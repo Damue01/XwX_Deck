@@ -153,8 +153,8 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
-    "http-proxy-agent": "7.0.2",
-    "https-proxy-agent": "7.0.6",
+    "http-proxy-agent": "9.1.0",
+    "https-proxy-agent": "9.1.0",
     "ws": "^8.21.3"
   },
   "overrides": {
