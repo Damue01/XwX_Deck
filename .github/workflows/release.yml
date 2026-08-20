@@ -1,0 +1,187 @@
+name: Build release draft
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate source
+        run: |
+          npm test
+          npm run docs:build
+          npm run check:public-boundary
+          npm run check:workflows
+
+      - name: Validate tag and package version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME:-v$VERSION}"
+          if [[ "$TAG" != "v$VERSION" ]]; then
+            echo "Tag $TAG does not match package version $VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Windows x64
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows portable package
+        run: npm run build:win
+
+      - name: Prepare Windows assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-upload | Out-Null
+          Copy-Item "release/XwX Deck.exe" "release-upload/XwX-Deck-windows-x64.exe"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: release-upload/*
+          if-no-files-found: error
+
+  macos-arm64:
+    name: macOS arm64
+    needs: validate
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unsigned macOS arm64 package
+        run: npm run build:mac:arm64
+
+      - name: Prepare macOS assets
+        shell: bash
+        run: |
+          mkdir -p release-upload
+          cp "release/XwX-Deck-mac-arm64.dmg" release-upload/
+          cp "release/XwX-Deck-mac-arm64.zip" release-upload/
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: release-upload/*
+          if-no-files-found: error
+
+  release-draft:
+    name: Assemble draft release
+    needs:
+      - validate
+      - windows
+      - macos-arm64
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate update manifests and checksums
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node tools/write-public-release-manifest.mjs release-assets
+
+      - name: Generate build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release-assets/*
+
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null | grep -qx true; then
+            gh release upload "$TAG" release-assets/* --clobber
+          elif gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists and is not a draft." >&2
+            exit 1
+          else
+            gh release create "$TAG" \
+              --draft \
+              --generate-notes \
+              --title "XwX Deck $VERSION" \
+              --notes-file release-assets/release-notes.md \
+              release-assets/*
+          fi
+          echo "Draft release is ready. Review platform packages before publishing it in GitHub."

@@ -1,0 +1,42 @@
+node_modules/
+.DS_Store
+dist/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+release/
+release-mac/
+/release-local-build/
+!web/release/
+!web/release/*.html
+history/
+test-results/
+*.log
+*.tmp
+/.tmp-*
+/build-local-release.log
+/icon.png
+/index.html
+/main.js
+# legacy local scratch directory
+/.xwx_deck/
+
+# Local design exploration. The selected production icon assets and their
+# provenance remain tracked separately.
+/design/appearance-system-preview.html
+/design/appearance-system-preview.png
+/design/xwx-icon-context-preview.svg
+/design/xwx-icon-context-preview.png
+/design/xxx-deck-concepts/
+# brainstorming visual-companion scratch
+/.superpowers/
+
+# Local release candidates and download-site previews. Build output, never tracked.
+/release-preview/
+
+# Scratch space for probing external pricing APIs during update:pricing work.
+/.probe/
+
+# Throwaway patch scripts used while editing; never part of a commit.
+/tmp-*.py
+/tmp-*.mjs
+/tmp-*.cjs

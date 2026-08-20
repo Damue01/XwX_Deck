@@ -1,0 +1,16 @@
+# XwX Deck 文档
+
+- [五分钟使用指南](getting-started.md)
+- [用户手册](user-manual.md)
+- [macOS 首次运行](macos-first-run.md)
+- [服务商兼容](provider-compatibility.md)
+- [GitHub 发布流程](github-release.md)
+- [架构与维护](architecture.md)
+- [公共边界](public-release-boundary.md)
+- [Roadmap](roadmap.md)
+- [模型能力维护](model-capability-maintenance.md)
+- [会话路由](session-routing.md)
+- [Trace 捕获与恢复](trace-capture-session-recovery.md)
+- [Codex 第三方模型网关](codex-desktop-third-party-model-gateway.md)
+- [Codex 上下文可移植性](codex-context-compaction-portability.md)
+- [Codex 接入 Anthropic Messages](codex-claude-anthropic-messages-integration.md)

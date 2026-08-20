@@ -1,0 +1,15 @@
+XwX Deck macOS 首次打开说明
+
+当前公开测试包没有 Developer ID 签名和 Apple 公证。
+
+1. 将 XwX Deck.app 拖入“应用程序”。
+2. 先在 Finder 中右键应用，选择“打开”。
+3. 如果仍被阻止，确认安装包来自：
+   https://github.com/Damue01/XwX_Deck/releases
+4. 核对 Release 中的 SHA-256 后，在终端执行：
+
+   xattr -dr com.apple.quarantine "/Applications/XwX Deck.app"
+
+5. 重新打开 XwX Deck。
+
+该命令会移除这个应用的下载隔离属性，不要对来源不明的应用执行。

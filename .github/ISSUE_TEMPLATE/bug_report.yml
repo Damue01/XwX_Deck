@@ -1,0 +1,53 @@
+name: Bug 报告
+description: 报告可复现的问题
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 请删除密钥、Cookie、私人路径和完整 Trace 内容后再提交。
+  - type: input
+    id: version
+    attributes:
+      label: XwX Deck 版本
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 操作系统
+      options:
+        - Windows x64
+        - macOS arm64
+        - macOS x64
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 已脱敏日志
+      render: shell

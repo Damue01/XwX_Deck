@@ -1,0 +1,207 @@
+import * as React from 'react';
+import type { PageId } from '@/features/shell/Rail';
+
+/** 一步导览：切到哪页、高亮哪个真实元素、气泡文案。 */
+interface TourStep {
+  readonly page: PageId;
+  /** 目标元素的 CSS 选择器（真实控件）。 */
+  readonly selector: string;
+  readonly title: string;
+  /** 引导语一句话。 */
+  readonly lead: string;
+  /** 补充要点，逐条列出。 */
+  readonly points?: readonly React.ReactNode[];
+}
+
+const STEPS: readonly TourStep[] = [
+  {
+    page: 'signal',
+    selector: '#captureBtn',
+    title: '开始一次请求追踪',
+    lead: '开始前会先检查已启用客户端的配置和上游；成功接入的请求会经过 XwX Deck，并计入本地用量。',
+    points: [
+      <>再次点击可停止记录并安全恢复 Trace 临时配置；已启用的第三方模型服务不会因此关闭。</>,
+      <>中央大数字显示累计用量，点它可在 <b>Token</b> 与 <b>费用</b> 之间切换。</>
+    ]
+  },
+  {
+    page: 'signal',
+    selector: '#dashBtn',
+    title: '仪表盘看每条详情',
+    lead: '想看具体每一次请求，点这里在浏览器打开完整仪表盘。',
+    points: [
+      <>逐条查看请求的模型、Token、耗时与内容。</>,
+      <>支持按会话、客户端筛选与回溯。</>
+    ]
+  },
+  {
+    page: 'models',
+    selector: '[data-tour="models-proxy"]',
+    title: '一键接入模型服务',
+    lead: '打开代理开关，XwX Deck 会自动改写该客户端的配置，让它走设置页保存的兼容模型服务。',
+    points: [
+      <>关闭时只恢复仍由 XwX Deck 管理的字段，外部并发修改会保留。</>,
+      <>Claude 可为 Fable / Opus / Sonnet / Haiku 分别指定模型。</>,
+      <>ChatGPT 设一个默认模型即可，随时用 <code>/model</code> 临时切换。</>
+    ]
+  }
+];
+
+const STORAGE_KEY = 'xwx-deck.onboardingSeen';
+const PAD = 8; // 高亮框外扩
+
+interface Rect { top: number; left: number; width: number; height: number; }
+
+function navigateTo(page: PageId): void {
+  window.dispatchEvent(new CustomEvent('xwxdeck:navigate', { detail: page }));
+}
+
+export function OnboardingTour(): React.ReactElement | null {
+  const [active, setActive] = React.useState<boolean>(() => {
+    try {
+      const query = new URLSearchParams(location.search);
+      if (query.get('tour') === '1') return true;
+      if (query.get('appearance') === '1') return false;
+      return localStorage.getItem(STORAGE_KEY) !== 'true';
+    } catch { return true; }
+  });
+  const [index, setIndex] = React.useState(0);
+  const [rect, setRect] = React.useState<Rect | null>(null);
+
+  const step = STEPS[index];
+
+  const finish = React.useCallback(() => {
+    try { localStorage.setItem(STORAGE_KEY, 'true'); } catch { /* ignore */ }
+    setActive(false);
+  }, []);
+
+  React.useEffect(() => {
+    if (active) document.body.dataset.tourActive = 'true';
+    else delete document.body.dataset.tourActive;
+    return () => { delete document.body.dataset.tourActive; };
+  }, [active]);
+
+  // Switch the underlying page before paint. During the tour page transitions
+  // are disabled, so the spotlight can move directly between stable targets
+  // instead of exposing an intermediate faded/scaled page.
+  React.useLayoutEffect(() => {
+    if (!active || !step) return;
+    navigateTo(step.page);
+  }, [active, step]);
+
+  // 定位目标元素（等切页后渲染出来，轮询一小段时间直到量到）
+  React.useLayoutEffect(() => {
+    if (!active || !step) return;
+    let raf = 0;
+    let tries = 0;
+    let observedTarget: HTMLElement | null = null;
+    let observedLayout: HTMLElement | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+
+    const observeLayout = (el: HTMLElement) => {
+      if (!resizeObserver || observedTarget === el) return;
+      resizeObserver.disconnect();
+      observedTarget = el;
+      observedLayout = el.closest<HTMLElement>('.page-inner');
+      resizeObserver.observe(el);
+      if (observedLayout) resizeObserver.observe(observedLayout);
+    };
+
+    const measure = () => {
+      const el = document.querySelector(step.selector) as HTMLElement | null;
+      if (el) {
+        const page = el.closest<HTMLElement>('.page');
+        const pageReady = !page
+          || (page.classList.contains('current') && getComputedStyle(page).transform === 'none');
+        const r = el.getBoundingClientRect();
+        if (pageReady && r.width > 0 && r.height > 0) {
+          setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+          observeLayout(el);
+          return;
+        }
+      }
+      if (tries++ < 40) raf = requestAnimationFrame(measure); // ~0.6s 内重试
+    };
+    resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => measure());
+    // Retain the previous spotlight until the next real target is measurable.
+    // Clearing it here rendered one full-screen dark frame on every Next click.
+    measure();
+    const onResize = () => measure();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onResize, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onResize, true);
+    };
+  }, [active, step]);
+
+  if (!active || !step) return null;
+
+  const last = index === STEPS.length - 1;
+
+  // 气泡贴着高亮框；下方空间够就放下方，否则放上方。
+  // 两种情况都把可用高度算出来给 maxHeight，超高则气泡内部滚动，保证矮窗口也能看全。
+  const GAP = PAD + 12;
+  const MARGIN = 16;
+  const spaceBelow = rect ? window.innerHeight - (rect.top + rect.height) - GAP - MARGIN : 0;
+  const spaceAbove = rect ? rect.top - GAP - MARGIN : 0;
+  const bubbleBelow = spaceBelow >= spaceAbove;
+  const bubbleStyle: React.CSSProperties = rect
+    ? {
+        top: bubbleBelow ? rect.top + rect.height + GAP : undefined,
+        bottom: bubbleBelow ? undefined : window.innerHeight - rect.top + GAP,
+        left: Math.max(MARGIN, Math.min(rect.left, window.innerWidth - 400 - MARGIN)),
+        maxHeight: Math.max(180, (bubbleBelow ? spaceBelow : spaceAbove))
+      }
+    : { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', maxHeight: window.innerHeight - 2 * MARGIN };
+
+  return (
+    <div className="tour-root" role="dialog" aria-modal="true" aria-label="新手引导" data-tour-index={index}>
+      {/* 四块遮罩围出高亮洞；无 rect 时整屏遮罩 */}
+      {rect ? (
+        <div
+          className="tour-spotlight"
+          style={{
+            top: rect.top - PAD,
+            left: rect.left - PAD,
+            width: rect.width + PAD * 2,
+            height: rect.height + PAD * 2
+          }}
+        />
+      ) : (
+        <div className="tour-backdrop-full" />
+      )}
+
+      <div className="tour-bubble" style={bubbleStyle}>
+        <h3 className="tour-title">{step.title}</h3>
+        <p className="tour-body">{step.lead}</p>
+        {step.points && step.points.length > 0 && (
+          <ul className="tour-points">
+            {step.points.map((p, i) => <li key={i}>{p}</li>)}
+          </ul>
+        )}
+        <div className="tour-foot">
+          <div className="tour-dots" aria-hidden="true">
+            {STEPS.map((_, i) => <i key={i} className={i === index ? 'on' : undefined} />)}
+          </div>
+          <div className="tour-actions">
+            {index === 0
+              ? <button type="button" className="tour-skip" onClick={finish}>跳过</button>
+              : <button type="button" className="tour-back" onClick={() => setIndex(index - 1)}>上一步</button>}
+            <button
+              type="button"
+              className="tour-next"
+              onClick={() => (last ? finish() : setIndex(index + 1))}
+            >
+              {last ? '开始使用' : '下一步'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

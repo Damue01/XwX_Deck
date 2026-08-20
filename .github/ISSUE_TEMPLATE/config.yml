@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞
+    url: https://github.com/Damue01/XwX_Deck/security/advisories/new
+    about: 请通过私密渠道报告安全问题
+  - name: 使用讨论
+    url: https://github.com/Damue01/XwX_Deck/discussions
+    about: 使用问题、经验分享和开放讨论

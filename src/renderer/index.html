@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="day">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>XwX Deck</title>
+    <link rel="icon" type="image/png" href="./icon-runtime.png" />
+    <link rel="apple-touch-icon" href="./icon-runtime.png" />
+    <link rel="stylesheet" href="./app.css" />
+    <script>
+      // Apply stored theme before first paint to avoid a flash.
+      try {
+        var t = localStorage.getItem('xwx-deck.theme');
+        if (t !== 'day' && t !== 'night') t = 'day';
+        document.documentElement.dataset.theme = t;
+        if (t === 'night') document.documentElement.classList.add('dark');
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

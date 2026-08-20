@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "product": "XwX Deck",
+  "edition": "standalone",
+  "versionSource": "package.json",
+  "identity": {
+    "packageName": "xwx-deck",
+    "appId": "app.xwxdeck.desktop",
+    "dataNamespace": "xwx-deck",
+    "gatewayPortRange": [
+      45233,
+      45242
+    ]
+  },
+  "features": {
+    "trace": true,
+    "modelGateway": true,
+    "repairCenter": true,
+    "safeExitRecovery": true,
+    "configurationSync": false,
+    "toolsPage": false,
+    "excelToMarkdown": false
+  },
+  "updates": {
+    "enabledByDefault": true,
+    "provider": "github-releases",
+    "defaultServer": "https://github.com/Damue01/XwX_Deck/releases/latest/download",
+    "serverEnvironmentVariable": "XWX_DECK_UPDATE_SERVER_URL",
+    "metadataEnvironmentVariable": "XWX_DECK_METADATA_PUSH_URL"
+  },
+  "platforms": {
+    "windows": {
+      "buildScript": "build:win",
+      "artifactName": "XwX Deck.exe"
+    },
+    "macosArm64": {
+      "buildScript": "build:mac:arm64",
+      "artifactName": "XwX-Deck-mac-arm64.dmg",
+      "distribution": "unsigned-manual-dmg",
+      "developerId": false,
+      "notarized": false
+    }
+  },
+  "openSource": {
+    "license": "Apache-2.0",
+    "repository": "Damue01/XwX_Deck",
+    "documentation": "github-pages"
+  },
+  "automation": {
+    "ci": ".github/workflows/ci.yml",
+    "pages": ".github/workflows/pages.yml",
+    "release": ".github/workflows/release.yml",
+    "releaseMode": "draft"
+  },
+  "providerFramework": {
+    "presets": [
+      "auto",
+      "openai-compatible",
+      "compatible",
+      "volcengine-ark",
+      "custom"
+    ],
+    "defaultPreset": "auto",
+    "authentication": [
+      "bearer"
+    ],
+    "futureAuthentication": [
+      "x-api-key",
+      "api-key",
+      "aws-sigv4",
+      "google-oauth"
+    ],
+    "userFields": [
+      "displayName",
+      "baseUrl",
+      "key"
+    ],
+    "discovery": "automatic",
+    "protocolSelection": "per-model-metadata",
+    "modelDiscoveryCandidates": [
+      "base/models",
+      "base/v1/models",
+      "version-root/models",
+      "full-endpoint-derived-models",
+      "compat-suffix-root-models"
+    ],
+    "protocolFamilies": [
+      "openai-responses",
+      "chat-completions",
+      "anthropic-messages",
+      "gemini-native"
+    ],
+    "authenticationImplemented": [
+      "bearer"
+    ],
+    "authenticationPlanned": [
+      "anthropic-api-key",
+      "google-api-key",
+      "azure-api-key",
+      "oauth",
+      "aws-sigv4",
+      "custom-headers"
+    ],
+    "imageGenerationPolicy": {
+      "default": "allow",
+      "knownIncompatible": "block",
+      "restoreOnProviderChange": true,
+      "userField": false
+    }
+  }
+}

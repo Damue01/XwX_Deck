@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "path": "assets/icon.svg",
+    "sha256": "d5eaced4020fd79b1b1083300e26f8258cc7a28e4577eba94c550a7a406617db"
+  },
+  "rasterMaster": {
+    "path": "design/icon-master-black.png",
+    "sha256": "06c29e01d5ef8e880f5c0044ce2f1927238f97da653db58aa01462c9f2b28d75"
+  },
+  "outputs": [
+    {
+      "path": "assets/icon.ico",
+      "sha256": "e6bfc497206c53d26d3126e9d67a46afc36c7788b84cbafd9fdd95a48b72d7c2"
+    },
+    {
+      "path": "assets/icon.png",
+      "sha256": "9c2c0c736cfb1c645107a1731829e0b6b705b3acf91d8d593c25560694e75b08"
+    },
+    {
+      "path": "assets/tray.png",
+      "sha256": "06018120a5ac0003b04173f0b92f89fbb4b45e6e76e7f4703cf938f85e1854e7"
+    }
+  ]
+}

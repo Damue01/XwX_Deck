@@ -1,0 +1,181 @@
+{
+  "name": "xwx-deck",
+  "displayName": "XwX Deck",
+  "description": "XwX Deck: local request tracing and model gateway management for Claude and ChatGPT.",
+  "author": "XwX Deck",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@11.6.2",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=11.6.2 <12"
+  },
+  "main": "dist/main.js",
+  "scripts": {
+    "postinstall": "electron-builder install-app-deps",
+    "clean": "rimraf dist",
+    "compile": "npm run check-types && npm run check:docs && npm run check:icons && npm run check:release-contract && node esbuild.config.mjs",
+    "check-types": "tsc --noEmit",
+    "check:docs": "node tools/check-docs.mjs",
+    "check:release-contract": "node tools/check-release-contract.mjs",
+    "check:icons": "node tools/check-icon-assets.mjs",
+    "check:public-boundary": "node tools/check-public-boundary.mjs",
+    "check:workflows": "node tools/check-github-workflows.mjs",
+    "preview": "node esbuild.config.mjs --development && node tools/preview-server.mjs",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "generate:icons": "npm run generate:icons:win",
+    "generate:icons:win": "node tools/windows-icon-assets.mjs",
+    "regenerate:icons:win": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/generate-icon-assets.ps1 && node tools/windows-icon-assets.mjs --write",
+    "generate:icons:mac": "node tools/generate-macos-app-icon.mjs",
+    "test": "npm run compile && npm run test:built",
+    "test:built": "node tools/run-core-smoke.mjs && node tools/run-gateway-helper-smoke.mjs && node tools/run-gateway-helper-upgrade-smoke.mjs && node tools/run-background-controller-smoke.mjs",
+    "test:gateway-helper": "node tools/run-gateway-helper-smoke.mjs",
+    "test:gateway-upgrade": "node tools/run-gateway-helper-upgrade-smoke.mjs",
+    "test:background-controller": "node tools/run-background-controller-smoke.mjs",
+    "diagnose:trace": "node tools/trace-integrity.mjs",
+    "test:packaged": "node tools/run-packaged-smoke.mjs",
+    "dev": "npm run check-types && node esbuild.config.mjs --development && electron .",
+    "start": "electron .",
+    "preview:web": "node tools/serve-manager-preview.mjs",
+    "update:pricing": "node tools/update-model-pricing.mjs",
+    "build:win": "npm run clean && npm run generate:icons:win && npm run test && electron-builder --win portable --publish never",
+    "build:mac:arm64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg zip --arm64 --publish never",
+    "build:mac:x64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg zip --x64 --publish never"
+  },
+  "build": {
+    "appId": "app.xwxdeck.desktop",
+    "productName": "XwX Deck",
+    "asar": {
+      "smartUnpack": false
+    },
+    "electronLanguages": [
+      "en-US",
+      "zh-CN"
+    ],
+    "files": [
+      "dist/**/*",
+      "assets/icon.png",
+      "assets/icon-runtime.png",
+      "assets/models-dev-pricing.json",
+      "assets/tray.png",
+      "assets/trayTemplate.png",
+      "assets/trayTemplate@2x.png",
+      "LICENSE",
+      "NOTICE",
+      "THIRD_PARTY_NOTICES.md",
+      "package.json",
+      "!**/*.map"
+    ],
+    "afterPack": "tools/after-pack.cjs",
+    "directories": {
+      "output": "release"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://github.com/Damue01/XwX_Deck/releases/latest/download"
+      }
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "portable"
+      ]
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "hardenedRuntime": false,
+      "target": [
+        "dmg"
+      ],
+      "artifactName": "XwX-Deck-mac-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "XwX Deck ${version}",
+      "backgroundColor": "#f5f5f7",
+      "iconSize": 72,
+      "iconTextSize": 12,
+      "window": {
+        "width": 680,
+        "height": 460
+      },
+      "contents": [
+        {
+          "x": 170,
+          "y": 165
+        },
+        {
+          "x": 510,
+          "y": 165,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 340,
+          "y": 315,
+          "type": "file",
+          "path": "assets/macos/首次打开说明.txt",
+          "name": "首次打开说明.txt"
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "${productName}.${ext}",
+      "useZip": true
+    }
+  },
+  "devDependencies": {
+    "@base-ui/react": "^1.6.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^20.14.15",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
+    "clsx": "^2.1.1",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.7",
+    "esbuild": "^0.28.1",
+    "lucide-react": "^1.25.0",
+    "postcss": "^8.5.20",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "rimraf": "^6.0.1",
+    "smol-toml": "^1.7.0",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.5.4",
+    "vitepress": "^2.0.0-alpha.19",
+    "yaml": "^2.9.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
+    "ws": "^8.21.3"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.9",
+    "tar": "7.5.22"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Damue01/XwX_Deck.git"
+  },
+  "homepage": "https://damue01.github.io/XwX_Deck/",
+  "bugs": {
+    "url": "https://github.com/Damue01/XwX_Deck/issues"
+  },
+  "keywords": [
+    "electron",
+    "claude",
+    "chatgpt",
+    "trace",
+    "ai-gateway",
+    "openai-compatible"
+  ]
+}
