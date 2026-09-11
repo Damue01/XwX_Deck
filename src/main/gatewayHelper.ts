@@ -1,3 +1,4 @@
+import { isCodexUpstreamKind } from './trace/codexConversationPortability';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
@@ -356,8 +357,8 @@ function array<T>(value: unknown): T[] {
   return value as T[];
 }
 
-function provider(value: unknown): 'official' | 'compatible' {
-  if (value !== 'official' && value !== 'compatible') throw new Error('invalid provider');
+function provider(value: unknown): 'official' | 'compatible' | `provider:${string}` {
+  if (!isCodexUpstreamKind(value)) throw new Error('invalid provider');
   return value;
 }
 

@@ -196,9 +196,9 @@ button,input{font:inherit} button{cursor:pointer}.tnum{font-variant-numeric:tabu
 .diff-pop .diff-opt .diff-tick{flex:0 0 auto;width:13px;height:13px;color:var(--blue);opacity:0}
 .diff-pop .diff-opt.selected{background:var(--soft)}.diff-pop .diff-opt.selected .diff-tick{opacity:1}
 .diff-pop .diff-opt:hover,.diff-pop .diff-opt.hl{background:var(--hover)}
-.cmp-controls .diff-nav{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:6px;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.cmp-controls .diff-nav{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:6px;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;transition:background .12s,color .12s,box-shadow .12s}
 .cmp-controls .diff-nav svg{display:block}
-.cmp-controls .diff-nav:hover{background:var(--hover);color:var(--text)}.cmp-controls .diff-nav:disabled{opacity:.35;cursor:default}
+.cmp-controls .diff-nav:hover{background:var(--hover);color:var(--text)}.cmp-controls .diff-nav:focus-visible{outline:0;box-shadow:0 0 0 2px var(--focus-ring)}.cmp-controls .diff-nav:disabled{opacity:.35;cursor:default}.cmp-controls .diff-nav:disabled:hover{background:var(--panel);color:var(--muted)}
 .cmp-controls .diff-cur{font-size:12px;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px 10px;white-space:nowrap}
 .acts{margin-left:auto;display:inline-flex;gap:2px;flex:0 0 auto}.acts .search-btn{background:var(--panel);border:1px solid var(--line);color:var(--faint);font-size:12.5px;padding:0 12px;border-radius:8px;display:inline-flex;align-items:center;justify-content:flex-start;gap:7px;min-width:172px;min-height:40px;line-height:1;font-weight:500}.acts .search-btn svg{display:block;flex:0 0 auto;opacity:.8}.acts .search-btn .search-ph{color:var(--faint);line-height:1}.acts .search-btn:hover{background:var(--hover);border-color:color-mix(in srgb,var(--line) 60%,var(--faint));color:var(--text)}.acts .search-btn:hover svg{opacity:1}.acts .search-btn:hover .search-ph{color:var(--text)}
 .view-single{display:block}.app[data-detmode="compare"] .view-single,.app[data-detmode="raw"] .view-single{display:none}
@@ -709,11 +709,15 @@ function renderChromeText(){
     if(view === 'session') brandHome.removeAttribute('data-nav');
     else brandHome.setAttribute('data-nav', 'dashboard');
   }
+  const crumbs = el('crumbs'); if(crumbs) crumbs.setAttribute('aria-label', L('导航', 'Navigation'));
+  const railResizer = el('railResizer'); if(railResizer) railResizer.setAttribute('aria-label', L('拖动调整侧栏宽度', 'Drag to resize sidebar'));
   const btn = el('langToggle');
   if(btn){ btn.textContent = uiLang === 'zh' ? '中文' : 'EN'; btn.title = uiLang === 'zh' ? '当前语言：中文，点击切换到 English' : 'Current language: English. Click to switch to 中文'; btn.setAttribute('aria-label', btn.title); }
   const sTitle = el('searchTitle'); if(sTitle) sTitle.textContent = L('搜索当前会话', 'Search current session');
   const search = el('globalSearch'); if(search){ search.placeholder = L('输入关键词', 'Keyword'); search.setAttribute('aria-label', L('搜索当前会话', 'Search current session')); }
+  const searchClose = el('searchClose'); if(searchClose){ searchClose.title = L('关闭', 'Close'); searchClose.setAttribute('aria-label', searchClose.title); }
   const pTitle = el('pricingTitle'); if(pTitle) pTitle.textContent = L('估算价目表（USD / 1M tokens）', 'Estimated Pricing (USD / 1M tokens)');
+  const pricingClose = el('pricingClose'); if(pricingClose){ pricingClose.title = L('关闭', 'Close'); pricingClose.setAttribute('aria-label', pricingClose.title); }
   const pLabel = el('progressLabel'); if(pLabel) pLabel.textContent = L('请求', 'Request');
   const fold = el('foldToggle'); if(fold) fold.textContent = L('收起全部 Subagents','Collapse all Subagents');
   const cdTitle = el('confirmDeleteTitle'); if(cdTitle) cdTitle.textContent = L('删除该会话的全部 trace？','Delete this session’s full trace?');
@@ -1687,7 +1691,7 @@ function renderRailHead(){
   // 折叠图标复用 XwX Deck 主窗口的 lucide PanelLeft（方框+竖线，无箭头），
   // 两种状态同一图标，仅 aria/title 文案随折叠态变化。
   const collapseIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path></svg>';
-  const collapseLabel = compact ? L('展开侧栏','Expand rail') : L('收成数字栏','Collapse to numbers');
+  const collapseLabel = compact ? L('展开侧栏','Expand rail') : L('收起为数字栏','Collapse to numbers');
   el('railHead').innerHTML = '<span class="rh-title" title="'+esc(title)+'">'+esc(title)+'</span><button type="button" class="rail-collapse" data-act="toggle-rail" title="'+collapseLabel+'" aria-label="'+collapseLabel+'">'+collapseIcon+'</button>';
 }
 function railMode(){ return el('appRoot').getAttribute('data-rail') || 'full'; }
@@ -3284,8 +3288,9 @@ function displayProviderTransition(t){
 }
 function codexTraceProviderKind(t){
   if(!t || (t.source !== 'codex-cli' && t.source !== 'codex-vscode')) return '';
+  if(t.provider && t.provider.connectionId) return 'provider:' + t.provider.connectionId;
   const explicit = t.providerTransition;
-  if(explicit && (explicit.target === 'official' || explicit.target === 'compatible')) return explicit.target;
+  if(explicit && typeof explicit.target === 'string') return explicit.target;
   const raw = String(t.upstream && (t.upstream.baseUrl || t.upstream.url) || '');
   const match = /^https?:\\/\\/([^\\/:?#]+)/i.exec(raw);
   if(!match) return '';
@@ -3302,7 +3307,7 @@ function inferProviderTransitions(list){
     const provider = codexTraceProviderKind(t);
     if(!provider) continue;
     const explicit = t.providerTransition;
-    if(!lastMainProvider && explicit && (explicit.source === 'official' || explicit.source === 'compatible')){
+    if(!lastMainProvider && explicit && typeof explicit.source === 'string'){
       lastMainProvider = explicit.source;
     }
     if(!explicit && lastMainProvider && provider !== lastMainProvider && t.id){
@@ -3624,7 +3629,7 @@ function systemSegments(t){
 }
 function renderSystem(t){
   const entries = systemEntries(t);
-  if(!entries.length) return '<div class="empty">\u65e0 System</div>';
+  if(!entries.length) return '<div class="empty">'+L('无 System','No System')+'</div>';
   // PRETTY 是默认的人类阅读视图：Markdown 排版与 XML 折叠同时生效，内容不删减；
   // MD 保留纯 Markdown 解析，RAW 则逐字显示原始文本。
   const blocks = entries.map(entry => {
@@ -3633,9 +3638,9 @@ function renderSystem(t){
     const markdownPane = '<div class="sys-pane" data-sysfmt-pane="markdown" style="display:none"><div class="md">'+renderMarkdown(text)+'</div></div>';
     const rawPane = '<div class="sys-pane" data-sysfmt-pane="raw" style="display:none"><pre class="codebox">'+esc(text)+'</pre></div>';
     const switcher = '<div class="sys-fmt">'+
-      '<button class="sys-fmt-btn active" data-sysfmt="text" title="Markdown \u6392\u7248\u4e0e\u53ef\u6298\u53e0\u7ed3\u6784">PRETTY</button>'+
-      '<button class="sys-fmt-btn" data-sysfmt="markdown" title="\u7eaf Markdown \u9884\u89c8">MD</button>'+
-      '<button class="sys-fmt-btn" data-sysfmt="raw" title="\u539f\u59cb\u6587\u672c">RAW</button>'+
+      '<button class="sys-fmt-btn active" data-sysfmt="text" title="'+L('Markdown 排版与可折叠结构','Formatted Markdown with collapsible structure')+'">PRETTY</button>'+
+      '<button class="sys-fmt-btn" data-sysfmt="markdown" title="'+L('纯 Markdown 预览','Markdown preview')+'">MD</button>'+
+      '<button class="sys-fmt-btn" data-sysfmt="raw" title="'+L('原始文本','Raw text')+'">RAW</button>'+
     '</div>';
     const label = '<div class="msg-role"><span class="pill '+entry.roleClass+'" title="'+esc(entry.origin)+'">'+esc(entry.label)+'</span></div>';
     return '<div class="sysblk sys-wrap" data-sysfmt="text">'+label+'<div class="sysblk-body">'+switcher+textPane+markdownPane+rawPane+'</div></div>';
@@ -3907,7 +3912,7 @@ function responseStatusAlert(snap){
   return '<div class="resp-alert"><b>'+label+'</b>'+(detail?' · '+esc(detail):'')+'</div>';
 }
 function renderMessages(msgs){
-  if(!msgs.length) return '<div class="empty">无 messages</div>';
+  if(!msgs.length) return '<div class="empty">'+L('无 Messages','No messages')+'</div>';
   const callNames = toolCallNameIndex(msgs);
   return msgs.map(m => {
     // System 区已经展示过的段落只留一行指引，避免同一段 system prompt 在一页里出现两遍。
@@ -4434,8 +4439,8 @@ function blockWrap(html, many, raw, plain){
   const showFmt = raw && typeof raw === 'object';
   const fmt = showFmt
     ? '<div class="block-fmt">'+
-        '<button class="block-fmt-btn active" data-bfmt="pretty" title="解析视图">PRETTY</button>'+
-        '<button class="block-fmt-btn" data-bfmt="raw" title="原始 JSON">RAW</button>'+
+        '<button class="block-fmt-btn active" data-bfmt="pretty" title="'+L('解析视图','Formatted view')+'">PRETTY</button>'+
+        '<button class="block-fmt-btn" data-bfmt="raw" title="'+L('原始 JSON','Raw JSON')+'">RAW</button>'+
       '</div>'
     : '';
   const rawPane = showFmt
@@ -4536,7 +4541,7 @@ function toolDeclKind(tool){
 }
 function renderTools(t){
   const list = tools(t);
-  if(!list.length) return '<div class="empty">No tools in this request</div>';
+  if(!list.length) return '<div class="empty">'+L('此请求没有工具','No tools in this request')+'</div>';
   return list.map((tool,i) => {
     const name = toolDeclDisplayName(tool);
     const desc = toolDeclDescription(tool);
@@ -4732,7 +4737,7 @@ function schemaHelp(schema){
 }
 function renderSse(t){
   const events = t.sse && t.sse.events || [];
-  if(!events.length) return '<div class="empty">非 SSE 响应或未收到事件</div>';
+  if(!events.length) return '<div class="empty">'+L('非 SSE 响应或未收到事件','Non-SSE response or no events received')+'</div>';
   return sseEventGroups(events).map(item => {
     if(item.kind === 'group') return renderSseGroup(item);
     return renderSseRow(item.event, item.index, false);
@@ -4912,7 +4917,8 @@ function renderDiff(){
   }
   const selectedKey = selected ? diffChoiceKey(selected) : '';
   const base = selected ? diffTraceForChoice(list, selected) : undefined;
-  const baseIdx = flat.findIndex(x => diffChoiceKey(x) === selectedKey);
+  const navChoices = diffNavigationChoices(choiceGroups, selectedKey);
+  const navIdx = navChoices.findIndex(x => diffChoiceKey(x) === selectedKey);
   const cacheKey = selected && selected.turn ? diffTraceCacheKey(selected.turn) : '';
   const loadError = cacheKey ? diffTraceErrors.get(cacheKey) : '';
   if(selected && !base && selected.turn && !diffTraceLoading.has(cacheKey) && !loadError){
@@ -4931,7 +4937,7 @@ function renderDiff(){
         return '<div class="diff-optgroup" role="presentation">'+esc(group.label)+'</div>'+rows;
       }).join('');
       pick.innerHTML =
-        '<button class="diff-nav" id="diffPrev"'+(baseIdx<=0?' disabled':'')+' title="Previous compare target"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"></polyline></svg></button>'+
+        '<button type="button" class="diff-nav" id="diffPrev"'+(navIdx<=0?' disabled':'')+' title="'+L('更早的对比请求','Earlier compare request')+'" aria-label="'+L('更早的对比请求','Earlier compare request')+'"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"></polyline></svg></button>'+
         '<div class="diff-sel-wrap'+(diffSelOpen?' open':'')+'" id="diffBase">'+
           '<button type="button" class="diff-sel" id="diffSelBtn" aria-haspopup="listbox" aria-expanded="'+(diffSelOpen?'true':'false')+'" title="'+L('选择对比请求','Select request to compare')+'">'+
             '<span class="diff-sel-label">'+esc(selected ? selected.label : L('选择对比请求','Select request to compare'))+'</span>'+
@@ -4939,7 +4945,7 @@ function renderDiff(){
           '</button>'+
           '<div class="diff-pop" id="diffPop" role="listbox">'+options+'</div>'+
         '</div>'+
-        '<button class="diff-nav" id="diffNext"'+(baseIdx>=flat.length-1?' disabled':'')+' title="Next compare target"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg></button>'+
+        '<button type="button" class="diff-nav" id="diffNext"'+(navIdx<0||navIdx>=navChoices.length-1?' disabled':'')+' title="'+L('更新的对比请求','Later compare request')+'" aria-label="'+L('更新的对比请求','Later compare request')+'"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg></button>'+
         '<span class="diff-cur" title="'+L('当前请求','Current request')+'">'+esc(t ? requestLabel(stableTraceOrdinal(t, '?')) : '')+'</span>';
     } else {
       diffSelOpen = false;
@@ -4956,11 +4962,14 @@ function renderDiff(){
 }
 function stepDiffBase(delta){
   const list = traces(); const t = currentTrace();
-  const flat = flattenDiffChoices(diffChoiceGroups(list, t));
-  if(!flat.length) return;
-  const cur = flat.findIndex(x => diffChoiceKey(x) === activeDiffChoiceKey());
-  const next = Math.min(flat.length - 1, Math.max(0, (cur < 0 ? 0 : cur) + delta));
-  if(flat[next] && diffChoiceKey(flat[next]) !== activeDiffChoiceKey()) selectDiffChoice(flat[next]);
+  const groups = diffChoiceGroups(list, t);
+  const activeKey = activeDiffChoiceKey();
+  const choices = diffNavigationChoices(groups, activeKey);
+  if(!choices.length) return;
+  const cur = choices.findIndex(x => diffChoiceKey(x) === activeKey);
+  if(cur < 0) return;
+  const next = Math.min(choices.length - 1, Math.max(0, cur + delta));
+  if(choices[next] && diffChoiceKey(choices[next]) !== activeKey) selectDiffChoice(choices[next]);
 }
 function diffChoiceKey(item){
   const turn = Number(item && item.turn);
@@ -5060,11 +5069,11 @@ function diffChoiceGroups(list, current){
   const view = logicalTraceView(list);
   const currentInfo = view.meta.get(current.id) || fallbackTraceInfo(current);
   const groups = [
-    { label:'Default', items:[] },
-    { label:'Mainline', items:[] },
-    { label:'Same Subagent', items:[] },
-    { label:'Auxiliary', items:[] },
-    { label:'Timeline', items:[] }
+    { key:'default', label:'Default', items:[] },
+    { key:'mainline', label:'Mainline', items:[] },
+    { key:'same-subagent', label:'Same Subagent', items:[] },
+    { key:'auxiliary', label:'Auxiliary', items:[] },
+    { key:'timeline', label:'Timeline', items:[] }
   ];
   const seen = new Set();
   const currentKey = diffChoiceKey({ id:current.id, turn:stableTraceOrdinal(current, 0) });
@@ -5108,7 +5117,18 @@ function diffChoiceGroups(list, current){
     if(info.kind === 'aux' && info.parentId === currentInfo.parentId && info.sortRank < currentRank) add(groups[3], t);
   }
   for(const item of timelineDiffChoices(list, current)) addItem(groups[4], item);
-  return groups.filter(g => g.items.length);
+  return orderDiffChoiceGroups(groups).filter(g => g.items.length);
+}
+function orderDiffChoiceGroups(groups){
+  for(const group of groups){
+    if(group.key === 'default' || group.key === 'timeline') continue;
+    group.items.sort((a, b) => {
+      const aTurn = Number(a && a.turn) || 0;
+      const bTurn = Number(b && b.turn) || 0;
+      return bTurn - aTurn;
+    });
+  }
+  return groups;
 }
 function flattenDiffChoices(groups){
   const seen = new Set();
@@ -5122,6 +5142,28 @@ function flattenDiffChoices(groups){
     }
   }
   return out;
+}
+function diffNavigationChoices(groups, activeKey){
+  const activeGroup = groups.find(group => group.items.some(item => diffChoiceKey(item) === activeKey));
+  if(!activeGroup) return [];
+  if(activeGroup.key === 'timeline') return activeGroup.items.slice();
+  let recentFirst;
+  if(activeGroup.key === 'mainline'){
+    const primaryDefault = groups.find(group => group.key === 'default');
+    recentFirst = flattenDiffChoices([
+      { items:primaryDefault && primaryDefault.items.length ? [primaryDefault.items[0]] : [] },
+      activeGroup
+    ]);
+  } else if(activeGroup.key === 'default' && diffChoiceKey(activeGroup.items[0]) === activeKey){
+    const mainline = groups.find(group => group.key === 'mainline');
+    recentFirst = flattenDiffChoices([
+      { items:[activeGroup.items[0]] },
+      { items:mainline ? mainline.items : [] }
+    ]);
+  } else {
+    recentFirst = activeGroup.items.slice();
+  }
+  return recentFirst.reverse();
 }
 function logicalSortRank(t, view){
   const info = view.meta.get(t && t.id) || fallbackTraceInfo(t);
@@ -6089,14 +6131,50 @@ function mergeLiveTrace(trace, wasAtNewest){
   return mergedSessionId;
 }
 // 镜像后端 traceStore.accumulateUsageByModel：按模型累进 session.usageByModel。
+function accumUsageBands(prev, model, servedModel, trace, usage){
+  const price = findModelPriceForUsage(model, servedModel);
+  const banded = price && (
+    (price.tiers && price.tiers.length)
+    || (price.peak && price.peak.peakWindowsUtc && price.peak.peakWindowsUtc.length)
+  );
+  if(!banded) return prev;
+  const promptTokens = usage.inputTotalTokens !== undefined
+    ? usage.inputTotalTokens
+    : (usage.inputUncachedTokens !== undefined ? usage.inputUncachedTokens : (usage.inputTokens || 0))
+      + (usage.cacheReadTokens || 0)
+      + (usage.cacheCreationTokens || 0);
+  let tier = 0;
+  for(let i=0;i<(price.tiers || []).length;i++){
+    if(promptTokens >= price.tiers[i].fromInputTokens) tier = i;
+  }
+  const startedAtMs = Date.parse(trace.startedAt || '');
+  const hour = Number.isFinite(startedAtMs) ? new Date(startedAtMs).getUTCHours() : 0;
+  const offPeak = !!(price.peak && price.peak.peakWindowsUtc && Number.isFinite(startedAtMs)
+    && !price.peak.peakWindowsUtc.some(function(window){ return hour >= window[0] && hour < window[1]; }));
+  const shortRule = price.tiers && price.tiers[tier] && price.tiers[tier].shortOutput;
+  const shortOutput = !!shortRule && (usage.outputTokens || 0) <= shortRule.atMostTokens;
+  return mergeUsageBands(prev,[{
+    tier,
+    offPeak,
+    ...(shortOutput ? { shortOutput:true } : {}),
+    input: usage.inputUncachedTokens || 0,
+    output: usage.outputTokens || 0,
+    cacheRead: usage.cacheReadTokens || 0,
+    cacheCreation: usage.cacheCreationTokens || 0,
+    ...(usage.cacheCreation5mTokens !== undefined ? { cacheCreation5m:usage.cacheCreation5mTokens || 0 } : {}),
+    ...(usage.cacheCreation1hTokens !== undefined ? { cacheCreation1h:usage.cacheCreation1hTokens || 0 } : {})
+  }]);
+}
 function accumUsageByModel(prev, trace){
   const u = usageOf(trace);
   if(!u) return prev;
   const snap = (trace.sse && trace.sse.snapshot) || (trace.response && trace.response.snapshot);
-  const model = (snap && snap.model) || (trace.request && trace.request.model);
+  const model = (trace.request && trace.request.model) || (snap && snap.model);
   if(!model) return prev;
+  const servedModel = snap && snap.model && snap.model !== model ? snap.model : undefined;
   const next = Object.assign({}, prev);
   const before = next[model];
+  const bands = accumUsageBands(before && before.bands, model, servedModel, trace, u);
   next[model] = {
     version: 2,
     input: ((before && before.input) || 0) + (u.inputUncachedTokens || 0),
@@ -6111,7 +6189,9 @@ function accumUsageByModel(prev, trace){
       : {}),
     total: ((before && before.total) || 0) + totalTokens(trace),
     apiType: (before && before.apiType) || (trace.request && trace.request.apiType),
-    incompleteFields: Array.from(new Set([...(before && before.incompleteFields || []),...(u.incompleteFields || [])]))
+    incompleteFields: Array.from(new Set([...(before && before.incompleteFields || []),...(u.incompleteFields || [])])),
+    ...(bands && bands.length ? { bands } : {}),
+    ...((before && before.servedModel) || servedModel ? { servedModel:(before && before.servedModel) || servedModel } : {})
   };
   return next;
 }

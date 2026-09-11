@@ -103,6 +103,7 @@ interface ActiveWebSocketPair {
   downstream: WebSocket;
   upstream: WebSocket;
   finishActive: (error?: Error) => void;
+  refreshRoute: () => void;
 }
 
 export class TapProxy {
@@ -158,18 +159,18 @@ export class TapProxy {
   }
 
   async markCodexProviderTransition(
-    source: 'official' | 'compatible',
-    target: 'official' | 'compatible'
+    source: 'official' | 'compatible' | `provider:${string}`,
+    target: 'official' | 'compatible' | `provider:${string}`
   ): Promise<void> {
     await this.responsesContinuations.markProviderTransition(source, target);
     await this.conversationPortability.markProviderTransition(source, target);
   }
 
-  async adoptCodexProviderOnStartup(target: 'official' | 'compatible'): Promise<boolean> {
+  async adoptCodexProviderOnStartup(target: 'official' | 'compatible' | `provider:${string}`): Promise<boolean> {
     return this.conversationPortability.adoptProviderOnStartup(target);
   }
 
-  async repairCodexHistoryForProvider(target: 'official' | 'compatible') {
+  async repairCodexHistoryForProvider(target: 'official' | 'compatible' | `provider:${string}`) {
     return this.conversationPortability.repairLocalHistory(target);
   }
 
@@ -391,6 +392,13 @@ export class TapProxy {
           resolve();
           return;
         }
+        const currentRoute = this.pickRoute(localUrl.pathname, allowed.prefix, undefined, allowed.apiType, clientIdentity);
+        if (webSocketConnectionKey(currentRoute, request, localUrl) !== webSocketConnectionKey(route, request, localUrl)) {
+          upstream.terminate();
+          rejectUpgrade(socket, 426, 'XwX Deck service changed; reconnect using the current route.');
+          resolve();
+          return;
+        }
         this.webSocketUpgradeHeaders.set(request, upstreamHeaders);
         server.handleUpgrade(request, socket, head, downstream => {
           this.bridgeOfficialWebSocket({
@@ -400,7 +408,6 @@ export class TapProxy {
             localUrl,
             allowed,
             route,
-            clientRoutes,
             clientIdentity,
             upstreamUrl,
             upstreamHeaders
@@ -429,7 +436,6 @@ export class TapProxy {
     localUrl: URL;
     allowed: { prefix: string; apiType: TapApiType };
     route: ResolvedRoute;
-    clientRoutes: readonly TapClientRoute[];
     clientIdentity: TapClientIdentity;
     upstreamUrl: URL;
     upstreamHeaders: http.IncomingHttpHeaders;
@@ -440,7 +446,6 @@ export class TapProxy {
       request,
       localUrl,
       allowed,
-      clientRoutes,
       clientIdentity,
       upstreamUrl,
       upstreamHeaders
@@ -448,13 +453,34 @@ export class TapProxy {
     let active: WebSocketTraceExchange | undefined;
     let sendChain = Promise.resolve();
     let closed = false;
+    let retired = false;
+    let retirementScheduled = false;
+    let lastFinalization = Promise.resolve();
+    const connectionKey = webSocketConnectionKey(input.route, request, localUrl);
     let pair: ActiveWebSocketPair;
+
+    const retireWhenIdle = (): void => {
+      if (!retired || active || retirementScheduled || closed) return;
+      retirementScheduled = true;
+      // Flush the completed response's continuation before inviting HTTP/SSE
+      // retries on the new provider. Never interrupt an accepted response.
+      void lastFinalization.then(() => {
+        if (closed) return;
+        downstream.close(1000, 'Service changed; reconnect');
+        upstream.close(1000, 'Service changed; reconnect');
+      });
+    };
+    const refreshRoute = (): void => {
+      const current = this.pickRoute(localUrl.pathname, allowed.prefix, undefined, allowed.apiType, clientIdentity);
+      if (webSocketConnectionKey(current, request, localUrl) !== connectionKey) retired = true;
+      retireWhenIdle();
+    };
 
     const finishActive = (error?: Error): void => {
       const exchange = active;
       active = undefined;
       if (!exchange) return;
-      this.queueWebSocketFinalization(exchange, error);
+      lastFinalization = Promise.all([lastFinalization, this.queueWebSocketFinalization(exchange, error)]).then(() => undefined);
     };
     const closePair = (source: WebSocket, target: WebSocket, code: number, reason: Buffer): void => {
       if (closed) return;
@@ -469,11 +495,13 @@ export class TapProxy {
         if (source.readyState !== WebSocket.CLOSED) source.terminate();
       } catch { /* ignore */ }
     };
-    pair = { downstream, upstream, finishActive };
+    pair = { downstream, upstream, finishActive, refreshRoute };
     this.webSocketPairs.add(pair);
 
     downstream.on('message', (data, isBinary) => {
       sendChain = sendChain.then(async () => {
+        refreshRoute();
+        if (closed || retired) return;
         if (upstream.readyState !== WebSocket.OPEN) return;
         if (isBinary) {
           upstream.send(data, { binary: true });
@@ -495,23 +523,47 @@ export class TapProxy {
           allowed.prefix,
           model,
           allowed.apiType,
-          clientIdentity,
-          clientRoutes
+          clientIdentity
         );
         if (!resolved) throw new Error(`no official WebSocket route for model ${model ?? '(unknown)'}`);
         const route: ResolvedRoute = {
           ...resolved,
           source: resolveTraceSource(clientIdentity, resolved.source)
         };
-        if (!isOfficialResponsesWebSocketRoute(route)) {
-          throw new Error(`model ${model ?? '(unknown)'} requires HTTP/SSE routing`);
+        if (webSocketConnectionKey(route, request, localUrl) !== connectionKey) {
+          retired = true;
+          retireWhenIdle();
+          return;
         }
         const targetUpstream = routeUpstreamIdentity(route, request.headers);
-        const portableRequest = await this.conversationPortability.prepareRequest(body, {
+        const continuation = await this.responsesContinuations.prepareRequest(
+          body,
+          targetUpstream,
+          'responses'
+        );
+        if (continuation.unresolvedToolOutputs > 0) {
+          downstream.send(JSON.stringify({
+            type: 'error',
+            error: {
+              type: 'invalid_request_error',
+              code: 'missing_call_id',
+              message: 'XwX Deck rejected a function call output without a recoverable call_id before forwarding it upstream.'
+            }
+          }));
+          return;
+        }
+        const portableRequest = await this.conversationPortability.prepareRequest(continuation.body, {
           target: targetUpstream,
           wireProtocol: 'responses',
-          threadId: codexThreadId(request.headers, body)
+          threadId: codexThreadId(request.headers, body),
+          recoverContinuation: continuation.droppedPreviousResponseId && continuation.expandedResponses === 0
         });
+        // Route publication can race the async continuation/portability reads.
+        refreshRoute();
+        if (closed || retired || upstream.readyState !== WebSocket.OPEN) return;
+        if (continuation.repairedToolOutputs) {
+          log(`[compatible/tap] repaired ${continuation.repairedToolOutputs} malformed Responses tool output item(s) before WebSocket forwarding`);
+        }
         const requestProbe = synthesizeInflightProbe({
           startedAt: new Date(),
           req: request,
@@ -576,9 +628,10 @@ export class TapProxy {
         // Codex can send its continuation as soon as it observes the terminal
         // frame. Release the active slot before publishing that frame so the
         // next response.create cannot be rejected as overlapping work.
-        this.queueWebSocketFinalization(exchange);
+        lastFinalization = Promise.all([lastFinalization, this.queueWebSocketFinalization(exchange)]).then(() => undefined);
       }
       if (downstream.readyState === WebSocket.OPEN) downstream.send(data, { binary: isBinary });
+      retireWhenIdle();
     });
 
     downstream.on('close', (code, reason) => closePair(downstream, upstream, code, reason));
@@ -658,6 +711,7 @@ export class TapProxy {
         protocol: 'openai-responses',
         captureMode: captureModeFromSource(exchange.route.source),
         providerTransition: exchange.providerTransition,
+        provider: traceProvider(exchange.route),
         request: {
           method: 'WS',
           path: exchange.localUrl.pathname,
@@ -693,7 +747,7 @@ export class TapProxy {
     }
   }
 
-  private queueWebSocketFinalization(exchange: WebSocketTraceExchange, error?: Error): void {
+  private queueWebSocketFinalization(exchange: WebSocketTraceExchange, error?: Error): Promise<void> {
     let pending: Promise<void>;
     pending = this.finalizeWebSocketExchange(exchange, error)
       .catch(finalizeError => {
@@ -701,6 +755,7 @@ export class TapProxy {
       })
       .finally(() => this.pendingWebSocketFinalizations.delete(pending));
     this.pendingWebSocketFinalizations.add(pending);
+    return pending;
   }
 
   private async drainWebSocketFinalizations(): Promise<void> {
@@ -847,6 +902,7 @@ export class TapProxy {
     }));
     this.fallbackBaseUrl = fallbackBaseUrl ? stripTrailingSlash(fallbackBaseUrl) : undefined;
     this.fallbackProxyUrl = fallbackProxyUrl;
+    for (const pair of this.webSocketPairs) pair.refreshRoute();
   }
 
   /**
@@ -858,6 +914,7 @@ export class TapProxy {
       ...route,
       upstreamBaseUrl: stripTrailingSlash(route.upstreamBaseUrl)
     }));
+    for (const pair of this.webSocketPairs) pair.refreshRoute();
   }
 
   hasClientRoute(source: TapClientRoute['source'], path: string): boolean {
@@ -953,7 +1010,7 @@ export class TapProxy {
             targetUpstream,
             route.wireProtocol ?? 'responses'
           )
-        : { body: requestBody, expandedResponses: 0, restoredToolCalls: 0, unresolvedToolOutputs: 0, droppedPreviousResponseId: false };
+        : { body: requestBody, expandedResponses: 0, restoredToolCalls: 0, repairedToolOutputs: 0, unresolvedToolOutputs: 0, droppedPreviousResponseId: false };
       if (continuation.unresolvedToolOutputs > 0) {
         const errorBody = chatErrorToResponseError({
           message: 'XwX Deck could not safely restore the original tool call for this provider switch. Reopen the task and retry from the last user turn; no tool was re-executed.',
@@ -977,8 +1034,8 @@ export class TapProxy {
             recoverContinuation: continuation.droppedPreviousResponseId && continuation.expandedResponses === 0
           })
         : { body: requestBody, removedReasoning: 0, replacedCompactions: 0, normalizedMessageIds: 0 };
-      if (continuation.expandedResponses || continuation.restoredToolCalls || portableRequest.removedReasoning || portableRequest.replacedCompactions || portableRequest.normalizedMessageIds || portableRequest.insertedCheckpoint) {
-        log(`[compatible/tap] portable Codex history: removed ${portableRequest.removedReasoning} unportable reasoning item(s), replaced ${portableRequest.replacedCompactions} compaction item(s)${portableRequest.normalizedMessageIds ? `, normalized ${portableRequest.normalizedMessageIds} legacy message ID(s)` : ''}${portableRequest.checkpointSource ? ` via ${portableRequest.checkpointSource}` : ''}${portableRequest.transitionSanitizedOpaque ? `; proactively sanitized ${portableRequest.transitionSanitizedOpaque} legacy opaque item(s) after provider switch` : ''}`);
+      if (continuation.expandedResponses || continuation.restoredToolCalls || continuation.repairedToolOutputs || portableRequest.removedReasoning || portableRequest.replacedCompactions || portableRequest.normalizedMessageIds || portableRequest.insertedCheckpoint) {
+        log(`[compatible/tap] portable Codex history: removed ${portableRequest.removedReasoning} unportable reasoning item(s), replaced ${portableRequest.replacedCompactions} compaction item(s)${continuation.repairedToolOutputs ? `, repaired ${continuation.repairedToolOutputs} malformed tool output item(s)` : ''}${portableRequest.normalizedMessageIds ? `, normalized ${portableRequest.normalizedMessageIds} legacy message ID(s)` : ''}${portableRequest.checkpointSource ? ` via ${portableRequest.checkpointSource}` : ''}${portableRequest.transitionSanitizedOpaque ? `; proactively sanitized ${portableRequest.transitionSanitizedOpaque} legacy opaque item(s) after provider switch` : ''}`);
       }
       const remoteCompaction = isCompactionTriggerRequest(requestBody);
       if (remoteCompaction && route.nativeCompact !== true) {
@@ -997,7 +1054,12 @@ export class TapProxy {
         if (s) this.broadcast('touch', JSON.stringify({ sessionId: s.id, ts: new Date().toISOString() }));
       }).catch(err => log.warn(`[compatible/tap] inflight probe failed: ${(err as Error).message}`));
     }
-    const upstreamUrl = buildUpstreamUrl(route.upstreamBaseUrl, localUrl, route.stripPathPrefix, route.transform, route.wireProtocol);
+    const upstreamUrl = route.providerAdapter && route.providerAdapter !== 'auto'
+      ? new URL(route.upstreamBaseUrl.replace(/\/+$/, '') + (localUrl.pathname.endsWith('/models') ? '/models'
+        : route.wireProtocol === 'anthropic-messages' ? '/messages'
+        : route.wireProtocol === 'chat-completions' ? '/chat/completions'
+        : localUrl.pathname.endsWith('/compact') ? '/responses/compact' : '/responses') + localUrl.search)
+      : buildUpstreamUrl(route.upstreamBaseUrl, localUrl, route.stripPathPrefix, route.transform, route.wireProtocol);
     let conversionSource = portableRequest.body;
     if (route.excludedToolNamespaces?.length) {
       conversionSource = excludeToolNamespaces(conversionSource, route.excludedToolNamespaces);
@@ -1214,6 +1276,10 @@ export class TapProxy {
       route.replacementBearerToken,
       anthropicWire
     );
+    if (route.providerAdapter === 'anthropic-messages' && route.upstreamBearerToken) {
+      delete requestHeaders.authorization;
+      requestHeaders['x-api-key'] = route.upstreamBearerToken;
+    }
     const responseChunks: Buffer[] = [];
     let responseStatusCode: number | undefined;
     let responseStatusMessage: string | undefined;
@@ -1625,6 +1691,7 @@ export class TapProxy {
       protocol: protocolForResolvedRoute(route),
       captureMode: captureModeFromSource(route.source),
       providerTransition,
+      provider: traceProvider(route),
       request: {
         method: req.method || 'POST',
         path: localUrl.pathname,
@@ -1726,6 +1793,9 @@ interface ResolvedRoute {
   readonly defaultMaxOutputTokens?: number;
   readonly nativeCompact?: boolean;
   readonly webSocket?: 'official-responses';
+  readonly providerId?: string;
+  readonly providerName?: string;
+  readonly providerAdapter?: import('../../shared/providers').ProviderAdapter;
   readonly compatibleServiceGateway?: boolean;
   readonly excludedToolNamespaces?: readonly string[];
   readonly capture?: boolean;
@@ -1784,6 +1854,9 @@ function resolveClientRoute(route: TapClientRoute, model: string | undefined): R
     defaultMaxOutputTokens: model ? route.modelMaxOutputTokens?.[model] : undefined,
     nativeCompact,
     webSocket: route.webSocket,
+    providerId: route.providerId,
+    providerName: route.providerName,
+    providerAdapter: route.providerAdapter,
     compatibleServiceGateway: route.compatibleServiceGateway,
     excludedToolNamespaces: route.excludedToolNamespaces,
     capture: route.capture,
@@ -1911,12 +1984,19 @@ function buildForwardHeaders(
     if (lower === 'host' || lower === 'content-length' || lower === 'accept-encoding') continue;
     if (value !== undefined) headers[key] = value;
   }
+  if (bearerToken) {
+    for (const key of Object.keys(headers)) if (['authorization', 'x-api-key', 'api-key', 'chatgpt-account-id', 'cookie'].includes(key.toLowerCase())) delete headers[key];
+  }
   headers.host = host;
   headers['accept-encoding'] = 'identity';
   headers['content-length'] = bodyLength;
   if (blockedBearerToken && bearerHeaderMatches(headers.authorization, blockedBearerToken)) {
     delete headers.authorization;
     if (replacementBearerToken) headers.authorization = `Bearer ${replacementBearerToken}`;
+  }
+  if (replacementBearerToken) {
+    delete headers['x-api-key']; delete headers['api-key'];
+    headers.authorization = `Bearer ${replacementBearerToken}`;
   }
   if (bearerToken) headers.authorization = `Bearer ${bearerToken}`;
   if (anthropic) headers['anthropic-version'] = '2023-06-01';
@@ -1941,6 +2021,10 @@ function buildWebSocketForwardHeaders(
   if (blockedBearerToken && bearerHeaderMatches(headers.authorization, blockedBearerToken)) {
     delete headers.authorization;
     if (replacementBearerToken) headers.authorization = `Bearer ${replacementBearerToken}`;
+  }
+  if (replacementBearerToken) {
+    delete headers['x-api-key']; delete headers['api-key'];
+    headers.authorization = `Bearer ${replacementBearerToken}`;
   }
   return headers;
 }
@@ -1993,6 +2077,19 @@ function rejectUpgrade(socket: Duplex, statusCode: number, body: string): void {
   ].join('\r\n'));
 }
 
+function webSocketConnectionKey(
+  route: ResolvedRoute | undefined,
+  request: http.IncomingMessage,
+  localUrl: URL
+): string | undefined {
+  if (!route || !isOfficialResponsesWebSocketRoute(route)) return undefined;
+  return JSON.stringify([
+    buildUpstreamUrl(route.upstreamBaseUrl, localUrl, route.stripPathPrefix, undefined, 'responses').toString(),
+    route.upstreamProxyUrl ?? '',
+    buildWebSocketForwardHeaders(request.headers, route.blockedBearerToken, route.replacementBearerToken)
+  ]);
+}
+
 function isOfficialResponsesWebSocketRoute(route: ResolvedRoute): boolean {
   if (route.webSocket !== 'official-responses'
     || route.compatibleServiceGateway === true
@@ -2013,13 +2110,13 @@ function bearerHeaderMatches(value: http.OutgoingHttpHeaders[string], token: str
 }
 
 function routeUpstreamIdentity(
-  route: Pick<ResolvedRoute, 'compatibleServiceGateway' | 'upstreamBaseUrl' | 'upstreamBearerToken'>,
+  route: Pick<ResolvedRoute, 'providerId' | 'compatibleServiceGateway' | 'upstreamBaseUrl' | 'upstreamBearerToken'>,
   headers: http.IncomingHttpHeaders
 ): CodexUpstreamIdentity {
   return codexUpstreamIdentity({
-    kind: route.compatibleServiceGateway === true ? 'compatible' : 'official',
+    kind: route.providerId ? `provider:${route.providerId}` : route.compatibleServiceGateway === true ? 'compatible' : 'official',
     baseUrl: route.upstreamBaseUrl,
-    credential: route.compatibleServiceGateway === true
+    credential: route.providerId || route.compatibleServiceGateway === true
       ? route.upstreamBearerToken
       : undefined,
     accountId: headerValue(headers, 'chatgpt-account-id')
@@ -2263,3 +2360,7 @@ export const __test = {
   shouldSkipTraceCapture,
   isProviderTransitionConsumer
 };
+
+function traceProvider(route: ResolvedRoute): TapTraceRecord['provider'] {
+  return route.providerId ? { id: route.providerId.replace(/_[a-f0-9]{16}$/, ''), name: route.providerName ?? '', connectionId: route.providerId } : undefined;
+}

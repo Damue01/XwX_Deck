@@ -73,7 +73,7 @@ try {
   await exited(launcher);
 
   runtime = await waitForRuntime(path.join(controlDir, 'runtime.json'));
-  assert.equal(runtime.helperProtocolVersion, 12);
+  assert.equal(runtime.helperProtocolVersion, 13);
   assert.ok(runtime.pid > 0);
   assert.ok(runtime.gatewayPort > 0);
   assert.ok(runtime.controlPort > 0);
@@ -149,7 +149,7 @@ try {
   // Simulate a freshly opened manager attaching and reading status. It must not
   // overwrite the helper's live generation with empty constructor defaults.
   const attached = await control(runtime.controlPort, token, '/control/status', undefined, 'GET');
-  assert.equal(attached.helperProtocolVersion, 12);
+  assert.equal(attached.helperProtocolVersion, 13);
   assert.equal(attached.generation, 1);
   const afterAttach = await gateway(runtime.gatewayPort, { model: 'gpt-xwx-after-attach', input: [] });
   assert.equal(afterAttach.status, 200);
@@ -212,6 +212,29 @@ try {
   });
   assert.deepEqual(stoppedRecording.capturedClients, [],
     'turning Trace off must reset the current capture epoch');
+  const indexPath = path.join(traceRoot, 'index.json');
+  const healthyIndexBytes = await readFile(indexPath);
+  const invalidIndexBytes = Buffer.from('{"version":1,"sessions":[', 'utf8');
+  await writeFile(indexPath, invalidIndexBytes);
+  await assert.rejects(
+    control(runtime.controlPort, token, '/control/configure', {
+      generation: 4,
+      routes: [],
+      clientRoutes: [route],
+      recording: true,
+      traceRetention: { maxSessions: 1, maxStorageBytes: 0 }
+    }),
+    /returned 500:.*Trace 索引不可用/,
+    'the helper must reject recording before mutating routes or generation when the index is unreadable'
+  );
+  const rejectedRecording = await control(runtime.controlPort, token, '/control/status', undefined, 'GET');
+  assert.equal(rejectedRecording.generation, 3);
+  assert.equal(rejectedRecording.recording, false);
+  assert.deepEqual(await readFile(indexPath), invalidIndexBytes,
+    'helper recording preflight must preserve invalid index bytes');
+  assert.equal((await gateway(runtime.gatewayPort, { model: 'gpt-index-guard', input: [] })).status, 200,
+    'a rejected recording configuration must leave the existing Gateway route usable');
+  await writeFile(indexPath, healthyIndexBytes);
   const nonCapturing = await control(runtime.controlPort, token, '/control/configure', {
     generation: 4,
     routes: [],

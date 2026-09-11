@@ -165,7 +165,7 @@ async function testLegacyHelperWithoutAbandonEndpoint(): Promise<void> {
 }
 
 async function testV5HelperUpgrade(): Promise<void> {
-  assert.equal(GATEWAY_HELPER_PROTOCOL_VERSION, 12,
+  assert.equal(GATEWAY_HELPER_PROTOCOL_VERSION, 13,
     'this regression verifies replacement of the v5 helper missing current routing and portability behavior');
   const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'xwx-gateway-upgrade-v5-'));
   const testUserData = path.join(testRoot, 'user-data');

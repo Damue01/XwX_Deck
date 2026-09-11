@@ -16,7 +16,7 @@ const PROVIDER_TRANSITION_TTL_MS = 15 * 60 * 1000;
 const PORTABILITY_SUMMARY_PREFIX =
   'Another language model started to solve this problem and produced a summary of its work. Continue from this summary without repeating completed work:';
 
-export type CodexUpstreamKind = 'official' | 'compatible';
+export type CodexUpstreamKind = 'official' | 'compatible' | `provider:${string}`;
 
 export interface CodexUpstreamIdentity {
   readonly key: string;
@@ -99,7 +99,7 @@ export class CodexConversationPortability {
   private legacyMessageIdHistoryNormalized = false;
   private unreplayableReasoningHistorySanitized = false;
   private readonly legacyOfficialRestoreHashes = new Set<string>();
-  private readonly pendingLocalRepairHashes: Record<CodexUpstreamKind, Set<string>> = {
+  private readonly pendingLocalRepairHashes: Partial<Record<CodexUpstreamKind, Set<string>>> = {
     official: new Set(),
     compatible: new Set()
   };
@@ -137,7 +137,7 @@ export class CodexConversationPortability {
     // Rewriting them on the official route mutates ChatGPT's signed request
     // body and breaks otherwise valid old conversations. 兼容服务 cannot
     // decrypt those unknown OpenAI items, so only that direction is strict.
-    const sanitizeUnknownOpaque = !!transition && options.target.kind === 'compatible';
+    const sanitizeUnknownOpaque = !!transition && options.target.kind !== 'official';
 
     let removedReasoning = 0;
     let replacedCompactions = 0;
@@ -184,7 +184,7 @@ export class CodexConversationPortability {
           continue;
         }
         if (encrypted.startsWith(XwX_ANTHROPIC_REASONING_PREFIX)) {
-          if (options.target.kind === 'compatible' && options.wireProtocol === 'anthropic-messages') {
+          if (options.target.kind !== 'official' && options.wireProtocol === 'anthropic-messages') {
             output.push(raw);
           } else {
             removedReasoning += 1;
@@ -194,7 +194,7 @@ export class CodexConversationPortability {
         if (this.canReplay(encrypted, options.target, sanitizeUnknownOpaque)) {
           output.push(raw);
         } else {
-          this.pendingLocalRepairHashes[options.target.kind].add(opaqueHash(encrypted));
+          (this.pendingLocalRepairHashes[options.target.kind] ??= new Set()).add(opaqueHash(encrypted));
           removedReasoning += 1;
           if (sanitizeUnknownOpaque && !this.hasOrigin(encrypted) && transition) {
             transitionSanitizedOpaque += 1;
@@ -234,7 +234,7 @@ export class CodexConversationPortability {
           });
           learnedTransitionOrigins = true;
         }
-        this.pendingLocalRepairHashes[options.target.kind].add(opaqueHash(encrypted));
+        (this.pendingLocalRepairHashes[options.target.kind] ??= new Set()).add(opaqueHash(encrypted));
         if (!checkpointLoaded) {
           checkpoint = await this.portableHistory.read(options.threadId);
           checkpointLoaded = true;
@@ -322,7 +322,7 @@ export class CodexConversationPortability {
           if (!entry.upstreamKind) this.origins.set(hash, { ...entry, upstreamKind: source });
         }
       }
-      if (target === 'compatible') {
+      if (target !== 'official') {
         this.transition = { source, target, createdAt: Date.now() };
       }
     }
@@ -386,7 +386,7 @@ export class CodexConversationPortability {
    * response so the next retry falls back to portable transcript state.
    */
   async noteUpstreamFailure(upstream: CodexUpstreamIdentity, reason: string): Promise<number> {
-    if (upstream.kind !== 'compatible') return 0;
+    if (upstream.kind === 'official') return 0;
     const normalized = reason.toLowerCase();
     if (!normalized.includes('invalid_encrypted_content')
       && !normalized.includes('encrypted content')
@@ -433,7 +433,7 @@ export class CodexConversationPortability {
         kind: item.kind,
         seenAt: now
       });
-      this.pendingLocalRepairHashes[upstream.kind].add(hash);
+      (this.pendingLocalRepairHashes[upstream.kind] ??= new Set()).add(hash);
       changed += 1;
     }
     if (changed) {
@@ -547,7 +547,7 @@ export class CodexConversationPortability {
       }
       throw error;
     }
-    for (const hash of foreignHashes) this.pendingLocalRepairHashes[targetKind].delete(hash);
+    for (const hash of foreignHashes) this.pendingLocalRepairHashes[targetKind]?.delete(hash);
     if (normalizeLegacyMessageIds) this.legacyMessageIdHistoryNormalized = true;
     if (removeUnencryptedReasoning) this.unreplayableReasoningHistorySanitized = true;
     try { await this.persist(); }
@@ -704,20 +704,20 @@ export class CodexConversationPortability {
               const kind = raw.kind === 'reasoning' || raw.kind === 'compaction' ? raw.kind : undefined;
               const seenAt = number(raw.seenAt);
               if (upstream && kind && seenAt) {
-                const upstreamKind = raw.upstreamKind === 'official' || raw.upstreamKind === 'compatible'
+                const upstreamKind = isCodexUpstreamKind(raw.upstreamKind)
                   ? raw.upstreamKind
                   : undefined;
-                const rejectedByKind = raw.rejectedByKind === 'official' || raw.rejectedByKind === 'compatible'
+                const rejectedByKind = isCodexUpstreamKind(raw.rejectedByKind)
                   ? raw.rejectedByKind
                   : undefined;
                 this.origins.set(hash, { upstream, upstreamKind, rejectedByKind, kind, seenAt });
               }
             }
             if (saved.version === 3 && isRecord(saved.transition)) {
-              const source = saved.transition.source === 'official' || saved.transition.source === 'compatible'
+              const source = isCodexUpstreamKind(saved.transition.source)
                 ? saved.transition.source
                 : undefined;
-              const target = saved.transition.target === 'official' || saved.transition.target === 'compatible'
+              const target = isCodexUpstreamKind(saved.transition.target)
                 ? saved.transition.target
                 : undefined;
               const createdAt = number(saved.transition.createdAt);
@@ -1090,4 +1090,8 @@ function string(value: unknown): string {
 
 function number(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+export function isCodexUpstreamKind(value: unknown): value is CodexUpstreamKind {
+  return value === 'official' || value === 'compatible' || typeof value === 'string' && /^provider:[a-zA-Z0-9_-]{1,160}$/.test(value);
 }

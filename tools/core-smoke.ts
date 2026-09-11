@@ -2963,6 +2963,68 @@ async function testResponsesContinuationStore(): Promise<void> {
   const sameProvider = await store.prepareRequest(toolRequest, official, 'responses');
   assert.equal(sameProvider.body, toolRequest, 'native Responses continuation remains byte-stable on the same upstream');
 
+  const heartbeatOutput = {
+    type: 'function_call_output',
+    id: 'fco_heartbeat',
+    name: 'automation_update',
+    namespace: 'codex_app',
+    output: '<heartbeat><automation_id>scheduled-task</automation_id><instructions>prepare the scheduled draft</instructions></heartbeat>'
+  };
+  const repairedHeartbeat = await store.prepareRequest({
+    model: 'gpt-test',
+    input: [heartbeatOutput]
+  }, official, 'responses');
+  assert.equal(repairedHeartbeat.repairedToolOutputs, 1);
+  assert.equal(repairedHeartbeat.unresolvedToolOutputs, 0);
+  assert.deepEqual((repairedHeartbeat.body as Record<string, any>).input, [{
+    type: 'message',
+    role: 'developer',
+    content: [{ type: 'input_text', text: heartbeatOutput.output }]
+  }], 'standalone heartbeat wakeups must become developer input instead of invalid function outputs');
+
+  const exactLegacyOutput = await store.prepareRequest({
+    input: [
+      { type: 'function_call', call_id: 'call_legacy', name: 'inspect', arguments: '{}' },
+      { type: 'function_call_output', id: 'call_legacy', output: 'done' }
+    ]
+  }, official, 'responses');
+  assert.equal(exactLegacyOutput.repairedToolOutputs, 1);
+  assert.equal((exactLegacyOutput.body as Record<string, any>).input[1].call_id, 'call_legacy',
+    'a missing call_id may only be recovered from an exact call id already present in the same input');
+
+  const nativeOrphan = await store.prepareRequest({
+    input: [{ type: 'function_call_output', id: 'fco_orphan', output: 'unsafe orphan' }]
+  }, official, 'responses');
+  assert.equal(nativeOrphan.unresolvedToolOutputs, 1,
+    'native Responses requests must fail closed before forwarding an output with no recoverable call_id');
+
+  const legacyHeartbeatStateFile = path.join(root, 'responses-continuations', 'legacy-heartbeat.json');
+  await fs.mkdir(path.dirname(legacyHeartbeatStateFile), { recursive: true });
+  await fs.writeFile(legacyHeartbeatStateFile, JSON.stringify({
+    version: 1,
+    entries: {
+      resp_legacy_heartbeat: {
+        upstreamKey: official.key,
+        input: [heartbeatOutput],
+        output: [{ type: 'message', role: 'assistant', content: 'wake acknowledged' }],
+        createdAt: Date.now(),
+        bytes: 512
+      }
+    }
+  }), 'utf8');
+  const legacyHeartbeatStore = new ResponsesContinuationStore(legacyHeartbeatStateFile);
+  const expandedLegacyHeartbeat = await legacyHeartbeatStore.prepareRequest({
+    previous_response_id: 'resp_legacy_heartbeat',
+    input: [{ type: 'message', role: 'user', content: 'continue after restart' }]
+  }, compatible, 'chat-completions');
+  assert.equal(expandedLegacyHeartbeat.repairedToolOutputs, 1);
+  assert.equal(expandedLegacyHeartbeat.unresolvedToolOutputs, 0);
+  assert.doesNotMatch(JSON.stringify(expandedLegacyHeartbeat.body), /"type":"function_call_output"[^}]*fco_heartbeat/,
+    'legacy continuation sidecars must repair persisted standalone heartbeat outputs during expansion');
+  assert.match(JSON.stringify(expandedLegacyHeartbeat.body), /prepare the scheduled draft/);
+
+
+
   await store.markProviderTransition('official', 'compatible');
   const switched = await store.prepareRequest(toolRequest, compatible, 'chat-completions');
   assert.equal(switched.droppedPreviousResponseId, true);
@@ -7326,11 +7388,20 @@ async function testProxyCapture(): Promise<void> {
       model: 'gpt-native',
       instructions: 'official websocket',
       previous_response_id: 'resp_ws_1',
-      input: [{
-        type: 'function_call_output',
-        call_id: 'call_ws_incremental',
-        output: 'incremental tool result'
-      }],
+      input: [
+        {
+          type: 'function_call_output',
+          id: 'fco_ws_heartbeat',
+          name: 'automation_update',
+          namespace: 'codex_app',
+          output: '<heartbeat><automation_id>scheduled-task</automation_id><instructions>continue scheduled work</instructions></heartbeat>'
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call_ws_incremental',
+          output: 'incremental tool result'
+        }
+      ],
       tools: [],
       tool_choice: 'auto',
       parallel_tool_calls: false,
@@ -7343,9 +7414,12 @@ async function testProxyCapture(): Promise<void> {
     assert.equal(secondWebSocketEvents.at(-1)?.response?.id, 'resp_ws_2');
     assert.equal(upstreamWebSocketFrames.length, 2);
     assert.equal(upstreamWebSocketFrames[1]?.previous_response_id, 'resp_ws_1');
-    assert.equal(upstreamWebSocketFrames[1]?.input?.length, 1,
+    assert.equal(upstreamWebSocketFrames[1]?.input?.length, 2,
       'official WebSocket continuation must preserve Codex incremental input');
-    assert.equal(upstreamWebSocketFrames[1]?.input?.[0]?.type, 'function_call_output');
+    assert.equal(upstreamWebSocketFrames[1]?.input?.[0]?.type, 'message');
+    assert.equal(upstreamWebSocketFrames[1]?.input?.[0]?.role, 'developer');
+    assert.equal(upstreamWebSocketFrames[1]?.input?.[1]?.type, 'function_call_output');
+    assert.equal(upstreamWebSocketFrames[1]?.input?.[1]?.call_id, 'call_ws_incremental');
     clientWebSocket.close();
 
     let latestWebSocketTrace = await store.latestTrace();
@@ -7359,7 +7433,10 @@ async function testProxyCapture(): Promise<void> {
     }
     assert.equal(latestWebSocketTrace?.request.method, 'WS');
     assert.equal((latestWebSocketTrace?.request.body as any)?.previous_response_id, 'resp_ws_1');
-    assert.equal((latestWebSocketTrace?.request.body as any)?.input?.length, 1);
+    assert.equal((latestWebSocketTrace?.request.body as any)?.input?.length, 2);
+    assert.equal((latestWebSocketTrace?.request.body as any)?.input?.[0]?.type, 'function_call_output',
+      'Trace must retain the original client request while the wire-only repair stays internal');
+    assert.equal((latestWebSocketTrace?.request.body as any)?.input?.[0]?.call_id, undefined);
     assert.match(JSON.stringify(latestWebSocketTrace?.sse.snapshot?.content), /websocket reply 2/);
 
     await proxy.markCodexProviderTransition('official', 'compatible');
@@ -10225,6 +10302,20 @@ async function testViewerMessageContract(): Promise<void> {
     'the deferred-field disclosure caret must visibly track the expanded state');
   assert.match(html, /Claude 或 ChatGPT/);
   assert.doesNotMatch(html, /Claude 或 Codex/);
+  assert.match(html, /L\('无 Messages','No messages'\)/,
+    'empty message state must follow the viewer language');
+  assert.match(html, /L\('无 System','No System'\)/,
+    'empty system state must follow the viewer language');
+  assert.match(html, /L\('此请求没有工具','No tools in this request'\)/,
+    'empty tool state must follow the viewer language');
+  assert.match(html, /L\('非 SSE 响应或未收到事件','Non-SSE response or no events received'\)/,
+    'empty SSE state must follow the viewer language');
+  assert.match(html, /L\('拖动调整侧栏宽度',\s*'Drag to resize sidebar'\)/,
+    'the rail resize affordance must expose a localized accessible label');
+  assert.match(html, /L\('解析视图','Formatted view'\)/,
+    'message-format tooltips must follow the viewer language');
+  assert.match(html, /L\('原始 JSON','Raw JSON'\)/,
+    'raw-message tooltips must follow the viewer language');
   assert.match(html, /dashHead\('duration', L\('耗时','Duration'\), 'num'\)/);
   assert.match(html, /function sessionDurationMs/);
   assert.match(html, /function sessionDurationText/);
@@ -10806,6 +10897,78 @@ async function testViewerMessageContract(): Promise<void> {
   assert.equal(allTypeChoices[2]?.turn, 3, 'unloaded requests must keep a synthetic turn candidate');
   assert.equal(allTypeChoices[2]?.id, undefined, 'unloaded requests must not pretend to have a loaded trace id');
   assert.equal(allTypeChoices[167]?.id, 'tail-168', 'loaded tail-page requests must retain their real trace id');
+  const diffChoiceFunctionNames = [
+    'diffChoiceKey',
+    'orderDiffChoiceGroups',
+    'flattenDiffChoices',
+    'diffNavigationChoices'
+  ];
+  let diffChoiceSource = '';
+  for (const name of diffChoiceFunctionNames) {
+    const match = new RegExp(`^function ${name}\\s*\\([\\s\\S]*?\\n\\}`, 'm').exec(viewerScript);
+    assert.ok(match, `viewer must define ${name}`);
+    diffChoiceSource += `${match![0]}\n`;
+  }
+  const diffChoiceFunctions: Record<string, unknown> = {};
+  vm.runInNewContext(
+    `${diffChoiceSource};this.api={${diffChoiceFunctionNames.join(',')}};`,
+    diffChoiceFunctions
+  );
+  const diffChoiceApi = diffChoiceFunctions.api as {
+    diffChoiceKey: (item: { id?: string; turn?: number }) => string;
+    orderDiffChoiceGroups: (groups: Array<{ key: string; items: Array<{ id?: string; turn?: number }> }>) => Array<{ key: string; items: Array<{ id?: string; turn?: number }> }>;
+    diffNavigationChoices: (groups: Array<{ key: string; items: Array<{ id?: string; turn?: number }> }>, activeKey: string) => Array<{ id?: string; turn?: number }>;
+  };
+  const compareChoiceGroups = diffChoiceApi.orderDiffChoiceGroups([
+    { key: 'default', items: [{ id: 'subagent-890', turn: 890 }] },
+    { key: 'mainline', items: [{ id: 'main-878', turn: 878 }, { id: 'main-879', turn: 879 }] },
+    { key: 'timeline', items: [{ id: 'timeline-1', turn: 1 }, { id: 'timeline-2', turn: 2 }] }
+  ]);
+  assert.deepEqual(
+    Array.from(compareChoiceGroups[1].items, item => item.turn),
+    [879, 878],
+    'Mainline compare choices must run backward from the current request'
+  );
+  assert.deepEqual(
+    Array.from(compareChoiceGroups[2].items, item => item.turn),
+    [1, 2],
+    'Timeline compare choices must keep their chronological order'
+  );
+  const semanticDefaultGroups = diffChoiceApi.orderDiffChoiceGroups([
+    { key: 'default', items: [{ id: 'preferred-main-879', turn: 879 }, { id: 'secondary-890', turn: 890 }] },
+    { key: 'mainline', items: [{ id: 'main-878', turn: 878 }] }
+  ]);
+  assert.deepEqual(
+    Array.from(semanticDefaultGroups[0].items, item => item.turn),
+    [879, 890],
+    'sorting Mainline choices must not change the semantic priority of Default choices'
+  );
+  assert.deepEqual(
+    Array.from(diffChoiceApi.diffNavigationChoices(
+      semanticDefaultGroups,
+      diffChoiceApi.diffChoiceKey(semanticDefaultGroups[0].items[0])
+    ), item => item.turn),
+    [878, 879],
+    'quick navigation from the primary Default choice must follow Mainline instead of secondary defaults'
+  );
+  const defaultNavigation = diffChoiceApi.diffNavigationChoices(
+    compareChoiceGroups,
+    diffChoiceApi.diffChoiceKey(compareChoiceGroups[0].items[0])
+  );
+  assert.deepEqual(
+    Array.from(defaultNavigation, item => item.turn),
+    [878, 879, 890],
+    'the earlier button must step from the default request through recent Mainline requests'
+  );
+  const timelineNavigation = diffChoiceApi.diffNavigationChoices(
+    compareChoiceGroups,
+    diffChoiceApi.diffChoiceKey(compareChoiceGroups[2].items[1])
+  );
+  assert.deepEqual(
+    Array.from(timelineNavigation, item => item.turn),
+    [1, 2],
+    'Timeline arrow navigation must remain chronological'
+  );
   const diffLoadStart = viewerScript.indexOf('async function loadDiffTrace');
   const diffLoadEnd = viewerScript.indexOf('function timelineDiffChoices', diffLoadStart);
   assert.ok(diffLoadStart >= 0 && diffLoadEnd > diffLoadStart, 'viewer must define lazy compare trace loading');
@@ -11880,6 +12043,115 @@ async function testUsageProtocolSemantics(): Promise<void> {
       viewerCost(withTtl, anthropicRule),
       (1_000 * 3 + 200 * 15 + 1_500 * 3.75 + 500 * 6) / 1_000_000,
       'a captured TTL split must survive the merge and charge 1h writes at the 1h rate'
+    );
+  }
+
+  // ── 实时 SSE 聚合必须和落盘索引保留同一份计费分桶 ──
+  // A long-running dashboard updates totalTokens from every SSE completion. Its
+  // live usage accumulator used to drop `bands`, so the main banded model became
+  // unpriceable while an earlier cheap title request stayed priceable. The row
+  // then showed millions of tokens beside only the title request's ~$0.0021.
+  {
+    const liveScript = [...renderTapViewerHtml({
+      mode: 'static',
+      state: { active: false, rootPath: 'qa', sessions: [], traces: [] }
+    }).matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]).at(-1) ?? '';
+    const priceRules = [
+      {
+        tokens: ['gpt-5.6-luna'], match: 'exact', protocol: 'openai', providerId: 'openai',
+        modelId: 'gpt-5.6-luna', input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25,
+        tiers: [
+          { fromInputTokens: 0, input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
+          { fromInputTokens: 272_001, input: 0.4, output: 1.8, cacheRead: 0.04, cacheWrite: 0.5 }
+        ]
+      },
+      {
+        tokens: ['gpt-5.6-sol'], match: 'exact', protocol: 'openai', providerId: 'openai',
+        modelId: 'gpt-5.6-sol', input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25,
+        tiers: [
+          { fromInputTokens: 0, input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+          { fromInputTokens: 272_001, input: 10, output: 45, cacheRead: 1, cacheWrite: 12.5 }
+        ]
+      }
+    ];
+    const liveVm: Record<string, unknown> = {};
+    vm.runInNewContext(
+      [
+        `const PRICE_RULES = ${JSON.stringify(priceRules)};`,
+        'function usageOf(trace){ return trace.usage; }',
+        'function totalTokens(trace){ return trace.usage.totalTokens; }',
+        extractViewerFunction(liveScript, 'mergeUsageBands'),
+        extractViewerFunction(liveScript, 'mergeModelUsage'),
+        extractViewerFunction(liveScript, 'findModelPrice'),
+        extractViewerFunction(liveScript, 'findModelPriceForUsage'),
+        extractViewerFunction(liveScript, 'accumUsageBands'),
+        extractViewerFunction(liveScript, 'accumUsageByModel'),
+        extractViewerFunction(liveScript, 'estimateCostUsd'),
+        extractViewerFunction(liveScript, 'sessionCostInfo'),
+        'globalThis.liveAccum = accumUsageByModel;',
+        'globalThis.liveCost = estimateCostUsd;',
+        'globalThis.liveSessionCost = sessionCostInfo;',
+        'globalThis.liveMergeModelUsage = mergeModelUsage;'
+      ].join('\n'),
+      liveVm
+    );
+    const liveAccum = liveVm.liveAccum as (
+      previous: Record<string, TapModelUsage> | undefined,
+      trace: unknown
+    ) => Record<string, TapModelUsage>;
+    const liveCost = liveVm.liveCost as (usage: TapModelUsage, price: unknown) => number | undefined;
+    const liveSessionCost = liveVm.liveSessionCost as (
+      session: { usageByModel: Record<string, TapModelUsage> }
+    ) => { cost: number | undefined; priced: number; unpriced: number };
+    const liveMergeModelUsage = liveVm.liveMergeModelUsage as (
+      target: Record<string, TapModelUsage>,
+      source: Record<string, TapModelUsage>
+    ) => Record<string, TapModelUsage>;
+    let liveUsage = liveAccum(undefined, {
+      startedAt: '2026-09-08T05:48:56.398Z',
+      auxiliary: 'title',
+      request: { model: 'gpt-5.6-luna', apiType: 'responses' },
+      response: { snapshot: { model: 'gpt-5.6-luna' } },
+      usage: {
+        inputTokens: 8_228, inputUncachedTokens: 3, inputTotalTokens: 8_228,
+        outputTokens: 47, totalTokens: 8_275, cacheReadTokens: 0, cacheCreationTokens: 8_225
+      }
+    });
+    const titleOnlyCost = liveCost(liveUsage['gpt-5.6-luna']!, priceRules[0]);
+    assert.equal(titleOnlyCost, (3 * 0.2 + 47 * 1.2 + 8_225 * 0.25) / 1_000_000);
+    assert.ok(titleOnlyCost! >= 0.002 && titleOnlyCost! < 0.0022,
+      'the field symptom was the title request cost rounded to $0.0021');
+
+    liveUsage = liveAccum(liveUsage, {
+      startedAt: '2026-09-08T05:49:10.000Z',
+      request: { model: 'gpt-5.6-sol', apiType: 'responses' },
+      response: { snapshot: { model: 'gpt-5.6-sol' } },
+      usage: {
+        inputTokens: 250_000, inputUncachedTokens: 100_000, inputTotalTokens: 250_000,
+        outputTokens: 2_000, totalTokens: 252_000, cacheReadTokens: 149_000, cacheCreationTokens: 1_000
+      }
+    });
+    const solUsage = liveUsage['gpt-5.6-sol']!;
+    assert.equal(solUsage.bands?.length, 1,
+      'a live banded request must retain the band required to estimate its cost');
+    assert.equal(
+      liveCost(solUsage, priceRules[1]),
+      (100_000 * 5 + 149_000 * 0.5 + 1_000 * 6.25 + 2_000 * 30) / 1_000_000,
+      'live SSE usage must be priceable before a full /api/state reload'
+    );
+    const combinedCost = liveSessionCost({ usageByModel: liveUsage });
+    assert.equal(combinedCost.priced, 2);
+    assert.equal(combinedCost.unpriced, 0);
+    assert.equal(
+      combinedCost.cost,
+      titleOnlyCost! + liveCost(solUsage, priceRules[1])!,
+      'the dashboard row and total must include the main model instead of showing only the title request'
+    );
+    const matrixUsage = liveMergeModelUsage({}, liveUsage);
+    assert.equal(
+      liveCost(matrixUsage['gpt-5.6-sol']!, priceRules[1]),
+      liveCost(solUsage, priceRules[1]),
+      'the usage matrix must preserve the same live billing bands as the session row'
     );
   }
 

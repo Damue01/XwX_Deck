@@ -51,6 +51,9 @@ export interface TapRoute {
  * Claude 走 兼容服务 风格 /anthropic/v1/messages 时要 strip 掉 /anthropic，避免双重前缀。
  */
 export interface TapClientRoute {
+  readonly providerId?: string;
+  readonly providerName?: string;
+  readonly providerAdapter?: import('../../shared/providers').ProviderAdapter;
   readonly source: TapTraceSource;
   readonly path: string;
   readonly apiType: TapApiType;
@@ -206,6 +209,7 @@ export interface TapSubagentInfo {
 }
 
 export interface TapTraceRecord {
+  readonly provider?: { readonly id: string; readonly name: string; readonly connectionId: string };
   readonly id: string;
   readonly sessionId?: string;
   /**
@@ -243,8 +247,8 @@ export interface TapTraceRecord {
    * observability; cleared by the Gateway after the target's first success.
    */
   readonly providerTransition?: {
-    readonly source: 'official' | 'compatible';
-    readonly target: 'official' | 'compatible';
+    readonly source: 'official' | 'compatible' | `provider:${string}`;
+    readonly target: 'official' | 'compatible' | `provider:${string}`;
   };
   /**
    * 路由决策路径，仅用于可观测性，不参与归并判定本身（Phase 5，2026-06-13）。

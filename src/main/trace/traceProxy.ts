@@ -1,13 +1,14 @@
 import { TapClientRoute, TapRoute, TapTraceRecord } from './types';
 import { ViewerHandler } from './tapProxy';
 import type { GatewayCapturedClient } from './gatewayProtocol';
+import type { GatewayTraceRetention } from './gatewayProtocol';
 
 export interface TraceProxy {
   setRecordingEnabled(enabled: boolean): void;
   isRecordingEnabled(): boolean;
-  markCodexProviderTransition(source: 'official' | 'compatible', target: 'official' | 'compatible'): Promise<void>;
-  adoptCodexProviderOnStartup(target: 'official' | 'compatible'): Promise<boolean>;
-  repairCodexHistoryForProvider(target: 'official' | 'compatible'): Promise<{
+  markCodexProviderTransition(source: 'official' | 'compatible' | `provider:${string}`, target: 'official' | 'compatible' | `provider:${string}`): Promise<void>;
+  adoptCodexProviderOnStartup(target: 'official' | 'compatible' | `provider:${string}`): Promise<boolean>;
+  repairCodexHistoryForProvider(target: 'official' | 'compatible' | `provider:${string}`): Promise<{
     changedFiles: number;
     removedItems: number;
     removedUnencryptedReasoningItems?: number;
@@ -39,6 +40,7 @@ export interface TraceProxy {
   setClientRoutes(routes: readonly TapClientRoute[]): void;
   hasClientRoute(source: TapClientRoute['source'], path: string): boolean;
   synchronize?(): Promise<void>;
+  enforceTraceRetention?(): Promise<GatewayTraceRetention | undefined>;
   clearHistory?(): Promise<void>;
   readonly background?: boolean;
 }

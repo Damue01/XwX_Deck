@@ -1,3 +1,4 @@
+import { isCodexUpstreamKind } from './codexConversationPortability';
 import * as path from 'path';
 import { ensureDir, readJson, writeJson } from '../shared/fsx';
 import type { CodexUpstreamIdentity } from './codexConversationPortability';
@@ -25,8 +26,8 @@ interface ContinuationFile {
 }
 
 interface ContinuationTransition {
-  readonly source: 'official' | 'compatible';
-  readonly target: 'official' | 'compatible';
+  readonly source: 'official' | 'compatible' | `provider:${string}`;
+  readonly target: 'official' | 'compatible' | `provider:${string}`;
   readonly createdAt: number;
 }
 
@@ -34,13 +35,14 @@ export interface ContinuationPrepareResult {
   readonly body: unknown;
   readonly expandedResponses: number;
   readonly restoredToolCalls: number;
+  readonly repairedToolOutputs: number;
   readonly unresolvedToolOutputs: number;
   readonly droppedPreviousResponseId: boolean;
   readonly unresolvedPreviousResponseId?: string;
   readonly unresolvedContinuation?: boolean;
   readonly providerTransition?: {
-    readonly source: 'official' | 'compatible';
-    readonly target: 'official' | 'compatible';
+    readonly source: 'official' | 'compatible' | `provider:${string}`;
+    readonly target: 'official' | 'compatible' | `provider:${string}`;
   };
 }
 
@@ -59,8 +61,8 @@ export class ResponsesContinuationStore {
   constructor(private readonly stateFile?: string) {}
 
   async markProviderTransition(
-    source: 'official' | 'compatible',
-    target: 'official' | 'compatible'
+    source: 'official' | 'compatible' | `provider:${string}`,
+    target: 'official' | 'compatible' | `provider:${string}`
   ): Promise<void> {
     if (source === target) return;
     await this.load();
@@ -84,16 +86,21 @@ export class ResponsesContinuationStore {
     if (!isRecord(body)) return unchanged(body);
     await this.load();
     const transition = this.activeTransition(target.kind);
-    const previousResponseId = string(body.previous_response_id).trim();
-    if (!previousResponseId) return unchanged(body, transition);
+    const integrity = repairToolOutputIntegrity(body);
+    if (integrity.unresolved > 0) {
+      return unchanged(integrity.body, transition, integrity.repaired, integrity.unresolved);
+    }
+    const requestBody = integrity.body;
+    const previousResponseId = string(requestBody.previous_response_id).trim();
+    if (!previousResponseId) return unchanged(requestBody, transition, integrity.repaired);
 
     const previous = this.entries.get(previousResponseId);
     const needsLocalExpansion = wireProtocol !== 'responses'
       || !!transition
       || (!!previous && previous.upstreamKey !== target.key);
-    if (!needsLocalExpansion) return unchanged(body, transition);
+    if (!needsLocalExpansion) return unchanged(requestBody, transition, integrity.repaired);
 
-    const currentInput = inputItems(body.input);
+    const currentInput = inputItems(requestBody.input);
     const chain = previous ? this.chain(previousResponseId) : undefined;
     if (chain?.length) {
       const rebuilt: unknown[] = [];
@@ -101,14 +108,16 @@ export class ResponsesContinuationStore {
         rebuilt.push(...entry.input, ...entry.output);
       }
       rebuilt.push(...currentInput);
+      const expandedIntegrity = repairToolOutputIntegrity(withoutPreviousResponseId(
+        requestBody,
+        deduplicateRefreshableDeveloperContext(deduplicateToolPairs(rebuilt))
+      ));
       return {
-        body: withoutPreviousResponseId(
-          body,
-          deduplicateRefreshableDeveloperContext(deduplicateToolPairs(rebuilt))
-        ),
+        body: expandedIntegrity.body,
         expandedResponses: chain.length,
         restoredToolCalls: 0,
-        unresolvedToolOutputs: 0,
+        repairedToolOutputs: integrity.repaired + expandedIntegrity.repaired,
+        unresolvedToolOutputs: expandedIntegrity.unresolved,
         droppedPreviousResponseId: true,
         providerTransition: transitionMetadata(transition)
       };
@@ -116,9 +125,10 @@ export class ResponsesContinuationStore {
 
     const restored = this.restoreRequestedToolCalls(currentInput);
     return {
-      body: withoutPreviousResponseId(body, restored.input),
+      body: withoutPreviousResponseId(requestBody, restored.input),
       expandedResponses: 0,
       restoredToolCalls: restored.count,
+      repairedToolOutputs: integrity.repaired,
       unresolvedToolOutputs: restored.unresolved,
       droppedPreviousResponseId: true,
       unresolvedPreviousResponseId: previousResponseId,
@@ -135,10 +145,13 @@ export class ResponsesContinuationStore {
     if (!isRecord(requestBody) || !isRecord(response)) return false;
     const responseId = string(response.id).trim();
     if (!responseId) return false;
-    const input = portableItems(inputItems(requestBody.input));
+    const integrity = repairToolOutputIntegrity(requestBody);
+    if (integrity.unresolved > 0) return false;
+    const normalizedRequestBody = integrity.body;
+    const input = portableItems(inputItems(normalizedRequestBody.input));
     const output = portableItems(inputItems(response.output));
     if (!input.length && !output.length) return false;
-    const previousResponseId = string(requestBody.previous_response_id).trim() || undefined;
+    const previousResponseId = string(normalizedRequestBody.previous_response_id).trim() || undefined;
     const raw = JSON.stringify({ input, output });
     if (Buffer.byteLength(raw) > MAX_ENTRY_BYTES) return false;
     await this.load();
@@ -223,10 +236,10 @@ export class ResponsesContinuationStore {
             }
           }
           if (isRecord(saved.transition)) {
-            const source = saved.transition.source === 'official' || saved.transition.source === 'compatible'
+            const source = isCodexUpstreamKind(saved.transition.source)
               ? saved.transition.source
               : undefined;
-            const target = saved.transition.target === 'official' || saved.transition.target === 'compatible'
+            const target = isCodexUpstreamKind(saved.transition.target)
               ? saved.transition.target
               : undefined;
             const createdAt = number(saved.transition.createdAt);
@@ -271,7 +284,7 @@ export class ResponsesContinuationStore {
     }
   }
 
-  private activeTransition(target: 'official' | 'compatible'): ContinuationTransition | undefined {
+  private activeTransition(target: 'official' | 'compatible' | `provider:${string}`): ContinuationTransition | undefined {
     const transition = this.transition;
     if (!transition) return undefined;
     if (Date.now() - transition.createdAt > TRANSITION_TTL_MS) {
@@ -402,13 +415,16 @@ function withoutPreviousResponseId(body: Record<string, any>, input: unknown[]):
 
 function unchanged(
   body: unknown,
-  transition?: ContinuationTransition
+  transition?: ContinuationTransition,
+  repairedToolOutputs = 0,
+  unresolvedToolOutputs = 0
 ): ContinuationPrepareResult {
   return {
     body,
     expandedResponses: 0,
     restoredToolCalls: 0,
-    unresolvedToolOutputs: 0,
+    repairedToolOutputs,
+    unresolvedToolOutputs,
     droppedPreviousResponseId: false,
     providerTransition: transitionMetadata(transition)
   };
@@ -431,19 +447,87 @@ function inputItems(value: unknown): unknown[] {
 
 function isToolCall(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  return value.type === 'function_call' || value.type === 'custom_tool_call';
+  return value.type === 'function_call'
+    || value.type === 'custom_tool_call'
+    || value.type === 'tool_search_call';
 }
 
 function isToolOutput(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  return value.type === 'function_call_output' || value.type === 'custom_tool_call_output';
+  return value.type === 'function_call_output'
+    || value.type === 'custom_tool_call_output'
+    || value.type === 'tool_search_output';
 }
 
 function rawCallId(value: unknown): string | undefined {
   if (!isRecord(value)) return undefined;
-  const id = string(value.call_id) || string(value.id);
+  const id = string(value.call_id) || (isToolCall(value) ? string(value.id) : '');
   if (!id) return undefined;
   return isToolCall(value) || isToolOutput(value) ? id : undefined;
+}
+
+interface ToolOutputIntegrityResult {
+  readonly body: Record<string, any>;
+  readonly repaired: number;
+  readonly unresolved: number;
+}
+
+/**
+ * Codex heartbeat wakeups are control messages, not results of a model-issued
+ * function call. Codex Desktop 0.144 can persist them as a standalone
+ * `function_call_output` without `call_id`, which native Responses correctly
+ * rejects. Preserve the scheduler instructions as developer input. For every
+ * other malformed output, only recover an exact call-id match already present
+ * in the same input; never guess by tool name, order, or output item id shape.
+ */
+function repairToolOutputIntegrity(body: Record<string, any>): ToolOutputIntegrityResult {
+  if (!Array.isArray(body.input)) return { body, repaired: 0, unresolved: 0 };
+  const callIds = new Set(
+    body.input
+      .filter(isToolCall)
+      .map(rawCallId)
+      .filter((value): value is string => !!value)
+  );
+  let repaired = 0;
+  let unresolved = 0;
+  let changed = false;
+  const input = body.input.map((item: unknown) => {
+    if (!isToolOutput(item) || !isRecord(item) || string(item.call_id).trim()) return item;
+    if (isCodexHeartbeatControlOutput(item)) {
+      repaired += 1;
+      changed = true;
+      return {
+        type: 'message',
+        role: 'developer',
+        content: [{ type: 'input_text', text: item.output }]
+      };
+    }
+    const exactLegacyCallId = string(item.id).trim();
+    if (exactLegacyCallId && callIds.has(exactLegacyCallId)) {
+      repaired += 1;
+      changed = true;
+      return { ...item, call_id: exactLegacyCallId };
+    }
+    unresolved += 1;
+    return item;
+  });
+  return {
+    body: changed ? { ...body, input } : body,
+    repaired,
+    unresolved
+  };
+}
+
+function isCodexHeartbeatControlOutput(value: Record<string, any>): boolean {
+  if (value.type !== 'function_call_output'
+    || value.namespace !== 'codex_app'
+    || value.name !== 'automation_update'
+    || typeof value.output !== 'string') return false;
+  const output = value.output.trim();
+  return output.startsWith('<heartbeat>')
+    && output.endsWith('</heartbeat>')
+    && /<automation_id>[^<]+<\/automation_id>/.test(output)
+    && /<instructions>[\s\S]*<\/instructions>/.test(output);
 }
 
 function isContinuationEntry(value: unknown): value is ContinuationEntry {

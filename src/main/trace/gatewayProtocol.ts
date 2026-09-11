@@ -11,7 +11,7 @@ declare const __XWX_GATEWAY_BUILD_ID__: string | undefined;
 // Bump for helper control/schema compatibility changes. Runtime behavior is
 // additionally pinned to the source fingerprint below, so same-protocol
 // helpers from another package build are also replaced safely.
-export const GATEWAY_HELPER_PROTOCOL_VERSION = 12;
+export const GATEWAY_HELPER_PROTOCOL_VERSION = 13;
 const injectedGatewayBuildId = typeof __XWX_GATEWAY_BUILD_ID__ === 'string'
   ? __XWX_GATEWAY_BUILD_ID__.trim().toLowerCase()
   : '';

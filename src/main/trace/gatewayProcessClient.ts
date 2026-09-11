@@ -82,7 +82,7 @@ export class GatewayProcessClient implements TraceProxy {
    */
   private helperUpgradePort: number | undefined;
   private helperUpgradeTimer: ReturnType<typeof setTimeout> | undefined;
-  private deferredCodexProviderAdoption: 'official' | 'compatible' | undefined;
+  private deferredCodexProviderAdoption: 'official' | 'compatible' | `provider:${string}` | undefined;
   private controlUncertainKey: string | undefined;
 
   constructor(
@@ -282,11 +282,19 @@ export class GatewayProcessClient implements TraceProxy {
     });
   }
 
-  async markCodexProviderTransition(source: 'official' | 'compatible', target: 'official' | 'compatible'): Promise<void> {
+  async markCodexProviderTransition(source: 'official' | 'compatible' | `provider:${string}`, target: 'official' | 'compatible' | `provider:${string}`): Promise<void> {
+    if ((source.startsWith('provider:') || target.startsWith('provider:')) && (this.runtime?.helperProtocolVersion ?? 0) < 13) {
+      await this.synchronize();
+      if ((this.runtime?.helperProtocolVersion ?? 0) < 13) throw new Error('Gateway 正在等待当前请求完成后升级，请稍后重试服务切换。');
+    }
     await this.request('/control/portability/mark-transition', { source, target });
   }
 
-  async adoptCodexProviderOnStartup(target: 'official' | 'compatible'): Promise<boolean> {
+  async adoptCodexProviderOnStartup(target: 'official' | 'compatible' | `provider:${string}`): Promise<boolean> {
+    if (target.startsWith('provider:') && this.helperUpgradePending && (this.runtime?.helperProtocolVersion ?? 0) < 13) {
+      this.deferredCodexProviderAdoption = target;
+      return false;
+    }
     try {
       const result = await this.request<{ adopted: boolean }>('/control/portability/adopt', { target });
       return result.adopted;
@@ -303,7 +311,7 @@ export class GatewayProcessClient implements TraceProxy {
     }
   }
 
-  async repairCodexHistoryForProvider(target: 'official' | 'compatible') {
+  async repairCodexHistoryForProvider(target: 'official' | 'compatible' | `provider:${string}`) {
     return this.request<{
       changedFiles: number;
       removedItems: number;
@@ -331,6 +339,20 @@ export class GatewayProcessClient implements TraceProxy {
 
   async synchronize(): Promise<void> {
     await this.serializeLifecycle(() => this.synchronizeUnlocked());
+  }
+
+  async enforceTraceRetention(): Promise<GatewayTraceRetention | undefined> {
+    if (!this.desiredRunning) return undefined;
+    return this.serializeLifecycle(async () => {
+      if (!this.desiredRunning) return undefined;
+      await this.startUnlocked();
+      // Force a fresh configure generation even when routes and recording did
+      // not change. This makes the repair-center check authoritative for an
+      // already-running helper inherited from an older package.
+      this.generation += 1;
+      await this.flushSync();
+      return this.status?.traceRetention;
+    });
   }
 
   private async synchronizeUnlocked(): Promise<void> {
