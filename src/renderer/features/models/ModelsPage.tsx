@@ -52,6 +52,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   const [busyClaude, setBusyClaude] = React.useState(false);
   const [busyCodex, setBusyCodex] = React.useState(false);
   const codexOperationRef = React.useRef(false);
+  const externalCodexProvider = !!bridge.providers && codexConfig?.mode === 'compatible' && !bridge.providers.active.codex;
   // Hydrate local state from the store once it boots.
   React.useEffect(() => { if (bridge.claudeModels) setClaudeModels(bridge.claudeModels); }, [bridge.claudeModels]);
   React.useEffect(() => { if (bridge.codexConfig) setCodexConfig(bridge.codexConfig); }, [bridge.codexConfig]);
@@ -319,14 +320,14 @@ export function ModelsPage({ active }: Props): React.ReactElement {
           >
             <div className="field-row">
               <span className="fr-label">服务连接</span>
-              <div className="fr-value"><ProviderPicker registry={bridge.providers} client="codex" disabled={busyCodex} onChange={id => void handleProviderChange('codex', id)} /></div>
+              <div className="fr-value"><ProviderPicker registry={bridge.providers} client="codex" external={externalCodexProvider} disabled={busyCodex} onChange={id => void handleProviderChange('codex', id)} /></div>
             </div>
             <div className="field-row">
               <span className="fr-label">默认模型</span>
               <div className="fr-value">
                     <ModelPicker
                       value={codexModelValue}
-                      disabled={busyCodex || !codexConfig}
+                      disabled={busyCodex || !codexConfig || externalCodexProvider}
                       catalog={codexChoiceCatalog}
                       onChange={handleCodexModelChange}
                       allowCustomValue={id => !isKnownNonConversationalModel(id)

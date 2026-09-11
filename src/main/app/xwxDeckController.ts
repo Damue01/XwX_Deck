@@ -1239,6 +1239,7 @@ export class XwXDeckController {
       this.readUnderlyingCodexConfig(),
       this.settingsStore.read()
     ]);
+    if (config.mode === 'compatible' && !this.activeRegistryCodexProvider(settings, config)) return config;
     const preferredWindow = config.mode === 'compatible'
       ? settings.codexModels.compatibleContextWindow
       : settings.codexModels.officialContextWindow;
@@ -1273,12 +1274,27 @@ export class XwXDeckController {
     }
     return { ...registry, active: {
       codex: codexStatus.status === 'fulfilled'
-        ? codexStatus.value.mode === 'compatible' ? registry.selected.codex : null
+        ? this.activeRegistryCodexProvider(settings, codexStatus.value)
         : registry.selected.codex,
       claude: claudeStatus.status === 'fulfilled'
         ? claudeStatus.value.enabled ? registry.selected.claude : null
         : registry.selected.claude
     } };
+  }
+
+  private activeRegistryCodexProvider(settings: XwXDeckSettings, config: CodexConfigSnapshot): string | null {
+    const provider = selectedProvider(settings, 'codex');
+    if (!provider || config.mode !== 'compatible') return null;
+    const ownProvider = isXwXManagedProvider(config.activeProvider);
+    const gateway = this.localBaseUrl();
+    if (ownProvider && this.codexGatewayEnabled && gateway
+      && sameHttpEndpoint(config.activeBaseUrl, `${gateway.replace(/\/+$/, '')}/backend-api/codex`)) return provider.id;
+    // An external provider selection or edited endpoint is not an active
+    // registry connection. Editing a saved connection must not take it over.
+    if ((ownProvider || config.activeProvider === 'compatible')
+      && sameHttpEndpoint(config.activeBaseUrl, provider.baseUrl)
+      && config.compatible.bearerToken === provider.bearerToken) return provider.id;
+    return null;
   }
 
   async saveProvider(input: ProviderInput): Promise<ProviderSnapshot> {
@@ -1620,7 +1636,9 @@ export class XwXDeckController {
   private async updateCodexConfigUnlocked(input: CodexConfigUpdate): Promise<CodexConfigSnapshot> {
     const settings = await this.settingsStore.read();
     const config = await this.readUnderlyingCodexConfig();
-    if (input.expectedProviderId !== undefined && input.expectedProviderId !== (config.mode === 'compatible' ? settings.providers?.selected.codex : null)) throw new Error('服务连接已变化，请刷新后重试。');
+    const activeProviderId = this.activeRegistryCodexProvider(settings, config);
+    if (input.expectedProviderId !== undefined && input.expectedProviderId !== activeProviderId) throw new Error('服务连接已变化，请刷新后重试。');
+    if (input.expectedProviderId !== undefined && config.mode === 'compatible' && !activeProviderId) throw new Error('ChatGPT 正在使用外部配置，请先选择服务连接后再修改模型。');
     const selected = selectedProvider(settings, 'codex');
     const next = await this.withUnderlyingClient('codex-cli', () => this.applyCodexConfigAndAuth({
       ...input,

@@ -84,6 +84,16 @@ export async function testProviderRegistry(root: string): Promise<void> {
     await controller.start();
     assert.equal((await controller.readProviders()).active.codex, b.id, 'a protocol bridge resumes the saved selection');
     await controller.switchClientProvider('codex', a.id);
+    const ownedContent = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
+    const externallySelected = ownedContent.replace('model_provider = "xwx_deck"', 'model_provider = "user_service"');
+    assert.notEqual(externallySelected, ownedContent);
+    await fs.writeFile(path.join(codexHome, 'config.toml'), externallySelected);
+    assert.equal((await controller.readProviders()).active.codex, null, 'external selections are not attributed to the saved connection');
+    await controller.saveProvider({ ...a, displayName: 'A edited while external' });
+    assert.equal(await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8'), externallySelected, 'editing a saved provider preserves the external selection');
+    await assert.rejects(controller.updateCodexConfig({ expectedProviderId: a.id, compatibleModel: 'stale' }), /连接已变化/);
+    await assert.rejects(controller.updateCodexConfig({ expectedProviderId: null, compatibleModel: 'stale' }), /外部配置/);
+    await fs.writeFile(path.join(codexHome, 'config.toml'), ownedContent);
     const internal = controller as any; const read = internal.codexConfig.read.bind(internal.codexConfig); internal.codexConfig.read = async () => { throw new Error('fixture unreadable config'); };
     try {
       assert.equal((await controller.readProviders()).connections.length, 3);
