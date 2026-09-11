@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import { EventEmitter } from 'events';
-import { ensureDir, readJson, writeJson } from '../shared/fsx';
+import { ensureDir, writeJson } from '../shared/fsx';
 import { clampInt } from '../shared/obj';
 import { TAP_LOCK_FILE } from './tapPortLock';
 import { TRACE_WRITER_LEASE_FILE } from './traceWriterLease';
@@ -185,6 +185,15 @@ export class TraceStore {
       : undefined;
     if (current) return current;
     return this.startSession();
+  }
+
+  /**
+   * Fail closed before enabling capture when an existing index cannot be read.
+   * Routing may continue without recording, but no caller may replace an
+   * unreadable index with a freshly generated partial index.
+   */
+  async assertIndexReadable(): Promise<void> {
+    await this.readIndex();
   }
 
   async appendTrace(trace: TapTraceRecord): Promise<TapTraceRecord> {
@@ -1263,9 +1272,38 @@ export class TraceStore {
   }
 
   private async readIndex(): Promise<TapHistoryIndex> {
-    const index = await readJson<TapHistoryIndex>(this.indexPath(), { version: 1, sessions: [] });
+    const indexPath = this.indexPath();
+    let text: string;
+    try {
+      text = await fs.promises.readFile(indexPath, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (await this.hasUnindexedJsonlFiles()) {
+          throw traceIndexReadError(indexPath, '索引缺失，但目录中仍有 JSONL；请先运行索引诊断与修复');
+        }
+        return { version: 1, sessions: [] };
+      }
+      throw traceIndexReadError(indexPath, `读取失败：${errorMessage(error)}`);
+    }
+
+    let index: TapHistoryIndex;
+    try {
+      index = JSON.parse(text) as TapHistoryIndex;
+    } catch (error) {
+      throw traceIndexReadError(indexPath, `JSON 无法解析：${errorMessage(error)}`);
+    }
     if (!index || index.version !== 1 || !Array.isArray(index.sessions)) {
-      return { version: 1, sessions: [] };
+      throw traceIndexReadError(indexPath, '索引结构或版本无效');
+    }
+    if (index.sessions.some(session => (
+      !session
+      || typeof session !== 'object'
+      || typeof session.id !== 'string'
+      || !session.id
+      || typeof session.jsonlPath !== 'string'
+      || !session.jsonlPath
+    ))) {
+      throw traceIndexReadError(indexPath, '至少一条 Session 索引记录缺少 id 或 jsonlPath');
     }
     return {
       version: 1,
@@ -1350,6 +1388,16 @@ export class TraceStore {
     };
   }
 
+  private async hasUnindexedJsonlFiles(): Promise<boolean> {
+    try {
+      const entries = await fs.promises.readdir(this.rootDir, { withFileTypes: true });
+      return entries.some(entry => entry.isFile() && entry.name.toLowerCase().endsWith('.jsonl'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+
   private async writeIndex(index: TapHistoryIndex): Promise<void> {
     await ensureDir(this.rootDir);
     await writeJson(this.indexPath(), index);
@@ -1370,6 +1418,177 @@ export class TraceStore {
   }
 }
 
+export interface RecoveredSessionSummary {
+  readonly summary: TapSessionSummary;
+  readonly validRecords: number;
+  readonly malformedRecords: number;
+}
+
+/**
+ * Rebuild one physical Session summary from its immutable JSONL records.
+ * This is intentionally routing-free: an orphaned file already contains the
+ * authoritative physical sessionId/turn assignments, so recovery must not
+ * rewrite or regroup the original Trace records.
+ */
+export async function recoverSessionSummaryFromJsonl(
+  jsonlPath: string
+): Promise<RecoveredSessionSummary> {
+  const resolvedPath = path.resolve(jsonlPath);
+  const id = path.basename(resolvedPath, '.jsonl');
+  let validRecords = 0;
+  let malformedRecords = 0;
+  let maxTurn = 0;
+  let startedAtMs = Number.POSITIVE_INFINITY;
+  let lastRequestAtMs = Number.NEGATIVE_INFINITY;
+  let updatedAtMs = Number.NEGATIVE_INFINITY;
+  let mainRecords = 0;
+  let source: TapSessionSummary['source'];
+  let firstClient: string | undefined;
+  let firstModel: string | undefined;
+  let firstPrompt: string | undefined;
+  let title: string | undefined;
+  let clientConversationKey: string | undefined;
+  let lastChain: readonly string[] | undefined;
+  let pendingSubagents: TapSessionSummary['pendingSubagents'];
+  let responseIds: readonly string[] | undefined;
+  let interactionIds: readonly string[] | undefined;
+  let totalTokens = 0;
+  let errorCount = 0;
+  let lastTurnError: boolean | undefined;
+  let usageByModel: TapSessionSummary['usageByModel'];
+  let dailyUsage: TapSessionSummary['dailyUsage'];
+  let recentRatePoints: TapSessionSummary['recentRatePoints'];
+  let auxiliaryCounts: TapSessionSummary['auxiliaryCounts'];
+  const hiddenLabels = new Set<NonNullable<TapSessionSummary['auxiliary']>>();
+
+  const input = fs.createReadStream(resolvedPath, { encoding: 'utf8' });
+  const lines = readline.createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      const text = String(line || '').trim();
+      if (!text) continue;
+      let stored: TapTraceRecord;
+      try {
+        stored = JSON.parse(text) as TapTraceRecord;
+      } catch {
+        malformedRecords += 1;
+        continue;
+      }
+      if (stored.sessionId && stored.sessionId !== id) {
+        throw new Error(`Trace file ${resolvedPath} contains a foreign sessionId`);
+      }
+      const trace = hydrateStoredSse(stored);
+      validRecords += 1;
+      if (Number.isInteger(trace.turn) && (trace.turn ?? 0) > 0) {
+        maxTurn = Math.max(maxTurn, trace.turn ?? 0);
+      }
+
+      const recordStartMs = Date.parse(trace.startedAt || '');
+      if (Number.isFinite(recordStartMs)) {
+        startedAtMs = Math.min(startedAtMs, recordStartMs);
+        lastRequestAtMs = Math.max(lastRequestAtMs, recordStartMs);
+      }
+      const recordCompletedMs = Date.parse(trace.completedAt || '');
+      if (Number.isFinite(recordCompletedMs)) updatedAtMs = Math.max(updatedAtMs, recordCompletedMs);
+
+      const auxiliary = trace.auxiliary
+        ?? classifyAuxiliaryTrace(trace)
+        ?? (isCodexStructuredUtilityTrace(trace) ? 'utility' : undefined);
+      const subagent = trace.subagent || (!auxiliary ? detectSubagent(trace) : undefined);
+      const isMain = !auxiliary && !subagent;
+      if (auxiliary) hiddenLabels.add(auxiliary);
+      else if (subagent) hiddenLabels.add('subagent');
+
+      source = source || trace.source;
+      const fingerprint = extractFingerprint(trace);
+      if (isMain) {
+        mainRecords += 1;
+        firstClient = firstClient || trace.client;
+        firstModel = firstModel || trace.request?.model;
+        firstPrompt = firstPrompt || fingerprint.firstPrompt || undefined;
+        clientConversationKey = clientConversationKey
+          || trace.clientConversationKey
+          || extractClientConversationKey(trace);
+        if (fingerprint.chainHashes.length > 0) lastChain = [...fingerprint.chainHashes];
+      }
+
+      if (!title && auxiliary === 'title') title = extractGeneratedTitle(trace);
+      const invocations = subagentInvocations(trace);
+      if (invocations.length > 0) {
+        pendingSubagents = [...(pendingSubagents || []), ...invocations].slice(-16);
+      }
+      const responseId = extractResponseId(trace);
+      if (responseId) responseIds = [...(responseIds || []), responseId].slice(-16);
+      const interactionId = extractInteractionId(trace);
+      if (isMain && interactionId && !(interactionIds || []).includes(interactionId)) {
+        interactionIds = [...(interactionIds || []), interactionId].slice(-16);
+      }
+
+      totalTokens += totalTokensOfTrace(trace);
+      const isError = traceHasError(trace);
+      errorCount += isError ? 1 : 0;
+      if (isMain) lastTurnError = isError;
+      usageByModel = accumulateUsageByModel(usageByModel, trace);
+      dailyUsage = accumulateDailyUsage(dailyUsage, trace);
+      recentRatePoints = appendRatePoint(recentRatePoints, trace);
+      if (auxiliary || subagent) {
+        const label: NonNullable<TapSessionSummary['auxiliary']> = auxiliary || 'subagent';
+        auxiliaryCounts = {
+          ...(auxiliaryCounts || {}),
+          [label]: (auxiliaryCounts?.[label] || 0) + 1
+        };
+      }
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+
+  if (validRecords === 0 || !Number.isFinite(startedAtMs)) {
+    throw new Error(`Trace file has no recoverable records: ${resolvedPath}`);
+  }
+  if (!Number.isFinite(lastRequestAtMs)) lastRequestAtMs = startedAtMs;
+  if (!Number.isFinite(updatedAtMs)) updatedAtMs = lastRequestAtMs;
+  const hidden = mainRecords === 0;
+  const hiddenAuxiliary: TapSessionSummary['auxiliary'] | undefined = hidden
+    ? hiddenLabels.size === 1
+      ? [...hiddenLabels][0]
+      : hiddenLabels.has('subagent')
+        ? 'subagent'
+        : 'utility'
+    : undefined;
+  const summary: TapSessionSummary = {
+    id,
+    startedAt: new Date(startedAtMs).toISOString(),
+    updatedAt: new Date(updatedAtMs).toISOString(),
+    lastRequestAt: new Date(lastRequestAtMs).toISOString(),
+    traceCount: maxTurn > 0 ? maxTurn : validRecords,
+    jsonlPath: resolvedPath,
+    firstPrompt,
+    title,
+    lastChain,
+    pendingSubagentRoots: pendingSubagents?.flatMap(invocation => invocation.roots),
+    pendingSubagents,
+    responseIds,
+    interactionIds,
+    hidden: hidden ? true : undefined,
+    auxiliary: hiddenAuxiliary,
+    auxiliaryCounts,
+    totalTokens,
+    errorCount,
+    lastTurnError,
+    durationMs: Math.max(0, lastRequestAtMs - startedAtMs),
+    firstModel,
+    source,
+    firstClient,
+    clientConversationKey,
+    usageByModel,
+    dailyUsage,
+    dailyUsageComplete: true,
+    recentRatePoints
+  };
+  return { summary, validRecords, malformedRecords };
+}
 interface StagedSessionFile {
   readonly originalPath: string;
   readonly stagedPath: string;
@@ -2037,6 +2256,14 @@ function mergeUsageFields(
 ): TapModelUsage['incompleteFields'] {
   const fields = [...new Set([...(left ?? []), ...(right ?? [])])];
   return fields.length ? fields : undefined;
+}
+
+function traceIndexReadError(indexPath: string, detail: string): Error {
+  return new Error(`Trace 索引不可用，已停止记录且未修改原文件：${detail}（${indexPath}）`);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function traceHasError(t: TapTraceRecord): boolean {

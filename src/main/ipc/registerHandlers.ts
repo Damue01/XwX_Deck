@@ -187,6 +187,13 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
       return deps.currentState();
     },
     'xwxdeck:clear-history': () => deps.clearHistory(),
+    'xwxdeck:inspect-trace-index-repair': () => requireController().inspectTraceIndexRepair(),
+    'xwxdeck:apply-trace-index-repair': (_event, expectedIndexSha256) => {
+      if (expectedIndexSha256 !== undefined && typeof expectedIndexSha256 !== 'string') {
+        throw new Error('无效的 Trace 索引版本。');
+      }
+      return requireController().applyTraceIndexRepair(expectedIndexSha256);
+    },
     'xwxdeck:disable-breaks-codex': () => requireController().disableBreaksCodex(),
     'xwxdeck:refresh': () => deps.refreshUi(),
     'xwxdeck:window-minimize': event => deps.managerWindow.minimize(event.sender),

@@ -78,6 +78,7 @@ async function run(): Promise<void> {
   };
 
   if (bootstrap) {
+    if (bootstrap.recording) await store.assertIndexReadable();
     proxy.setRoutes(bootstrap.routes, bootstrap.fallbackBaseUrl, bootstrap.fallbackProxyUrl);
     proxy.setClientRoutes(bootstrap.clientRoutes);
     setRecordingEnabled(bootstrap.recording);
@@ -167,6 +168,7 @@ async function run(): Promise<void> {
     if (pathname === '/control/configure') {
       const nextGeneration = integer(body.generation);
       if (nextGeneration >= generation) {
+        if (body.recording === true) await store.assertIndexReadable();
         const nextRetention = normalizeTraceRetention(body.traceRetention);
         const retentionChanged = nextRetention.maxSessions !== traceRetention.maxSessions
           || nextRetention.maxStorageBytes !== traceRetention.maxStorageBytes;

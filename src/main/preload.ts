@@ -51,6 +51,8 @@ contextBridge.exposeInMainWorld('xwxDeck', {
   openDataFolder: () => ipcRenderer.invoke('xwxdeck:open-data-folder'),
   openLogFolder: () => ipcRenderer.invoke('xwxdeck:open-log-folder'),
   clearHistory: () => ipcRenderer.invoke('xwxdeck:clear-history'),
+  inspectTraceIndexRepair: () => ipcRenderer.invoke('xwxdeck:inspect-trace-index-repair'),
+  applyTraceIndexRepair: (expectedIndexSha256: unknown) => ipcRenderer.invoke('xwxdeck:apply-trace-index-repair', expectedIndexSha256),
   disableBreaksCodex: () => ipcRenderer.invoke('xwxdeck:disable-breaks-codex'),
   refresh: () => ipcRenderer.invoke('xwxdeck:refresh'),
   minimizeWindow: () => ipcRenderer.invoke('xwxdeck:window-minimize'),

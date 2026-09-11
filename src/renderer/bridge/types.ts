@@ -8,6 +8,29 @@ import type {
   CodexConversationPageRequest,
   CodexConversationPageResponse
 } from '../../shared/codexConversationHealth';
+export interface TraceIndexRepairCandidate {
+  readonly id: string;
+  readonly jsonlPath: string;
+  readonly validRecords: number;
+  readonly malformedRecords: number;
+}
+
+export interface TraceIndexRepairPlan {
+  readonly rootPath: string;
+  readonly indexPath: string;
+  readonly indexStatus: 'valid' | 'missing' | 'invalid';
+  readonly indexSha256: string;
+  readonly indexedSessions: number;
+  readonly jsonlFiles: number;
+  readonly missingIndexedFiles: readonly string[];
+  readonly candidates: readonly TraceIndexRepairCandidate[];
+}
+
+export interface AppliedTraceIndexRepair extends TraceIndexRepairPlan {
+  readonly applied: true;
+  readonly backupIndexPath?: string;
+  readonly recoveredSessions: number;
+}
 export type {
   CodexConversationDetailRequest,
   CodexConversationDatabaseHealth,
@@ -325,6 +348,8 @@ export interface XwXDeckApi {
   openDataFolder(): Promise<void>;
   openLogFolder(): Promise<void>;
   clearHistory(): Promise<XwXDeckRuntimeState>;
+  inspectTraceIndexRepair(): Promise<TraceIndexRepairPlan>;
+  applyTraceIndexRepair(expectedIndexSha256?: string): Promise<AppliedTraceIndexRepair>;
   /** True when stopping tracing would break the active ChatGPT (chat-completions bridge) model. */
   disableBreaksCodex(): Promise<boolean>;
   refresh(): Promise<XwXDeckRuntimeState>;

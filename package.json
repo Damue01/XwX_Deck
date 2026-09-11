@@ -42,7 +42,8 @@
     "update:pricing": "node tools/update-model-pricing.mjs",
     "build:win": "npm run clean && npm run generate:icons:win && npm run test && electron-builder --win portable --publish never",
     "build:mac:arm64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg zip --arm64 --publish never",
-    "build:mac:x64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg zip --x64 --publish never"
+    "build:mac:x64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg zip --x64 --publish never",
+    "repair:trace-index": "node tools/run-trace-index-repair.mjs"
   },
   "build": {
     "appId": "app.xwxdeck.desktop",
@@ -117,8 +118,8 @@
           "x": 340,
           "y": 315,
           "type": "file",
-          "path": "assets/macos/首次打开说明.txt",
-          "name": "首次打开说明.txt"
+          "path": "assets/macos/\u9996\u6b21\u6253\u5f00\u8bf4\u660e.txt",
+          "name": "\u9996\u6b21\u6253\u5f00\u8bf4\u660e.txt"
         }
       ]
     },

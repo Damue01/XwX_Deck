@@ -129,6 +129,8 @@ import {
   LOCAL_COMMAND_CAVEAT_TAG,
   LOCAL_COMMAND_CAVEAT_TEXT
 } from '../src/main/trace/clientSignatures';
+import { applyTraceIndexRepair, inspectTraceIndexRepair } from '../src/main/trace/traceIndexRepair';
+import { acquireTraceWriterLease } from '../src/main/trace/traceWriterLease';
 import { TraceStore } from '../src/main/trace/traceStore';
 import { parseTapListenPorts } from '../src/main/trace/tapPortLock';
 import { selectSystemProxy } from '../src/main/trace/systemProxy';
@@ -210,6 +212,7 @@ try {
   await testCodexConversationDoctor();
   await testTraceDeletionTransactions();
   await testChatGptLifecycle();
+  await testTraceIndexRepair();
   await testControllerColdStartTransactions();
   await testAtomicFileWriteRetries();
   await testCodexChatBridge();
@@ -1087,6 +1090,119 @@ async function testTraceDeletionTransactions(): Promise<void> {
   }
   completed.push('Trace deletion stages files and rolls back every failed transaction');
 }
+
+async function testTraceIndexRepair(): Promise<void> {
+  const traceRoot = path.join(root, 'trace-index-repair');
+  await fs.mkdir(traceRoot, { recursive: true });
+  const existingId = '2026-08-01T00-00-00-000Z';
+  const orphanId = '2026-08-02T00-00-00-000Z';
+  const existingPath = path.join(traceRoot, `${existingId}.jsonl`);
+  const orphanPath = path.join(traceRoot, `${orphanId}.jsonl`);
+  const makeTrace = (turn: number): TapTraceRecord => ({
+    id: `recovery-${turn}`,
+    sessionId: orphanId,
+    turn,
+    startedAt: `2026-08-02T00:0${turn - 1}:00.000Z`,
+    completedAt: `2026-08-02T00:0${turn - 1}:01.000Z`,
+    durationMs: 1000,
+    client: 'ChatGPT',
+    source: 'codex-vscode',
+    clientConversationKey: 'codex-vscode:recovered-thread',
+    request: {
+      method: 'POST',
+      path: '/v1/responses',
+      url: 'http://127.0.0.1/v1/responses',
+      headers: {},
+      body: {
+        model: 'gpt-recovery',
+        input: [{ role: 'user', content: [{ type: 'input_text', text: turn === 1 ? '恢复这段对话' : '继续' }] }]
+      },
+      model: 'gpt-recovery',
+      apiType: 'responses'
+    },
+    upstream: { url: 'https://example.invalid/v1/responses', statusCode: 200 },
+    response: { statusCode: 200, headers: {}, body: { id: `resp-${turn}` } },
+    timings: {}
+  } as TapTraceRecord);
+  await fs.writeFile(existingPath, `${JSON.stringify({ ...makeTrace(1), sessionId: existingId })}\n`);
+  const orphanBytes = `${JSON.stringify(makeTrace(1))}\n${JSON.stringify(makeTrace(2))}\n`;
+  await fs.writeFile(orphanPath, orphanBytes);
+  await fs.writeFile(path.join(traceRoot, 'index.json'), JSON.stringify({
+    version: 1,
+    sessions: [{
+      id: existingId,
+      startedAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:01.000Z',
+      traceCount: 1,
+      jsonlPath: existingPath
+    }]
+  }));
+
+  const beforeHash = crypto.createHash('sha256').update(await fs.readFile(orphanPath)).digest('hex');
+  const plan = await inspectTraceIndexRepair(traceRoot);
+  assert.equal(plan.indexStatus, 'valid');
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0]?.id, orphanId);
+  assert.equal(plan.candidates[0]?.validRecords, 2);
+  assert.equal(plan.candidates[0]?.summary.traceCount, 2);
+  assert.equal(plan.candidates[0]?.summary.firstPrompt, '恢复这段对话');
+  assert.equal(plan.candidates[0]?.summary.clientConversationKey, 'codex-vscode:recovered-thread');
+  const lease = await acquireTraceWriterLease(traceRoot);
+  await assert.rejects(applyTraceIndexRepair(traceRoot, plan.indexSha256), /已有写入进程/);
+  await lease.release();
+  await assert.rejects(applyTraceIndexRepair(traceRoot, 'stale-hash'), /no longer matches/);
+  const applied = await applyTraceIndexRepair(traceRoot, plan.indexSha256);
+  assert.equal(applied.recoveredSessions, 1);
+  assert.ok(applied.backupIndexPath);
+  assert.ok((await fs.stat(applied.backupIndexPath!)).isFile());
+  const repairedIndex = JSON.parse(await fs.readFile(path.join(traceRoot, 'index.json'), 'utf8')) as {
+    sessions: TapSessionSummary[];
+  };
+  assert.deepEqual(repairedIndex.sessions.map(session => session.id), [existingId, orphanId]);
+  assert.equal((await inspectTraceIndexRepair(traceRoot)).candidates.length, 0);
+  const afterHash = crypto.createHash('sha256').update(await fs.readFile(orphanPath)).digest('hex');
+  assert.equal(afterHash, beforeHash, 'index recovery must not rewrite original JSONL');
+
+  const invalidRoot = path.join(root, 'trace-index-invalid');
+  const invalidId = '2026-08-03T00-00-00-000Z';
+  const invalidJsonl = path.join(invalidRoot, `${invalidId}.jsonl`);
+  const invalidIndex = Buffer.from('{"version":1,"sessions":[', 'utf8');
+  await fs.mkdir(invalidRoot, { recursive: true });
+  await fs.writeFile(invalidJsonl, `${JSON.stringify({ ...makeTrace(1), sessionId: invalidId })}\n`);
+  await fs.writeFile(path.join(invalidRoot, 'index.json'), invalidIndex);
+  const invalidStore = new TraceStore(invalidRoot);
+  await assert.rejects(invalidStore.assertIndexReadable(), /Trace 索引不可用.*JSON 无法解析/);
+  await assert.rejects(invalidStore.appendTrace(makeTrace(2)), /Trace 索引不可用/);
+  assert.deepEqual(await fs.readFile(path.join(invalidRoot, 'index.json')), invalidIndex,
+    'recording must never overwrite an unreadable Trace index');
+  const invalidPlan = await inspectTraceIndexRepair(invalidRoot);
+  assert.equal(invalidPlan.indexStatus, 'invalid');
+  assert.equal(invalidPlan.candidates.length, 1);
+  const invalidApplied = await applyTraceIndexRepair(invalidRoot, invalidPlan.indexSha256);
+  assert.ok(invalidApplied.backupIndexPath);
+  assert.deepEqual(await fs.readFile(invalidApplied.backupIndexPath!), invalidIndex,
+    'explicit repair must preserve the exact invalid index bytes');
+  await invalidStore.assertIndexReadable();
+  assert.deepEqual((await invalidStore.listSessions()).map(session => session.id), [invalidId]);
+
+  const missingRoot = path.join(root, 'trace-index-missing');
+  const missingId = '2026-08-04T00-00-00-000Z';
+  await fs.mkdir(missingRoot, { recursive: true });
+  await fs.writeFile(
+    path.join(missingRoot, `${missingId}.jsonl`),
+    `${JSON.stringify({ ...makeTrace(1), sessionId: missingId })}\n`
+  );
+  const missingStore = new TraceStore(missingRoot);
+  await assert.rejects(missingStore.assertIndexReadable(), /索引缺失.*仍有 JSONL/);
+  const missingPlan = await inspectTraceIndexRepair(missingRoot);
+  assert.equal(missingPlan.indexStatus, 'missing');
+  const missingApplied = await applyTraceIndexRepair(missingRoot, missingPlan.indexSha256);
+  assert.equal(missingApplied.backupIndexPath, undefined);
+  await missingStore.assertIndexReadable();
+  assert.deepEqual((await missingStore.listSessions()).map(session => session.id), [missingId]);
+  completed.push('Trace index recovery protects invalid or missing indexes and preserves raw JSONL');
+}
+
 
 async function testControllerColdStartTransactions(): Promise<void> {
   assert.equal(startupRegistrationMatches({

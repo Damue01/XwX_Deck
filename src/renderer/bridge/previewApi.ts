@@ -574,6 +574,28 @@ export function createPreviewApi(): XwXDeckApi {
     openDataFolder: async () => undefined,
     openLogFolder: async () => undefined,
     clearHistory: async () => buildState(),
+    inspectTraceIndexRepair: async () => ({
+      rootPath: state.traceRoot,
+      indexPath: `${state.traceRoot}\\index.json`,
+      indexStatus: 'valid' as const,
+      indexSha256: 'preview-index',
+      indexedSessions: state.sessions,
+      jsonlFiles: state.sessions,
+      missingIndexedFiles: [],
+      candidates: []
+    }),
+    applyTraceIndexRepair: async () => ({
+      rootPath: state.traceRoot,
+      indexPath: `${state.traceRoot}\\index.json`,
+      indexStatus: 'valid' as const,
+      indexSha256: 'preview-index',
+      indexedSessions: state.sessions,
+      jsonlFiles: state.sessions,
+      missingIndexedFiles: [],
+      candidates: [],
+      applied: true as const,
+      recoveredSessions: 0
+    }),
     disableBreaksCodex: async () => false,
     refresh: async () => buildState(),
     minimizeWindow: async () => undefined,

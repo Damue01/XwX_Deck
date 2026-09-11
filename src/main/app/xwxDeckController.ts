@@ -52,6 +52,12 @@ import {
   writeLock
 } from '../trace/tapPortLock';
 import { TraceStore } from '../trace/traceStore';
+import {
+  applyTraceIndexRepair,
+  inspectTraceIndexRepair,
+  type AppliedTraceIndexRepair,
+  type TraceIndexRepairPlan
+} from '../trace/traceIndexRepair';
 import { TapClientRoute, TapModelUsage, TapSessionTracePage } from '../trace/types';
 import { estimateCostUsd, findModelPriceForUsage } from '../trace/pricing';
 import { renderTapViewerHtml, TapViewerState } from '../trace/webview/viewerHtml';
@@ -1700,6 +1706,22 @@ export class XwXDeckController {
     else await this.traceStore.clearAll();
     this.proxy.broadcastReset();
     this.fireChange();
+  }
+
+  async inspectTraceIndexRepair(): Promise<TraceIndexRepairPlan> {
+    return inspectTraceIndexRepair(this.traceStore.rootPath());
+  }
+
+  async applyTraceIndexRepair(expectedIndexSha256?: string): Promise<AppliedTraceIndexRepair> {
+    return this.serializeMutation(async () => {
+      if (this.active || this.proxy.isListening()) {
+        throw new Error('请先关闭 Gateway 代理，再修复 Trace 索引。');
+      }
+      const result = await applyTraceIndexRepair(this.traceStore.rootPath(), expectedIndexSha256);
+      this.proxy.broadcastReset();
+      this.fireChange();
+      return result;
+    });
   }
 
   /** 持久化夜间/白天主题;渲染进程通过状态下发得到权威值,不再依赖 file:// 源的 localStorage。 */
