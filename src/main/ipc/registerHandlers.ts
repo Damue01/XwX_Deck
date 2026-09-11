@@ -12,6 +12,10 @@ import { isPathInsideCodexHome } from '../app/codexConversationDoctor';
 import type { ClientId, XwXDeckController, XwXDeckRuntimeState } from '../app/xwxDeckController';
 import type { XwXDeckUpdater } from '../update/xwxDeckUpdater';
 import type { ManagerWindow } from '../window/managerWindow';
+import type {
+  CodexConversationDetailRequest,
+  CodexConversationPageRequest
+} from '../../shared/codexConversationHealth';
 
 type InvokeHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
 type EventHandler = (event: IpcMainEvent, ...args: unknown[]) => void;
@@ -120,6 +124,18 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
       return requireController().updateCodexConfig(input);
     },
     'xwxdeck:diagnose-codex-conversations': () => requireController().diagnoseCodexConversations(),
+    'xwxdeck:query-codex-conversations': (_event, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('无效的对话诊断查询。');
+      return requireController().queryCodexConversations(input as CodexConversationPageRequest);
+    },
+    'xwxdeck:detail-codex-conversation': (_event, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('无效的对话诊断详情请求。');
+      return requireController().detailCodexConversation(input as CodexConversationDetailRequest);
+    },
+    'xwxdeck:cancel-codex-conversation-scan': (_event, requestId) => {
+      if (typeof requestId !== 'string' || !requestId.trim()) throw new Error('无效的对话诊断请求 ID。');
+      return requireController().cancelCodexConversationScan(requestId);
+    },
     'xwxdeck:open-codex-conversation-path': (_event, input) => {
       if (typeof input !== 'string' || !input.trim() || !isPathInsideCodexHome(input)) {
         throw new Error('无效的 ChatGPT 会话路径。');

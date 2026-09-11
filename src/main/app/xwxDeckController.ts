@@ -30,7 +30,14 @@ import { CodexOfficialAuthManager } from '../trace/codexOfficialAuthManager';
 import { CodexModelCatalogManager } from '../trace/codexModelCatalogManager';
 import { CodexThreadTitleReader } from '../trace/codexThreadTitles';
 import { CodexConversationDoctor } from './codexConversationDoctor';
-import type { CodexConversationHealthReport } from '../../shared/codexConversationHealth';
+import { CodexConversationWorkerClient } from './codexConversationWorkerClient';
+import type {
+  CodexConversationDetailRequest,
+  CodexConversationHealthReport,
+  CodexConversationHealthRow,
+  CodexConversationPageRequest,
+  CodexConversationPageResponse
+} from '../../shared/codexConversationHealth';
 import { TapProxy } from '../trace/tapProxy';
 import { GatewayProcessClient } from '../trace/gatewayProcessClient';
 import { TraceProxy } from '../trace/traceProxy';
@@ -280,6 +287,7 @@ export class XwXDeckController {
   private readonly codexOfficialAuth: CodexOfficialAuthManager;
   private readonly codexCatalog: CodexModelCatalogManager;
   private readonly codexThreadTitles: CodexThreadTitleReader;
+  private readonly conversationWorker = new CodexConversationWorkerClient();
   private compatibleServiceCatalog: readonly ModelCatalogEntry[] = [];
   private compatibleServiceCatalogRefresh: {
     readonly connection: string;
@@ -1604,6 +1612,18 @@ export class XwXDeckController {
 
   async diagnoseCodexConversations(): Promise<CodexConversationHealthReport> {
     return new CodexConversationDoctor().diagnose();
+  }
+
+  async queryCodexConversations(request: CodexConversationPageRequest): Promise<CodexConversationPageResponse> {
+    return this.conversationWorker.query(request);
+  }
+
+  async detailCodexConversation(request: CodexConversationDetailRequest): Promise<CodexConversationHealthRow> {
+    return this.conversationWorker.detail(request);
+  }
+
+  cancelCodexConversationScan(requestId: string): boolean {
+    return this.conversationWorker.cancel(requestId);
   }
 
   async openLogFolder(): Promise<void> {

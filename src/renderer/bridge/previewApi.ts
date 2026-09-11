@@ -1,7 +1,10 @@
 import type {
   ClientId,
   ClaudeModelSettings,
+  CodexConversationDetailRequest,
   CodexConversationHealthReport,
+  CodexConversationPageRequest,
+  CodexConversationPageResponse,
   CodexAuthMode,
   CodexConfigSnapshot,
   CodexEnhancementsSnapshot,
@@ -410,6 +413,53 @@ export function createPreviewApi(): XwXDeckApi {
       return structuredClone(codex);
     },
     diagnoseCodexConversations: async () => conversationHealthPreview(),
+    queryCodexConversations: async (request: CodexConversationPageRequest): Promise<CodexConversationPageResponse> => {
+      const report = conversationHealthPreview();
+      const needle = request.query.trim().toLocaleLowerCase();
+      const filtered = report.conversations.filter(row => (
+        (request.filter !== 'issues' || row.status !== 'healthy')
+        && (request.filter !== 'healthy' || row.status === 'healthy')
+        && (!needle || [row.threadId, row.title, row.cwd, row.rolloutPath]
+          .some(value => String(value || '').toLocaleLowerCase().includes(needle)))
+      ));
+      const pageSize = Math.max(20, Math.min(200, Math.floor(request.pageSize) || 120));
+      const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+      const page = Math.max(0, Math.min(pageCount - 1, Math.floor(request.page) || 0));
+      return {
+        requestId: request.requestId,
+        snapshotId: `${report.generatedAt}:preview`,
+        generatedAt: report.generatedAt,
+        codexHome: report.codexHome,
+        configPath: report.configPath,
+        activeProvider: report.activeProvider,
+        configuredProviders: report.configuredProviders,
+        databases: report.databases,
+        scanScope: report.scanScope,
+        scanComplete: report.scanComplete,
+        scanIssues: report.scanIssues,
+        truncated: report.truncated,
+        summary: report.summary,
+        page,
+        pageSize,
+        total: filtered.length,
+        rows: filtered.slice(page * pageSize, (page + 1) * pageSize).map(row => ({
+          threadId: row.threadId,
+          title: row.title,
+          status: row.status,
+          primaryIssueTitle: row.issues[0]?.title || '一致',
+          issueCount: row.issues.length,
+          ...(row.updatedAt ? { updatedAt: row.updatedAt } : {}),
+          ...(row.fileModifiedAt ? { fileModifiedAt: row.fileModifiedAt } : {})
+        })),
+        performance: { durationMs: 0, reusedRollouts: 0, inspectedRollouts: 0, reusedDatabases: 0, inspectedDatabases: 0 }
+      };
+    },
+    detailCodexConversation: async (request: CodexConversationDetailRequest) => {
+      const row = conversationHealthPreview().conversations.find(item => item.threadId === request.threadId);
+      if (!row) throw new Error('未找到该对话的诊断详情。');
+      return row;
+    },
+    cancelCodexConversationScan: async () => false,
     openCodexConversationPath: async () => undefined,
     copyText: async value => {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);

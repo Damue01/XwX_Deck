@@ -1,14 +1,23 @@
 // Shared data shapes for the window.xwxDeck bridge surface.
 // All types are plain serialisable objects; nothing from Electron is imported here.
 import type { ProviderPresetId } from '../../shared/providerProfiles';
-import type { CodexConversationHealthReport } from '../../shared/codexConversationHealth';
+import type {
+  CodexConversationDetailRequest,
+  CodexConversationHealthReport,
+  CodexConversationHealthRow,
+  CodexConversationPageRequest,
+  CodexConversationPageResponse
+} from '../../shared/codexConversationHealth';
 export type {
+  CodexConversationDetailRequest,
   CodexConversationDatabaseHealth,
   CodexConversationHealthReport,
   CodexConversationHealthRow,
   CodexConversationHealthStatus,
   CodexConversationIssue,
   CodexConversationIssueCode,
+  CodexConversationPageRequest,
+  CodexConversationPageResponse,
   CodexRolloutLocation
 } from '../../shared/codexConversationHealth';
 
@@ -288,6 +297,9 @@ export interface XwXDeckApi {
   updateCodexEnhancements(payload: Record<string, unknown>): Promise<CodexEnhancementsSnapshot>;
   updateCodexConfig(payload: Record<string, unknown>): Promise<CodexConfigSnapshot>;
   diagnoseCodexConversations(): Promise<CodexConversationHealthReport>;
+  queryCodexConversations(request: CodexConversationPageRequest): Promise<CodexConversationPageResponse>;
+  detailCodexConversation(request: CodexConversationDetailRequest): Promise<CodexConversationHealthRow>;
+  cancelCodexConversationScan(requestId: string): Promise<boolean>;
   openCodexConversationPath(filePath: string): Promise<void>;
   copyText(value: string): Promise<void>;
 

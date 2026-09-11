@@ -6,6 +6,7 @@ import type {
   CodexConversationHealthReport,
   CodexConversationHealthRow,
   CodexConversationIssue,
+  CodexConversationScanPerformance,
   CodexConversationWorkspaceKind,
   CodexRolloutLocation
 } from '../../shared/codexConversationHealth';
@@ -15,10 +16,13 @@ import { readTextOrUndefined } from '../shared/fsx';
 
 const MAX_THREADS = 5_000;
 const MAX_SESSION_META_BYTES = 1024 * 1024;
+const SESSION_META_CHUNK_BYTES = 64 * 1024;
+const ROLLOUT_SCAN_CONCURRENCY = 16;
 const THREAD_ID_PATTERN = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+const THREAD_ID_ANY_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig;
 const BUILT_IN_PROVIDERS = new Set(['openai', 'ollama', 'lmstudio']);
 
-interface ThreadIndexRow {
+export interface ThreadIndexRow {
   id: string;
   title: string;
   preview: string;
@@ -39,7 +43,7 @@ interface ThreadIndexRow {
   sqliteFields: Array<{ key: string; value: string }>;
 }
 
-interface RolloutFile {
+export interface RolloutFile {
   path: string;
   normalizedPath: string;
   location: CodexRolloutLocation;
@@ -60,8 +64,63 @@ interface ProjectRecord {
   roots: string[];
 }
 
+interface DatabaseInspection {
+  readonly health: CodexConversationDatabaseHealth;
+  readonly rows: ThreadIndexRow[];
+  readonly truncated: boolean;
+}
+
+interface CachedRolloutFile {
+  readonly signature: string;
+  readonly file: RolloutFile;
+}
+
+interface CachedDatabaseInspection {
+  readonly signature: string;
+  readonly inspection: DatabaseInspection;
+}
+
+export class CodexConversationScanCache {
+  readonly rollouts = new Map<string, CachedRolloutFile>();
+  readonly databases = new Map<string, CachedDatabaseInspection>();
+}
+
+export interface CodexConversationDoctorOptions {
+  readonly cache?: CodexConversationScanCache;
+  readonly isCancelled?: () => boolean;
+}
+
+export class CodexConversationScanCancelledError extends Error {
+  constructor() {
+    super('对话诊断扫描已取消');
+    this.name = 'CodexConversationScanCancelledError';
+  }
+}
+
 export class CodexConversationDoctor {
+  private scanPerformance: CodexConversationScanPerformance = {
+    durationMs: 0,
+    reusedRollouts: 0,
+    inspectedRollouts: 0,
+    reusedDatabases: 0,
+    inspectedDatabases: 0
+  };
+
+  constructor(private readonly options: CodexConversationDoctorOptions = {}) {}
+
+  performance(): CodexConversationScanPerformance {
+    return this.scanPerformance;
+  }
+
   async diagnose(): Promise<CodexConversationHealthReport> {
+    const startedAt = Date.now();
+    const counters = {
+      reusedRollouts: 0,
+      inspectedRollouts: 0,
+      reusedDatabases: 0,
+      inspectedDatabases: 0
+    };
+    assertScanActive(this.options);
     const paths = resolveClientPaths();
     const codexHome = path.dirname(paths.codexConfigPath);
     const configText = await readTextOrUndefined(paths.codexConfigPath) ?? '';
@@ -82,15 +141,37 @@ export class CodexConversationDoctor {
     }
 
     for (const databasePath of databasePaths) {
-      const result = inspectDatabase(databasePath);
+      assertScanActive(this.options);
+      const result = inspectDatabaseCached(databasePath, this.options.cache, counters);
       databaseHealth.push(result.health);
       if (result.truncated) truncated = true;
-      for (const row of result.rows) mergeIndexRow(indexed, row);
+      for (const row of result.rows) mergeIndexRow(indexed, cloneIndexRow(row));
     }
 
     appendDatabaseScanIssues(scanIssues, databaseHealth);
-    const sessionsScan = await collectRollouts(path.join(codexHome, 'sessions'), 'sessions');
-    const archivedScan = await collectRollouts(path.join(codexHome, 'archived_sessions'), 'archived_sessions');
+    const seenRolloutPaths = new Set<string>();
+    const sessionsScan = await collectRollouts(
+      path.join(codexHome, 'sessions'),
+      'sessions',
+      this.options,
+      counters,
+      seenRolloutPaths
+    );
+    const archivedScan = await collectRollouts(
+      path.join(codexHome, 'archived_sessions'),
+      'archived_sessions',
+      this.options,
+      counters,
+      seenRolloutPaths
+    );
+    if (this.options.cache) {
+      for (const cachedPath of this.options.cache.rollouts.keys()) {
+        if (!seenRolloutPaths.has(cachedPath)) this.options.cache.rollouts.delete(cachedPath);
+      }
+      for (const cachedPath of this.options.cache.databases.keys()) {
+        if (!databasePaths.includes(cachedPath)) this.options.cache.databases.delete(cachedPath);
+      }
+    }
     const allFiles = [...sessionsScan.files, ...archivedScan.files];
     for (const scanError of [...sessionsScan.errors, ...archivedScan.errors]) {
       scanIssues.push(issue(
@@ -113,11 +194,20 @@ export class CodexConversationDoctor {
     const conversations: CodexConversationHealthRow[] = [];
 
     for (const row of indexed.values()) {
-      conversations.push(buildIndexedHealthRow(row, filesById, config.providers));
+      assertScanActive(this.options);
+      conversations.push(buildIndexedHealthRow(
+        row,
+        filesById,
+        config.providers,
+        this.options,
+        counters,
+        seenRolloutPaths
+      ));
     }
 
     const orphanGroups = new Map<string, RolloutFile[]>();
     for (const file of allFiles) {
+      assertScanActive(this.options);
       const id = file.sessionId || file.filenameThreadId || file.path;
       if (indexedIds.has(id)) continue;
       const group = orphanGroups.get(id) ?? [];
@@ -125,6 +215,7 @@ export class CodexConversationDoctor {
       orphanGroups.set(id, group);
     }
     for (const files of orphanGroups.values()) {
+      assertScanActive(this.options);
       conversations.push(buildOrphanHealthRow(files, config.providers));
     }
 
@@ -132,6 +223,10 @@ export class CodexConversationDoctor {
     const limited = conversations.slice(0, MAX_THREADS);
     if (limited.length < conversations.length) truncated = true;
 
+    this.scanPerformance = {
+      durationMs: Date.now() - startedAt,
+      ...counters
+    };
     return {
       generatedAt: new Date().toISOString(),
       codexHome,
@@ -211,11 +306,37 @@ function stateDatabasePaths(codexHome: string, configText: string): string[] {
   return [...new Set(output.map(value => path.resolve(value)))];
 }
 
-function inspectDatabase(databasePath: string): {
-  health: CodexConversationDatabaseHealth;
-  rows: ThreadIndexRow[];
-  truncated: boolean;
-} {
+function databaseSignature(databasePath: string): string {
+  return [fileSignatureSync(databasePath), fileSignatureSync(`${databasePath}-wal`)].join('|');
+}
+
+function fileSignatureSync(filePath: string): string {
+  try {
+    const stat = fs.statSync(filePath);
+    return `${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return 'missing';
+  }
+}
+
+function inspectDatabaseCached(
+  databasePath: string,
+  cache: CodexConversationScanCache | undefined,
+  counters: { reusedDatabases: number; inspectedDatabases: number }
+): DatabaseInspection {
+  const signature = databaseSignature(databasePath);
+  const cached = cache?.databases.get(databasePath);
+  if (cached?.signature === signature) {
+    counters.reusedDatabases += 1;
+    return cached.inspection;
+  }
+  const inspection = inspectDatabase(databasePath);
+  counters.inspectedDatabases += 1;
+  cache?.databases.set(databasePath, { signature, inspection });
+  return inspection;
+}
+
+function inspectDatabase(databasePath: string): DatabaseInspection {
   if (!fs.existsSync(databasePath)) {
     return {
       health: {
@@ -433,16 +554,30 @@ function mergeIndexRow(target: Map<string, ThreadIndexRow>, incoming: ThreadInde
   current.indexConflict = current.indexConflict || conflict;
 }
 
+function cloneIndexRow(row: ThreadIndexRow): ThreadIndexRow {
+  return {
+    ...row,
+    projectRoots: [...row.projectRoots],
+    databasePaths: [...row.databasePaths],
+    sqliteFields: row.sqliteFields.map(field => ({ ...field }))
+  };
+}
+
 async function collectRollouts(
   root: string,
-  location: Exclude<CodexRolloutLocation, 'other' | 'missing'>
+  location: Exclude<CodexRolloutLocation, 'other' | 'missing'>,
+  options: CodexConversationDoctorOptions,
+  counters: { reusedRollouts: number; inspectedRollouts: number },
+  seenRolloutPaths: Set<string>
 ): Promise<{
   files: RolloutFile[];
   errors: Array<{ path: string; message: string }>;
 }> {
   const output: RolloutFile[] = [];
   const errors: Array<{ path: string; message: string }> = [];
+  const rolloutPaths: string[] = [];
   const visit = async (directory: string): Promise<void> => {
+    assertScanActive(options);
     let entries: fs.Dirent[];
     try {
       entries = await fs.promises.readdir(directory, { withFileTypes: true });
@@ -453,24 +588,54 @@ async function collectRollouts(
       return;
     }
     for (const entry of entries) {
+      assertScanActive(options);
       const target = path.join(directory, entry.name);
       if (entry.isDirectory()) {
         await visit(target);
       } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.jsonl')) {
-        try {
-          output.push(await inspectRollout(target, location));
-        } catch (error) {
-          errors.push({ path: target, message: errorMessage(error) });
-        }
+        rolloutPaths.push(target);
       }
     }
   };
   await visit(root);
+  for (let offset = 0; offset < rolloutPaths.length; offset += ROLLOUT_SCAN_CONCURRENCY) {
+    assertScanActive(options);
+    const batch = rolloutPaths.slice(offset, offset + ROLLOUT_SCAN_CONCURRENCY);
+    const inspected = await Promise.all(batch.map(async filePath => {
+      try {
+        assertScanActive(options);
+        const stat = await fs.promises.stat(filePath);
+        const normalizedPath = normalizePath(filePath);
+        const signature = `${location}:${stat.size}:${stat.mtimeMs}`;
+        seenRolloutPaths.add(normalizedPath);
+        const cached = options.cache?.rollouts.get(normalizedPath);
+        if (cached?.signature === signature) {
+          counters.reusedRollouts += 1;
+          return { file: cached.file };
+        }
+        const file = await inspectRollout(filePath, location, stat, options);
+        counters.inspectedRollouts += 1;
+        options.cache?.rollouts.set(normalizedPath, { signature, file });
+        return { file };
+      } catch (error) {
+        if (error instanceof CodexConversationScanCancelledError) throw error;
+        return { error: { path: filePath, message: errorMessage(error) } };
+      }
+    }));
+    for (const result of inspected) {
+      if (result.file) output.push(result.file);
+      else if (result.error) errors.push(result.error);
+    }
+  }
   return { files: output, errors };
 }
 
-async function inspectRollout(filePath: string, location: CodexRolloutLocation): Promise<RolloutFile> {
-  const stat = await fs.promises.stat(filePath);
+async function inspectRollout(
+  filePath: string,
+  location: CodexRolloutLocation,
+  stat: fs.Stats,
+  options: CodexConversationDoctorOptions
+): Promise<RolloutFile> {
   let sessionId: string | undefined;
   let provider: string | undefined;
   let cwd: string | undefined;
@@ -483,7 +648,7 @@ async function inspectRollout(filePath: string, location: CodexRolloutLocation):
     metaError = 'JSONL 文件为空';
   } else {
     try {
-      const firstLine = await readFirstLine(filePath);
+      const firstLine = await readFirstLine(filePath, options);
       const meta = JSON.parse(firstLine) as {
         type?: unknown;
         payload?: Record<string, unknown>;
@@ -499,6 +664,7 @@ async function inspectRollout(filePath: string, location: CodexRolloutLocation):
         sessionFields = sessionFieldList(meta.payload);
       }
     } catch (error) {
+      if (error instanceof CodexConversationScanCancelledError) throw error;
       metaErrorKind = sessionMetaErrorKind(error);
       metaError = errorMessage(error);
     }
@@ -520,16 +686,32 @@ async function inspectRollout(filePath: string, location: CodexRolloutLocation):
   };
 }
 
-async function readFirstLine(filePath: string): Promise<string> {
+function assertScanActive(options: CodexConversationDoctorOptions): void {
+  if (options.isCancelled?.()) throw new CodexConversationScanCancelledError();
+}
+
+async function readFirstLine(filePath: string, options: CodexConversationDoctorOptions): Promise<string> {
   const handle = await fs.promises.open(filePath, 'r');
   try {
-    const buffer = Buffer.alloc(MAX_SESSION_META_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (!bytesRead) throw new Error('JSONL 文件为空');
-    const content = buffer.subarray(0, bytesRead).toString('utf8').replace(/^\uFEFF/, '');
-    const newline = content.indexOf('\n');
-    if (newline < 0 && bytesRead === buffer.length) throw new Error('session_meta 首行超过扫描上限');
-    return (newline < 0 ? content : content.slice(0, newline)).replace(/\r$/, '');
+    const chunks: Buffer[] = [];
+    let position = 0;
+    while (position < MAX_SESSION_META_BYTES) {
+      assertScanActive(options);
+      const buffer = Buffer.allocUnsafe(Math.min(SESSION_META_CHUNK_BYTES, MAX_SESSION_META_BYTES - position));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+      if (!bytesRead) break;
+      const chunk = buffer.subarray(0, bytesRead);
+      const newline = chunk.indexOf(0x0a);
+      chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
+      position += bytesRead;
+      if (newline >= 0) {
+        return Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '').replace(/\r$/, '');
+      }
+      if (bytesRead < buffer.length) break;
+    }
+    if (!position) throw new Error('JSONL 文件为空');
+    if (position >= MAX_SESSION_META_BYTES) throw new Error('session_meta 首行超过扫描上限');
+    return Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '').replace(/\r$/, '');
   } finally {
     await handle.close();
   }
@@ -550,7 +732,10 @@ function indexRolloutsByThreadId(files: readonly RolloutFile[]): Map<string, Rol
 function buildIndexedHealthRow(
   row: ThreadIndexRow,
   filesById: ReadonlyMap<string, readonly RolloutFile[]>,
-  configuredProviders: ReadonlySet<string>
+  configuredProviders: ReadonlySet<string>,
+  options: CodexConversationDoctorOptions,
+  counters: { reusedRollouts: number; inspectedRollouts: number },
+  seenRolloutPaths: Set<string>
 ): CodexConversationHealthRow {
   const issues: CodexConversationIssue[] = [];
   const exactPath = row.rolloutPath?.trim();
@@ -559,13 +744,18 @@ function buildIndexedHealthRow(
   const candidates = [...(filesById.get(row.id) ?? [])];
   const exact = exactNormalized
     ? candidates.find(file => file.normalizedPath === exactNormalized)
-      ?? inspectExistingPathSync(resolvedIndexPath)
+      ?? inspectExistingPathSyncCached(resolvedIndexPath, options, counters, seenRolloutPaths)
     : undefined;
   if (exact && !candidates.some(file => file.normalizedPath === exact.normalizedPath)) {
     candidates.push(exact);
   }
-  const uniqueCandidates = uniqueRollouts(candidates);
-  const resolved = exact ?? (uniqueCandidates.length === 1 ? uniqueCandidates[0] : undefined);
+  const uniqueCandidates = sortRolloutsByStart(uniqueRollouts(candidates));
+  const segmentChain = isRolloutSegmentChain(uniqueCandidates, row.id);
+  const resolved = exact ?? (
+    uniqueCandidates.length === 1 || segmentChain
+      ? preferredRollout(uniqueCandidates)
+      : undefined
+  );
   const candidateSessionProvider = singleValue(uniqueCandidates.map(candidate => candidate.provider));
   const candidateSessionId = singleValue(uniqueCandidates.map(candidate => candidate.sessionId));
 
@@ -577,20 +767,23 @@ function buildIndexedHealthRow(
   } else if (!exact) {
     issues.push(issue('rollout_file_missing', 'error', '索引指向的文件不存在', exactPath));
   }
-  if (!exact && uniqueCandidates.length === 1) {
+  if (!exact && (uniqueCandidates.length === 1 || segmentChain)) {
+    const recovery = preferredRollout(uniqueCandidates);
     issues.push(issue(
       'recovery_candidate',
       'warning',
       '发现可恢复文件',
-      `同一任务 ID 出现在 ${uniqueCandidates[0].location}：${uniqueCandidates[0].path}`
+      segmentChain
+        ? `找到 ${uniqueCandidates.length} 个连续会话片段，最新文件位于 ${recovery.location}：${recovery.path}`
+        : `同一任务 ID 出现在 ${recovery.location}：${recovery.path}`
     ));
   }
-  if (uniqueCandidates.length > 1) {
+  if (uniqueCandidates.length > 1 && !segmentChain) {
     issues.push(issue(
       'multiple_rollout_candidates',
       'error',
       '找到多个同 ID 文件',
-      uniqueCandidates.map(file => file.path).join('；')
+      `共 ${uniqueCandidates.length} 个文件，无法唯一确定它们是否属于同一条连续会话。`
     ));
   }
   for (const candidate of uniqueCandidates) {
@@ -678,20 +871,21 @@ function buildOrphanHealthRow(
   files: readonly RolloutFile[],
   configuredProviders: ReadonlySet<string>
 ): CodexConversationHealthRow {
-  const uniqueFiles = uniqueRollouts(files);
+  const uniqueFiles = sortRolloutsByStart(uniqueRollouts(files));
   const file = preferredRollout(uniqueFiles);
   const sessionProvider = singleValue(uniqueFiles.map(candidate => candidate.provider));
   const sessionId = singleValue(uniqueFiles.map(candidate => candidate.sessionId));
   const cwd = singleValue(uniqueFiles.map(candidate => candidate.cwd));
+  const segmentChain = !!sessionId && isRolloutSegmentChain(uniqueFiles, sessionId);
   const issues: CodexConversationIssue[] = [
     issue('orphan_rollout', 'warning', '文件未进入 SQLite 索引', file.path)
   ];
-  if (uniqueFiles.length > 1) {
+  if (uniqueFiles.length > 1 && !segmentChain) {
     issues.push(issue(
       'multiple_rollout_candidates',
       'error',
       '找到多个同 ID 文件',
-      uniqueFiles.map(candidate => candidate.path).join('；')
+      `共 ${uniqueFiles.length} 个文件，无法唯一确定它们是否属于同一条连续会话。`
     ));
   }
   for (const candidate of uniqueFiles) {
@@ -714,10 +908,10 @@ function buildOrphanHealthRow(
     ...(cwd ? { cwd } : {}),
     indexed: false,
     databasePaths: [],
-    ...(uniqueFiles.length === 1 ? { resolvedPath: file.path } : {}),
+    ...(uniqueFiles.length === 1 || segmentChain ? { resolvedPath: file.path } : {}),
     candidatePaths: uniqueFiles.map(candidate => candidate.path),
     fileExists: true,
-    ...(uniqueFiles.length === 1 ? {
+    ...(uniqueFiles.length === 1 || segmentChain ? {
       fileSize: file.size,
       fileModifiedAt: file.modifiedAt
     } : {}),
@@ -782,10 +976,40 @@ function compareHealthRows(left: CodexConversationHealthRow, right: CodexConvers
   );
 }
 
-function inspectExistingPathSync(filePath: string): RolloutFile | undefined {
+function inspectExistingPathSyncCached(
+  filePath: string,
+  options: CodexConversationDoctorOptions,
+  counters: { reusedRollouts: number; inspectedRollouts: number },
+  seenRolloutPaths: Set<string>
+): RolloutFile | undefined {
+  assertScanActive(options);
+  const normalizedPath = normalizePath(filePath);
   let stat: fs.Stats;
   try {
     stat = fs.statSync(filePath);
+    if (!stat.isFile()) return undefined;
+  } catch {
+    return undefined;
+  }
+  const signature = `${rolloutLocation(filePath)}:${stat.size}:${stat.mtimeMs}`;
+  seenRolloutPaths.add(normalizedPath);
+  const cached = options.cache?.rollouts.get(normalizedPath);
+  if (cached?.signature === signature) {
+    counters.reusedRollouts += 1;
+    return cached.file;
+  }
+  const file = inspectExistingPathSync(filePath, stat);
+  if (file) {
+    counters.inspectedRollouts += 1;
+    options.cache?.rollouts.set(normalizedPath, { signature, file });
+  }
+  return file;
+}
+
+function inspectExistingPathSync(filePath: string, existingStat?: fs.Stats): RolloutFile | undefined {
+  let stat: fs.Stats;
+  try {
+    stat = existingStat ?? fs.statSync(filePath);
     if (!stat.isFile()) return undefined;
   } catch {
     return undefined;
@@ -947,6 +1171,38 @@ function uniqueRollouts(files: readonly RolloutFile[]): RolloutFile[] {
     seen.add(file.normalizedPath);
     return true;
   });
+}
+
+function sortRolloutsByStart(files: readonly RolloutFile[]): RolloutFile[] {
+  return [...files].sort((left, right) => (
+    path.basename(left.path).localeCompare(path.basename(right.path), 'en')
+      || left.path.localeCompare(right.path, 'en')
+  ));
+}
+
+function isRolloutSegmentChain(files: readonly RolloutFile[], threadId: string): boolean {
+  if (files.length < 2) return false;
+  const normalizedThreadId = threadId.toLowerCase();
+  const suffixIds = new Set<string>();
+  let baseFiles = 0;
+  let segmentFiles = 0;
+
+  for (const file of files) {
+    if (!file.metaValid || file.sessionId?.toLowerCase() !== normalizedThreadId) return false;
+    const filenameIds = path.basename(file.path).match(THREAD_ID_ANY_PATTERN) ?? [];
+    if (filenameIds[0]?.toLowerCase() !== normalizedThreadId) return false;
+    if (filenameIds.length === 1) {
+      baseFiles += 1;
+      continue;
+    }
+    if (filenameIds.length !== 2) return false;
+    const suffixId = filenameIds[1].toLowerCase();
+    if (suffixId === normalizedThreadId || suffixIds.has(suffixId)) return false;
+    suffixIds.add(suffixId);
+    segmentFiles += 1;
+  }
+
+  return baseFiles <= 1 && segmentFiles > 0;
 }
 
 function preferredRollout(files: readonly RolloutFile[]): RolloutFile {

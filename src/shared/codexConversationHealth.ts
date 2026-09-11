@@ -102,3 +102,62 @@ export interface CodexConversationHealthReport {
   };
   readonly conversations: readonly CodexConversationHealthRow[];
 }
+
+export type CodexConversationFilter = 'all' | 'issues' | 'healthy';
+export type CodexConversationSortKey = 'title' | 'status' | 'updated';
+export type CodexConversationSortDirection = 'asc' | 'desc';
+
+export interface CodexConversationHealthSummaryRow {
+  readonly threadId: string;
+  readonly title: string;
+  readonly status: CodexConversationHealthStatus;
+  readonly primaryIssueTitle: string;
+  readonly issueCount: number;
+  readonly updatedAt?: string;
+  readonly fileModifiedAt?: string;
+}
+
+export interface CodexConversationScanPerformance {
+  readonly durationMs: number;
+  readonly reusedRollouts: number;
+  readonly inspectedRollouts: number;
+  readonly reusedDatabases: number;
+  readonly inspectedDatabases: number;
+}
+
+export interface CodexConversationPageRequest {
+  readonly requestId: string;
+  readonly page: number;
+  readonly pageSize: number;
+  readonly query: string;
+  readonly filter: CodexConversationFilter;
+  readonly sortKey: CodexConversationSortKey;
+  readonly sortDirection: CodexConversationSortDirection;
+  readonly refresh?: boolean;
+}
+
+export interface CodexConversationPageResponse {
+  readonly requestId: string;
+  readonly snapshotId: string;
+  readonly generatedAt: string;
+  readonly codexHome: string;
+  readonly configPath: string;
+  readonly activeProvider: string;
+  readonly configuredProviders: readonly string[];
+  readonly databases: readonly CodexConversationDatabaseHealth[];
+  readonly scanScope: CodexConversationHealthReport['scanScope'];
+  readonly scanComplete: boolean;
+  readonly scanIssues: readonly CodexConversationIssue[];
+  readonly truncated: boolean;
+  readonly summary: CodexConversationHealthReport['summary'];
+  readonly page: number;
+  readonly pageSize: number;
+  readonly total: number;
+  readonly rows: readonly CodexConversationHealthSummaryRow[];
+  readonly performance: CodexConversationScanPerformance;
+}
+
+export interface CodexConversationDetailRequest {
+  readonly snapshotId: string;
+  readonly threadId: string;
+}

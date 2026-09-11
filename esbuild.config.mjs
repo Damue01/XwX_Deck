@@ -17,7 +17,8 @@ await esbuild.build({
     main: 'src/main/main.ts',
     preload: 'src/main/preload.ts',
     'gateway-helper': 'src/main/gatewayHelper.ts',
-    'exit-recovery': 'src/main/exitRecovery.ts'
+    'exit-recovery': 'src/main/exitRecovery.ts',
+    'codex-conversation-worker': 'src/main/codexConversationWorker.ts'
   },
   bundle: true,
   platform: 'node',
