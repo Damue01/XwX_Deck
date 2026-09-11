@@ -33,6 +33,10 @@ export interface AppliedTraceIndexRepair extends TraceIndexRepairPlan {
   readonly recoveredSessions: number;
 }
 export type {
+  CodexConversationFilter,
+  CodexConversationHealthSummaryRow,
+  CodexConversationSortKey,
+  CodexConversationSortDirection,
   CodexConversationDetailRequest,
   CodexConversationDatabaseHealth,
   CodexConversationHealthReport,
@@ -324,6 +328,7 @@ export interface XwXDeckApi {
   diagnoseCodexConversations(): Promise<CodexConversationHealthReport>;
   queryCodexConversations(request: CodexConversationPageRequest): Promise<CodexConversationPageResponse>;
   detailCodexConversation(request: CodexConversationDetailRequest): Promise<CodexConversationHealthRow>;
+  setCodexConversationDiagnosticsActive(active: boolean): Promise<void>;
   cancelCodexConversationScan(requestId: string): Promise<boolean>;
   openCodexConversationPath(filePath: string): Promise<void>;
   copyText(value: string): Promise<void>;

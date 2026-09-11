@@ -5,14 +5,20 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   FolderOpen,
   LoaderCircle,
   RefreshCw,
   Search
 } from 'lucide-react';
 import type {
-  CodexConversationHealthReport,
-  CodexConversationHealthRow
+  CodexConversationFilter as ConversationFilter,
+  CodexConversationHealthSummaryRow,
+  CodexConversationHealthRow,
+  CodexConversationPageResponse,
+  CodexConversationSortDirection as ConversationSortDirection,
+  CodexConversationSortKey as ConversationSortKey
 } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
 import { isDesktop } from '@/bridge/api';
@@ -23,10 +29,7 @@ interface Props {
   readonly active: boolean;
 }
 
-type ConversationFilter = 'all' | 'issues' | 'healthy';
-type ConversationWorkspaceFilter = CodexConversationHealthRow['workspaceKind'] | 'all';
-type ConversationSortKey = 'title' | 'workspace' | 'location' | 'status' | 'updated';
-type ConversationSortDirection = 'asc' | 'desc';
+const CONVERSATION_PAGE_SIZE = 120;
 
 interface ConversationSortState {
   readonly key: ConversationSortKey;
@@ -36,6 +39,10 @@ interface ConversationSortState {
 interface ConversationHeaderOption {
   readonly value: string;
   readonly label: string;
+}
+
+function fileName(p: string): string {
+  return String(p || '').split(/[\\/]/).pop() || String(p || '');
 }
 
 function diagnosticError(error: unknown): string {
@@ -75,6 +82,19 @@ function formatTime(value: string | undefined): string {
   return [formatted.primary, formatted.secondary].filter(Boolean).join(' ');
 }
 
+function formatScanTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '时间未知';
+  const now = new Date();
+  const twoDigits = (part: number): string => String(part).padStart(2, '0');
+  const clock = `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
+  return date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate()
+    ? clock
+    : `${twoDigits(date.getMonth() + 1)}月${twoDigits(date.getDate())}日 ${clock}`;
+}
+
 function formatTableTime(value: string | undefined): {
   readonly primary: string;
   readonly secondary: string;
@@ -100,39 +120,8 @@ function conversationDetailId(threadId: string): string {
   return `conversation-detail-${threadId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
 }
 
-const conversationCollator = new Intl.Collator('zh-CN', {
-  numeric: true,
-  sensitivity: 'base'
-});
-
-const conversationStatusOrder: Record<CodexConversationHealthRow['status'], number> = {
-  error: 0,
-  warning: 1,
-  healthy: 2
-};
-
-const conversationLocationOrder: Record<CodexConversationHealthRow['location'], number> = {
-  sessions: 0,
-  archived_sessions: 1,
-  other: 2,
-  missing: 3
-};
-
-function conversationTimestamp(row: CodexConversationHealthRow): number {
-  const parsed = Date.parse(row.updatedAt || row.fileModifiedAt || '');
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function workspaceKindLabel(kind: CodexConversationHealthRow['workspaceKind']): string {
-  if (kind === 'project') return 'ChatGPT Project';
-  if (kind === 'directory') return '本地目录（未加入 Project）';
-  return '无工作区';
-}
-
-function conversationWorkspaceTitle(row: CodexConversationHealthRow): string {
-  if (row.workspaceKind === 'project') return `ChatGPT Project：${row.projectName || row.workspaceName}`;
-  if (row.workspaceKind === 'directory') return `本地目录：${row.cwd || row.workspaceName}`;
-  return '无工作区';
+function conversationHasAmbiguousFiles(row: CodexConversationHealthRow): boolean {
+  return row.issues.some(issue => issue.code === 'multiple_rollout_candidates');
 }
 
 function ConversationHeaderMenu({
@@ -297,96 +286,51 @@ function ConversationPathChain({
   );
 }
 
-function ConversationWorkspaceFacts({
-  row,
+function ConversationPathList({
+  paths,
   onCopy
 }: {
-  readonly row: CodexConversationHealthRow;
+  readonly paths: readonly string[];
   readonly onCopy: (label: string, value: string) => void;
 }): React.ReactElement {
-  const roots = row.projectRoots ?? [];
-  const facts: Array<{
-    label: string;
-    value: string;
-    copyLabel?: string;
-    copyValue?: string;
-  }> = [
-    { label: '工作区', value: row.workspaceName || '—' },
-    { label: '归属类型', value: workspaceKindLabel(row.workspaceKind) },
-    {
-      label: 'Project ID',
-      value: row.projectId || '—',
-      ...(row.projectId ? { copyLabel: 'Project ID', copyValue: row.projectId } : {})
-    },
-    {
-      label: '工作目录',
-      value: row.cwd || '—',
-      ...(row.cwd ? { copyLabel: '工作目录', copyValue: row.cwd } : {})
-    },
-    {
-      label: '主目录',
-      value: roots[0] || '—',
-      ...(roots[0] ? { copyLabel: 'Project 主目录', copyValue: roots[0] } : {})
-    }
-  ];
-
   return (
-    <section className="conversation-workspace-facts" aria-label="工作归属">
-      <h4>工作归属</h4>
-      <dl>
-        {facts.map(fact => (
-          <div key={fact.label}>
-            <dt>{fact.label}</dt>
-            <dd>
-              {fact.copyValue && fact.copyLabel ? (
-                <button
-                  type="button"
-                  className="conversation-copy-value"
-                  aria-label={`复制${fact.copyLabel}`}
-                  title={`点击复制${fact.copyLabel}`}
-                  onClick={() => onCopy(fact.copyLabel!, fact.copyValue!)}
-                >
-                  <code>{fact.value}</code>
-                </button>
-              ) : <span title={fact.value}>{fact.value}</span>}
-            </dd>
-          </div>
-        ))}
-        <div>
-          <dt>其他目录</dt>
-          <dd className="conversation-workspace-roots">
-            {roots.length > 1 ? roots.slice(1).map(root => (
-              <button
-                type="button"
-                className="conversation-copy-value"
-                aria-label="复制 Project 其他目录"
-                title="点击复制 Project 其他目录"
-                onClick={() => onCopy('Project 其他目录', root)}
-                key={root}
-              >
-                <code>{root}</code>
-              </button>
-            )) : <span>—</span>}
-          </dd>
-        </div>
-      </dl>
-    </section>
+    <div className="conversation-path-list">
+      {paths.map(candidate => (
+        <button
+          type="button"
+          className="conversation-copy-value"
+          aria-label={`复制 JSONL 文件路径：${fileName(candidate)}`}
+          title="点击复制 JSONL 文件路径"
+          onClick={() => onCopy('JSONL 文件路径', candidate)}
+          key={candidate}
+        >
+          <code>{candidate}</code>
+        </button>
+      ))}
+    </div>
   );
 }
 
 function ConversationHealthTool({ active }: { active: boolean }): React.ReactElement {
   const bridge = useBridge();
-  const [report, setReport] = React.useState<CodexConversationHealthReport | null>(null);
+  const [report, setReport] = React.useState<CodexConversationPageResponse | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
   const [query, setQuery] = React.useState('');
   const [filter, setFilter] = React.useState<ConversationFilter>('all');
-  const [workspaceFilter, setWorkspaceFilter] = React.useState<ConversationWorkspaceFilter>('all');
-  const [locationFilter, setLocationFilter] = React.useState<CodexConversationHealthRow['location'] | 'all'>('all');
   const [sort, setSort] = React.useState<ConversationSortState>({ key: 'status', direction: 'asc' });
   const [selectedId, setSelectedId] = React.useState('');
-  const loadedRef = React.useRef(false);
-  const scanningRef = React.useRef(false);
+  const [page, setPage] = React.useState(0);
+  const [details, setDetails] = React.useState<Map<string, CodexConversationHealthRow>>(() => new Map());
+  const [detailLoadingId, setDetailLoadingId] = React.useState('');
+  const [detailError, setDetailError] = React.useState('');
+  const mountedRef = React.useRef(true);
+  const activeRef = React.useRef(active);
+  activeRef.current = active;
+  const detailSequenceRef = React.useRef(0);
+  const activeRequestRef = React.useRef('');
+  const requestSequenceRef = React.useRef(0);
+  const snapshotIdRef = React.useRef('');
   const deferredQuery = React.useDeferredValue(query);
 
   const copyValue = React.useCallback((label: string, value: string): void => {
@@ -397,116 +341,101 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
     });
   }, [bridge.api]);
 
-  const scan = React.useCallback(async () => {
-    if (scanningRef.current) return;
-    scanningRef.current = true;
+  const loadPage = React.useCallback(async (refresh = false) => {
+    if (!activeRef.current) return;
+    setSelectedId('');
+    setDetailLoadingId('');
+    const previousRequestId = activeRequestRef.current;
+    if (previousRequestId) void bridge.api.cancelCodexConversationScan(previousRequestId).catch(() => undefined);
+    const requestId = `conversation:${Date.now()}:${++requestSequenceRef.current}`;
+    activeRequestRef.current = requestId;
     setLoading(true);
     setError('');
     try {
-      const next = await bridge.api.diagnoseCodexConversations();
+      const next = await bridge.api.queryCodexConversations({
+        requestId,
+        page,
+        pageSize: CONVERSATION_PAGE_SIZE,
+        query: deferredQuery,
+        filter,
+        sortKey: sort.key,
+        sortDirection: sort.direction,
+        refresh
+      });
+      if (!mountedRef.current || activeRequestRef.current !== requestId) return;
+      const snapshotChanged = snapshotIdRef.current !== next.snapshotId;
+      snapshotIdRef.current = next.snapshotId;
       setReport(next);
-      setSelectedId(previous => (
-        previous && next.conversations.some(row => row.threadId === previous)
-          ? previous
-          : ''
-      ));
-      setWorkspaceFilter(previous => (
-        previous === 'all' || next.conversations.some(row => row.workspaceKind === previous)
-          ? previous
-          : 'all'
-      ));
-      setLocationFilter(previous => (
-        previous === 'all' || next.conversations.some(row => row.location === previous)
-          ? previous
-          : 'all'
-      ));
-      loadedRef.current = true;
+      if (next.page !== page) setPage(next.page);
+      if (snapshotChanged) {
+        detailSequenceRef.current += 1;
+        setDetailLoadingId('');
+        setDetails(new Map());
+        setSelectedId('');
+      } else {
+        setSelectedId(previous => previous && next.rows.some(row => row.threadId === previous) ? previous : '');
+      }
+      setDetailError('');
     } catch (scanError) {
+      if (!mountedRef.current || activeRequestRef.current !== requestId) return;
       const message = diagnosticError(scanError);
+      if (message.includes('扫描已取消')) return;
       setError(message);
       showToast(message, 'error');
     } finally {
-      scanningRef.current = false;
-      setLoading(false);
+      if (mountedRef.current && activeRequestRef.current === requestId) {
+        activeRequestRef.current = '';
+        setLoading(false);
+      }
     }
-  }, [bridge.api]);
+  }, [bridge.api, deferredQuery, filter, page, sort.direction, sort.key]);
 
   React.useEffect(() => {
-    if (active && !loadedRef.current) void scan();
-  }, [active, scan]);
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
-  const workspaceFilterOptions = React.useMemo<readonly ConversationHeaderOption[]>(() => {
-    const present = new Set((report?.conversations ?? []).map(row => row.workspaceKind));
-    return [
-      { value: 'all', label: '全部工作区' },
-      ...(['project', 'directory', 'none'] as const)
-        .filter(value => present.has(value))
-        .map(value => ({ value, label: workspaceKindLabel(value) }))
-    ];
-  }, [report]);
+  React.useEffect(() => {
+    void bridge.api.setCodexConversationDiagnosticsActive(active).catch(() => undefined);
+    if (active) void loadPage(false);
+    return () => {
+      const requestId = activeRequestRef.current;
+      activeRequestRef.current = '';
+      detailSequenceRef.current += 1;
+      if (requestId) void bridge.api.cancelCodexConversationScan(requestId).catch(() => undefined);
+      void bridge.api.setCodexConversationDiagnosticsActive(false).catch(() => undefined);
+    };
+  }, [active, bridge.api, loadPage]);
 
-  const locationFilterOptions = React.useMemo<readonly ConversationHeaderOption[]>(() => {
-    const present = new Set((report?.conversations ?? []).map(row => row.location));
-    return [
-      { value: 'all', label: '全部文件位置' },
-      ...(['sessions', 'archived_sessions', 'other', 'missing'] as const)
-        .filter(value => present.has(value))
-        .map(value => ({ value, label: locationLabel(value) }))
-    ];
-  }, [report]);
+  const pageRows = report?.rows ?? [];
+  const pageCount = Math.max(1, Math.ceil((report?.total ?? 0) / CONVERSATION_PAGE_SIZE));
+  const safePage = report?.page ?? page;
+  const pageOffset = safePage * CONVERSATION_PAGE_SIZE;
 
-  const rows = React.useMemo(() => {
-    const needle = deferredQuery.trim().toLocaleLowerCase();
-    const filteredRows = (report?.conversations ?? []).filter(row => {
-      if (filter === 'issues' && row.status === 'healthy') return false;
-      if (filter === 'healthy' && row.status !== 'healthy') return false;
-      if (workspaceFilter !== 'all' && row.workspaceKind !== workspaceFilter) return false;
-      if (locationFilter !== 'all' && row.location !== locationFilter) return false;
-      if (!needle) return true;
-      return [
-        row.threadId,
-        row.title,
-        row.preview,
-        row.workspaceName,
-        row.projectId,
-        row.projectName,
-        row.cwd,
-        ...row.projectRoots,
-        row.sqliteProvider,
-        row.sessionProvider,
-        row.rolloutPath,
-        row.resolvedPath,
-        ...row.databasePaths,
-        ...row.candidatePaths,
-        ...row.issues.flatMap(issue => [issue.title, issue.detail])
-      ].some(value => String(value || '').toLocaleLowerCase().includes(needle));
-    });
-
-    const direction = sort.direction === 'asc' ? 1 : -1;
-    return filteredRows.sort((left, right) => {
-      let comparison = 0;
-      if (sort.key === 'title') {
-        comparison = conversationCollator.compare(left.title || left.threadId, right.title || right.threadId);
-      } else if (sort.key === 'workspace') {
-        comparison = conversationCollator.compare(
-          left.workspaceName || workspaceKindLabel(left.workspaceKind),
-          right.workspaceName || workspaceKindLabel(right.workspaceKind)
-        );
-      } else if (sort.key === 'location') {
-        comparison = conversationLocationOrder[left.location] - conversationLocationOrder[right.location];
-      } else if (sort.key === 'status') {
-        comparison = conversationStatusOrder[left.status] - conversationStatusOrder[right.status];
-      } else {
-        const leftTime = conversationTimestamp(left);
-        const rightTime = conversationTimestamp(right);
-        if (!leftTime && rightTime) return 1;
-        if (leftTime && !rightTime) return -1;
-        comparison = leftTime - rightTime;
-      }
-      if (comparison !== 0) return comparison * direction;
-      return conversationTimestamp(right) - conversationTimestamp(left);
-    });
-  }, [deferredQuery, filter, locationFilter, report, sort, workspaceFilter]);
+  const loadDetail = React.useCallback(async (row: CodexConversationHealthSummaryRow): Promise<void> => {
+    if (!report || details.has(row.threadId)) return;
+    const expectedSnapshotId = report.snapshotId;
+    const detailSequence = ++detailSequenceRef.current;
+    setDetailLoadingId(row.threadId);
+    setDetailError('');
+    try {
+      const detail = await bridge.api.detailCodexConversation({
+        snapshotId: expectedSnapshotId,
+        threadId: row.threadId
+      });
+      if (!mountedRef.current || !activeRef.current || detailSequenceRef.current !== detailSequence || snapshotIdRef.current !== expectedSnapshotId) return;
+      setDetails(previous => {
+        const next = new Map(previous);
+        next.set(row.threadId, detail);
+        return next;
+      });
+    } catch (detailLoadError) {
+      if (!mountedRef.current || !activeRef.current || detailSequenceRef.current !== detailSequence) return;
+      setDetailError(diagnosticError(detailLoadError));
+    } finally {
+      if (mountedRef.current && detailSequenceRef.current === detailSequence) setDetailLoadingId('');
+    }
+  }, [bridge.api, details, report]);
 
   const updateSort = React.useCallback((
     key: ConversationSortKey,
@@ -514,6 +443,7 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
   ): void => {
     setSort({ key, direction });
     setSelectedId('');
+    setPage(0);
   }, []);
 
   const scanProblem = report?.scanIssues.some(issue => issue.severity === 'error');
@@ -543,24 +473,32 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                 type="search"
                 size="sm"
                 value={query}
-                placeholder="搜索标题、任务 ID、工作区、Provider 或路径"
+                placeholder="搜索标题、任务 ID、Provider 或路径"
                 aria-label="搜索对话"
-                onChange={event => setQuery(event.target.value)}
+                onChange={event => {
+                  setQuery(event.target.value);
+                  setPage(0);
+                }}
               />
             </label>
             <span
               className="conversation-toolbar-status"
               data-status={scanProblem ? 'error' : report.scanComplete ? 'healthy' : 'warning'}
               aria-live="polite"
+              title={`生成于 ${formatTime(report.generatedAt)}；扫描 ${report.performance.durationMs} ms；复用 ${report.performance.reusedRollouts} 个 Session 文件`}
             >
-              {report.scanComplete ? '扫描完成' : '扫描不完整'}
+              {loading
+                ? '扫描中'
+                : report.scanComplete
+                  ? `上次扫描 ${formatScanTimestamp(report.generatedAt)}`
+                  : `扫描不完整 · ${formatScanTimestamp(report.generatedAt)}`}
             </span>
             <button
               type="button"
               className="txt-action conversation-refresh"
               id="conversationDoctorScan"
               disabled={loading}
-              onClick={() => void scan()}
+              onClick={() => void loadPage(true)}
             >
               <RefreshCw className={loading ? 'conversation-spin' : ''} aria-hidden="true" />
               <span>{loading ? '扫描中' : '刷新'}</span>
@@ -587,8 +525,6 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
             <table className="conversation-table">
               <colgroup>
                 <col className="conversation-col-title" />
-                <col className="conversation-col-workspace" />
-                <col className="conversation-col-file" />
                 <col className="conversation-col-result" />
                 <col className="conversation-col-updated" />
               </colgroup>
@@ -601,36 +537,6 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                       sort={sort}
                       sortLabels={['标题 A 到 Z', '标题 Z 到 A']}
                       onSort={updateSort}
-                    />
-                  </th>
-                  <th aria-sort={sort.key === 'workspace' ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'}>
-                    <ConversationHeaderMenu
-                      label="工作区"
-                      sortKey="workspace"
-                      sort={sort}
-                      sortLabels={['名称 A 到 Z', '名称 Z 到 A']}
-                      onSort={updateSort}
-                      filterValue={workspaceFilter}
-                      filterOptions={workspaceFilterOptions}
-                      onFilter={value => {
-                        setWorkspaceFilter(value as ConversationWorkspaceFilter);
-                        setSelectedId('');
-                      }}
-                    />
-                  </th>
-                  <th aria-sort={sort.key === 'location' ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'}>
-                    <ConversationHeaderMenu
-                      label="文件"
-                      sortKey="location"
-                      sort={sort}
-                      sortLabels={['活动优先', '缺失优先']}
-                      onSort={updateSort}
-                      filterValue={locationFilter}
-                      filterOptions={locationFilterOptions}
-                      onFilter={value => {
-                        setLocationFilter(value as CodexConversationHealthRow['location'] | 'all');
-                        setSelectedId('');
-                      }}
                     />
                   </th>
                   <th aria-sort={sort.key === 'status' ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'}>
@@ -649,6 +555,7 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                       onFilter={value => {
                         setFilter(value as ConversationFilter);
                         setSelectedId('');
+                        setPage(0);
                       }}
                     />
                   </th>
@@ -665,23 +572,29 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                 </tr>
               </thead>
               <tbody>
-                {rows.map(row => {
+                {pageRows.map(row => {
                   const expanded = row.threadId === selectedId;
                   const detailId = conversationDetailId(row.threadId);
-                  const fileSummary = row.candidatePaths.length > 1
-                    ? `多个文件 · ${row.candidatePaths.length} 个`
-                    : locationLabel(row.location);
+                  const detail = details.get(row.threadId);
+                  const ambiguousFiles = detail ? conversationHasAmbiguousFiles(detail) : false;
+                  const hasSegments = !!detail && detail.candidatePaths.length > 1 && !ambiguousFiles;
                   const resultSummary = [
-                    row.issues[0]?.title || '一致',
-                    row.issues.length > 1 ? `另 ${row.issues.length - 1} 项` : ''
+                    row.primaryIssueTitle,
+                    row.issueCount > 1 ? `另 ${row.issueCount - 1} 项` : ''
                   ].filter(Boolean).join(' · ');
                   const updatedValue = row.updatedAt || row.fileModifiedAt;
                   const updatedTime = formatTableTime(updatedValue);
                   const toggleExpanded = (): void => {
-                    setSelectedId(expanded ? '' : row.threadId);
+                    if (expanded) {
+                      setSelectedId('');
+                      setDetailError('');
+                      return;
+                    }
+                    setSelectedId(row.threadId);
+                    void loadDetail(row);
                   };
                   return (
-                    <React.Fragment key={`${row.threadId}:${row.resolvedPath || row.rolloutPath || 'missing'}`}>
+                    <React.Fragment key={row.threadId}>
                       <tr
                         className="conversation-table-row"
                         data-status={row.status}
@@ -704,18 +617,10 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                           </span>
                         </td>
                         <td>
-                          <span className="conversation-workspace-summary" title={conversationWorkspaceTitle(row)}>
-                            {row.workspaceName || '—'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="conversation-file-summary" title={fileSummary}>{fileSummary}</span>
-                        </td>
-                        <td>
                           <span
                             className="conversation-result"
                             data-status={row.status}
-                            aria-label={`${healthStatusLabel(row.status)}：${row.issues[0]?.title || '一致'}`}
+                            aria-label={`${healthStatusLabel(row.status)}：${row.primaryIssueTitle}`}
                           >
                             {resultSummary}
                           </span>
@@ -734,66 +639,71 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                       </tr>
                       {expanded && (
                         <tr className="conversation-table-detail" id={detailId}>
-                          <td colSpan={5}>
+                          <td colSpan={3}>
                             <div className="conversation-inline-detail">
-                              {row.issues.length > 0 && (
-                                <ul>
-                                  {row.issues.map((issue, issueIndex) => (
-                                    <li data-severity={issue.severity} key={`${issue.code}:${issueIndex}`}>
-                                      <strong>{issue.title}</strong>
-                                      <span>{issue.detail}</span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                              <ConversationWorkspaceFacts row={row} onCopy={copyValue} />
-                              <ConversationPathChain row={row} onCopy={copyValue} />
-                              <div className="conversation-file-facts">
-                                <span><b>目录</b>{locationLabel(row.location)}</span>
-                                <span><b>大小</b>{formatBytes(row.fileSize)}</span>
-                                <span><b>修改时间</b>{formatTime(row.fileModifiedAt)}</span>
-                                <span><b>同 ID 文件</b>{row.candidatePaths.length}</span>
-                              </div>
-                              {row.candidatePaths.length > 1 && (
-                                <div className="conversation-candidates">
-                                  <b>找到的 JSONL</b>
-                                  {row.candidatePaths.map(candidate => (
-                                    <button
-                                      type="button"
-                                      className="conversation-copy-value"
-                                      aria-label="复制 JSONL 文件路径"
-                                      title="点击复制 JSONL 文件路径"
-                                      onClick={() => copyValue('JSONL 文件路径', candidate)}
-                                      key={candidate}
-                                    >
-                                      <code>{candidate}</code>
-                                    </button>
-                                  ))}
+                              {!detail && detailLoadingId === row.threadId && (
+                                <div className="conversation-detail-loading" aria-live="polite">
+                                  <LoaderCircle className="conversation-spin" aria-hidden="true" />
+                                  <span>正在读取 SQLite 与 Session 详情</span>
                                 </div>
                               )}
-                              <div className="conversation-field-groups">
-                                <section>
-                                  <h4>SQLite · threads</h4>
-                                  <ConversationFieldList fields={row.sqliteFields} empty="未进入索引" />
-                                </section>
-                                <section>
-                                  <h4>JSONL · session_meta</h4>
-                                  <ConversationFieldList fields={row.sessionFields} empty="无法读取" />
-                                </section>
-                              </div>
-                              {isDesktop() && row.resolvedPath && (
-                                <div className="conversation-open-actions">
-                                  <button
-                                    type="button"
-                                    className="txt-action conversation-open-link"
-                                    onClick={() => void bridge.api.openCodexConversationPath(row.resolvedPath!).catch(() => {
-                                      showToast('无法打开 Session 文件位置', 'error');
-                                    })}
-                                  >
-                                    <FolderOpen aria-hidden="true" />
-                                    <span>打开文件位置</span>
-                                  </button>
+                              {!detail && detailLoadingId !== row.threadId && (
+                                <div className="conversation-detail-loading is-error" role="status">
+                                  <span>{detailError || '详情暂时不可用，请收起后重试。'}</span>
                                 </div>
+                              )}
+                              {detail && (
+                                <>
+                                  {detail.issues.length > 0 && (
+                                    <ul>
+                                      {detail.issues.map((issue, issueIndex) => (
+                                        <li data-severity={issue.severity} key={`${issue.code}:${issueIndex}`}>
+                                          <strong>{issue.title}</strong>
+                                          {issue.code === 'multiple_rollout_candidates'
+                                            ? <ConversationPathList paths={detail.candidatePaths} onCopy={copyValue} />
+                                            : <span>{issue.detail}</span>}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  <ConversationPathChain row={detail} onCopy={copyValue} />
+                                  <div className="conversation-file-facts">
+                                    <span><b>目录</b>{locationLabel(detail.location)}</span>
+                                    <span><b>大小</b>{formatBytes(detail.fileSize)}</span>
+                                    <span><b>修改时间</b>{formatTime(detail.fileModifiedAt)}</span>
+                                    <span><b>{hasSegments ? '会话片段' : '同 ID 文件'}</b>{detail.candidatePaths.length}</span>
+                                  </div>
+                                  {hasSegments && (
+                                    <div className="conversation-candidates">
+                                      <b>续写片段</b>
+                                      <ConversationPathList paths={detail.candidatePaths} onCopy={copyValue} />
+                                    </div>
+                                  )}
+                                  <div className="conversation-field-groups">
+                                    <section>
+                                      <h4>SQLite · threads</h4>
+                                      <ConversationFieldList fields={detail.sqliteFields} empty="未进入索引" />
+                                    </section>
+                                    <section>
+                                      <h4>JSONL · session_meta</h4>
+                                      <ConversationFieldList fields={detail.sessionFields} empty="无法读取" />
+                                    </section>
+                                  </div>
+                                  {isDesktop() && detail.resolvedPath && (
+                                    <div className="conversation-open-actions">
+                                      <button
+                                        type="button"
+                                        className="txt-action conversation-open-link"
+                                        onClick={() => void bridge.api.openCodexConversationPath(detail.resolvedPath!).catch(() => {
+                                          showToast('无法打开 Session 文件位置', 'error');
+                                        })}
+                                      >
+                                        <FolderOpen aria-hidden="true" />
+                                        <span>打开文件位置</span>
+                                      </button>
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </div>
                           </td>
@@ -804,7 +714,7 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                 })}
               </tbody>
             </table>
-            {!rows.length && (
+            {!pageRows.length && (
               <div className="conversation-empty">
                 <strong>没有符合条件的对话</strong>
                 <span>调整搜索词或状态筛选。</span>
@@ -812,13 +722,46 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
             )}
           </div>
 
+          {report.total > 0 && (
+            <nav className="conversation-pagination" aria-label="对话列表分页">
+              <span>
+                {pageOffset + 1}–{pageOffset + pageRows.length} / {report.total}
+              </span>
+              <div>
+                <button
+                  type="button"
+                  className="txt-action"
+                  disabled={loading || safePage === 0}
+                  onClick={() => {
+                    setSelectedId('');
+                    setPage(current => Math.max(0, current - 1));
+                  }}
+                >
+                  <ChevronLeft aria-hidden="true" />
+                  <span>上一页</span>
+                </button>
+                <button
+                  type="button"
+                  className="txt-action"
+                  disabled={loading || safePage >= pageCount - 1}
+                  onClick={() => {
+                    setSelectedId('');
+                    setPage(current => Math.min(pageCount - 1, current + 1));
+                  }}
+                >
+                  <span>下一页</span>
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              </div>
+            </nav>
+          )}
+
           {report.truncated && <p className="conversation-scope-note">结果数量已达到显示上限。</p>}
         </>
       )}
     </div>
   );
 }
-
 
 export function ToolsPage({ active }: Props): React.ReactElement {
   return (

@@ -165,7 +165,7 @@ try {
     );
   }
   // Standalone surface plus the three read-only conversation-diagnosis methods.
-  assert.equal(result.ipcMethods, 42);
+  assert.equal(result.ipcMethods, 43);
   assert.ok(Math.abs(result.ui.clearRowHeight - 48) <= 0.25, "clearRowHeight exceeds subpixel tolerance");
   assert.deepEqual(result.ui.faviconSize, { width: 256, height: 256 });
   assert.ok(result.ui.appearanceRightDelta <= 1, `appearance controls are misaligned by ${result.ui.appearanceRightDelta}px`);
@@ -182,6 +182,9 @@ try {
   assert.deepEqual(result.ui.initialViewport, { width: 1040, height: 560 });
   assert.ok(Math.abs(result.ui.initialWindowBounds.width - 1040) <= 2, `unexpected DPI-adjusted window width: ${result.ui.initialWindowBounds.width}`);
   assert.ok(Math.abs(result.ui.initialWindowBounds.height - 560) <= 2, `unexpected DPI-adjusted window height: ${result.ui.initialWindowBounds.height}`);
+  assert.deepEqual(result.ui.diagnosisHeaders, ['对话', '检查结果', '更新时间']);
+  assert.equal(result.ui.diagnosisPagedRows, 126);
+  assert.equal(result.ui.diagnosisDetailLoaded, true);
   assert.equal(result.ui.fieldPausedOffPage, true);
   assert.equal(result.ui.fieldRenderer, '2d');
   assert.equal(result.ui.rendererReusedAfterTrayClose, true);
@@ -200,7 +203,7 @@ try {
   assert.equal(result.traceCapture?.delta, 1);
   assert.equal(tracedUpstreamRequests, 1, 'the packaged Trace request must reach the isolated upstream exactly once');
   assert.equal(result.codexEnhancements.migrated.migratedJsonlFiles, 1);
-  assert.equal(result.codexEnhancements.restored.restoredStateRows, 1);
+  assert.equal(result.codexEnhancements.restored.restoredStateRows, 126);
   assert.deepEqual(result.clients.map(client => client.status), ['taken', 'taken']);
   assert.equal(await readFile(claudePath, 'utf8'), claudeOriginal);
   const stableCodexConfig = await readFile(codexPath, 'utf8');

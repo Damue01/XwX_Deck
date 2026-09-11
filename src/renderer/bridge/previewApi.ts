@@ -461,6 +461,7 @@ export function createPreviewApi(): XwXDeckApi {
       if (!row) throw new Error('未找到该对话的诊断详情。');
       return row;
     },
+    setCodexConversationDiagnosticsActive: async () => undefined,
     cancelCodexConversationScan: async () => false,
     openCodexConversationPath: async () => undefined,
     copyText: async value => {

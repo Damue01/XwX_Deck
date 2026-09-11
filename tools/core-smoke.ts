@@ -10050,7 +10050,7 @@ async function testManagerIpcContract(): Promise<void> {
   assert.match(rendererSrc, /data-page=\{id\}/);
   assert.match(rendererSrc, /id="page-tools"/);
   assert.match(toolsPage, /id="conversationDoctor"/);
-  assert.match(toolsPage, /diagnoseCodexConversations/);
+  assert.match(toolsPage, /queryCodexConversations/);
   assert.match(toolsPage, /SQLite · threads/);
   assert.match(toolsPage, /JSONL · session_meta/);
   assert.doesNotMatch(toolsPage, /Excel 转 Markdown|excelDropzone|convertExcelFiles/,

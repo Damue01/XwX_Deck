@@ -1839,6 +1839,10 @@ export class XwXDeckController {
     return this.conversationWorker.cancel(requestId);
   }
 
+  setCodexConversationDiagnosticsActive(active: boolean): void {
+    this.conversationWorker.setActive(active);
+  }
+
   async openLogFolder(): Promise<void> {
     const root = this.logRootPath();
     await fs.promises.mkdir(root, { recursive: true });

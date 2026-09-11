@@ -13,9 +13,15 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     throw new Error('Packaged smoke fixtures were not provided.');
   }
 
+  const diagnosisFixtureRowCount = 126;
   const stateDbPath = path.join(codexHome, 'state_5.sqlite');
   const stateDb = new Database(stateDbPath);
-  stateDb.exec("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL); INSERT INTO threads VALUES ('packaged-official', 'openai');");
+  stateDb.exec("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL, title TEXT, rollout_path TEXT, updated_at INTEGER); INSERT INTO threads VALUES ('packaged-official', 'openai', 'Fixture official', NULL, 1789092000);");
+  const insertFixture = stateDb.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?)');
+  for (let index = 0; index < diagnosisFixtureRowCount - 1; index += 1) {
+    const suffix = String(index).padStart(3, '0');
+    insertFixture.run(`ui-fixture-${suffix}`, 'openai', `Fixture ${suffix}`, null, 1789092000 + index);
+  }
   stateDb.close();
 
   // Electron's executeJavaScript() collapses any rejection from the async block
@@ -43,6 +49,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
   const runScript = async () => {
     return managerWindow.webContents.executeJavaScript(`(async () => {
     try {
+    const diagnosisFixtureRowCount = ${JSON.stringify(diagnosisFixtureRowCount)};
     const skipStartupToggle = ${JSON.stringify(skipStartupToggle)};
     const preserveTrace = ${JSON.stringify(preserveTrace)};
     const compatibleServiceBaseUrl = ${JSON.stringify(compatibleServiceBaseUrl)};
@@ -53,7 +60,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       'getState', 'getTraceStats', 'getUpdateState', 'checkForUpdates', 'setStartupEnabled', 'setTheme', 'setTraceAppearance', 'chooseTraceBackground', 'clearTraceBackground', 'repairApplication', 'resetApplication', 'toggleTracing', 'toggleClient',
       'getCodexConfig', 'getCodexEnhancements', 'updateCodexEnhancements',
       'getProviders', 'saveProvider', 'deleteProvider', 'switchClientProvider', 'fetchProviderModels',
-      'diagnoseCodexConversations', 'queryCodexConversations', 'detailCodexConversation', 'cancelCodexConversationScan', 'openCodexConversationPath', 'copyText',
+      'diagnoseCodexConversations', 'queryCodexConversations', 'detailCodexConversation', 'cancelCodexConversationScan', 'setCodexConversationDiagnosticsActive', 'openCodexConversationPath', 'copyText',
       'inspectTraceIndexRepair', 'applyTraceIndexRepair',
       'getCompatibleServiceConfig', 'updateCompatibleServiceConfig', 'getModelServices', 'setModelService', 'isChatGptRunning',
       'getClaudeModels', 'updateClaudeModels', 'clearHistory', 'refresh', 'toggleMaximize', 'setManagerView', 'fetchModels',
@@ -270,6 +277,39 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       () => document.querySelector('#conversationDoctor .conversation-table'),
       'conversation diagnosis did not finish its initial scan'
     );
+    const diagnosisHeaders = [...document.querySelectorAll('#conversationDoctor thead th')].map(th => th.textContent.trim());
+    if (JSON.stringify(diagnosisHeaders) !== JSON.stringify(['对话', '检查结果', '更新时间'])) {
+      throw new Error('diagnosis table must expose exactly the three upstream columns: ' + diagnosisHeaders.join(', '));
+    }
+    const paginationRect = document.querySelector('.conversation-pagination').getBoundingClientRect();
+    if (paginationRect.top < 0 || paginationRect.bottom > innerHeight) throw new Error('diagnosis pagination is outside the default window viewport');
+    const diagnosisRows = () => [...document.querySelectorAll('#conversationDoctor .conversation-table-row')];
+    const diagnosisNext = () => [...document.querySelectorAll('.conversation-pagination button')].find(button => button.textContent.trim() === '下一页');
+    await waitFor(() => diagnosisRows().length === 120 && diagnosisNext() && !diagnosisNext().disabled, 'diagnosis did not render the first bounded page');
+    diagnosisNext().click();
+    await waitFor(() => diagnosisRows().length === diagnosisFixtureRowCount - 120 && diagnosisNext().disabled, 'diagnosis next page did not load from the worker');
+    diagnosisRows()[0].click();
+    await waitFor(() => document.querySelector('.conversation-table-detail .conversation-path-chain'), 'diagnosis row detail did not load on demand');
+    if (document.querySelector('.conversation-table-detail td')?.colSpan !== 3) throw new Error('diagnosis detail uses stale column span');
+    if (document.querySelector('#conversationDoctor').textContent.includes('packaged history body')) throw new Error('diagnosis exposed conversation body');
+    const searchInput = document.querySelector('input[aria-label="搜索对话"]');
+    const searchDiagnosis = value => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(searchInput, value);
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    searchDiagnosis('Fixture 124');
+    await waitFor(() => diagnosisRows().length === 1 && diagnosisRows()[0].textContent.includes('Fixture 124'), 'diagnosis search did not reset to the first filtered page');
+    searchDiagnosis('');
+    await waitFor(() => diagnosisRows().length === 120 && !diagnosisNext().disabled, 'diagnosis search did not restore the first page');
+    document.querySelector('button[aria-label="对话列，排序"]').click();
+    await waitFor(() => [...document.querySelectorAll('.conversation-header-menu-item')].some(item => item.textContent.trim() === '标题 A 到 Z'), 'diagnosis sort menu did not open');
+    [...document.querySelectorAll('.conversation-header-menu-item')].find(item => item.textContent.trim() === '标题 A 到 Z').click();
+    await waitFor(() => diagnosisRows()[0]?.textContent.includes('Fixture 000'), 'diagnosis title sorting did not reach the worker');
+    document.querySelector('#conversationDoctorScan').click();
+    signalButton.click();
+    await waitFor(() => document.getElementById('page-signal')?.classList.contains('current'), 'diagnosis could not leave during refresh');
+    toolsButton.click();
+    await waitFor(() => diagnosisRows().length === 120 && !document.querySelector('#conversationDoctorScan').disabled, 'diagnosis did not recover after cancellation and reopening');
     const removedSpreadsheetDropzoneId = ['excel', 'Dropzone'].join('');
     const removedSpreadsheetPanelId = ['tool-panel-', 'excel'].join('');
     if (document.getElementById(removedSpreadsheetDropzoneId) || document.getElementById(removedSpreadsheetPanelId)) {
@@ -451,15 +491,15 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     modelsButton.click();
     codexTab.click();
     const enhancementsOn = await api.updateCodexEnhancements({ unifySessionHistory: true, migrateExisting: true });
-    if (!enhancementsOn.unifySessionHistory || enhancementsOn.history?.migratedJsonlFiles !== 1 || enhancementsOn.history?.migratedStateRows !== 1) {
+    if (!enhancementsOn.unifySessionHistory || enhancementsOn.history?.migratedJsonlFiles !== 1 || enhancementsOn.history?.migratedStateRows !== diagnosisFixtureRowCount) {
       throw new Error('ChatGPT history migration did not update JSONL and SQLite');
     }
     const enhancementsOff = await api.updateCodexEnhancements({ unifySessionHistory: false, restoreExisting: true });
-    if (enhancementsOff.unifySessionHistory || enhancementsOff.history?.restoredJsonlFiles !== 1 || enhancementsOff.history?.restoredStateRows !== 1) {
+    if (enhancementsOff.unifySessionHistory || enhancementsOff.history?.restoredJsonlFiles !== 1 || enhancementsOff.history?.restoredStateRows !== diagnosisFixtureRowCount) {
       throw new Error('ChatGPT history restore did not restore JSONL and SQLite');
     }
     const keepCurrentOn = await api.updateCodexEnhancements({ unifySessionHistory: true, migrateExisting: true });
-    if (keepCurrentOn.history?.migratedJsonlFiles !== 1 || keepCurrentOn.history?.migratedStateRows !== 1) {
+    if (keepCurrentOn.history?.migratedJsonlFiles !== 1 || keepCurrentOn.history?.migratedStateRows !== diagnosisFixtureRowCount) {
       throw new Error('ChatGPT history did not migrate before the keep-current close case');
     }
     const keepCurrentOff = await api.updateCodexEnhancements({ unifySessionHistory: false, restoreExisting: false });
@@ -554,15 +594,15 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       throw new Error('stable xwx_deck history unexpectedly changed during official Trace');
     }
     const traceHistoryOff = await api.updateCodexEnhancements({ unifySessionHistory: false, restoreExisting: true });
-    if (traceHistoryOff.history?.restoredJsonlFiles !== 1 || traceHistoryOff.history?.restoredStateRows !== 1 || traceHistoryOff.historyRestorePending) {
+    if (traceHistoryOff.history?.restoredJsonlFiles !== 1 || traceHistoryOff.history?.restoredStateRows !== diagnosisFixtureRowCount || traceHistoryOff.historyRestorePending) {
       throw new Error('official Trace did not restore history immediately under the stable provider');
     }
     const traceHistoryReEnabled = await api.updateCodexEnhancements({ unifySessionHistory: true, migrateExisting: true });
-    if (traceHistoryReEnabled.historyRestorePending || traceHistoryReEnabled.history?.migratedJsonlFiles !== 1 || traceHistoryReEnabled.history?.migratedStateRows !== 1) {
+    if (traceHistoryReEnabled.historyRestorePending || traceHistoryReEnabled.history?.migratedJsonlFiles !== 1 || traceHistoryReEnabled.history?.migratedStateRows !== diagnosisFixtureRowCount) {
       throw new Error('history did not migrate back to xwx_deck during official Trace');
     }
     const traceHistoryOffAgain = await api.updateCodexEnhancements({ unifySessionHistory: false, restoreExisting: true });
-    if (traceHistoryOffAgain.historyRestorePending || traceHistoryOffAgain.history?.restoredJsonlFiles !== 1 || traceHistoryOffAgain.history?.restoredStateRows !== 1) {
+    if (traceHistoryOffAgain.historyRestorePending || traceHistoryOffAgain.history?.restoredJsonlFiles !== 1 || traceHistoryOffAgain.history?.restoredStateRows !== diagnosisFixtureRowCount) {
       throw new Error('history did not restore immediately after re-migration');
     }
     await selectCodexProvider(compatible.displayName);
@@ -647,6 +687,9 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
         themePersisted: themeExpected,
         themeRestored: themeBefore,
         initialViewport,
+        diagnosisHeaders,
+        diagnosisPagedRows: diagnosisFixtureRowCount,
+        diagnosisDetailLoaded: true,
         fieldPausedOffPage: true,
         fieldRenderer: fieldCanvas.dataset.renderer,
       },

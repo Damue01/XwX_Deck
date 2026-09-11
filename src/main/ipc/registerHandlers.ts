@@ -137,6 +137,10 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
       if (typeof requestId !== 'string' || !requestId.trim()) throw new Error('无效的对话诊断请求 ID。');
       return requireController().cancelCodexConversationScan(requestId);
     },
+    'xwxdeck:set-codex-conversation-diagnostics-active': (_event, active) => {
+      if (typeof active !== 'boolean') throw new Error('无效的对话诊断活动状态。');
+      requireController().setCodexConversationDiagnosticsActive(active);
+    },
     'xwxdeck:open-codex-conversation-path': (_event, input) => {
       if (typeof input !== 'string' || !input.trim() || !isPathInsideCodexHome(input)) {
         throw new Error('无效的 ChatGPT 会话路径。');

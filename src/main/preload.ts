@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('xwxDeck', {
   diagnoseCodexConversations: () => ipcRenderer.invoke('xwxdeck:diagnose-codex-conversations'),
   queryCodexConversations: (payload: unknown) => ipcRenderer.invoke('xwxdeck:query-codex-conversations', payload),
   detailCodexConversation: (payload: unknown) => ipcRenderer.invoke('xwxdeck:detail-codex-conversation', payload),
+  setCodexConversationDiagnosticsActive: (active: boolean) => ipcRenderer.invoke('xwxdeck:set-codex-conversation-diagnostics-active', active),
   cancelCodexConversationScan: (requestId: unknown) => ipcRenderer.invoke('xwxdeck:cancel-codex-conversation-scan', requestId),
   openCodexConversationPath: (filePath: unknown) => ipcRenderer.invoke('xwxdeck:open-codex-conversation-path', filePath),
   copyText: async (value: unknown) => clipboard.writeText(String(value ?? '')),
