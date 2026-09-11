@@ -51,6 +51,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     const required = ${JSON.stringify([
       'getState', 'getTraceStats', 'getUpdateState', 'checkForUpdates', 'setStartupEnabled', 'setTheme', 'setTraceAppearance', 'chooseTraceBackground', 'clearTraceBackground', 'repairApplication', 'resetApplication', 'toggleTracing', 'toggleClient',
       'getCodexConfig', 'getCodexEnhancements', 'updateCodexEnhancements',
+      'diagnoseCodexConversations', 'openCodexConversationPath', 'copyText',
       'getCompatibleServiceConfig', 'updateCompatibleServiceConfig', 'getModelServices', 'setModelService', 'isChatGptRunning',
       'getClaudeModels', 'updateClaudeModels', 'clearHistory', 'refresh', 'toggleMaximize', 'setManagerView', 'fetchModels',
       'updateTraceDirectories'
@@ -92,6 +93,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     }
     const settingsButton = document.querySelector('.rail-btn[data-page="settings"]');
     const modelsButton = document.querySelector('.rail-btn[data-page="models"]');
+    const toolsButton = document.querySelector('.rail-btn[data-page="tools"]');
     const signalButton = document.querySelector('.rail-btn[data-page="signal"]');
     const fieldCanvas = document.querySelector('canvas.field');
     const appearanceTrigger = document.querySelector('[data-appearance-trigger]');
@@ -107,7 +109,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     const codexAuthToggle = document.getElementById('codexAuthToggle');
     const codexHistoryToggle = document.getElementById('codexHistoryToggle');
     const codexServiceToggle = document.getElementById('codexServiceToggle');
-    if (!settingsButton || !modelsButton || !signalButton || !fieldCanvas || !appearanceTrigger || !captureButton || !stopCaptureButton || !codexTab || !codexPanel) {
+    if (!settingsButton || !modelsButton || !toolsButton || !signalButton || !fieldCanvas || !appearanceTrigger || !captureButton || !stopCaptureButton || !codexTab || !codexPanel) {
       throw new Error('manager interaction controls are missing');
     }
     if (!startupToggle || !document.getElementById('page-settings')?.contains(startupToggle)) {
@@ -205,6 +207,21 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     }
     repairClose.click();
     await waitFor(() => !document.getElementById('repairCenterSheet'), 'repair center sheet did not close');
+    toolsButton.click();
+    await waitFor(
+      () => document.getElementById('page-tools')?.classList.contains('current'),
+      'tools navigation click was not handled'
+    );
+    await waitFor(
+      () => document.querySelector('#conversationDoctor .conversation-table'),
+      'conversation diagnosis did not finish its initial scan'
+    );
+    const removedSpreadsheetDropzoneId = ['excel', 'Dropzone'].join('');
+    const removedSpreadsheetPanelId = ['tool-panel-', 'excel'].join('');
+    if (document.getElementById(removedSpreadsheetDropzoneId) || document.getElementById(removedSpreadsheetPanelId)) {
+      throw new Error('removed Excel conversion UI returned with the conversation diagnosis page');
+    }
+    assertStableViewport('tools');
     signalButton.click();
     await waitFor(
       () => document.getElementById('page-signal')?.classList.contains('current'),

@@ -3,7 +3,7 @@
  * (clientConfig / clientConfigWriter) and the user-settings path (codexConfigManager).
  *
  * Full TOML syntax is intentionally out of scope: these helpers only update the
- * simple string and boolean assignments that XwX Deck owns.
+ * simple string, boolean, and integer assignments that XwX Deck owns.
  */
 
 import { escapeRegExp } from '../shared/str';
@@ -25,6 +25,20 @@ export function readTomlBooleanKey(text: string, key: string): boolean | undefin
   const re = new RegExp(String.raw`^\s*${escapeRegExp(key)}\s*=\s*(true|false)`, 'mi');
   const match = re.exec(text);
   return match ? match[1].toLowerCase() === 'true' : undefined;
+}
+
+/** Read a finite integer key from the supplied TOML fragment. */
+export function readTomlIntegerKey(text: string, key: string): number | undefined {
+  const re = new RegExp(String.raw`^\s*${escapeRegExp(key)}\s*=\s*([+-]?\d+)`, 'm');
+  const match = re.exec(text);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+/** Read a root-level integer key, never a key nested under `[section]`. */
+export function readTomlTopLevelInteger(text: string, key: string): number | undefined {
+  return readTomlIntegerKey(rootToml(text), key);
 }
 
 export function findTomlSection(text: string, header: string): { start: number; end: number } | undefined {
@@ -59,6 +73,17 @@ export function setTomlBooleanKey(
   return setTomlKey(text, newLine, booleanAssignmentPattern(key), options.sectionHeader);
 }
 
+/** Rewrite an integer key. Without `sectionHeader`, the assignment is root-level. */
+export function setTomlIntegerKey(
+  text: string,
+  key: string,
+  value: number,
+  options: { sectionHeader?: string } = {}
+): { text: string; changed: boolean } {
+  if (!Number.isSafeInteger(value)) throw new Error(`TOML integer ${key} must be a safe integer.`);
+  return setTomlKey(text, `${key} = ${value}`, integerAssignmentPattern(key), options.sectionHeader);
+}
+
 /** Remove a string assignment, optionally scoped to a section. */
 export function removeTomlStringKey(
   text: string,
@@ -91,6 +116,32 @@ export function removeTomlBooleanKey(
   const re = new RegExp(
     String.raw`^\s*${escapeRegExp(key)}\s*=\s*(?:true|false|"[^"]*"|'[^']*')\s*(?:#.*)?(?:\r?\n|$)`,
     'mi'
+  );
+  if (sectionHeader) {
+    const section = findTomlSection(text, sectionHeader);
+    if (!section) return { text, changed: false };
+    const sectionText = text.slice(section.start, section.end);
+    if (!re.test(sectionText)) return { text, changed: false };
+    return {
+      text: text.slice(0, section.start) + sectionText.replace(re, '') + text.slice(section.end),
+      changed: true
+    };
+  }
+
+  const root = rootToml(text);
+  if (!re.test(root)) return { text, changed: false };
+  return { text: root.replace(re, '') + text.slice(root.length), changed: true };
+}
+
+/** Remove an integer assignment, optionally scoped to a section. */
+export function removeTomlIntegerKey(
+  text: string,
+  key: string,
+  sectionHeader?: string
+): { text: string; changed: boolean } {
+  const re = new RegExp(
+    String.raw`^\s*${escapeRegExp(key)}\s*=\s*[+-]?\d+\s*(?:#.*)?(?:\r?\n|$)`,
+    'm'
   );
   if (sectionHeader) {
     const section = findTomlSection(text, sectionHeader);
@@ -160,6 +211,10 @@ function stringAssignmentPattern(key: string): RegExp {
 
 function booleanAssignmentPattern(key: string): RegExp {
   return new RegExp(String.raw`^\s*${escapeRegExp(key)}\s*=\s*(?:true|false|"[^"]*"|'[^']*')`, 'mi');
+}
+
+function integerAssignmentPattern(key: string): RegExp {
+  return new RegExp(String.raw`^\s*${escapeRegExp(key)}\s*=\s*[+-]?\d+`, 'm');
 }
 
 function detectEol(text: string): string {

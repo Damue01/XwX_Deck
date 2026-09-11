@@ -163,8 +163,8 @@ try {
       macUpdateBytes.toString('utf8')
     );
   }
-  // Standalone surface: 27 existing methods + repairApplication/resetApplication.
-  assert.equal(result.ipcMethods, 29);
+  // Standalone surface plus the three read-only conversation-diagnosis methods.
+  assert.equal(result.ipcMethods, 32);
   assert.equal(result.ui.clearRowHeight, 48);
   assert.deepEqual(result.ui.faviconSize, { width: 256, height: 256 });
   assert.ok(result.ui.appearanceRightDelta <= 1, `appearance controls are misaligned by ${result.ui.appearanceRightDelta}px`);

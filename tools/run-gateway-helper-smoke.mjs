@@ -132,12 +132,13 @@ try {
     traceRetention: { maxSessions: 50, maxStorageBytes: 1024 }
   });
   assert.equal(configured.generation, 1);
-  assert.deepEqual(configured.traceRetention, { maxSessions: 50, maxStorageBytes: 1024 });
+  assert.deepEqual(configured.traceRetention, { maxSessions: 0, maxStorageBytes: 0 },
+    'the helper must reject attempts to enable automatic Trace cleanup');
   assert.deepEqual(configured.capturedClients, []);
-  const cleanedState = await waitForGatewayState(runtime.gatewayPort, state => state.sessions?.length === 0);
-  assert.equal(cleanedState.storage.maxBytes, 1024,
-    'the helper-owned TraceStore must apply the manager disk budget');
-  assert.deepEqual(cleanedState.pricingModelIds, ['codex-auto-review', 'gpt-xwx-smoke'],
+  const configuredState = await waitForGatewayState(runtime.gatewayPort, state => state.sessions?.length === 2);
+  assert.equal(configuredState.storage.maxBytes, undefined,
+    'unsupported retention settings must not publish a storage budget');
+  assert.deepEqual(configuredState.pricingModelIds, ['codex-auto-review', 'gpt-xwx-smoke'],
     'the helper viewer must publish exact model IDs from the active route catalog');
 
   const first = await gateway(runtime.gatewayPort, { model: 'gpt-xwx-smoke', input: [] });
@@ -173,6 +174,7 @@ try {
     traceRetention: { maxSessions: 1, maxStorageBytes: 0 }
   });
   assert.equal(recording.recording, true);
+  assert.deepEqual(recording.traceRetention, { maxSessions: 0, maxStorageBytes: 0 });
   assert.deepEqual(recording.capturedClients, []);
   await gateway(
     runtime.gatewayPort,
@@ -191,9 +193,15 @@ try {
     { model: 'gpt-xwx-capture-b', input: 'captured B' },
     { 'session-id': 'retention-b' }
   );
-  const retainedState = await waitForGatewayState(runtime.gatewayPort, state => state.sessions?.length === 1);
-  assert.equal(retainedState.sessions[0]?.clientConversationKey, 'codex-cli:retention-b',
-    'the helper-owned TraceStore must enforce the configured Session budget');
+  const retainedState = await waitForGatewayState(runtime.gatewayPort, state => state.sessions?.length === 4);
+  assert.deepEqual(
+    retainedState.sessions
+      .map(session => session.clientConversationKey)
+      .filter(Boolean)
+      .sort(),
+    ['codex-cli:retention-a', 'codex-cli:retention-b'],
+    'the helper must retain both newly captured Sessions despite an unsupported positive budget'
+  );
 
   const stoppedRecording = await control(runtime.controlPort, token, '/control/configure', {
     generation: 3,
@@ -240,7 +248,7 @@ try {
 
   await control(runtime.controlPort, token, '/control/stop', {});
   await waitForClosed(runtime.controlPort);
-  console.log('PASS background Gateway preserves routes, applies Trace retention, reports captures and stops cleanly');
+  console.log('PASS background Gateway preserves routes, rejects automatic Trace cleanup, reports captures and stops cleanly');
 } finally {
   releaseForcedResponse?.();
   if (runtime?.controlPort) {

@@ -45,6 +45,10 @@ check(contract.providerFramework?.protocolSelection === 'per-model-metadata',
   'provider protocol selection must be driven by model metadata');
 check(contract.features?.repairCenter === true, 'repair center must remain enabled');
 check(contract.features?.safeExitRecovery === true, 'safe exit recovery must remain enabled');
+check(contract.features?.toolsPage === true && contract.features?.conversationDiagnostics === true,
+  'conversation diagnostics tools page must remain enabled');
+check(contract.features?.configurationSync === false && contract.features?.excelToMarkdown === false,
+  'configuration sync and Excel conversion must remain disabled');
 check(preload.includes('repairApplication') && preload.includes('resetApplication'),
   'preload must expose the repair center actions');
 check(handlers.includes('xwxdeck:repair-application') && handlers.includes('xwxdeck:reset-application'),
@@ -59,7 +63,7 @@ check(workflows.includes('npm run docs:build'), 'GitHub workflows must build the
 check(workflows.includes('write-public-release-manifest.mjs'), 'release workflow must create public update manifests');
 check(workflows.includes('--draft'), 'release workflow must create a draft before public release');
 for (const [label, content] of Object.entries({ app, rail, preload, handlers })) {
-  check(!/SyncPage|ToolsPage|config-sync|excel-progress|convert-excel|choose-excel|open-excel|read-excel/.test(content), `${label} still exposes a removed feature`);
+  check(!/SyncPage|config-sync|excel-progress|convert-excel|choose-excel|open-excel|read-excel/.test(content), `${label} still exposes a removed feature`);
 }
 if (failures.length) {
   console.error('Release contract check failed:');

@@ -2,10 +2,9 @@
   "schemaVersion": 1,
   "repositoryMode": "standalone",
   "historyStrategy": "new-root-history",
-  "sourceCommit": "65a02a3ae4f2ec1276889d066da0cba75025e215",
+  "sourceCommit": "0c07a367ae828d929bb39aee5748767d0635b218",
   "removedFeatures": [
     "configuration-sync",
-    "tools-page",
     "excel-to-markdown"
   ],
   "forbiddenPatterns": [

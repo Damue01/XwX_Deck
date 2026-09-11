@@ -360,16 +360,8 @@ function provider(value: unknown): 'official' | 'compatible' {
 }
 
 function normalizeTraceRetention(value: unknown): GatewayTraceRetention {
-  const record = value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-  const maxSessions = typeof record.maxSessions === 'number' && Number.isFinite(record.maxSessions)
-    ? Math.max(0, Math.floor(record.maxSessions))
-    : 0;
-  const maxStorageBytes = typeof record.maxStorageBytes === 'number' && Number.isFinite(record.maxStorageBytes)
-    ? Math.max(0, Math.floor(record.maxStorageBytes))
-    : 0;
-  return { maxSessions, maxStorageBytes };
+  void value;
+  return { maxSessions: 0, maxStorageBytes: 0 };
 }
 
 function capturedClientForSource(source: TapTraceSource | undefined): GatewayCapturedClient | undefined {

@@ -31,7 +31,7 @@ for (const relative of docs) {
   }
 }
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-for (const phrase of ['XwX Deck','0.1.0','Apache License 2.0','app.xwxdeck.desktop','45233-45242','客户端配置同步','工具页面','GitHub Releases']) {
+for (const phrase of ['XwX Deck','0.1.0','Apache License 2.0','app.xwxdeck.desktop','45233-45242','客户端配置同步','对话诊断','GitHub Releases']) {
   if (!readme.includes(phrase)) errors.push(`README.md: missing ${phrase}`);
 }
 const manual = fs.readFileSync(path.join(root, 'docs/user-manual.md'), 'utf8');

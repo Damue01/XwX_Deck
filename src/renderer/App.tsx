@@ -6,6 +6,7 @@ import { Titlebar } from '@/features/shell/Titlebar';
 import { Rail, type PageId } from '@/features/shell/Rail';
 import { SignalPage, TRACE_TOGGLE_REQUEST_EVENT } from '@/features/trace/SignalPage';
 import { ModelsPage } from '@/features/models/ModelsPage';
+import { ToolsPage } from '@/features/tools/ToolsPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { OnboardingTour } from '@/features/onboarding/OnboardingTour';
 import { UpdateNotification } from '@/features/shell/UpdateNotification';
@@ -87,6 +88,7 @@ function Shell(): React.ReactElement {
         <div className="stage">
           <SignalPage active={activePage === 'signal'} />
           <ModelsPage active={activePage === 'models'} />
+          <ToolsPage active={activePage === 'tools'} />
           <SettingsPage active={activePage === 'settings'} />
         </div>
       </div>

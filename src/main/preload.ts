@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { clipboard, contextBridge, ipcRenderer } from 'electron';
 
 type ClientId = 'claude-cli' | 'codex-cli';
 type StateListener = (state: unknown) => void;
@@ -31,6 +31,9 @@ contextBridge.exposeInMainWorld('xwxDeck', {
   isChatGptRunning: () => ipcRenderer.invoke('xwxdeck:is-chatgpt-running'),
   getCodexEnhancements: () => ipcRenderer.invoke('xwxdeck:get-codex-enhancements'),
   updateCodexEnhancements: (payload: unknown) => ipcRenderer.invoke('xwxdeck:update-codex-enhancements', payload),
+  diagnoseCodexConversations: () => ipcRenderer.invoke('xwxdeck:diagnose-codex-conversations'),
+  openCodexConversationPath: (filePath: unknown) => ipcRenderer.invoke('xwxdeck:open-codex-conversation-path', filePath),
+  copyText: async (value: unknown) => clipboard.writeText(String(value ?? '')),
   getCompatibleServiceConfig: () => ipcRenderer.invoke('xwxdeck:get-compatible-config'),
   updateCompatibleServiceConfig: (payload: unknown) => ipcRenderer.invoke('xwxdeck:update-compatible-config', payload),
   getModelServices: () => ipcRenderer.invoke('xwxdeck:get-model-services'),

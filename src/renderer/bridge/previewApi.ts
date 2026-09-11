@@ -1,6 +1,7 @@
 import type {
   ClientId,
   ClaudeModelSettings,
+  CodexConversationHealthReport,
   CodexAuthMode,
   CodexConfigSnapshot,
   CodexEnhancementsSnapshot,
@@ -29,6 +30,122 @@ export function createPreviewApi(): XwXDeckApi {
   const previewQuery = typeof location !== 'undefined' ? new URLSearchParams(location.search) : undefined;
   const hasTraceSkipped = previewQuery?.get('trace-skipped') === '1';
   const hasTraceLive = previewQuery?.get('trace-live') === '1' || previewQuery?.get('appearance') === '1';
+  const chatGptRestartRecommended = previewQuery?.get('chatgpt-restart') === '1';
+  const conversationHealthPreview = (): CodexConversationHealthReport => {
+    const now = new Date().toISOString();
+    const databasePath = 'C:\\Users\\demo\\.codex\\state_5.sqlite';
+    const activePath = 'C:\\Users\\demo\\.codex\\sessions\\2026\\08\\26\\rollout-active.jsonl';
+    const missingPath = 'C:\\Users\\demo\\.codex\\sessions\\2026\\08\\25\\rollout-missing.jsonl';
+    const candidatePath = 'C:\\Users\\demo\\.codex\\archived_sessions\\rollout-recovered.jsonl';
+    return {
+      generatedAt: now,
+      codexHome: 'C:\\Users\\demo\\.codex',
+      configPath: 'C:\\Users\\demo\\.codex\\config.toml',
+      activeProvider: 'xwx_deck',
+      configuredProviders: ['openai', 'xwx_deck'],
+      databases: [{
+        path: databasePath,
+        exists: true,
+        readable: true,
+        quickCheck: 'ok',
+        threadCount: 24,
+        walPresent: true,
+        walBytes: 524_288
+      }],
+      scanScope: 'index-and-session-meta',
+      scanComplete: true,
+      scanIssues: [],
+      truncated: false,
+      summary: {
+        indexedThreads: 24,
+        discoveredRollouts: 25,
+        healthy: 23,
+        warnings: 0,
+        errors: 1,
+        orphanRollouts: 0,
+        missingRollouts: 1
+      },
+      conversations: [{
+        threadId: '11111111-1111-4111-8111-111111111111',
+        title: '检查模型配置',
+        preview: '',
+        workspaceKind: 'project',
+        workspaceName: 'XwX Deck',
+        projectId: 'project-xwx-deck',
+        projectName: 'XwX Deck',
+        projectRoots: ['D:\\Work\\XwX_Deck'],
+        cwd: 'D:\\Work\\XwX_Deck',
+        indexed: true,
+        databasePaths: [databasePath],
+        rolloutPath: activePath,
+        resolvedPath: activePath,
+        candidatePaths: [activePath],
+        fileExists: true,
+        fileSize: 287_420,
+        fileModifiedAt: now,
+        location: 'sessions',
+        archived: false,
+        sqliteProvider: 'xwx_deck',
+        sessionProvider: 'xwx_deck',
+        sessionId: '11111111-1111-4111-8111-111111111111',
+        sqliteFields: [
+          { key: 'id', value: '11111111-1111-4111-8111-111111111111' },
+          { key: 'rollout_path', value: activePath },
+          { key: 'model_provider', value: 'xwx_deck' },
+          { key: 'project_id', value: 'project-xwx-deck' }
+        ],
+        sessionFields: [
+          { key: 'id', value: '11111111-1111-4111-8111-111111111111' },
+          { key: 'model_provider', value: 'xwx_deck' },
+          { key: 'source', value: 'vscode' }
+        ],
+        status: 'healthy',
+        issues: []
+      }, {
+        threadId: '22222222-2222-4222-8222-222222222222',
+        title: '恢复缺失的会话索引',
+        preview: '',
+        workspaceKind: 'directory',
+        workspaceName: 'Workspace',
+        projectRoots: [],
+        cwd: 'D:\\Work\\Workspace',
+        indexed: true,
+        databasePaths: [databasePath],
+        rolloutPath: missingPath,
+        resolvedPath: candidatePath,
+        candidatePaths: [candidatePath],
+        fileExists: true,
+        fileSize: 91_844,
+        fileModifiedAt: new Date(Date.now() - 3_600_000).toISOString(),
+        location: 'archived_sessions',
+        archived: false,
+        sqliteProvider: 'xwx_deck',
+        sessionProvider: 'xwx_deck',
+        sessionId: '22222222-2222-4222-8222-222222222222',
+        sqliteFields: [
+          { key: 'id', value: '22222222-2222-4222-8222-222222222222' },
+          { key: 'rollout_path', value: missingPath },
+          { key: 'model_provider', value: 'xwx_deck' }
+        ],
+        sessionFields: [
+          { key: 'id', value: '22222222-2222-4222-8222-222222222222' },
+          { key: 'model_provider', value: 'xwx_deck' }
+        ],
+        status: 'error',
+        issues: [{
+          code: 'rollout_file_missing',
+          severity: 'error',
+          title: '索引指向的文件不存在',
+          detail: missingPath
+        }, {
+          code: 'recovery_candidate',
+          severity: 'warning',
+          title: '发现可恢复文件',
+          detail: candidatePath
+        }]
+      }]
+    };
+  };
   const state: {
     tracingEnabled: boolean;
     theme: 'day' | 'night';
@@ -100,6 +217,7 @@ export function createPreviewApi(): XwXDeckApi {
     ...state,
     backgroundGatewayActive: state.tracingEnabled,
     backgroundGatewayAction: state.tracingEnabled ? 'close' : undefined,
+    chatGptRestartRecommended,
     readiness: {
       startupPhase: 'ready',
       proxyListening: state.tracingEnabled,
@@ -161,9 +279,9 @@ export function createPreviewApi(): XwXDeckApi {
   let claude: ClaudeModelSettings = { fable: '', opus: '', sonnet: '', haiku: '' };
   let codex: CodexConfigSnapshot = {
     configPath: '', authPath: '', exists: false,
-    mode: 'official', officialModel: '', authMode: 'unknown' as CodexAuthMode,
+    mode: 'official', officialModel: 'gpt-5.6-sol', authMode: 'unknown' as CodexAuthMode,
     activeProvider: 'openai', activeBaseUrl: 'https://api.openai.com/v1',
-    compatible: { provider: 'compatible', model: '', baseUrl: '', bearerToken: '' }
+    compatible: { provider: 'compatible', model: 'gpt-5.6-sol', baseUrl: '', bearerToken: '' }
   };
   let codexEnhancements: CodexEnhancementsSnapshot = {
     preserveOfficialLogin: true, authMode: 'unknown', unifySessionHistory: false,
@@ -278,6 +396,9 @@ export function createPreviewApi(): XwXDeckApi {
       codex = {
         ...codex, mode,
         officialModel: (value.officialModel as string) || codex.officialModel,
+        modelContextWindow: typeof value.modelContextWindow === 'number'
+          ? value.modelContextWindow
+          : value.modelContextWindow === null ? undefined : codex.modelContextWindow,
         activeProvider: mode === 'compatible' ? 'compatible' : 'openai',
         compatible: {
           ...codex.compatible,
@@ -287,6 +408,11 @@ export function createPreviewApi(): XwXDeckApi {
         }
       };
       return structuredClone(codex);
+    },
+    diagnoseCodexConversations: async () => conversationHealthPreview(),
+    openCodexConversationPath: async () => undefined,
+    copyText: async value => {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
     },
     getCompatibleServiceConfig: async () => ({ ...compatible }),
     updateCompatibleServiceConfig: async (value) => {
@@ -332,11 +458,22 @@ export function createPreviewApi(): XwXDeckApi {
     fetchModels: async () => {
       const openAiModels: ModelCatalogEntry[] = [
         {
+          id: 'gpt-5.6-sol',
+          vendor: 'OpenAI',
+          protocols: ['openai-responses', 'chat-completions'],
+          vision: true,
+          clients: ['codex'],
+          contextWindow: 1_050_000,
+          capabilitySources: { contextWindow: 'builtin' }
+        },
+        {
           id: 'gpt-5.5',
           vendor: 'OpenAI',
           protocols: ['openai-responses', 'chat-completions'],
           vision: true,
-          clients: ['codex']
+          clients: ['codex'],
+          contextWindow: 262_144,
+          capabilitySources: { contextWindow: 'models.dev' }
         }
       ];
       const multiProtocol = compatible.providerPreset === 'compatible'

@@ -16,6 +16,7 @@ import { ModelPicker } from './ModelPicker';
 import { CodexEnhancements } from './CodexEnhancements';
 import { isKnownNonConversationalModel, isOfficialCodexModelId } from '../../../main/app/codexProtocolPolicy';
 import { providerProfile } from '../../../shared/providerProfiles';
+import { codexContextVariants, type CodexContextVariant } from '../../../shared/codexContextVariants';
 
 type ClientTab = 'claude' | 'codex';
 type ClaudeRole = keyof ClaudeModelSettings;
@@ -114,9 +115,24 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   const codexCatalog = mergedCatalog.filter(m =>
     !isKnownNonConversationalModel(m.id)
     && (m.clients.includes('codex') || m.vendor === '已配置'));
-  const activeCodexCatalog = codexConfig?.mode === 'compatible'
-    ? codexCatalog
-    : codexCatalog.filter(model => isOfficialCodexModelId(model.id));
+  const activeCodexCatalog = React.useMemo(() => (
+    codexConfig?.mode === 'compatible'
+      ? codexCatalog
+      : codexCatalog.filter(model => isOfficialCodexModelId(model.id))
+  ), [codexCatalog, codexConfig?.mode]);
+  const codexChoices = React.useMemo(() => activeCodexCatalog.flatMap(model => (
+    codexContextVariants(model).map(variant => ({
+      variant,
+      catalogEntry: { ...model, id: variant.label }
+    }))
+  )), [activeCodexCatalog]);
+  const codexChoiceByLabel = React.useMemo(() => new Map(
+    codexChoices.map(choice => [choice.variant.label, choice.variant] as const)
+  ), [codexChoices]);
+  const codexChoiceCatalog = React.useMemo(
+    () => codexChoices.map(choice => choice.catalogEntry),
+    [codexChoices]
+  );
 
   const guard兼容服务 = React.useCallback((): boolean => {
     if (compatibleServiceReady(bridge.compatibleServiceConfig)) return true;
@@ -187,9 +203,15 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     }
   }, [bridge.api, bridge.patch, busyCodex, services, guard兼容服务, serviceName]);
 
-  const handleCodexModelChange = React.useCallback(async (modelId: string) => {
+  const handleCodexModelChange = React.useCallback(async (selection: string) => {
     const cfg = codexConfig;
     const mode = cfg?.mode ?? 'official';
+    const choice: CodexContextVariant = codexChoiceByLabel.get(selection) ?? {
+      modelId: selection,
+      label: selection,
+      contextWindow: null
+    };
+    const modelId = choice.modelId;
     try {
       const saved = await bridge.api.updateCodexConfig({
         mode,
@@ -197,14 +219,15 @@ export function ModelsPage({ active }: Props): React.ReactElement {
         compatibleModel: mode === 'compatible' ? modelId : (cfg?.compatible?.model ?? modelId),
         compatibleBaseUrl: bridge.compatibleServiceConfig?.baseUrl ?? cfg?.compatible?.baseUrl ?? '',
         compatibleBearerToken: bridge.compatibleServiceConfig?.bearerToken ?? cfg?.compatible?.bearerToken ?? '',
+        modelContextWindow: choice.contextWindow,
       });
       setCodexConfig(saved);
       bridge.patch({ codexConfig: saved });
-      showToast(`已选择 ${modelId}；协议由 XwX Deck 自动适配。`, 'success');
+      showToast(`已选择 ${choice.label}；协议由 XwX Deck 自动适配。`, 'success');
     } catch (error) {
       showToast(operationError(error, '无法保存 ChatGPT 配置'), 'error');
     }
-  }, [bridge.api, bridge.patch, codexConfig, bridge.compatibleServiceConfig]);
+  }, [bridge.api, bridge.patch, codexConfig, bridge.compatibleServiceConfig, codexChoiceByLabel]);
 
   const handleEnhancementsUpdate = React.useCallback(async (patch: Record<string, unknown>): Promise<CodexEnhancementsSnapshot> => {
     const updated = await bridge.api.updateCodexEnhancements(patch);
@@ -213,9 +236,18 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     return updated;
   }, [bridge.api, bridge.patch]);
 
-  const codexModelValue = codexConfig
+  const codexModelId = codexConfig
     ? (codexConfig.mode === 'compatible' ? codexConfig.compatible.model : codexConfig.officialModel)
     : '';
+  const codexModelValue = React.useMemo(() => {
+    if (!codexModelId) return '';
+    const variants = codexChoices
+      .map(choice => choice.variant)
+      .filter(variant => variant.modelId === codexModelId);
+    if (!variants.length) return codexModelId;
+    return variants.find(variant => variant.contextWindow === (codexConfig?.modelContextWindow ?? null))?.label
+      ?? variants[0].label;
+  }, [codexChoices, codexConfig?.modelContextWindow, codexModelId]);
 
   return (
     <section
@@ -308,7 +340,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
               <div className="fr-value">
                 <ModelPicker
                   value={codexModelValue}
-                  catalog={activeCodexCatalog}
+                  catalog={codexChoiceCatalog}
                   onChange={handleCodexModelChange}
                   allowCustomValue={id => !isKnownNonConversationalModel(id)
                     && (codexConfig?.mode === 'compatible' || isOfficialCodexModelId(id))}

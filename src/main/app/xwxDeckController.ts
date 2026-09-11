@@ -29,6 +29,8 @@ import { CodexConversationPortability } from '../trace/codexConversationPortabil
 import { CodexOfficialAuthManager } from '../trace/codexOfficialAuthManager';
 import { CodexModelCatalogManager } from '../trace/codexModelCatalogManager';
 import { CodexThreadTitleReader } from '../trace/codexThreadTitles';
+import { CodexConversationDoctor } from './codexConversationDoctor';
+import type { CodexConversationHealthReport } from '../../shared/codexConversationHealth';
 import { TapProxy } from '../trace/tapProxy';
 import { GatewayProcessClient } from '../trace/gatewayProcessClient';
 import { TraceProxy } from '../trace/traceProxy';
@@ -68,6 +70,8 @@ import {
   resolveCompatibleServiceCodexProtocol
 } from './codexProtocolPolicy';
 import { findOfficialModelRecord } from './officialModelRegistry';
+import { findBuiltInModelCapability } from './builtInModelCapabilityRegistry';
+import { codexContextVariants } from '../../shared/codexContextVariants';
 import {
   ClaudeModelSettings,
   XwXDeckSettings,
@@ -95,6 +99,7 @@ export interface XwXDeckRuntimeState {
   readonly dashboardUrl?: string;
   readonly backgroundGatewayActive: boolean;
   readonly backgroundGatewayAction?: 'close' | 'open';
+  readonly chatGptRestartRecommended: boolean;
   readonly externalTracePort?: number;
   readonly sessions: number;
   readonly traces: number;
@@ -140,6 +145,7 @@ interface EnableRollbackSnapshot {
   readonly clientTakeovers: readonly ClientTakeoverResult[];
   readonly clientsSeen: readonly ClientId[];
   readonly chatGptConnectionIssue: ChatGptConnectionIssue | undefined;
+  readonly chatGptRestartRecommended: boolean;
   readonly lastError: string | undefined;
 }
 
@@ -147,6 +153,7 @@ interface ClientToggleRollbackSnapshot {
   readonly settings: XwXDeckSettings;
   readonly clientTakeovers: readonly ClientTakeoverResult[];
   readonly chatGptConnectionIssue: ChatGptConnectionIssue | undefined;
+  readonly chatGptRestartRecommended: boolean;
   readonly lastError: string | undefined;
 }
 
@@ -166,6 +173,8 @@ export interface XwXDeckControllerOptions {
   readonly backgroundGateway?: boolean;
   /** Test hook; production defers JSONL/SQLite rewrites while ChatGPT is live. */
   readonly codexHistoryMutationAllowed?: () => Promise<boolean>;
+  /** Test hook for deciding whether a newly published Gateway needs a client restart notice. */
+  readonly chatGptRunning?: () => Promise<boolean>;
   /** Resolve the OS proxy for each upstream before publishing a client route. */
   readonly resolveUpstreamProxyUrl?: (url: string) => Promise<string | undefined>;
 }
@@ -295,6 +304,7 @@ export class XwXDeckController {
   private lastProxyRouteSummary = '';
   private lastError: string | undefined;
   private chatGptConnectionIssue: ChatGptConnectionIssue | undefined;
+  private chatGptRestartRecommended = false;
   private codexHistoryTimer: NodeJS.Timeout | undefined;
   private codexHistoryDeferredOperation: string | undefined;
   private codexHistoryDeferredAttempts = 0;
@@ -362,12 +372,20 @@ export class XwXDeckController {
     // probe; official direct + Trace off starts no helper at all.
     await this.clientOrchestrator.recoverOnStartup(port => probeTapPort(port));
     const startupCodex = await this.codexConfig.read().catch(() => undefined);
+    const startupGatewayPort = startupCodex && isLoopbackUrl(startupCodex.activeBaseUrl)
+      ? parsePort(startupCodex.activeBaseUrl)
+      : undefined;
+    const managedGatewayWasLive = startupGatewayPort !== undefined
+      && await probeTapPort(startupGatewayPort).catch(() => false);
     const needsProxy = !this.proxy.background
       || !this.settings.gatewayPaused && (
         this.settings.tracingEnabled
         || startupCodex?.mode === 'compatible'
         || !!startupCodex?.activeBaseUrl && isLoopbackUrl(startupCodex.activeBaseUrl)
       );
+    const chatGptWasRunningBeforeGateway = needsProxy
+      ? await this.chatGptRunningForRestartNotice()
+      : false;
     if (needsProxy) {
       await this.startProxyUnlocked('startup');
       this.setStartupPhase('proxy-listening');
@@ -416,6 +434,9 @@ export class XwXDeckController {
         log.warn(`[xwxdeck] startup restore skipped: ${this.lastError}`);
       }
     }
+    if (chatGptWasRunningBeforeGateway && this.codexGatewayEnabled && !managedGatewayWasLive) {
+      this.markChatGptRestartRecommended('XwX Deck started the ChatGPT Gateway after ChatGPT was already running');
+    }
     const readiness = await this.traceRuntimeReadiness();
     this.setStartupPhase(
       this.startupPhase === 'degraded'
@@ -457,6 +478,7 @@ export class XwXDeckController {
       clientTakeovers: this.clientTakeovers.map(takeover => ({ ...takeover })),
       clientsSeen: [...this.clientsSeenSinceEnable],
       chatGptConnectionIssue: this.chatGptConnectionIssue,
+      chatGptRestartRecommended: this.chatGptRestartRecommended,
       lastError: this.lastError
     };
     try {
@@ -469,6 +491,9 @@ export class XwXDeckController {
 
   private async enableTransactionUnlocked(reason: string): Promise<void> {
     let currentSettings = this.settings ?? await this.settingsStore.read();
+    const chatGptWasRunningBeforeTakeover = currentSettings.clientEnabled.codex
+      && !this.codexGatewayEnabled
+      && await this.chatGptRunningForRestartNotice();
     if (currentSettings.gatewayPaused) {
       currentSettings = await this.settingsStore.update({ gatewayPaused: false });
       this.settings = currentSettings;
@@ -543,6 +568,9 @@ export class XwXDeckController {
           if (chatGpt?.status === 'skipped' && chatGpt.skipReason === 'write-failed') {
             this.chatGptConnectionIssue = 'failed';
           }
+          if (chatGptWasRunningBeforeTakeover && chatGpt?.status === 'taken') {
+            this.markChatGptRestartRecommended('Trace published a new ChatGPT Gateway while ChatGPT was already running');
+          }
           this.lastError = this.chatGptConnectionIssue
             ? chatGptConnectionIssueText(this.chatGptConnectionIssue)
             : takeoverNotice(this.clientTakeovers);
@@ -567,6 +595,7 @@ export class XwXDeckController {
     this.clientsSeenSinceEnable.clear();
     for (const client of snapshot.clientsSeen) this.clientsSeenSinceEnable.add(client);
     this.chatGptConnectionIssue = snapshot.chatGptConnectionIssue;
+    this.chatGptRestartRecommended = snapshot.chatGptRestartRecommended;
     this.lastError = snapshot.lastError;
     this.setStartupPhase(snapshot.startupPhase);
 
@@ -660,6 +689,7 @@ export class XwXDeckController {
     this.active = false;
     this.clientsSeenSinceEnable.clear();
     this.chatGptConnectionIssue = undefined;
+    if (!this.codexGatewayEnabled) this.chatGptRestartRecommended = false;
     this.proxy.setRecordingEnabled(false);
     if (this.role === 'owner') await this.refreshProxyRoutes();
     if (this.settings.codexEnhancements.pendingHistoryRestore) {
@@ -1021,10 +1051,15 @@ export class XwXDeckController {
       settings,
       clientTakeovers: this.clientTakeovers.map(takeover => ({ ...takeover })),
       chatGptConnectionIssue: this.chatGptConnectionIssue,
+      chatGptRestartRecommended: this.chatGptRestartRecommended,
       lastError: this.lastError
     };
     const key = client === 'claude-cli' ? 'claude' : 'codex';
     const nextEnabled = !settings.clientEnabled[key];
+    const chatGptWasRunningBeforeTakeover = client === 'codex-cli'
+      && nextEnabled
+      && !this.codexGatewayEnabled
+      && await this.chatGptRunningForRestartNotice();
     let clientMutationStarted = false;
     try {
       this.settings = await this.settingsStore.update({
@@ -1049,6 +1084,9 @@ export class XwXDeckController {
           await this.assertPreparedClientRoutes([planned]);
           const result = await this.clientOrchestrator.applyOne(client, baseUrl);
           this.clientTakeovers = [...this.clientTakeovers.filter(t => t.client !== client), result];
+          if (chatGptWasRunningBeforeTakeover && result.status === 'taken') {
+            this.markChatGptRestartRecommended('ChatGPT Trace capture was enabled while ChatGPT was already running');
+          }
           this.lastError = takeoverNotice([result]);
         } else if (!nextEnabled) {
           clientMutationStarted = true;
@@ -1058,6 +1096,7 @@ export class XwXDeckController {
             const connection = await this.codexLocalProxy.restore();
             if (connection.conflict) this.lastError = [this.lastError, connection.conflict].filter(Boolean).join('；');
             this.chatGptConnectionIssue = undefined;
+            if (!this.codexGatewayEnabled) this.chatGptRestartRecommended = false;
           }
           this.clientTakeovers = this.clientTakeovers.filter(t => t.client !== client);
         }
@@ -1096,6 +1135,7 @@ export class XwXDeckController {
     }
     this.clientTakeovers = snapshot.clientTakeovers.map(takeover => ({ ...takeover }));
     this.chatGptConnectionIssue = snapshot.chatGptConnectionIssue;
+    this.chatGptRestartRecommended = snapshot.chatGptRestartRecommended;
     this.lastError = snapshot.lastError;
 
     if (clientMutationStarted && this.role === 'owner' && this.active) {
@@ -1144,7 +1184,16 @@ export class XwXDeckController {
   }
 
   async readCodexConfig(): Promise<CodexConfigSnapshot> {
-    return this.readUnderlyingCodexConfig();
+    const [config, settings] = await Promise.all([
+      this.readUnderlyingCodexConfig(),
+      this.settingsStore.read()
+    ]);
+    const preferredWindow = config.mode === 'compatible'
+      ? settings.codexModels.compatibleContextWindow
+      : settings.codexModels.officialContextWindow;
+    return preferredWindow > 0
+      ? { ...config, modelContextWindow: preferredWindow }
+      : config;
   }
 
   async readCompatibleServiceConfig(): Promise<CompatibleServiceSettings> {
@@ -1310,6 +1359,9 @@ export class XwXDeckController {
           compatibleModel: activeCompatibleServiceModel,
           compatibleBaseUrl: connection.baseUrl,
           compatibleBearerToken: connection.bearerToken,
+          modelContextWindow: enabled
+            ? settings.codexModels.compatibleContextWindow || null
+            : settings.codexModels.officialContextWindow || null,
           preserveOfficialLogin: settings.codexEnhancements.preserveOfficialLogin,
           unifySessionHistory: settings.codexEnhancements.unifySessionHistory
         });
@@ -1374,8 +1426,14 @@ export class XwXDeckController {
     }));
     this.settings = await this.settingsStore.update({
       codexModels: next.mode === 'official'
-        ? { official: next.officialModel }
-        : { compatible: next.compatible.model }
+        ? {
+            official: next.officialModel,
+            officialContextWindow: next.modelContextWindow ?? 0
+          }
+        : {
+            compatible: next.compatible.model,
+            compatibleContextWindow: next.modelContextWindow ?? 0
+          }
     });
     this.fireChange();
     return next;
@@ -1426,6 +1484,7 @@ export class XwXDeckController {
             compatibleModel: current.compatible.model,
             compatibleBaseUrl: connection.baseUrl,
             compatibleBearerToken: connection.bearerToken,
+            modelContextWindow: previousSettings.codexModels.compatibleContextWindow || null,
             preserveOfficialLogin,
             unifySessionHistory
           });
@@ -1541,6 +1600,10 @@ export class XwXDeckController {
     await fs.promises.mkdir(this.traceStore.rootPath(), { recursive: true });
     const { shell } = await import('electron');
     await shell.openPath(this.traceStore.rootPath());
+  }
+
+  async diagnoseCodexConversations(): Promise<CodexConversationHealthReport> {
+    return new CodexConversationDoctor().diagnose();
   }
 
   async openLogFolder(): Promise<void> {
@@ -1798,6 +1861,7 @@ export class XwXDeckController {
       dashboardUrl: this.dashboardUrl(),
       backgroundGatewayActive: this.backgroundGatewayActive(),
       backgroundGatewayAction,
+      chatGptRestartRecommended: this.chatGptRestartRecommended,
       traceRoot: this.traceStore.rootPath(),
       logRoot: this.logRootPath(),
       claudeConfigDir: path.dirname(clientPaths.claudeSettingsPath),
@@ -2580,6 +2644,7 @@ export class XwXDeckController {
         compatibleModel: snapshot.compatible.model,
         compatibleBaseUrl: connection.baseUrl,
         compatibleBearerToken: connection.bearerToken,
+        modelContextWindow: settings.codexModels.compatibleContextWindow || null,
         preserveOfficialLogin: settings.codexEnhancements.preserveOfficialLogin,
         unifySessionHistory: settings.codexEnhancements.unifySessionHistory
       }, { backgroundRefresh: false }));
@@ -2597,8 +2662,21 @@ export class XwXDeckController {
     const mode = input.mode;
     if (mode !== 'official' && mode !== 'compatible') throw new Error('Unsupported ChatGPT config mode.');
     const preserveOfficialLogin = input.preserveOfficialLogin !== false;
-    const previousMode = this.codexGatewayMode ?? (await this.codexConfig.read()).mode;
+    const previousConfig = await this.codexConfig.read();
+    const previousMode = this.codexGatewayMode ?? previousConfig.mode;
+    const chatGptWasRunningBeforeUpdate = mode === 'compatible'
+      && !isLoopbackUrl(previousConfig.activeBaseUrl)
+      && await this.chatGptRunningForRestartNotice();
     let managedInput: CodexConfigUpdate = { ...input, preserveOfficialLogin };
+    if (Object.prototype.hasOwnProperty.call(input, 'modelContextWindow')) {
+      const selectedModel = mode === 'compatible'
+        ? typeof input.compatibleModel === 'string' ? input.compatibleModel.trim() : ''
+        : typeof input.officialModel === 'string' ? input.officialModel.trim() : '';
+      managedInput = {
+        ...managedInput,
+        modelContextWindow: this.validateCodexContextWindow(selectedModel, input.modelContextWindow)
+      };
+    }
 
     if (mode === 'official') {
       const selectedModel = typeof input.officialModel === 'string' ? input.officialModel.trim() : '';
@@ -2673,6 +2751,11 @@ export class XwXDeckController {
         }
 
         const next = await this.codexConfig.update(managedInput);
+        if (chatGptWasRunningBeforeUpdate
+          && isLoopbackUrl(next.activeBaseUrl)
+          && !sameHttpEndpoint(previousConfig.activeBaseUrl, next.activeBaseUrl)) {
+          this.markChatGptRestartRecommended('ChatGPT was running when its service switched to the local Gateway');
+        }
         this.setStartupPhase('config-ready');
         if (options.backgroundRefresh) this.scheduleCompatibleServiceModelRefresh('gateway configured');
         return next;
@@ -2735,7 +2818,9 @@ export class XwXDeckController {
         this.codexOfficialBearerToken = undefined;
         this.codexOfficialUpstreamBaseUrl = undefined;
       }
-      return await this.codexConfig.update(managedInput);
+      const next = await this.codexConfig.update(managedInput);
+      if (!isLoopbackUrl(next.activeBaseUrl)) this.chatGptRestartRecommended = false;
+      return next;
     } catch (error) {
       if (previousGatewayMode === 'compatible' && !preserveOfficialLogin && previousSettings.compatible.bearerToken) {
         await this.codexOfficialAuth.useCompatibleServiceKey(previousSettings.compatible.bearerToken).catch(authError => {
@@ -2776,6 +2861,39 @@ export class XwXDeckController {
       clients: ['codex']
     }];
     return this.codexCatalog.sync(this.compatibleServiceCatalog);
+  }
+
+  private validateCodexContextWindow(modelId: string, raw: unknown): number | null {
+    if (raw === null || raw === undefined || raw === 0) return null;
+    if (typeof raw !== 'number' || !Number.isSafeInteger(raw)) {
+      throw new Error('ChatGPT 上下文窗口无效。');
+    }
+    const catalogEntry = this.compatibleServiceCatalog.find(entry => entry.id === modelId);
+    const builtin = catalogEntry ? undefined : findBuiltInModelCapability(modelId);
+    const variants = codexContextVariants(catalogEntry ?? {
+      id: modelId,
+      contextWindow: builtin?.contextWindow,
+      capabilitySources: builtin?.contextWindow !== undefined ? { contextWindow: 'builtin' } : undefined
+    });
+    if (!variants.some(variant => variant.contextWindow === raw)) {
+      throw new Error(`模型 ${modelId || '（未选择）'} 不支持 ${raw.toLocaleString('en-US')} token 上下文配置。`);
+    }
+    return raw;
+  }
+
+  private async chatGptRunningForRestartNotice(): Promise<boolean> {
+    try {
+      return await (this.options.chatGptRunning ?? isChatGptRunning)();
+    } catch (error) {
+      log.warn(`[xwxdeck] could not determine whether ChatGPT needs a restart notice: ${(error as Error).message}`);
+      return false;
+    }
+  }
+
+  private markChatGptRestartRecommended(reason: string): void {
+    if (this.chatGptRestartRecommended) return;
+    this.chatGptRestartRecommended = true;
+    log(`[xwxdeck] ChatGPT restart recommended: ${reason}`);
   }
 
   private async refreshCompatibleServiceModelCatalog(
@@ -3029,11 +3147,8 @@ export class XwXDeckController {
   private createTraceRuntime(rootDir: string): void {
     const store = new TraceStore(
       rootDir,
-      () => this.settings?.maxSessions ?? 0,
-      () => {
-        const mb = this.settings?.maxStorageMB ?? 0;
-        return mb > 0 ? Math.floor(mb * 1024 * 1024) : undefined;
-      },
+      () => 0,
+      () => undefined,
       sessions => this.codexThreadTitles.overlay(sessions)
     );
     const proxy: TraceProxy = this.options.backgroundGateway
@@ -3043,16 +3158,7 @@ export class XwXDeckController {
         this.options.proxyListenPorts,
         async () => !await isChatGptRunning(),
         {
-          traceRetention: () => {
-            const maxSessions = this.settings?.maxSessions ?? 0;
-            const maxStorageMB = this.settings?.maxStorageMB ?? 0;
-            return {
-              maxSessions,
-              maxStorageBytes: maxStorageMB > 0
-                ? Math.floor(maxStorageMB * 1024 * 1024)
-                : 0
-            };
-          }
+          traceRetention: () => ({ maxSessions: 0, maxStorageBytes: 0 })
         }
       )
       : new TapProxy(

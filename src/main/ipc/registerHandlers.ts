@@ -2,10 +2,13 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  shell,
   type IpcMainEvent,
   type IpcMainInvokeEvent
 } from 'electron';
+import * as path from 'path';
 import { isChatGptRunning } from '../app/chatGptLifecycle';
+import { isPathInsideCodexHome } from '../app/codexConversationDoctor';
 import type { ClientId, XwXDeckController, XwXDeckRuntimeState } from '../app/xwxDeckController';
 import type { XwXDeckUpdater } from '../update/xwxDeckUpdater';
 import type { ManagerWindow } from '../window/managerWindow';
@@ -115,6 +118,14 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     'xwxdeck:update-codex-config': (_event, input) => {
       if (!input || typeof input !== 'object') throw new Error('Invalid ChatGPT config payload.');
       return requireController().updateCodexConfig(input);
+    },
+    'xwxdeck:diagnose-codex-conversations': () => requireController().diagnoseCodexConversations(),
+    'xwxdeck:open-codex-conversation-path': (_event, input) => {
+      if (typeof input !== 'string' || !input.trim() || !isPathInsideCodexHome(input)) {
+        throw new Error('无效的 ChatGPT 会话路径。');
+      }
+      shell.showItemInFolder(path.resolve(input));
+      return true;
     },
     'xwxdeck:fetch-models': (_event, input) => {
       const source = input && typeof input === 'object' && (input as { source?: unknown }).source === 'compatible'

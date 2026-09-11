@@ -20,6 +20,15 @@ import {
   performApplicationRepair,
   performApplicationResetAtStartup
 } from '../src/main/app/applicationReset';
+import {
+  CodexConversationDoctor,
+  isPathInsideCodexHome
+} from '../src/main/app/codexConversationDoctor';
+import {
+  CODEX_EXTENDED_CONTEXT_WINDOW,
+  CODEX_STANDARD_LONG_CONTEXT_WINDOW,
+  codexContextVariants
+} from '../src/shared/codexContextVariants';
 import { gatewayMenuActionMatches } from '../src/main/app/gatewayMenuAction';
 import { XwXDeckController, __test as controllerTest } from '../src/main/app/xwxDeckController';
 import { buildTrayQuitPrompt } from '../src/main/app/shutdownPrompt';
@@ -198,6 +207,8 @@ try {
   await testApplicationReset();
   await testExitRecovery();
   await testSettings();
+  await testCodexConversationDoctor();
+  await testTraceDeletionTransactions();
   await testChatGptLifecycle();
   await testControllerColdStartTransactions();
   await testAtomicFileWriteRetries();
@@ -611,7 +622,12 @@ async function testSettings(): Promise<void> {
   assert.equal(initial.codexEnhancements.preserveOfficialLogin, true);
   assert.equal(initial.codexEnhancements.unifySessionHistory, false);
   assert.equal(initial.codexEnhancements.pendingHistoryRestore, false);
-  assert.deepEqual(initial.codexModels, { official: 'gpt-5.5', compatible: '' });
+  assert.deepEqual(initial.codexModels, {
+    official: 'gpt-5.5',
+    officialContextWindow: 0,
+    compatible: '',
+    compatibleContextWindow: 0
+  });
   assert.equal(initial.compatible.displayName, '兼容服务');
   assert.equal(initial.compatible.providerPreset, 'auto');
   assert.equal(providerProfile('compatible').supportsClaude, true);
@@ -682,6 +698,15 @@ async function testSettings(): Promise<void> {
     'Trace Session retention must default to unlimited');
   assert.equal(initial.maxStorageMB, 0,
     'Trace storage retention must default to unlimited');
+  const rejectedRetentionPatch = await store.update({ maxSessions: 25, maxStorageMB: 512 });
+  assert.deepEqual(
+    {
+      maxSessions: rejectedRetentionPatch.maxSessions,
+      maxStorageMB: rejectedRetentionPatch.maxStorageMB
+    },
+    { maxSessions: 0, maxStorageMB: 0 },
+    'unsupported settings patches must not enable automatic Trace cleanup'
+  );
   // Regression: theme and startup intent must persist in settings.json so a
   // portable repackage (which changes the file:// origin / exe path) does not
   // silently reset them the way localStorage / login-item probing did.
@@ -784,8 +809,20 @@ async function testSettings(): Promise<void> {
   assert.equal(compatible.compatible.baseUrl, 'https://compatible.example/v1');
   assert.equal(compatible.compatible.bearerToken, 'qa-key');
   assert.equal(compatible.compatible.codexApiFormat, 'responses');
-  const codexModels = await store.update({ codexModels: { official: 'gpt-5.6-sol', compatible: 'deepseek-chat' } });
-  assert.deepEqual(codexModels.codexModels, { official: 'gpt-5.6-sol', compatible: 'deepseek-chat' });
+  const codexModels = await store.update({
+    codexModels: {
+      official: 'gpt-5.6-sol',
+      officialContextWindow: CODEX_EXTENDED_CONTEXT_WINDOW,
+      compatible: 'deepseek-chat',
+      compatibleContextWindow: CODEX_STANDARD_LONG_CONTEXT_WINDOW
+    }
+  });
+  assert.deepEqual(codexModels.codexModels, {
+    official: 'gpt-5.6-sol',
+    officialContextWindow: CODEX_EXTENDED_CONTEXT_WINDOW,
+    compatible: 'deepseek-chat',
+    compatibleContextWindow: CODEX_STANDARD_LONG_CONTEXT_WINDOW
+  });
   // Regression: codexApiFormat must be able to latch to chat-completions AND back
   // to responses. A controller bug pinned it once it became chat-completions,
   // which then mis-tagged gpt/grok requests and deadlocked disable().
@@ -810,6 +847,245 @@ async function testSettings(): Promise<void> {
   assert.equal(directories.traceRoot, traceRoot);
   assert.equal(directories.logRoot, logRoot);
   completed.push('settings persistence');
+}
+
+async function testCodexConversationDoctor(): Promise<void> {
+  const previousHome = process.env.CODEX_HOME;
+  const previousSqliteHome = process.env.CODEX_SQLITE_HOME;
+  const base = path.join(root, 'codex-conversation-doctor');
+  const codexHome = path.join(base, '.codex');
+  const sessionDir = path.join(codexHome, 'sessions', '2026', '08', '26');
+  const archivedDir = path.join(codexHome, 'archived_sessions');
+  process.env.CODEX_HOME = codexHome;
+  delete process.env.CODEX_SQLITE_HOME;
+  const healthyId = '11111111-1111-4111-8111-111111111111';
+  const recoverableId = '22222222-2222-4222-8222-222222222222';
+  const mismatchId = '33333333-3333-4333-8333-333333333333';
+  const orphanId = '44444444-4444-4444-8444-444444444444';
+  const duplicateId = '55555555-5555-4555-8555-555555555555';
+  const emptyId = '66666666-6666-4666-8666-666666666666';
+  const healthyPath = path.join(sessionDir, `rollout-2026-08-26T10-00-00-${healthyId}.jsonl`);
+  const missingIndexedPath = path.join(sessionDir, `rollout-2026-08-26T11-00-00-${recoverableId}.jsonl`);
+  const recoveryPath = path.join(archivedDir, `rollout-2026-08-26T11-00-00-${recoverableId}.jsonl`);
+  const mismatchPath = path.join(sessionDir, `rollout-2026-08-26T12-00-00-${mismatchId}.jsonl`);
+  const orphanPath = path.join(archivedDir, `rollout-2026-08-26T13-00-00-${orphanId}.jsonl`);
+  const duplicatePath = path.join(sessionDir, `rollout-2026-08-26T14-00-00-${duplicateId}.jsonl`);
+  const duplicateArchivedPath = path.join(archivedDir, `rollout-2026-08-26T14-30-00-${duplicateId}.jsonl`);
+  const emptyPath = path.join(sessionDir, `rollout-2026-08-26T15-00-00-${emptyId}.jsonl`);
+  let db: Database | undefined;
+  try {
+    await Promise.all([
+      fs.mkdir(sessionDir, { recursive: true }),
+      fs.mkdir(archivedDir, { recursive: true })
+    ]);
+    await fs.writeFile(path.join(codexHome, 'config.toml'), [
+      'model_provider = "xwx_deck"',
+      '',
+      '[model_providers.xwx_deck]',
+      'name = "XwX Deck"',
+      'base_url = "https://chatgpt.com/backend-api/codex"',
+      'wire_api = "responses"',
+      'requires_openai_auth = true',
+      ''
+    ].join('\n'));
+    const writeMeta = (filePath: string, id: string, provider = 'xwx_deck') => fs.writeFile(
+      filePath,
+      `${JSON.stringify({ type: 'session_meta', payload: { id, model_provider: provider } })}\n`
+    );
+    await Promise.all([
+      writeMeta(healthyPath, healthyId),
+      writeMeta(recoveryPath, recoverableId),
+      writeMeta(mismatchPath, mismatchId, 'openai'),
+      writeMeta(orphanPath, orphanId, 'openai'),
+      writeMeta(duplicatePath, duplicateId),
+      writeMeta(duplicateArchivedPath, duplicateId),
+      fs.writeFile(emptyPath, '')
+    ]);
+
+    const dbPath = path.join(codexHome, 'state_5.sqlite');
+    db = new Database(dbPath);
+    db.exec(`
+      PRAGMA journal_mode=WAL;
+      PRAGMA wal_autocheckpoint=0;
+      CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT);
+      CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT);
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        rollout_path TEXT,
+        model_provider TEXT,
+        archived INTEGER,
+        created_at INTEGER,
+        updated_at INTEGER,
+        project_id TEXT,
+        cwd TEXT
+      );
+      INSERT INTO projects (id, name) VALUES ('project-xwx', 'XwX Deck');
+      INSERT INTO project_roots (project_id, position, path) VALUES
+        ('project-xwx', 0, 'D:\\Work\\XwX_Deck'),
+        ('project-xwx', 1, 'D:\\Work\\XwX_Deck_Docs');
+    `);
+    const insert = db.prepare(`
+      INSERT INTO threads (
+        id, title, rollout_path, model_provider, archived, created_at, updated_at, project_id, cwd
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insert.run(healthyId, '正常任务', healthyPath, 'xwx_deck', 0, 1_787_280_000, 1_787_280_100, 'project-xwx', 'D:\\Work\\XwX_Deck');
+    insert.run(recoverableId, '待恢复任务', missingIndexedPath, 'xwx_deck', 0, 1_787_280_000, 1_787_280_200, null, 'D:\\Work\\Daily');
+    insert.run(mismatchId, 'Provider 不一致', mismatchPath, 'xwx_deck', 0, 1_787_280_000, 1_787_280_300, null, null);
+    insert.run(duplicateId, '重复文件', duplicatePath, 'xwx_deck', 0, 1_787_280_000, 1_787_280_400, null, null);
+    insert.run(emptyId, '空会话文件', emptyPath, 'xwx_deck', 0, 1_787_280_000, 1_787_280_500, null, null);
+
+    const report = await new CodexConversationDoctor().diagnose();
+    assert.equal(report.summary.indexedThreads, 5);
+    assert.equal(report.summary.discoveredRollouts, 7);
+    assert.equal(report.summary.healthy, 1);
+    assert.equal(report.summary.warnings, 1);
+    assert.equal(report.summary.errors, 4);
+    assert.equal(report.summary.orphanRollouts, 1);
+    assert.equal(report.summary.missingRollouts, 1);
+    assert.equal(report.scanComplete, true);
+    assert.deepEqual(report.scanIssues, []);
+    assert.equal(report.databases[0].readable, true);
+    assert.equal(report.databases[0].quickCheck, 'ok');
+    assert.equal(report.databases[0].walPresent, true);
+
+    const healthy = report.conversations.find(row => row.threadId === healthyId);
+    assert.equal(healthy?.workspaceKind, 'project');
+    assert.equal(healthy?.workspaceName, 'XwX Deck');
+    assert.equal(healthy?.projectId, 'project-xwx');
+    assert.deepEqual(healthy?.projectRoots, ['D:\\Work\\XwX_Deck', 'D:\\Work\\XwX_Deck_Docs']);
+    assert.equal(healthy?.preview, '', 'conversation diagnostics must not query or return message previews');
+
+    const recoverable = report.conversations.find(row => row.threadId === recoverableId);
+    assert.equal(recoverable?.status, 'error');
+    assert.equal(recoverable?.location, 'archived_sessions');
+    assert.equal(recoverable?.resolvedPath, recoveryPath);
+    assert.ok(recoverable?.issues.some(issue => issue.code === 'rollout_file_missing'));
+    assert.ok(recoverable?.issues.some(issue => issue.code === 'recovery_candidate'));
+
+    const mismatch = report.conversations.find(row => row.threadId === mismatchId);
+    assert.ok(mismatch?.issues.some(issue => issue.code === 'provider_mismatch'));
+    const orphan = report.conversations.find(row => row.threadId === orphanId);
+    assert.equal(orphan?.indexed, false);
+    assert.equal(orphan?.status, 'warning');
+    assert.ok(orphan?.issues.some(issue => issue.code === 'orphan_rollout'));
+    const duplicate = report.conversations.find(row => row.threadId === duplicateId);
+    assert.equal(duplicate?.candidatePaths.length, 2);
+    assert.ok(duplicate?.issues.some(issue => issue.code === 'multiple_rollout_candidates'));
+    const empty = report.conversations.find(row => row.threadId === emptyId);
+    assert.ok(empty?.issues.some(issue => issue.code === 'empty_session_file'));
+
+    assert.equal(isPathInsideCodexHome(healthyPath), true);
+    assert.equal(isPathInsideCodexHome(path.join(base, 'outside.jsonl')), false);
+    if (process.platform !== 'win32') {
+      const outside = path.join(base, 'outside-existing.jsonl');
+      const linked = path.join(codexHome, 'sessions', 'outside-link.jsonl');
+      await fs.writeFile(outside, '{}\n');
+      await fs.symlink(outside, linked);
+      assert.equal(isPathInsideCodexHome(linked), false, 'a symlink must not escape the Codex home path guard');
+    }
+
+    const corruptSqliteHome = path.join(base, 'corrupt-state');
+    await fs.mkdir(corruptSqliteHome, { recursive: true });
+    await fs.writeFile(path.join(corruptSqliteHome, 'state_5.sqlite'), 'not a sqlite database');
+    process.env.CODEX_SQLITE_HOME = corruptSqliteHome;
+    const incompleteReport = await new CodexConversationDoctor().diagnose();
+    assert.equal(incompleteReport.scanComplete, false);
+    assert.ok(incompleteReport.scanIssues.some(issue => issue.code === 'database_unavailable'));
+  } finally {
+    db?.close();
+    if (previousHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousHome;
+    if (previousSqliteHome === undefined) delete process.env.CODEX_SQLITE_HOME;
+    else process.env.CODEX_SQLITE_HOME = previousSqliteHome;
+  }
+  completed.push('ChatGPT conversation diagnosis links SQLite indexes and Session metadata safely');
+}
+
+async function testTraceDeletionTransactions(): Promise<void> {
+  const makeFixture = async (name: string, ids: readonly string[]): Promise<{
+    root: string;
+    indexPath: string;
+    paths: string[];
+  }> => {
+    const traceRoot = path.join(root, name);
+    await fs.mkdir(traceRoot, { recursive: true });
+    const paths = ids.map(id => path.join(traceRoot, `${id}.jsonl`));
+    await Promise.all(paths.map((file, index) => fs.writeFile(file, `record-${index}\n`, 'utf8')));
+    await fs.writeFile(path.join(traceRoot, 'index.json'), JSON.stringify({
+      version: 1,
+      sessions: ids.map((id, index) => ({
+        id,
+        startedAt: `2026-08-21T00:00:0${index}.000Z`,
+        updatedAt: `2026-08-21T00:00:0${index}.000Z`,
+        traceCount: 1,
+        jsonlPath: paths[index],
+        source: 'codex-cli',
+        clientConversationKey: 'codex-cli:transaction-test'
+      }))
+    }));
+    return { root: traceRoot, indexPath: path.join(traceRoot, 'index.json'), paths };
+  };
+
+  {
+    const fixture = await makeFixture('trace-delete-index-rollback', ['fragment-a']);
+    const originalIndex = await fs.readFile(fixture.indexPath, 'utf8');
+    const originalRename = nodeFs.promises.rename;
+    nodeFs.promises.rename = async (source, destination) => {
+      if (path.resolve(String(destination)) === path.resolve(fixture.indexPath)) {
+        throw Object.assign(new Error('injected index replacement failure'), { code: 'EIO' });
+      }
+      return originalRename(source, destination);
+    };
+    try {
+      await assert.rejects(
+        new TraceStore(fixture.root).deleteSession('fragment-a'),
+        /injected index replacement failure/
+      );
+    } finally {
+      nodeFs.promises.rename = originalRename;
+    }
+    assert.equal(await fs.readFile(fixture.indexPath, 'utf8'), originalIndex);
+    assert.equal(await fs.readFile(fixture.paths[0], 'utf8'), 'record-0\n');
+    assert.equal(
+      (await fs.readdir(fixture.root)).some(name => name.includes('.deleting-')),
+      false,
+      'index failure must restore the staged Session file'
+    );
+  }
+
+  {
+    const fixture = await makeFixture('trace-delete-stage-rollback', ['fragment-a', 'fragment-b']);
+    const originalIndex = await fs.readFile(fixture.indexPath, 'utf8');
+    const originalRename = nodeFs.promises.rename;
+    nodeFs.promises.rename = async (source, destination) => {
+      if (
+        path.resolve(String(source)) === path.resolve(fixture.paths[1])
+        && String(destination).includes('.deleting-')
+      ) {
+        throw Object.assign(new Error('injected staging failure'), { code: 'EIO' });
+      }
+      return originalRename(source, destination);
+    };
+    try {
+      await assert.rejects(
+        new TraceStore(fixture.root).deleteSession('fragment-a'),
+        /injected staging failure/
+      );
+    } finally {
+      nodeFs.promises.rename = originalRename;
+    }
+    assert.equal(await fs.readFile(fixture.indexPath, 'utf8'), originalIndex);
+    assert.equal(await fs.readFile(fixture.paths[0], 'utf8'), 'record-0\n');
+    assert.equal(await fs.readFile(fixture.paths[1], 'utf8'), 'record-1\n');
+    assert.equal(
+      (await fs.readdir(fixture.root)).some(name => name.includes('.deleting-')),
+      false,
+      'partial staging failure must roll every earlier rename back'
+    );
+  }
+  completed.push('Trace deletion stages files and rolls back every failed transaction');
 }
 
 async function testControllerColdStartTransactions(): Promise<void> {
@@ -998,6 +1274,7 @@ async function testControllerColdStartTransactions(): Promise<void> {
       const controller = new XwXDeckController(userData, {
         proxyListenPorts: [0],
         disableBackgroundModelRefresh: true,
+        chatGptRunning: async () => true,
         onStartupPhase: phase => phases.push(phase),
         beforeShutdownConfigVerification: async () => {
           if (!injectShutdownConflict) return;
@@ -1025,6 +1302,8 @@ async function testControllerColdStartTransactions(): Promise<void> {
       assert.equal(state.clients.find(client => client.id === 'codex-cli')?.status, 'taken');
       assert.equal(state.clients.find(client => client.id === 'claude-cli')?.statusText, '等待请求');
       assert.equal(state.clients.find(client => client.id === 'codex-cli')?.statusText, '等待请求');
+      assert.equal(state.chatGptRestartRecommended, true,
+        'a running ChatGPT must receive a restart recommendation after a new Gateway takeover');
       assert.ok(phases.indexOf('proxy-listening') < phases.indexOf('routes-ready'));
       assert.ok(phases.indexOf('routes-ready') < phases.indexOf('config-ready'));
       assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), /127\.0\.0\.1:\d+\/backend-api\/codex/);
@@ -1076,7 +1355,29 @@ async function testControllerColdStartTransactions(): Promise<void> {
       assert.match(officialTraceConfig, /base_url = "http:\/\/127\.0\.0\.1:\d+\/backend-api\/codex"/);
       assert.match(officialTraceConfig, /^model = "gpt-5\.5"$/m, 'returning official restores the last official model');
       const rememberedModels = (await new XwXDeckSettingsStore(userData).read()).codexModels;
-      assert.deepEqual(rememberedModels, { official: 'gpt-5.5', compatible: 'deepseek-chat' });
+      assert.deepEqual(rememberedModels, {
+        official: 'gpt-5.5',
+        officialContextWindow: 0,
+        compatible: 'deepseek-chat',
+        compatibleContextWindow: 0
+      });
+      const extendedOfficial = await controller.updateCodexConfig({
+        mode: 'official',
+        officialModel: 'gpt-5.6-sol',
+        modelContextWindow: CODEX_EXTENDED_CONTEXT_WINDOW
+      });
+      assert.equal(extendedOfficial.officialModel, 'gpt-5.6-sol');
+      assert.equal(extendedOfficial.modelContextWindow, CODEX_EXTENDED_CONTEXT_WINDOW);
+      const extendedOfficialToml = await fs.readFile(paths.codexConfigPath, 'utf8');
+      assert.match(extendedOfficialToml, /^model = "gpt-5\.6-sol"$/m,
+        'the display-only [1M] variant must never enter the upstream model id');
+      assert.match(extendedOfficialToml, /^model_context_window = 1000000$/m);
+      assert.match(extendedOfficialToml, /^model_auto_compact_token_limit = 900000$/m);
+      await assert.rejects(controller.updateCodexConfig({
+        mode: 'official',
+        officialModel: 'gpt-5.5',
+        modelContextWindow: CODEX_EXTENDED_CONTEXT_WINDOW
+      }), /不支持 1,000,000 token 上下文配置/);
       await assert.rejects(controller.updateCodexConfig({
         mode: 'official',
         officialModel: 'deepseek-chat'
@@ -5371,15 +5672,19 @@ async function testCodexProviderSwitch(): Promise<void> {
       mode: 'compatible',
       compatibleModel: 'qa-compatible-model',
       compatibleBaseUrl: 'http://compatible.local',
-      compatibleBearerToken: 'qa-bearer'
+      compatibleBearerToken: 'qa-bearer',
+      modelContextWindow: CODEX_EXTENDED_CONTEXT_WINDOW
     });
     assert.equal(compatible.mode, 'compatible');
     assert.equal(compatible.compatible.baseUrl, 'http://compatible.local/v1');
     assert.equal(compatible.compatible.bearerToken, 'qa-bearer');
     assert.equal(compatible.activeProvider, 'xwx_deck');
+    assert.equal(compatible.modelContextWindow, CODEX_EXTENDED_CONTEXT_WINDOW);
     const compatibleToml = await fs.readFile(path.join(process.env.CODEX_HOME, 'config.toml'), 'utf8');
     assert.match(compatibleToml, /^model_provider = "xwx_deck"$/m);
     assert.match(compatibleToml, /^service_tier = "default"$/m);
+    assert.match(compatibleToml, /^model_context_window = 1000000$/m);
+    assert.match(compatibleToml, /^model_auto_compact_token_limit = 900000$/m);
     assert.ok(compatibleToml.indexOf('model_provider = "xwx_deck"') < compatibleToml.indexOf('[windows]'));
     assert.match(compatibleToml, /\[windows\]\nmodel_provider = "openai"\nservice_tier = "default"/);
     assert.match(compatibleToml, /\[model_providers\.xwx_deck\][\s\S]*name = "XwX Deck"/);
@@ -5410,15 +5715,19 @@ async function testCodexProviderSwitch(): Promise<void> {
     // restart still returns the user's original setting.
     const official = await new CodexConfigManager(path.join(root, 'codex-provider-user-data')).update({
       mode: 'official',
-      officialModel: 'qa-official-model'
+      officialModel: 'qa-official-model',
+      modelContextWindow: CODEX_STANDARD_LONG_CONTEXT_WINDOW
     });
     assert.equal(official.mode, 'official');
     assert.equal(official.officialModel, 'qa-official-model');
     assert.equal(official.activeProvider, 'xwx_deck');
+    assert.equal(official.modelContextWindow, CODEX_STANDARD_LONG_CONTEXT_WINDOW);
     const officialToml = await fs.readFile(path.join(process.env.CODEX_HOME, 'config.toml'), 'utf8');
     assert.ok(officialToml.indexOf('model_provider = "xwx_deck"') < officialToml.indexOf('[windows]'));
     assert.match(officialToml, /\[model_providers\.xwx_deck\][\s\S]*base_url = "https:\/\/api\.openai\.com\/v1"/);
     assert.match(officialToml, /\[model_providers\.xwx_deck\][\s\S]*supports_websockets = true/);
+    assert.match(officialToml, /^model_context_window = 272000$/m);
+    assert.match(officialToml, /^model_auto_compact_token_limit = 244800$/m);
     assert.match(officialToml, /^image_gen = true$/m, 'returning to official restores the prior image setting');
     assert.doesNotMatch(officialToml, /^\s*image_generation\s*=/m);
     assert.doesNotMatch(officialToml, /^\s*imagegenext\s*=/m);
@@ -5431,10 +5740,15 @@ async function testCodexProviderSwitch(): Promise<void> {
       mode: 'compatible',
       compatibleModel: official.compatible.model,
       compatibleBaseUrl: 'http://compatible.local/v1',
-      compatibleBearerToken: 'qa-bearer'
+      compatibleBearerToken: 'qa-bearer',
+      modelContextWindow: null
     });
     assert.equal(toggled兼容服务.compatible.model, 'qa-official-model', 'enabling 兼容服务 must preserve the selected model');
     assert.equal(toggled兼容服务.officialModel, 'qa-official-model');
+    assert.equal(toggled兼容服务.modelContextWindow, undefined);
+    const clearedContextToml = await fs.readFile(path.join(process.env.CODEX_HOME, 'config.toml'), 'utf8');
+    assert.doesNotMatch(clearedContextToml, /^model_context_window\s*=/m);
+    assert.doesNotMatch(clearedContextToml, /^model_auto_compact_token_limit\s*=/m);
     const toggledOfficial = await manager.update({
       mode: 'official',
       officialModel: toggled兼容服务.officialModel
@@ -5516,6 +5830,34 @@ async function testCodexProviderSwitch(): Promise<void> {
 }
 
 async function testCodexModelCatalogGateway(): Promise<void> {
+  assert.deepEqual(codexContextVariants({
+    id: 'gpt-5.6-sol',
+    contextWindow: 1_050_000,
+    capabilitySources: { contextWindow: 'builtin' }
+  }), [
+    {
+      modelId: 'gpt-5.6-sol',
+      label: 'gpt-5.6-sol[272K]',
+      contextWindow: CODEX_STANDARD_LONG_CONTEXT_WINDOW
+    },
+    {
+      modelId: 'gpt-5.6-sol',
+      label: 'gpt-5.6-sol[1M]',
+      contextWindow: CODEX_EXTENDED_CONTEXT_WINDOW
+    }
+  ], 'verified GPT 1M capability must become two display-only model choices');
+  assert.deepEqual(codexContextVariants({
+    id: 'gpt-5.5',
+    contextWindow: 262_144,
+    capabilitySources: { contextWindow: 'models.dev' }
+  }), [{ modelId: 'gpt-5.5', label: 'gpt-5.5[256K]', contextWindow: null }]);
+  assert.deepEqual(codexContextVariants({
+    id: 'gpt-custom',
+    contextWindow: 262_144,
+    capabilitySources: { contextWindow: 'fallback' }
+  }), [{ modelId: 'gpt-custom', label: 'gpt-custom', contextWindow: null }],
+  'fallback context data must not be displayed as a verified model variant');
+
   const previousHome = process.env.CODEX_HOME;
   const codexHome = path.join(root, 'codex-model-gateway', '.codex');
   process.env.CODEX_HOME = codexHome;
@@ -5735,9 +6077,9 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       { effort: 'xhigh', description: 'xhigh reasoning effort' }
     ]);
     assert.equal(catalog.models[0].default_reasoning_level, 'xhigh');
-    assert.equal(catalog.models[0].context_window, 1_000_000, 'native 1M limit must survive into Codex catalog');
+    assert.equal(catalog.models[0].context_window, 272_000, 'verified GPT 1M models must default to the standard Codex window');
     assert.equal(catalog.models[0].max_context_window, 1_000_000);
-    assert.equal(catalog.models[0].auto_compact_token_limit, 900_000);
+    assert.equal(catalog.models[0].auto_compact_token_limit, 244_800);
     assert.equal(catalog.models[1].description, 'DeepSeek · 兼容服务');
     assert.deepEqual(catalog.models[1].input_modalities, ['text', 'image']);
     assert.equal(catalog.models[2].context_window, 200_000);
@@ -9130,6 +9472,7 @@ async function testManagerIpcContract(): Promise<void> {
   const settingsPage = await fs.readFile(path.resolve('src/renderer/features/settings/SettingsPage.tsx'), 'utf8');
   const repairCenter = await fs.readFile(path.resolve('src/renderer/features/settings/RepairCenterSheet.tsx'), 'utf8');
   const modelsPage = await fs.readFile(path.resolve('src/renderer/features/models/ModelsPage.tsx'), 'utf8');
+  const toolsPage = await fs.readFile(path.resolve('src/renderer/features/tools/ToolsPage.tsx'), 'utf8');
   const onboardingTour = await fs.readFile(path.resolve('src/renderer/features/onboarding/OnboardingTour.tsx'), 'utf8');
   const combobox = await fs.readFile(path.resolve('src/renderer/components/ui/combobox.tsx'), 'utf8');
   const rendererStyles = await fs.readFile(path.resolve('src/renderer/styles.css'), 'utf8');
@@ -9147,6 +9490,7 @@ async function testManagerIpcContract(): Promise<void> {
     'src/renderer/features/models/ModelsPage.tsx',
     'src/renderer/features/models/ModelPicker.tsx',
     'src/renderer/features/models/CodexEnhancements.tsx',
+    'src/renderer/features/tools/ToolsPage.tsx',
     'src/renderer/features/settings/SettingsPage.tsx',
     'src/renderer/features/settings/RepairCenterSheet.tsx',
   ].map(f => fs.readFile(path.resolve(f), 'utf8')))).join('\n');
@@ -9166,6 +9510,7 @@ async function testManagerIpcContract(): Promise<void> {
   const expected = [
     'getState', 'getTraceStats', 'getUpdateState', 'checkForUpdates', 'downloadUpdate', 'restartAndInstall',
     'setStartupEnabled', 'setTheme', 'toggleTracing', 'toggleClient', 'getCodexConfig', 'isChatGptRunning', 'getCodexEnhancements', 'updateCodexEnhancements',
+    'diagnoseCodexConversations', 'openCodexConversationPath', 'copyText',
     'getCompatibleServiceConfig', 'updateCompatibleServiceConfig',
     'getModelServices', 'setModelService', 'getClaudeModels', 'updateClaudeModels',
     'updateCodexConfig', 'fetchModels', 'chooseDirectory', 'updateTraceDirectories', 'setTraceAppearance',
@@ -9204,6 +9549,16 @@ async function testManagerIpcContract(): Promise<void> {
     'enabling Trace must use one concise bottom-right toast');
   assert.match(rendererSrc, /ChatGPT 接入失败，请重启 Trace 后重试。/);
   assert.match(rendererSrc, /ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。/);
+  assert.match(
+    rendererSrc,
+    /showToast\('请重启 ChatGPT', 'info', CHATGPT_RESTART_TOAST_ID,[\s\S]*?timeout: 12_000/,
+    'a running ChatGPT must receive a visible restart notice after Gateway takeover'
+  );
+  assert.match(
+    rendererSrc,
+    /if \(!bridge\.runtime\?\.chatGptRestartRecommended\) \{[\s\S]*?shownChatGptRestartRef\.current = false;/,
+    'the restart notice must reset after returning to a direct connection'
+  );
   assert.match(runtime, /if \(PACKAGED_SMOKE_TEST\)/,
     'isolated packaged smoke must never inspect the user\'s real ChatGPT process');
   assert.doesNotMatch(runtime, /forceQuitChatGpt|requestChatGptQuit|launchChatGpt/,
@@ -9330,6 +9685,14 @@ async function testManagerIpcContract(): Promise<void> {
   assert.doesNotMatch(rendererSrc, /切换为直连上游/);
   assert.match(rendererSrc, /data-client-tab="codex"/);
   assert.match(rendererSrc, />模型配置<\/h1>/);
+  assert.match(rendererSrc, /data-page=\{id\}/);
+  assert.match(rendererSrc, /id="page-tools"/);
+  assert.match(toolsPage, /id="conversationDoctor"/);
+  assert.match(toolsPage, /diagnoseCodexConversations/);
+  assert.match(toolsPage, /SQLite · threads/);
+  assert.match(toolsPage, /JSONL · session_meta/);
+  assert.doesNotMatch(toolsPage, /Excel 转 Markdown|excelDropzone|convertExcelFiles/,
+    'the standalone tools page must contain only conversation diagnosis');
   assert.match(rendererSrc, /data-model-service|setModelService/);
   assert.match(rendererSrc, /id="codexAuthToggle"/);
   assert.match(rendererSrc, /id="codexHistoryToggle"/);
@@ -9420,7 +9783,9 @@ async function testManagerIpcContract(): Promise<void> {
   assert.match(rendererSrc, /已切换至 \$\{serviceName\}。当前任务未生效时，请重新打开 ChatGPT。/,
     'provider switching must explain the loaded-task boundary without forcing a restart');
   assert.match(rendererSrc, /已切回官方服务。/);
-  assert.match(rendererSrc, /已选择 \$\{modelId\}；协议由 XwX Deck 自动适配。/);
+  assert.match(rendererSrc, /已选择 \$\{choice\.label\}；协议由 XwX Deck 自动适配。/);
+  assert.match(rendererSrc, /modelContextWindow: choice\.contextWindow/,
+    'the selected display variant must persist its numeric window separately from the model id');
   assert.match(rendererSrc, /协议由 XwX Deck 自动适配/);
   assert.doesNotMatch(settingsPage, /showToast\(`发现新版本 \$\{next\.targetVersion\}`, 'success'\)/, 'the actionable update toast must be the sole new-version notification');
   assert.match(rendererSrc, /恢复迁移前分类/);
@@ -9488,7 +9853,7 @@ async function testManagerIpcContract(): Promise<void> {
   assert.doesNotMatch(managerWindow, /reloadIgnoringCache/);
   assert.match(managerWindow, /win\.hide\(\)/);
   assert.match(rendererSrc, /isDesktop\(\) \? null : canvas\.getContext\('webgl'/);
-  assert.doesNotMatch(rendererSrc, /SyncPage|ToolsPage|page-sync|page-tools|配置同步|Excel 转 Markdown/);
+  assert.doesNotMatch(rendererSrc, /SyncPage|page-sync|配置同步|Excel 转 Markdown/);
   assert.doesNotMatch(preload, /config-sync|excel-progress|convertExcel|chooseExcel|openExcel|readExcel/);
   assert.doesNotMatch(ipcHandlers, /config-sync|excel-progress|convert-excel|choose-excel|open-excel|read-excel/);
   assert.doesNotMatch(runtime, /ConfigSyncService/);

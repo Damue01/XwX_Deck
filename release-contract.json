@@ -18,7 +18,8 @@
     "repairCenter": true,
     "safeExitRecovery": true,
     "configurationSync": false,
-    "toolsPage": false,
+    "toolsPage": true,
+    "conversationDiagnostics": true,
     "excelToMarkdown": false
   },
   "updates": {

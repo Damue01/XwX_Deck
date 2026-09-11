@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { Gauge, Box, Settings, LayoutDashboard, PanelLeft, ArrowDownToLine, Check, LoaderCircle } from 'lucide-react';
+import { Gauge, Box, Wrench, Settings, LayoutDashboard, PanelLeft, ArrowDownToLine, Check, LoaderCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getApi } from '@/bridge/api';
 import type { XwXDeckUpdateState } from '@/bridge/types';
 
-export type PageId = 'signal' | 'models' | 'settings';
+export type PageId = 'signal' | 'models' | 'tools' | 'settings';
 
 interface Props {
   readonly activePage: PageId;
@@ -15,6 +15,7 @@ interface Props {
 const NAV_ITEMS: Array<{ id: PageId; label: string; tip: string; Icon: React.ElementType }> = [
   { id: 'signal',   label: 'Trace', tip: 'Trace', Icon: Gauge },
   { id: 'models',   label: '模型',      tip: '模型',      Icon: Box },
+  { id: 'tools',    label: '工具',      tip: '工具',      Icon: Wrench },
 ];
 
 export function Rail({ activePage, onNavigate, updateState }: Props): React.ReactElement {

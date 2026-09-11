@@ -1,6 +1,16 @@
 // Shared data shapes for the window.xwxDeck bridge surface.
 // All types are plain serialisable objects; nothing from Electron is imported here.
 import type { ProviderPresetId } from '../../shared/providerProfiles';
+import type { CodexConversationHealthReport } from '../../shared/codexConversationHealth';
+export type {
+  CodexConversationDatabaseHealth,
+  CodexConversationHealthReport,
+  CodexConversationHealthRow,
+  CodexConversationHealthStatus,
+  CodexConversationIssue,
+  CodexConversationIssueCode,
+  CodexRolloutLocation
+} from '../../shared/codexConversationHealth';
 
 export type ClientId = 'claude-cli' | 'codex-cli';
 
@@ -93,6 +103,7 @@ export interface XwXDeckRuntimeState {
   readonly dashboardUrl?: string;
   readonly backgroundGatewayActive: boolean;
   readonly backgroundGatewayAction?: 'close' | 'open';
+  readonly chatGptRestartRecommended: boolean;
   readonly externalTracePort?: number;
   readonly sessions: number;
   readonly traces: number;
@@ -162,6 +173,7 @@ export interface CodexConfigSnapshot {
   readonly activeProvider: string;
   readonly activeBaseUrl: string;
   readonly officialModel: string;
+  readonly modelContextWindow?: number;
   readonly compatible: {
     readonly provider: string;
     readonly model: string;
@@ -275,6 +287,9 @@ export interface XwXDeckApi {
   getCodexEnhancements(): Promise<CodexEnhancementsSnapshot>;
   updateCodexEnhancements(payload: Record<string, unknown>): Promise<CodexEnhancementsSnapshot>;
   updateCodexConfig(payload: Record<string, unknown>): Promise<CodexConfigSnapshot>;
+  diagnoseCodexConversations(): Promise<CodexConversationHealthReport>;
+  openCodexConversationPath(filePath: string): Promise<void>;
+  copyText(value: string): Promise<void>;
 
   // 兼容服务
   getCompatibleServiceConfig(): Promise<CompatibleServiceConfigSnapshot>;

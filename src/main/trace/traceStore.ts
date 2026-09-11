@@ -1082,15 +1082,7 @@ export class TraceStore {
           && session.clientConversationKey === target.clientConversationKey
         )
       : [target];
-    const targetIds = new Set(targets.map(session => session.id));
-    if (this.currentSessionId && targetIds.has(this.currentSessionId)) {
-      this.currentSessionId = undefined;
-    }
-    await this.writeIndex({
-      version: 1,
-      sessions: index.sessions.filter(session => !targetIds.has(session.id))
-    });
-    for (const session of targets) await removeSessionFiles(session);
+    await this.removeSessionsFromIndex(index, targets);
     return true;
   }
 
@@ -1107,7 +1099,11 @@ export class TraceStore {
     if (max > 0 && index.sessions.length > max) {
       const sorted = [...index.sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
       const remove = sorted.slice(0, Math.max(0, sorted.length - max));
-      index = await this.removeSessionsFromIndex(index, remove);
+      try {
+        index = await this.removeSessionsFromIndex(index, remove);
+      } catch {
+        return;
+      }
     }
 
     const maxBytes = this.configuredMaxStorageBytes();
@@ -1129,7 +1125,11 @@ export class TraceStore {
       totalBytes -= await sessionFileSize(session);
     }
     if (remove.length === 0) return;
-    await this.removeSessionsFromIndex(index, remove);
+    try {
+      await this.removeSessionsFromIndex(index, remove);
+    } catch {
+      // Retention cleanup is best-effort and must never fail a durable append.
+    }
   }
 
   private async removeSessionsFromIndex(
@@ -1144,8 +1144,14 @@ export class TraceStore {
       version: 1,
       sessions: index.sessions.filter(s => !removeIds.has(s.id))
     };
-    await this.writeIndex(next);
-    for (const session of remove) await removeSessionFiles(session);
+    const staged = await stageSessionFilesForRemoval(remove);
+    try {
+      await this.writeIndex(next);
+    } catch (error) {
+      await restoreStagedSessionFiles(staged);
+      throw error;
+    }
+    await discardStagedSessionFiles(staged);
     return next;
   }
 
@@ -1364,8 +1370,41 @@ export class TraceStore {
   }
 }
 
-async function removeSessionFiles(session: TapSessionSummary): Promise<void> {
-  try { await fs.promises.rm(session.jsonlPath, { force: true }); } catch { /* ignore */ }
+interface StagedSessionFile {
+  readonly originalPath: string;
+  readonly stagedPath: string;
+}
+
+async function stageSessionFilesForRemoval(
+  sessions: readonly TapSessionSummary[]
+): Promise<StagedSessionFile[]> {
+  const staged: StagedSessionFile[] = [];
+  try {
+    for (const session of sessions) {
+      if (!await exists(session.jsonlPath)) continue;
+      const stagedPath = `${session.jsonlPath}.deleting-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      await fs.promises.rename(session.jsonlPath, stagedPath);
+      staged.push({ originalPath: session.jsonlPath, stagedPath });
+    }
+    return staged;
+  } catch (error) {
+    await restoreStagedSessionFiles(staged);
+    throw error;
+  }
+}
+
+async function restoreStagedSessionFiles(staged: readonly StagedSessionFile[]): Promise<void> {
+  for (const file of [...staged].reverse()) {
+    await fs.promises.rename(file.stagedPath, file.originalPath).catch(() => undefined);
+  }
+}
+
+async function discardStagedSessionFiles(staged: readonly StagedSessionFile[]): Promise<void> {
+  for (const file of staged) {
+    // A failed unlink leaves a uniquely named recoverable copy instead of
+    // silently losing the only bytes.
+    await fs.promises.rm(file.stagedPath, { force: true }).catch(() => undefined);
+  }
 }
 
 async function sessionFileSize(session: TapSessionSummary): Promise<number> {

@@ -21,7 +21,7 @@ for (const file of await textFiles(root)) {
   const content = await readFile(file, 'utf8');
   for (const pattern of patterns) if (pattern.test(content)) failures.push(`${relative} contains forbidden pattern ${pattern}`);
 }
-for (const relative of ['src/renderer/features/sync/SyncPage.tsx','src/renderer/features/tools/ToolsPage.tsx','src/main/app/configSync.ts','src/main/app/excelMarkdown.ts']) {
+for (const relative of ['src/renderer/features/sync/SyncPage.tsx','src/main/app/configSync.ts','src/main/app/excelMarkdown.ts']) {
   check(!await exists(path.join(root, relative)), `removed feature file still exists: ${relative}`);
 }
 if (failures.length) {

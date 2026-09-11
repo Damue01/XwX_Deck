@@ -5,6 +5,7 @@ import { readTextOrUndefined, writeFileAtomic } from '../shared/fsx';
 import { resolveClientPaths } from './clientConfig';
 import { resolveCompatibleServiceReasoningProfile } from './compatibleServiceReasoningProfiles';
 import { readTomlTopLevelString, rootToml } from './toml';
+import { codexDefaultContextWindow } from '../../shared/codexContextVariants';
 
 export const XwX_CODEX_CATALOG_FILE = 'xwx-compatible-catalog.json';
 
@@ -170,7 +171,8 @@ function routedCatalogRow(
 ): CatalogRow {
   // Enrichment normally supplies a sourced value for every row. Keep the same
   // 256K operational fallback here for damaged or hand-built catalogs.
-  const contextWindow = entry.contextWindow ?? 262_144;
+  const maxContextWindow = entry.contextWindow ?? 262_144;
+  const contextWindow = codexDefaultContextWindow(entry) ?? maxContextWindow;
   const row: CatalogRow = structuredClone(template);
   row.slug = entry.id;
   row.display_name = entry.id;
@@ -211,7 +213,7 @@ function routedCatalogRow(
     delete row.default_reasoning_level;
   }
   row.context_window = contextWindow;
-  row.max_context_window = contextWindow;
+  row.max_context_window = maxContextWindow;
   row.auto_compact_token_limit = Math.floor(contextWindow * 0.9);
   row.effective_context_window_percent = 95;
   const nativeInputModalities = Array.isArray(nativeModel?.input_modalities)

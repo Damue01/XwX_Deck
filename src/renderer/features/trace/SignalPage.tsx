@@ -12,10 +12,12 @@ import { AppearanceButton, AppearanceDrawer, customBackgroundStyle } from './App
 type PeriodKey = 'total' | 'today' | 'week';
 
 const CHATGPT_CONNECTION_TOAST_ID = 'chatgpt-connection';
+const CHATGPT_RESTART_TOAST_ID = 'chatgpt-restart-recommended';
 const TRACE_WAITING_TOAST_ID = 'trace-waiting-client';
 const ENVIRONMENT_OVERRIDE_TOAST_ID = 'environment-override';
 const CHATGPT_CONNECTION_FAILED_TEXT = 'ChatGPT 接入失败，请重启 Trace 后重试。';
 const CHATGPT_CONNECTION_UNSUPPORTED_TEXT = 'ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。';
+const CHATGPT_RESTART_DESCRIPTION = 'ChatGPT 在 XwX Deck 接管连接前已经运行，当前任务可能仍使用旧连接。完全退出并重新打开 ChatGPT 后，新请求才会稳定经过 Gateway。';
 export const TRACE_TOGGLE_REQUEST_EVENT = 'xwxdeck:toggle-trace-request';
 
 interface TokenReadoutProps {
@@ -110,6 +112,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
   const togglingRef = React.useRef(false);
   const statsTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const shownChatGptIssueRef = React.useRef<string | undefined>(undefined);
+  const shownChatGptRestartRef = React.useRef(false);
   const shownEnvironmentIssueRef = React.useRef<string | undefined>(undefined);
 
   const capturing = bridge.runtime?.tracingEnabled === true;
@@ -127,6 +130,19 @@ export function SignalPage({ active }: Props): React.ReactElement {
   React.useEffect(() => {
     document.body.dataset.capturing = String(capturing);
   }, [capturing]);
+
+  React.useEffect(() => {
+    if (!bridge.runtime?.chatGptRestartRecommended) {
+      shownChatGptRestartRef.current = false;
+      return;
+    }
+    if (shownChatGptRestartRef.current) return;
+    shownChatGptRestartRef.current = true;
+    showToast('请重启 ChatGPT', 'info', CHATGPT_RESTART_TOAST_ID, {
+      description: CHATGPT_RESTART_DESCRIPTION,
+      timeout: 12_000
+    });
+  }, [bridge.runtime?.chatGptRestartRecommended]);
 
   React.useEffect(() => {
     if (!environmentIssue) {

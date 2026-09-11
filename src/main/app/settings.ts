@@ -36,8 +36,12 @@ export interface CodexEnhancementSettings {
 export interface CodexModelSettings {
   /** Last model selected while using the official ChatGPT/OpenAI service. */
   readonly official: string;
+  /** Explicit window selected for the official model; zero follows the catalog. */
+  readonly officialContextWindow: number;
   /** Last model selected while using 兼容服务. Empty until first configured. */
   readonly compatible: string;
+  /** Explicit window selected for the compatible model; zero follows the catalog. */
+  readonly compatibleContextWindow: number;
 }
 
 export type AppTheme = 'day' | 'night';
@@ -118,7 +122,9 @@ const DEFAULT_CODEX_ENHANCEMENTS: CodexEnhancementSettings = {
 
 const DEFAULT_CODEX_MODELS: CodexModelSettings = {
   official: 'gpt-5.5',
-  compatible: ''
+  officialContextWindow: 0,
+  compatible: '',
+  compatibleContextWindow: 0
 };
 
 const DEFAULT_TRACE_APPEARANCE: TraceAppearanceSettings = {
@@ -220,8 +226,11 @@ function normalizeSettings(value: XwXDeckSettings): XwXDeckSettings {
       customImageOverlay: clampInt(value.traceAppearance?.customImageOverlay, 0, 80, DEFAULT_TRACE_APPEARANCE.customImageOverlay)
     },
     startupEnabled: value.startupEnabled === true,
-    maxSessions: clampInt(value.maxSessions, 0, 500, DEFAULT_SETTINGS.maxSessions),
-    maxStorageMB: clampInt(value.maxStorageMB, 0, 102400, DEFAULT_SETTINGS.maxStorageMB),
+    // XwX Deck never deletes Trace history automatically. Keep these
+    // serialized compatibility fields pinned to zero and reject unsupported
+    // renderer or configuration patches that try to revive retention budgets.
+    maxSessions: 0,
+    maxStorageMB: 0,
     traceRoot: cleanDirectory(value.traceRoot),
     logRoot: cleanDirectory(value.logRoot),
     claudeConfigDir: cleanDirectory(value.claudeConfigDir),
@@ -250,7 +259,9 @@ function normalizeSettings(value: XwXDeckSettings): XwXDeckSettings {
     },
     codexModels: {
       official: cleanModel(value.codexModels?.official) || DEFAULT_CODEX_MODELS.official,
-      compatible: cleanModel(value.codexModels?.compatible)
+      officialContextWindow: cleanContextWindow(value.codexModels?.officialContextWindow),
+      compatible: cleanModel(value.codexModels?.compatible),
+      compatibleContextWindow: cleanContextWindow(value.codexModels?.compatibleContextWindow)
     },
     codexEnhancements: {
       preserveOfficialLogin: value.codexEnhancements?.preserveOfficialLogin !== false,
@@ -262,6 +273,12 @@ function normalizeSettings(value: XwXDeckSettings): XwXDeckSettings {
 
 function cleanModel(value: unknown): string {
   return typeof value === 'string' ? value.trim().slice(0, 120) : '';
+}
+
+function cleanContextWindow(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 16_384 && value <= 2_000_000
+    ? value
+    : 0;
 }
 
 function cleanConnectionValue(value: unknown, maxLength: number): string {
