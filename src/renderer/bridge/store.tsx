@@ -1,3 +1,4 @@
+import type { ProviderSnapshot } from '../../shared/providers';
 import * as React from 'react';
 import { getApi, isDesktop } from './api';
 import type {
@@ -13,6 +14,7 @@ import type {
 } from './types';
 
 export interface BridgeState {
+  readonly providers: ProviderSnapshot | null;
   readonly api: ReturnType<typeof getApi>;
   readonly runtime: XwXDeckRuntimeState | null;
   readonly traceStats: ManagerTraceStats | null;
@@ -49,6 +51,7 @@ interface Props {
 export function BridgeProvider({ children, showToast }: Props): React.ReactElement {
   const api = React.useMemo(() => getApi(), []);
   const [state, setState] = React.useState<BridgeData>({
+    providers: null,
     runtime: null,
     traceStats: null,
     updateState: null,
@@ -81,9 +84,10 @@ export function BridgeProvider({ children, showToast }: Props): React.ReactEleme
         api.getCodexEnhancements(),
         api.getCompatibleServiceConfig(),
         api.getModelServices(),
+        api.getProviders(),
       ]);
 
-      const [runtimeR, statsR, updateR, claudeR, codexR, enhanR, paperR, servicesR] = results;
+      const [runtimeR, statsR, updateR, claudeR, codexR, enhanR, paperR, servicesR, providersR] = results;
       type MutablePatch = { -readonly [K in keyof BridgeData]?: BridgeData[K] };
       const patch: MutablePatch = { booted: true };
       if (runtimeR.status === 'fulfilled') patch.runtime = runtimeR.value;
@@ -95,6 +99,7 @@ export function BridgeProvider({ children, showToast }: Props): React.ReactEleme
       if (enhanR.status === 'fulfilled') patch.codexEnhancements = enhanR.value;
       if (paperR.status === 'fulfilled') patch.compatibleServiceConfig = paperR.value;
       if (servicesR.status === 'fulfilled') patch.modelServices = servicesR.value;
+      if (providersR.status === 'fulfilled') patch.providers = providersR.value;
       update(patch);
     };
 

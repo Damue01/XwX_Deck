@@ -105,8 +105,8 @@ export async function enrichModelCatalogCacheFirst(
   fetcher: JsonFetcher = fetch,
   cachePath?: string
 ): Promise<ModelCatalogEntry[]> {
-  const cached = remoteCache
-    ?? (cachePath ? await readRemoteCapabilityCache(cachePath) : undefined);
+  const cached = remoteCache && hasRemoteCapabilities(remoteCache) ? remoteCache
+    : cachePath ? await readRemoteCapabilityCache(cachePath) : undefined;
   if (cached && hasRemoteCapabilities(cached)) {
     return entries.map(entry => enrichEntry(entry, cached));
   }

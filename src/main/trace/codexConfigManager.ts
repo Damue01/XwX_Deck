@@ -32,6 +32,7 @@ export type CodexConfigMode = 'official' | 'compatible';
 export type CodexAuthMode = 'chatgpt' | 'api-key' | 'unknown';
 
 export interface CodexConfigSnapshot {
+  readonly modelCatalogSource?: 'none' | 'managed' | 'external';
   readonly configPath: string;
   readonly authPath: string;
   readonly exists: boolean;
@@ -51,6 +52,7 @@ export interface CodexConfigSnapshot {
 }
 
 export interface CodexConfigUpdate {
+  readonly expectedProviderId?: string | null;
   readonly mode?: unknown;
   readonly officialModel?: unknown;
   readonly compatibleModel?: unknown;
@@ -157,6 +159,7 @@ export class CodexConfigManager {
     const currentModel = topModel || (mode === 'official' ? DEFAULT_OFFICIAL_MODEL : DEFAULT_COMPATIBLE_SERVICE_MODEL);
 
     return {
+      modelCatalogSource: readTomlTopLevelString(rootText, 'model_catalog_json') ? isXwXCodexCatalogPath(readTomlTopLevelString(rootText, 'model_catalog_json')) ? 'managed' : 'external' : 'none',
       configPath: paths.codexConfigPath,
       authPath: paths.codexAuthPath,
       exists: text !== undefined,

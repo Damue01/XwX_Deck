@@ -1,4 +1,4 @@
-import { providerProfile, type ProviderPresetId } from './providerProfiles';
+import { type ProviderPresetId } from './providerProfiles';
 
 /** User-owned connection registry. A fresh installation has no API connections. */
 export type ProviderAdapter = 'auto' | 'responses' | 'chat-completions' | 'anthropic-messages';
@@ -30,5 +30,5 @@ export type ProviderInput = Pick<ProviderConnection, 'displayName' | 'baseUrl' |
 };
 export function supportsProviderClient(provider: ProviderConnection, client: ProviderClient): boolean {
   return client === 'codex' || provider.adapter === 'anthropic-messages'
-    || provider.adapter === 'auto' && providerProfile(provider.providerPreset).supportsClaude;
+    || provider.adapter === 'auto';
 }

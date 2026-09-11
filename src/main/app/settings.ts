@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import type { ProviderRegistry, ProviderConnection, ProviderClient } from '../../shared/providers';
 import * as path from 'path';
 import { readJson, writeJson } from '../shared/fsx';
 import {
@@ -60,6 +62,8 @@ export interface TraceAppearanceSettings {
 }
 
 export interface XwXDeckSettings {
+  readonly providers?: ProviderRegistry;
+  readonly codexPreferredMode: 'auto' | 'official' | 'compatible';
   readonly tracingEnabled: boolean;
   /** 用户显式关闭后台代理后的持久化暂停状态。 */
   readonly gatewayPaused: boolean;
@@ -138,6 +142,7 @@ const DEFAULT_TRACE_APPEARANCE: TraceAppearanceSettings = {
 const DEFAULT_SETTINGS: XwXDeckSettings = {
   tracingEnabled: false,
   gatewayPaused: false,
+  codexPreferredMode: 'auto',
   theme: 'day',
   traceAppearance: DEFAULT_TRACE_APPEARANCE,
   startupEnabled: false,
@@ -158,6 +163,7 @@ const DEFAULT_SETTINGS: XwXDeckSettings = {
 
 export class XwXDeckSettingsStore {
   private writeQueue: Promise<void> = Promise.resolve();
+  private readProblemValue: { path: string; message: string } | undefined;
 
   constructor(private readonly userDataDir: string) {}
 
@@ -165,9 +171,32 @@ export class XwXDeckSettingsStore {
     return path.join(this.userDataDir, 'settings.json');
   }
 
+  readProblem(): { path: string; message: string } | undefined { return this.readProblemValue; }
+
   async read(): Promise<XwXDeckSettings> {
-    const value = await readJson<XwXDeckSettings>(this.path(), DEFAULT_SETTINGS);
-    return normalizeSettings(value);
+    const result = this.writeQueue.then(() => this.readUnlocked());
+    this.writeQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async readUnlocked(): Promise<XwXDeckSettings> {
+    let value: XwXDeckSettings;
+    let normalized: XwXDeckSettings;
+    try {
+      let text: string | undefined;
+      try { text = await fs.promises.readFile(this.path(), 'utf8'); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const parsed: unknown = text === undefined ? DEFAULT_SETTINGS : JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('设置文件必须为对象。');
+      value = parsed as XwXDeckSettings;
+      normalized = normalizeSettings(value);
+      this.readProblemValue = undefined;
+    } catch {
+      this.readProblemValue = { path: this.path(), message: 'XwX Deck 设置文件无法解析，已使用安全默认值且禁止覆盖原文件。' };
+      return normalizeSettings(DEFAULT_SETTINGS);
+    }
+    if (!value.providers || value.maxSessions !== 0 || value.maxStorageMB !== 0) await writeJson(this.path(), normalized);
+    return normalized;
   }
 
   async update(patch: XwXDeckSettingsPatch): Promise<XwXDeckSettings> {
@@ -177,8 +206,9 @@ export class XwXDeckSettingsStore {
   }
 
   private async updateUnlocked(patch: XwXDeckSettingsPatch): Promise<XwXDeckSettings> {
-    const current = await this.read();
-    const next = normalizeSettings({
+    const current = await this.readUnlocked();
+    if (this.readProblemValue) throw new Error(this.readProblemValue.message);
+    let merged: XwXDeckSettings = {
       ...current,
       ...patch,
       clientEnabled: {
@@ -205,16 +235,36 @@ export class XwXDeckSettingsStore {
         ...current.codexEnhancements,
         ...patch.codexEnhancements
       }
-    });
+    };
+    if (!patch.providers && current.providers) {
+      const registry = current.providers;
+      const connectionPatch = patch.compatible;
+      if (!registry.connections.length && connectionPatch?.baseUrl && connectionPatch?.bearerToken) {
+        // An explicit save through the former single-service API creates its first user connection.
+        merged = { ...merged, providers: undefined };
+      } else {
+        merged = { ...merged, providers: { ...registry, connections: registry.connections.map(provider => ({
+          ...provider,
+          ...(provider.id === registry.selected.codex ? {
+            ...connectionPatch,
+            ...(patch.codexModels?.compatible !== undefined ? { codexModel: patch.codexModels.compatible } : {}),
+            ...(patch.codexModels?.compatibleContextWindow !== undefined ? { codexContextWindow: patch.codexModels.compatibleContextWindow } : {})
+          } : {}),
+          ...(provider.id === registry.selected.claude && patch.claudeModels ? { claudeModels: { ...provider.claudeModels, ...patch.claudeModels } } : {})
+        })) } };
+      }
+    }
+    const next = normalizeSettings(merged);
     await writeJson(this.path(), next);
     return next;
   }
 }
 
 function normalizeSettings(value: XwXDeckSettings): XwXDeckSettings {
-  return {
+  const normalized: XwXDeckSettings = {
     tracingEnabled: value.tracingEnabled === true,
     gatewayPaused: value.gatewayPaused === true,
+    codexPreferredMode: value.codexPreferredMode === 'official' || value.codexPreferredMode === 'compatible' ? value.codexPreferredMode : 'auto',
     theme: value.theme === 'night' ? 'night' : 'day',
     traceAppearance: {
       skin: value.traceAppearance?.skin === 'clean' || value.traceAppearance?.skin === 'custom'
@@ -269,6 +319,14 @@ function normalizeSettings(value: XwXDeckSettings): XwXDeckSettings {
       pendingHistoryRestore: value.codexEnhancements?.pendingHistoryRestore === true
     }
   };
+  const providers = normalizeProviders(value.providers, normalized);
+  const codex = providers.connections.find(p => p.id === providers.selected.codex);
+  const claude = providers.connections.find(p => p.id === providers.selected.claude);
+  return { ...normalized, providers,
+    compatible: codex ? { displayName: codex.displayName, providerPreset: codex.providerPreset, baseUrl: codex.baseUrl, bearerToken: codex.bearerToken, codexApiFormat: codex.codexApiFormat } : DEFAULT_COMPATIBLE_SERVICE,
+    codexModels: { ...normalized.codexModels, compatible: codex?.codexModel ?? normalized.codexModels.compatible, compatibleContextWindow: codex?.codexContextWindow ?? normalized.codexModels.compatibleContextWindow },
+    claudeModels: claude?.claudeModels ?? normalized.claudeModels
+  };
 }
 
 function cleanModel(value: unknown): string {
@@ -306,4 +364,32 @@ function cleanManagedFileName(value: unknown): string {
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(max, Math.floor(value)));
+}
+
+function normalizeProviders(raw: ProviderRegistry | undefined, legacy: XwXDeckSettings): ProviderRegistry {
+  if (!raw) {
+    const configured = !!legacy.compatible.baseUrl || !!legacy.compatible.bearerToken;
+    const initial: ProviderConnection = { id: 'initial-provider', ...legacy.compatible, adapter: 'auto',
+      codexModel: legacy.codexModels.compatible, codexContextWindow: legacy.codexModels.compatibleContextWindow,
+      claudeModels: legacy.claudeModels };
+    return { version: 1, connections: configured ? [initial] : [], selected: { codex: configured ? initial.id : null, claude: configured ? initial.id : null } };
+  }
+  if (raw.version !== 1 || !Array.isArray(raw.connections) || !raw.selected) throw new Error('服务连接配置格式无效。');
+  const ids = new Set<string>();
+  const connections: ProviderConnection[] = raw.connections.map(p => {
+    if (!p || typeof p.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(p.id) || ids.has(p.id)) throw new Error('服务连接 ID 无效或重复。');
+    ids.add(p.id);
+    if (!['auto', 'responses', 'chat-completions', 'anthropic-messages'].includes(p.adapter)) throw new Error('不支持的服务连接类型。');
+    return { id: p.id, displayName: cleanConnectionValue(p.displayName, 80), providerPreset: normalizeProviderPreset(p.providerPreset),
+      baseUrl: cleanConnectionValue(p.baseUrl, 2000), bearerToken: cleanConnectionValue(p.bearerToken, 4000), adapter: p.adapter,
+      codexApiFormat: p.adapter !== 'auto' ? p.adapter : p.codexApiFormat === 'chat-completions' || p.codexApiFormat === 'anthropic-messages' ? p.codexApiFormat : 'responses',
+      codexModel: cleanModel(p.codexModel), codexContextWindow: cleanContextWindow(p.codexContextWindow),
+      claudeModels: { fable: cleanModel(p.claudeModels?.fable), opus: cleanModel(p.claudeModels?.opus), sonnet: cleanModel(p.claudeModels?.sonnet), haiku: cleanModel(p.claudeModels?.haiku) } };
+  });
+  const selected = (client: ProviderClient) => raw.selected[client] && ids.has(raw.selected[client]!) ? raw.selected[client] : null;
+  return { version: 1, connections, selected: { codex: selected('codex'), claude: selected('claude') } };
+}
+
+export function selectedProvider(settings: XwXDeckSettings, client: ProviderClient): ProviderConnection | undefined {
+  return settings.providers?.connections.find(p => p.id === settings.providers?.selected[client]);
 }

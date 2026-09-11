@@ -31,6 +31,7 @@ export interface ClaudeCompatibleServiceSnapshot {
 }
 
 export interface ClaudeCompatibleServiceUpdate {
+  readonly nativeAnthropic?: boolean;
   readonly enabled: boolean;
   readonly baseUrl?: string;
   readonly bearerToken?: string;
@@ -76,7 +77,7 @@ export class ClaudeConfigManager {
   }
 
   private async enable(input: ClaudeCompatibleServiceUpdate): Promise<ClaudeCompatibleServiceSnapshot> {
-    const baseUrl = claudeCompatibleServiceBaseUrl(input.baseUrl || '');
+    const baseUrl = input.nativeAnthropic ? (input.baseUrl || '').trim().replace(/\/v1\/?$/, '') : claudeCompatibleServiceBaseUrl(input.baseUrl || '');
     const bearerToken = input.bearerToken?.trim() || '';
     if (!baseUrl) throw new Error('服务商地址不能为空。');
     if (!bearerToken) throw new Error('服务商密钥不能为空。');
@@ -95,6 +96,7 @@ export class ClaudeConfigManager {
       ? captureMissingValues(existingState.previous, env)
       : captureValues(env);
     const written = buildWrittenValues(baseUrl, bearerToken, input.models, input.catalog, data.model);
+    if (input.nativeAnthropic) { written.ANTHROPIC_AUTH_TOKEN = ''; written.ANTHROPIC_API_KEY = bearerToken; }
     for (const key of MANAGED_KEYS) {
       const value = written[key];
       if (value) env[key] = value;

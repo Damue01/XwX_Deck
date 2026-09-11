@@ -33,12 +33,13 @@ export interface CodexCatalogSyncResult {
  * XwX-owned `model_catalog_json` pointer from config.toml.
  */
 export class CodexModelCatalogManager {
+  private writes: Promise<unknown> = Promise.resolve();
   catalogPath(): string {
     return path.join(path.dirname(resolveClientPaths().codexConfigPath), XwX_CODEX_CATALOG_FILE);
   }
 
-  async sync(entries: readonly ModelCatalogEntry[]): Promise<string> {
-    const result = await this.writeCatalog(entries);
+  async sync(entries: readonly ModelCatalogEntry[], compatibleServiceProfile = true): Promise<string> {
+    const result = await this.writeCatalog(entries, compatibleServiceProfile);
     return result.path;
   }
 
@@ -47,16 +48,22 @@ export class CodexModelCatalogManager {
    * tool. An absent pointer is also allowed because the caller may be in the
    * middle of publishing the 兼容服务 config transaction.
    */
-  async syncIfXwXOwned(entries: readonly ModelCatalogEntry[]): Promise<CodexCatalogSyncResult | undefined> {
+  async syncIfXwXOwned(entries: readonly ModelCatalogEntry[], compatibleServiceProfile = true): Promise<CodexCatalogSyncResult | undefined> {
     const configText = await readTextOrUndefined(resolveClientPaths().codexConfigPath);
     const configuredPath = configText
       ? readTomlTopLevelString(rootToml(configText), 'model_catalog_json')
       : undefined;
     if (configuredPath && !isXwXCodexCatalogPath(configuredPath)) return undefined;
-    return this.writeCatalog(entries);
+    return this.writeCatalog(entries, compatibleServiceProfile);
   }
 
-  private async writeCatalog(entries: readonly ModelCatalogEntry[]): Promise<CodexCatalogSyncResult> {
+  private writeCatalog(entries: readonly ModelCatalogEntry[], compatibleServiceProfile: boolean): Promise<CodexCatalogSyncResult> {
+    const result = this.writes.then(() => this.writeCatalogUnlocked(entries, compatibleServiceProfile));
+    this.writes = result.catch(() => undefined);
+    return result;
+  }
+
+  private async writeCatalogUnlocked(entries: readonly ModelCatalogEntry[], compatibleServiceProfile: boolean): Promise<CodexCatalogSyncResult> {
     const templates = await this.readNativeTemplates();
     const rows = entries
       .filter(entry => (
@@ -69,7 +76,8 @@ export class CodexModelCatalogManager {
         templates.fallback,
         templates.bySlug.get(normalizeSlug(entry.id)),
         entry,
-        index
+        index,
+        compatibleServiceProfile
       ));
     if (!rows.length) throw new Error('兼容服务 没有返回可用于 ChatGPT 的模型。');
     const document: CatalogDocument = { models: rows };
@@ -167,7 +175,8 @@ function routedCatalogRow(
   template: CatalogRow,
   nativeModel: CatalogRow | undefined,
   entry: ModelCatalogEntry,
-  index: number
+  index: number,
+  compatibleServiceProfile = true
 ): CatalogRow {
   // Enrichment normally supplies a sourced value for every row. Keep the same
   // 256K operational fallback here for damaged or hand-built catalogs.
@@ -187,12 +196,12 @@ function routedCatalogRow(
       ? nativeModel.supported_reasoning_levels
       : undefined
   );
-  const shouldUseNativeLevels = nativeLevels.length > 0
+  const shouldUseNativeLevels = compatibleServiceProfile && nativeLevels.length > 0
     && entry.capabilitySources?.reasoning !== 'compatible';
   const levels = shouldUseNativeLevels
     ? nativeLevels
     : clampReasoningEfforts(entry.reasoningLevels);
-  const verifiedReasoning = verifiedCatalogReasoning(entry, levels);
+  const verifiedReasoning = compatibleServiceProfile ? verifiedCatalogReasoning(entry, levels) : undefined;
   const displayedLevels = verifiedReasoning?.levels ?? levels;
   // `supported_reasoning_levels` is a required Codex field. Always emit it
   // (even empty) instead of deleting it or inheriting the template's value.

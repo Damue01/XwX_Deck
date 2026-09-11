@@ -1,3 +1,4 @@
+import type { ProviderInput, ProviderClient } from '../../shared/providers';
 import {
   BrowserWindow,
   dialog,
@@ -142,6 +143,22 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
       }
       shell.showItemInFolder(path.resolve(input));
       return true;
+    },
+    'xwxdeck:get-providers': () => requireController().readProviders(),
+    'xwxdeck:save-provider': (_event, input) => requireController().saveProvider(input as ProviderInput),
+    'xwxdeck:delete-provider': (_event, id) => {
+      if (typeof id !== 'string') throw new Error('无效的连接 ID。');
+      return requireController().deleteProvider(id);
+    },
+    'xwxdeck:switch-client-provider': (_event, input) => {
+      const value = input as { client?: unknown; providerId?: unknown } | undefined;
+      if (!value || !['codex', 'claude'].includes(String(value.client)) || value.providerId !== null && typeof value.providerId !== 'string') throw new Error('无效的连接选择。');
+      return requireController().switchClientProvider(value.client as ProviderClient, value.providerId as string | null);
+    },
+    'xwxdeck:fetch-provider-models': (_event, input) => {
+      const value = input as { providerId?: unknown; refresh?: unknown } | undefined;
+      if (!value || typeof value.providerId !== 'string') throw new Error('无效的连接 ID。');
+      return requireController().fetchProviderModels(value.providerId, value.refresh === true);
     },
     'xwxdeck:fetch-models': (_event, input) => {
       const source = input && typeof input === 'object' && (input as { source?: unknown }).source === 'compatible'

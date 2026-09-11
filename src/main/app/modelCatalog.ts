@@ -139,30 +139,30 @@ export async function fetchCompatibleServiceModelCatalog(
         signal: AbortSignal.timeout(12_000)
       });
       if (!response.ok) {
-        return { ok: false as const, error: `${endpoint.kind} HTTP ${response.status}`, entries: [] as unknown[] };
+        return { ok: false as const, missing: response.status === 404 || response.status === 405, error: `${endpoint.kind} HTTP ${response.status}`, entries: [] as unknown[] };
       }
       const payload = await response.json() as unknown;
-      return { ok: true as const, error: '', entries: entriesFromEndpoint(payload, endpoint) };
+      return { ok: true as const, missing: false, error: '', entries: entriesFromEndpoint(payload, endpoint) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return { ok: false as const, error: `${endpoint.kind} ${message}`, entries: [] as unknown[] };
+      return { ok: false as const, missing: false, error: `${endpoint.kind} ${message}`, entries: [] as unknown[] };
     }
   }));
 
-  if (!results.some(result => result.ok)) {
+  if (!results.some(result => result.ok) && results.some(result => !result.missing)) {
     throw new Error(`模型列表请求失败：${results.map(result => result.error).filter(Boolean).join(' · ')}`);
   }
   const discovered = normalizeModelCatalog(results.flatMap((result, index) => (
     result.ok
       ? result.entries
-      : cachedEntriesForEndpoint(fallbackCatalog, endpoints[index])
+      : result.missing ? [] : cachedEntriesForEndpoint(fallbackCatalog, endpoints[index])
   ))).map(stripUntrustedCompatibleServiceCapabilities);
   const values = capabilityCachePath
     ? options.forceCapabilityRefresh
       ? await enrichModelCatalog(discovered, fetcher, capabilityCachePath)
       : await enrichModelCatalogCacheFirst(discovered, fetcher, capabilityCachePath)
     : await enrichModelCatalog(discovered, fetcher);
-  if (!values.length) throw new Error('服务端没有返回可用模型。');
+
   return values;
 }
 

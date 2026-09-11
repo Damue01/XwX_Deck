@@ -1,3 +1,4 @@
+import { ProviderPicker } from './ProviderPicker';
 import * as React from 'react';
 import type {
   ClaudeModelSettings,
@@ -5,17 +6,13 @@ import type {
   CodexEnhancementsSnapshot,
   ModelCatalogEntry,
   ModelServiceSnapshot,
-  CompatibleServiceConfigSnapshot,
 } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
 import { showToast } from '@/lib/toast';
-import { navigateTo } from '@/lib/utils';
 import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
-import { Toggle } from '@/features/shell/Toggle';
 import { ModelPicker } from './ModelPicker';
 import { CodexEnhancements } from './CodexEnhancements';
 import { isKnownNonConversationalModel, isOfficialCodexModelId } from '../../../main/app/codexProtocolPolicy';
-import { providerProfile } from '../../../shared/providerProfiles';
 import { codexContextVariants, type CodexContextVariant } from '../../../shared/codexContextVariants';
 
 type ClientTab = 'claude' | 'codex';
@@ -32,14 +29,6 @@ const CLAUDE_ROLES: Array<{ key: ClaudeRole; label: string }> = [
   { key: 'haiku', label: 'Haiku' },
 ];
 
-function compatibleServiceReady(cfg: CompatibleServiceConfigSnapshot | null): boolean {
-  return !!(cfg?.baseUrl?.trim() && cfg?.bearerToken?.trim());
-}
-
-function providerDisplayName(cfg: CompatibleServiceConfigSnapshot | null): string {
-  return cfg?.displayName?.trim() || '兼容服务';
-}
-
 function operationError(error: unknown, fallback: string): string {
   const message = error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string'
     ? (error as { message: string }).message.trim()
@@ -47,6 +36,8 @@ function operationError(error: unknown, fallback: string): string {
   if (message.startsWith('Claude 接入失败：检测到环境变量')) return message;
   return message ? `${fallback}：${message}` : fallback;
 }
+
+const EXTERNAL_CODEX_CATALOG_DESCRIPTION = '请移除其他软件写入的 model_catalog_json，再完全退出并重新打开 ChatGPT。';
 
 export function ModelsPage({ active }: Props): React.ReactElement {
   const bridge = useBridge();
@@ -56,13 +47,11 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   const [enhancements, setEnhancements] = React.useState<CodexEnhancementsSnapshot | null>(bridge.codexEnhancements);
   const [services, setServices] = React.useState<ModelServiceSnapshot | null>(bridge.modelServices);
   const [catalog, setCatalog] = React.useState<readonly ModelCatalogEntry[]>(bridge.modelCatalog);
+  const [claudeProviderCatalog, setClaudeProviderCatalog] = React.useState<readonly ModelCatalogEntry[]>([]);
+  const claudeOperationRef = React.useRef(false);
   const [busyClaude, setBusyClaude] = React.useState(false);
   const [busyCodex, setBusyCodex] = React.useState(false);
-  const serviceName = providerDisplayName(bridge.compatibleServiceConfig);
-  const providerSupportsClaude = providerProfile(
-    bridge.compatibleServiceConfig?.providerPreset
-  ).supportsClaude || catalog.some(model => model.protocols.includes('anthropic-messages'));
-
+  const codexOperationRef = React.useRef(false);
   // Hydrate local state from the store once it boots.
   React.useEffect(() => { if (bridge.claudeModels) setClaudeModels(bridge.claudeModels); }, [bridge.claudeModels]);
   React.useEffect(() => { if (bridge.codexConfig) setCodexConfig(bridge.codexConfig); }, [bridge.codexConfig]);
@@ -70,8 +59,8 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   React.useEffect(() => { if (bridge.modelServices) setServices(bridge.modelServices); }, [bridge.modelServices]);
   React.useEffect(() => { setCatalog(bridge.modelCatalog); }, [bridge.modelCatalog]);
 
-  // Show the cached directory immediately, then replace it with a fresh
-  // 兼容服务 snapshot. An empty fresh result must also clear stale entries.
+  // Load the active service directory. Official mode reads Codex's own
+  // models_cache.json; API connections refresh their remote directory.
   React.useEffect(() => {
     let alive = true;
     const apply = (list: readonly ModelCatalogEntry[]) => {
@@ -80,18 +69,27 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       bridge.patch({ modelCatalog: list });
     };
     void (async () => {
-      await bridge.api.fetchModels({ source: 'compatible' }).then(apply).catch(() => undefined);
+      await bridge.api.fetchModels({ source: 'active' }).then(apply).catch(() => undefined);
       if (!alive) return;
-      await bridge.api.fetchModels({ source: 'compatible', refresh: true }).then(apply).catch(() => undefined);
+      if (codexConfig?.mode === 'compatible') {
+        await bridge.api.fetchModels({ source: 'active', refresh: true }).then(apply).catch(() => undefined);
+      }
     })();
     return () => { alive = false; };
-  }, [bridge.api, bridge.patch]);
+  }, [bridge.api, bridge.patch, bridge.providers, codexConfig?.mode]);
+
+  React.useEffect(() => {
+    let alive = true;
+    setClaudeProviderCatalog([]);
+    const id = bridge.providers?.selected.claude;
+    if (id) void bridge.api.fetchProviderModels({ providerId: id }).then(models => { if (alive) setClaudeProviderCatalog(models); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [bridge.api, bridge.providers]);
 
   const configuredIds = React.useMemo(() => {
     const ids = new Set<string>();
-    if (claudeModels) Object.values(claudeModels).forEach(v => { if (v) ids.add(v); });
-    if (codexConfig?.officialModel) ids.add(codexConfig.officialModel);
-    if (codexConfig?.compatible?.model) ids.add(codexConfig.compatible.model);
+    const id = codexConfig?.mode === 'compatible' ? codexConfig.compatible.model : codexConfig?.officialModel;
+    if (id) ids.add(id);
     return ids;
   }, [claudeModels, codexConfig]);
 
@@ -105,11 +103,8 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
   }, [catalog, configuredIds]);
 
-  // Live 兼容服务 verification on 2026-07-28: all 31 models returned by the
-  // Anthropic directory accepted Messages, while all 29 extra name-matched
-  // models failed with no upstream channel. Endpoint membership is therefore
-  // the automatic Claude boundary; free-text custom ids remain available.
-  const claudeCatalog = mergedCatalog.filter(m =>
+  // Endpoint metadata determines Claude support; configured model IDs stay editable.
+  const claudeCatalog = claudeProviderCatalog.filter(m =>
     !isKnownNonConversationalModel(m.id)
     && (m.protocols.includes('anthropic-messages') || m.vendor === '已配置'));
   const codexCatalog = mergedCatalog.filter(m =>
@@ -134,76 +129,80 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     [codexChoices]
   );
 
-  const guard兼容服务 = React.useCallback((): boolean => {
-    if (compatibleServiceReady(bridge.compatibleServiceConfig)) return true;
-    navigateTo('settings');
-    window.dispatchEvent(new CustomEvent('xwxdeck:edit-compatible'));
-    showToast(`请先填写并保存 ${serviceName} 地址和密钥`, 'error');
-    return false;
-  }, [bridge.compatibleServiceConfig, serviceName]);
-
   const handleClaudeModelChange = React.useCallback(async (role: ClaudeRole, modelId: string) => {
-    if (!claudeModels) return;
+    if (!claudeModels || claudeOperationRef.current) return;
+    claudeOperationRef.current = true; setBusyClaude(true);
     try {
-      const updated = await bridge.api.updateClaudeModels({ [role]: modelId });
+      const updated = await bridge.api.updateClaudeModels({ [role]: modelId, expectedProviderId: bridge.providers?.active.claude ?? null });
       setClaudeModels(updated);
       bridge.patch({ claudeModels: updated });
       showToast('Claude 模型已保存', 'success');
     } catch (error) {
       showToast(operationError(error, '无法保存 Claude 模型'), 'error');
-    }
-  }, [bridge.api, bridge.patch, claudeModels]);
+    } finally { claudeOperationRef.current = false; setBusyClaude(false); }
+  }, [bridge.api, bridge.patch, bridge.providers?.active.claude, claudeModels]);
 
-  const handleClaudeService = React.useCallback(async () => {
-    if (busyClaude) return;
-    const enabled = !(services?.claude === true);
-    if (enabled && !guard兼容服务()) return;
-    setBusyClaude(true);
+  const handleProviderChange = async (client: ClientTab, providerId: string | null) => {
+    const lock = client === 'codex' ? codexOperationRef : claudeOperationRef;
+    if (lock.current) return;
+    lock.current = true;
+    const setBusy = client === 'codex' ? setBusyCodex : setBusyClaude;
+    setBusy(true);
+    let committed = false;
+    let switchWarningShown = false;
     try {
-      const next = await bridge.api.setModelService({ client: 'claude', enabled });
-      setServices(next);
-      bridge.patch({ modelServices: next });
-      showToast(`Claude 已${enabled ? `启用 ${serviceName}` : '切回官方服务'}`, 'success');
-    } catch (error) {
-      void bridge.api.getModelServices().then(next => {
-        setServices(next);
-        bridge.patch({ modelServices: next });
-      }).catch(() => undefined);
-      showToast(operationError(error, `无法切换 ${serviceName} 代理`), 'error');
-    } finally {
-      setBusyClaude(false);
+      const providers = await bridge.api.switchClientProvider({ client, providerId });
+      committed = true;
+      bridge.patch({ providers, modelCatalog: [] });
+      setCatalog([]);
+      const [runtimeResult, configResult] = client === 'codex'
+        ? await Promise.allSettled([bridge.api.getState(), bridge.api.getCodexConfig()])
+        : [null, null];
+      const runtime = runtimeResult?.status === 'fulfilled' ? runtimeResult.value : null;
+      const switchedConfig = configResult?.status === 'fulfilled' ? configResult.value : null;
+      if (runtime) bridge.patch({ runtime });
+      if (switchedConfig) {
+        setCodexConfig(switchedConfig);
+        bridge.patch({ codexConfig: switchedConfig });
+      }
+      if (client === 'codex' && providerId && switchedConfig?.modelCatalogSource === 'external') {
+        switchWarningShown = true;
+        showToast('ChatGPT 配置存在冲突', 'info', undefined, {
+          description: EXTERNAL_CODEX_CATALOG_DESCRIPTION,
+          timeout: 12_000
+        });
+      } else if (client === 'codex' && runtime?.chatGptRestartRecommended) {
+        switchWarningShown = true;
+        showToast('ChatGPT 配置已更新', 'info', undefined, {
+          description: '当前对话通常可继续使用；若仍在使用原服务或对话无法继续，再完全退出并重新打开 ChatGPT。',
+          timeout: 12_000
+        });
+      } else if (client === 'codex' && (!runtime || !switchedConfig)) {
+        switchWarningShown = true;
+        showToast('ChatGPT 配置已更新，切换状态未确认', 'info');
+      } else {
+        showToast(providerId ? '服务已切换' : '已切回官方服务。', 'success');
+      }
+    } catch (error) { showToast(operationError(error, '无法切换服务'), 'error'); }
+    finally {
+      const results = await Promise.allSettled([bridge.api.getProviders(), bridge.api.getModelServices(), bridge.api.getCodexConfig(), bridge.api.getClaudeModels(), bridge.api.getCompatibleServiceConfig()]);
+      const [pr, sr, cr, mr, pc] = results;
+      if (pr.status === 'fulfilled') bridge.patch({ providers: pr.value });
+      if (sr.status === 'fulfilled') { setServices(sr.value); bridge.patch({ modelServices: sr.value }); }
+      if (cr.status === 'fulfilled') { setCodexConfig(cr.value); bridge.patch({ codexConfig: cr.value }); }
+      if (mr.status === 'fulfilled') { setClaudeModels(mr.value); bridge.patch({ claudeModels: mr.value }); }
+      if (pc.status === 'fulfilled') bridge.patch({ compatibleServiceConfig: pc.value });
+      if (committed && !switchWarningShown && results.some(r => r.status === 'rejected')) {
+        showToast('服务配置已保存，页面状态未刷新，请重新进入。', 'info');
+      }
+      lock.current = false; setBusy(false);
     }
-  }, [bridge.api, bridge.patch, busyClaude, services, guard兼容服务, serviceName]);
-
-  const handleCodexService = React.useCallback(async () => {
-    if (busyCodex) return;
-    const enabled = !(services?.codex === true);
-    if (enabled && !guard兼容服务()) return;
-
-    const previous = services;
-    if (previous) setServices({ ...previous, codex: enabled });
-    setBusyCodex(true);
-    try {
-      const next = await bridge.api.setModelService({ client: 'codex', enabled });
-      setServices(next);
-      const cfg = await bridge.api.getCodexConfig();
-      setCodexConfig(cfg);
-      bridge.patch({ modelServices: next, codexConfig: cfg });
-      showToast(
-        enabled
-          ? `已切换至 ${serviceName}。当前任务未生效时，请重新打开 ChatGPT。`
-          : '已切回官方服务。',
-        'success'
-      );
-    } catch (error) {
-      if (previous) setServices(previous);
-      showToast(operationError(error, `无法切换 ${serviceName} 代理`), 'error');
-    } finally {
-      setBusyCodex(false);
-    }
-  }, [bridge.api, bridge.patch, busyCodex, services, guard兼容服务, serviceName]);
+  };
 
   const handleCodexModelChange = React.useCallback(async (selection: string) => {
+    if (codexOperationRef.current || !codexConfig) return;
+    codexOperationRef.current = true;
+    setBusyCodex(true);
     const cfg = codexConfig;
     const mode = cfg?.mode ?? 'official';
     const choice: CodexContextVariant = codexChoiceByLabel.get(selection) ?? {
@@ -214,6 +213,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const modelId = choice.modelId;
     try {
       const saved = await bridge.api.updateCodexConfig({
+        expectedProviderId: bridge.providers?.active.codex ?? null,
         mode,
         officialModel: mode === 'official' ? modelId : (cfg?.officialModel ?? modelId),
         compatibleModel: mode === 'compatible' ? modelId : (cfg?.compatible?.model ?? modelId),
@@ -223,11 +223,21 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       });
       setCodexConfig(saved);
       bridge.patch({ codexConfig: saved });
-      showToast(`已选择 ${choice.label}；协议由 XwX Deck 自动适配。`, 'success');
+      if (saved.modelCatalogSource === 'external') {
+        showToast('ChatGPT 模型可能未更新', 'info', undefined, {
+          description: EXTERNAL_CODEX_CATALOG_DESCRIPTION,
+          timeout: 12_000
+        });
+      } else {
+        showToast(`已选择 ${choice.label}；协议由 XwX Deck 自动适配。`, 'success');
+      }
     } catch (error) {
       showToast(operationError(error, '无法保存 ChatGPT 配置'), 'error');
+    } finally {
+      codexOperationRef.current = false;
+      setBusyCodex(false);
     }
-  }, [bridge.api, bridge.patch, codexConfig, bridge.compatibleServiceConfig, codexChoiceByLabel]);
+  }, [bridge.api, bridge.patch, codexConfig, bridge.compatibleServiceConfig, bridge.providers, codexChoiceByLabel]);
 
   const handleEnhancementsUpdate = React.useCallback(async (patch: Record<string, unknown>): Promise<CodexEnhancementsSnapshot> => {
     const updated = await bridge.api.updateCodexEnhancements(patch);
@@ -279,31 +289,16 @@ export function ModelsPage({ active }: Props): React.ReactElement {
             data-client-panel="claude"
           >
             <div className="field-row" data-tour="models-proxy">
-              <span className="fr-label">{serviceName} 代理</span>
-              <div className="fr-value">
-                <Toggle
-                  checked={services?.claude === true}
-                  disabled={!services || !providerSupportsClaude}
-                  busy={busyClaude}
-                  ariaLabel={`Claude 使用 ${serviceName} 代理`}
-                  title={providerSupportsClaude
-                    ? services?.claudeStatus.detail || `Claude 配置：${services?.claudeStatus.configPath || '检测中'}`
-                    : `${serviceName} 没有检测到 Claude Messages 兼容入口`}
-                  onToggle={handleClaudeService}
-                />
-              </div>
+              <span className="fr-label">服务连接</span>
+              <div className="fr-value"><ProviderPicker registry={bridge.providers} client="claude" disabled={busyClaude} onChange={id => void handleProviderChange('claude', id)} /></div>
             </div>
-            {!providerSupportsClaude && (
-              <p className="setting-note">
-                {serviceName} 没有检测到 Claude Messages 兼容入口，请在 ChatGPT 页使用。
-              </p>
-            )}
             {CLAUDE_ROLES.map(({ key, label }) => (
               <div key={key} className="field-row">
                 <span className="fr-label">{label}</span>
                 <div className="fr-value">
                   <ModelPicker
                     value={claudeModels?.[key] ?? ''}
+                    disabled={busyClaude || !services?.claude}
                     catalog={claudeCatalog}
                     onChange={id => handleClaudeModelChange(key, id)}
                     allowCustomValue={id => !isKnownNonConversationalModel(id)}
@@ -323,29 +318,21 @@ export function ModelsPage({ active }: Props): React.ReactElement {
             data-client-panel="codex"
           >
             <div className="field-row">
-              <span className="fr-label">{serviceName} 代理</span>
-              <div className="fr-value">
-                <Toggle
-                  id="codexServiceToggle"
-                  checked={services?.codex === true}
-                  disabled={!services}
-                  busy={busyCodex}
-                  ariaLabel={`ChatGPT 使用 ${serviceName} 代理`}
-                  onToggle={handleCodexService}
-                />
-              </div>
+              <span className="fr-label">服务连接</span>
+              <div className="fr-value"><ProviderPicker registry={bridge.providers} client="codex" disabled={busyCodex} onChange={id => void handleProviderChange('codex', id)} /></div>
             </div>
             <div className="field-row">
               <span className="fr-label">默认模型</span>
               <div className="fr-value">
-                <ModelPicker
-                  value={codexModelValue}
-                  catalog={codexChoiceCatalog}
-                  onChange={handleCodexModelChange}
-                  allowCustomValue={id => !isKnownNonConversationalModel(id)
-                    && (codexConfig?.mode === 'compatible' || isOfficialCodexModelId(id))}
-                  dataAttr={{ 'data-codex-model': '' }}
-                />
+                    <ModelPicker
+                      value={codexModelValue}
+                      disabled={busyCodex || !codexConfig}
+                      catalog={codexChoiceCatalog}
+                      onChange={handleCodexModelChange}
+                      allowCustomValue={id => !isKnownNonConversationalModel(id)
+                        && (codexConfig?.mode === 'compatible' || isOfficialCodexModelId(id))}
+                      dataAttr={{ 'data-codex-model': '' }}
+                    />
               </div>
             </div>
             {enhancements && (

@@ -1,3 +1,4 @@
+import type { ProviderSnapshot, ProviderInput, ProviderClient } from '../../shared/providers';
 // Shared data shapes for the window.xwxDeck bridge surface.
 // All types are plain serialisable objects; nothing from Electron is imported here.
 import type { ProviderPresetId } from '../../shared/providerProfiles';
@@ -197,6 +198,7 @@ export type CodexConfigMode = 'official' | 'compatible';
 export type CodexAuthMode = 'chatgpt' | 'api-key' | 'unknown';
 
 export interface CodexConfigSnapshot {
+  readonly modelCatalogSource?: 'none' | 'managed' | 'external';
   readonly configPath: string;
   readonly authPath: string;
   readonly exists: boolean;
@@ -327,6 +329,11 @@ export interface XwXDeckApi {
   copyText(value: string): Promise<void>;
 
   // 兼容服务
+  getProviders(): Promise<ProviderSnapshot>;
+  saveProvider(input: ProviderInput): Promise<ProviderSnapshot>;
+  deleteProvider(id: string): Promise<ProviderSnapshot>;
+  switchClientProvider(input: { client: ProviderClient; providerId: string | null }): Promise<ProviderSnapshot>;
+  fetchProviderModels(input: { providerId: string; refresh?: boolean }): Promise<readonly ModelCatalogEntry[]>;
   getCompatibleServiceConfig(): Promise<CompatibleServiceConfigSnapshot>;
   updateCompatibleServiceConfig(payload: Record<string, unknown>): Promise<CompatibleServiceConfigSnapshot>;
 
@@ -334,7 +341,7 @@ export interface XwXDeckApi {
   getModelServices(): Promise<ModelServiceSnapshot>;
   setModelService(payload: { client: 'claude' | 'codex'; enabled: boolean }): Promise<ModelServiceSnapshot>;
   getClaudeModels(): Promise<ClaudeModelSettings>;
-  updateClaudeModels(payload: Record<string, string>): Promise<ClaudeModelSettings>;
+  updateClaudeModels(payload: Partial<ClaudeModelSettings> & { expectedProviderId?: string | null }): Promise<ClaudeModelSettings>;
   fetchModels(payload?: {
     source?: 'compatible' | 'active';
     refresh?: boolean;

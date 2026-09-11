@@ -1,3 +1,8 @@
+import { createHash, randomUUID } from 'crypto';
+import { supportsProviderClient, type ProviderConnection, type ProviderClient, type ProviderInput, type ProviderSnapshot } from '../../shared/providers';
+import { selectedProvider } from './settings';
+import { fetchProviderCatalog } from './providerCatalog';
+import { readCodexOfficialModelCatalog } from './codexOfficialModelCatalog';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
@@ -303,6 +308,7 @@ export class XwXDeckController {
   private compatibleServiceCatalogGeneration = 0;
   private compatibleServiceCatalogRefreshedAt = 0;
   private codexGatewayEnabled = false;
+  private codexProviderIdentity: 'official' | 'compatible' | `provider:${string}` | undefined;
   private codexGatewayMode: 'official' | 'compatible' | undefined;
   private codexOfficialAuthMode: CodexAuthMode | undefined;
   private codexOfficialBearerToken: string | undefined;
@@ -369,6 +375,8 @@ export class XwXDeckController {
 
   private async startUnlocked(): Promise<void> {
     this.settings = await this.settingsStore.read();
+    const settingsProblem = this.settingsStore.readProblem();
+    if (settingsProblem) { this.lastError = settingsProblem.message; this.setStartupPhase('degraded'); this.fireChange(); return; }
     if (this.settings.compatible.baseUrl && this.settings.compatible.bearerToken) {
       this.compatibleServiceCatalog = await readCompatibleServiceModelCatalogCache(
         this.compatibleServiceModelCatalogCachePath(),
@@ -1210,16 +1218,156 @@ export class XwXDeckController {
       : config;
   }
 
-  async readCompatibleServiceConfig(): Promise<CompatibleServiceSettings> {
-    const [settings, codex] = await Promise.all([this.settingsStore.read(), this.readUnderlyingCodexConfig()]);
-    const configBaseUrl = isLoopbackUrl(codex.compatible.baseUrl) ? '' : codex.compatible.baseUrl;
-    return {
-      displayName: settings.compatible.displayName,
-      providerPreset: settings.compatible.providerPreset,
-      baseUrl: settings.compatible.baseUrl || configBaseUrl,
-      bearerToken: settings.compatible.bearerToken || codex.compatible.bearerToken,
-      codexApiFormat: settings.compatible.codexApiFormat
-    };
+  async readCompatibleServiceConfig(client: ProviderClient = 'codex', expectedId?: string | null): Promise<CompatibleServiceSettings> {
+    const settings = await this.settingsStore.read();
+    if (expectedId !== undefined && expectedId !== settings.providers?.selected[client]) throw new Error('服务连接已变化，请刷新后重试。');
+    return selectedProvider(settings, client) ?? { displayName: '兼容服务', providerPreset: 'auto', baseUrl: '', bearerToken: '', codexApiFormat: 'responses' };
+  }
+
+  async readProviders(): Promise<ProviderSnapshot> {
+    const settings = await this.settingsStore.read();
+    const registry = settings.providers!;
+    // The provider registry is owned by XwX Deck and must remain editable even
+    // when an external Claude/ChatGPT config is temporarily unreadable. Probe
+    // the two clients independently and fall back conservatively to the saved
+    // selection so an unknown live client still protects its connection from
+    // deletion without making the whole provider page unavailable.
+    const [claudeStatus, codexStatus] = await Promise.allSettled([
+      this.readUnderlyingClaudeService(),
+      this.readUnderlyingCodexConfig()
+    ]);
+    if (claudeStatus.status === 'rejected') {
+      log.warn(`[xwx-deck] provider registry could not inspect Claude activity: ${(claudeStatus.reason as Error).message}`);
+    }
+    if (codexStatus.status === 'rejected') {
+      log.warn(`[xwx-deck] provider registry could not inspect ChatGPT activity: ${(codexStatus.reason as Error).message}`);
+    }
+    return { ...registry, active: {
+      codex: codexStatus.status === 'fulfilled'
+        ? codexStatus.value.mode === 'compatible' ? registry.selected.codex : null
+        : registry.selected.codex,
+      claude: claudeStatus.status === 'fulfilled'
+        ? claudeStatus.value.enabled ? registry.selected.claude : null
+        : registry.selected.claude
+    } };
+  }
+
+  async saveProvider(input: ProviderInput): Promise<ProviderSnapshot> {
+    return this.serializeMutation(async () => {
+      if (!input || typeof input !== 'object') throw new Error('无效的连接配置。');
+      const previous = await this.settingsStore.read();
+      const registry = previous.providers!;
+      const existing = input.id ? registry.connections.find(p => p.id === input.id) : undefined;
+      if (input.id && !existing) throw new Error('连接已删除，请刷新后重试。');
+      const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
+      if (!displayName) throw new Error('请填写服务名称。');
+      if (!['auto', 'responses', 'chat-completions', 'anthropic-messages'].includes(input.adapter)) throw new Error('不支持的服务类型。');
+      const adapter = input.adapter;
+      const baseUrl = adapter === 'auto' ? normalizeCompatibleServiceBaseUrl(input.baseUrl) : normalizeProviderApiRoot(input.baseUrl);
+      const url = new URL(baseUrl);
+      if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('请输入不含认证、查询参数的 HTTP(S) API 地址。');
+      const bearerToken = typeof input.bearerToken === 'string' ? input.bearerToken.trim() : '';
+      if (!bearerToken) throw new Error('请填写访问密钥。');
+      const provider: ProviderConnection = { id: existing?.id ?? randomUUID(), displayName: displayName.slice(0, 80),
+        providerPreset: input.providerPreset === undefined ? existing?.providerPreset ?? detectProviderPreset(baseUrl) : normalizeProviderPreset(input.providerPreset),
+        baseUrl, bearerToken, adapter,
+        codexApiFormat: adapter === 'auto' ? existing?.codexApiFormat ?? 'responses' : adapter,
+        codexModel: typeof input.codexModel === 'string' ? input.codexModel.trim() : existing?.codexModel ?? '',
+        codexContextWindow: existing?.codexContextWindow ?? 0,
+        claudeModels: existing?.claudeModels ?? { fable: '', opus: '', sonnet: '', haiku: '' } };
+      const activity = await this.readProviders();
+      const services = { codex: !!activity.active.codex, claude: !!activity.active.claude };
+      const changed = !existing || existing.displayName !== provider.displayName || existing.baseUrl !== baseUrl || existing.bearerToken !== bearerToken
+        || existing.adapter !== provider.adapter || existing.providerPreset !== provider.providerPreset || existing.codexModel !== provider.codexModel;
+      const affected = (['codex', 'claude'] as const).filter(c => existing && registry.selected[c] === existing.id && services[c]);
+      for (const client of affected) if (!supportsProviderClient(provider, client)) throw new Error('该连接正在被客户端使用，请先切换服务再修改类型。');
+      if (affected.includes('claude') && provider.adapter === 'anthropic-messages' && !/\/v1\/?$/.test(provider.baseUrl)) throw new Error('Claude 直连需要以 /v1 结尾的完整 API 地址。');
+      try {
+        this.settings = await this.settingsStore.update({ providers: { ...registry,
+          connections: existing ? registry.connections.map(p => p.id === provider.id ? provider : p) : [...registry.connections, provider] } });
+        if (changed && registry.selected.codex === provider.id) this.invalidateProviderCatalog();
+        for (const client of changed ? affected : []) {
+          await this.options.beforeCompatibleServiceServiceReapply?.(client);
+          await this.setModelServiceUnlocked(client, true, true);
+        }
+      } catch (error) {
+        this.settings = await this.settingsStore.update(previous);
+        this.invalidateProviderCatalog();
+        for (const client of affected) await this.setModelServiceUnlocked(client, true);
+        throw error;
+      }
+      this.fireChange();
+      return this.readProviders();
+    });
+  }
+
+  async deleteProvider(id: string): Promise<ProviderSnapshot> {
+    return this.serializeMutation(async () => {
+      const snapshot = await this.readProviders();
+      const settings = await this.settingsStore.read();
+      if (!snapshot.connections.some(p => p.id === id)) throw new Error('连接不存在。');
+      if (snapshot.active.codex === id || snapshot.active.claude === id
+        || settings.codexPreferredMode === 'compatible' && snapshot.selected.codex === id) {
+        throw new Error('请先将正在使用此连接的客户端切换到官方或其他服务，再删除连接。');
+      }
+      const selected = { ...snapshot.selected };
+      for (const client of ['codex', 'claude'] as const) if (selected[client] === id) selected[client] = null;
+      this.settings = await this.settingsStore.update({ providers: { version: 1, selected, connections: snapshot.connections.filter(p => p.id !== id) } });
+      if (snapshot.selected.codex === id) this.invalidateProviderCatalog();
+      this.fireChange();
+      return this.readProviders();
+    });
+  }
+
+  async switchClientProvider(client: ProviderClient, id: string | null): Promise<ProviderSnapshot> {
+    return this.serializeMutation(async () => {
+      if (!['codex', 'claude'].includes(client)) throw new Error('不支持的客户端。');
+      const previous = await this.settingsStore.read();
+      const registry = previous.providers!;
+      const provider = id ? registry.connections.find(p => p.id === id) : undefined;
+      if (id && !provider) throw new Error('连接不存在，请刷新后重试。');
+      if (provider?.adapter === 'anthropic-messages' && client === 'claude' && !/\/v1\/?$/.test(provider.baseUrl)) throw new Error('Claude 直连需要以 /v1 结尾的完整 API 地址。');
+      if (provider && !supportsProviderClient(provider, client)) throw new Error('此服务类型不支持当前客户端。');
+      if (provider && (!provider.baseUrl || !provider.bearerToken)) throw new Error('请先保存服务地址和密钥。');
+      const services = await this.readModelServices();
+      try {
+        let nextRegistry = registry;
+        if (client === 'codex' && provider && !provider.codexModel) {
+          const catalog = await this.fetchProviderModels(provider.id);
+          const model = catalog.find(entry => entry.clients.includes('codex') && !isKnownNonConversationalModel(entry.id));
+          if (!model) throw new Error('服务未提供模型目录，请先编辑连接并填写模型 ID。');
+          nextRegistry = { ...registry, connections: registry.connections.map(connection => connection.id === provider.id ? { ...connection, codexModel: model.id } : connection) };
+        }
+        if (id) this.settings = await this.settingsStore.update({ providers: { ...nextRegistry, selected: { ...nextRegistry.selected, [client]: id } } });
+        if (client === 'codex' && id !== registry.selected.codex) this.invalidateProviderCatalog();
+        await this.setModelServiceUnlocked(client, !!id, true);
+      } catch (error) {
+        this.settings = await this.settingsStore.update(previous);
+        this.invalidateProviderCatalog();
+        await this.setModelServiceUnlocked(client, services[client], true);
+        throw error;
+      }
+      this.fireChange();
+      return this.readProviders();
+    });
+  }
+
+  private invalidateProviderCatalog(): void {
+    this.compatibleServiceCatalog = [];
+    this.compatibleServiceCatalogGeneration += 1;
+    this.compatibleServiceCatalogRefreshedAt = 0;
+  }
+
+  async fetchProviderModels(id: string, refresh = false): Promise<readonly ModelCatalogEntry[]> {
+    const settings = await this.settingsStore.read();
+    const provider = settings.providers!.connections.find(p => p.id === id);
+    if (!provider) throw new Error('服务连接不存在。');
+    const file = path.join(this.userDataDir, `provider-${id}-${provider.adapter}-models.json`);
+    const cached = await readCompatibleServiceModelCatalogCache(file, provider.baseUrl, provider.bearerToken, provider.providerPreset);
+    if (!refresh && cached.length) return cached;
+    const catalog = await fetchProviderCatalog(provider, path.join(this.userDataDir, 'model-capabilities-cache.json'));
+    await writeCompatibleServiceModelCatalogCache(file, provider.baseUrl, provider.bearerToken, catalog, provider.providerPreset);
+    return catalog;
   }
 
   async updateCompatibleServiceConfig(input: Partial<CompatibleServiceSettings>): Promise<CompatibleServiceSettings> {
@@ -1281,7 +1429,7 @@ export class XwXDeckController {
       } else {
         await this.codexConfig.updateCompatibleServiceConnection({ baseUrl, bearerToken });
       }
-      if (services.claude || services.claudeStatus.status === 'drifted') {
+      if ((services.claude || services.claudeStatus.status === 'drifted') && previousSettings.providers?.selected.claude === previousSettings.providers?.selected.codex) {
         await this.options.beforeCompatibleServiceServiceReapply?.('claude');
         await this.setModelServiceUnlocked('claude', true);
       }
@@ -1311,7 +1459,7 @@ export class XwXDeckController {
           log.error(`[xwxdeck] stored ChatGPT 兼容服务 connection rollback failed: ${(rollbackError as Error).message}`);
         });
       }
-      if (services.claude || services.claudeStatus.status === 'drifted') {
+      if ((services.claude || services.claudeStatus.status === 'drifted') && previousSettings.providers?.selected.claude === previousSettings.providers?.selected.codex) {
         await this.setModelServiceUnlocked('claude', true).catch(rollbackError => {
           log.error(`[xwxdeck] Claude 兼容服务 connection rollback failed: ${(rollbackError as Error).message}`);
         });
@@ -1335,23 +1483,22 @@ export class XwXDeckController {
     return this.serializeMutation(() => this.setModelServiceUnlocked(client, enabled));
   }
 
-  private async setModelServiceUnlocked(client: 'claude' | 'codex', enabled: boolean): Promise<ModelServiceSnapshot> {
-    const connection = await this.readCompatibleServiceConfig();
+  private async setModelServiceUnlocked(client: 'claude' | 'codex', enabled: boolean, useSavedSelection = false): Promise<ModelServiceSnapshot> {
+    const connection = await this.readCompatibleServiceConfig(client);
     if (enabled && (!connection.baseUrl || !connection.bearerToken)) {
       throw new Error(`请先在设置中填写并保存 ${connection.displayName} 地址和密钥。`);
     }
     const settings = await this.settingsStore.read();
     if (client === 'claude') {
-      if (enabled && !providerProfile(connection.providerPreset).supportsClaude) {
-        const discovered = this.compatibleServiceCatalog.length
-          ? this.compatibleServiceCatalog
-          : await this.fetchModels('compatible').catch(() => []);
+      if (enabled && selectedProvider(settings, 'claude')?.adapter !== 'anthropic-messages' && !providerProfile(connection.providerPreset).supportsClaude) {
+        const discovered = await this.loadClaudeCompatibleServiceCatalog();
         if (!discovered.some(model => model.protocols.includes('anthropic-messages'))) {
           throw new Error(`${connection.displayName} 没有检测到 Claude Messages 兼容入口。`);
         }
       }
       const catalog = enabled ? await this.loadClaudeCompatibleServiceCatalog() : this.compatibleServiceCatalog;
       await this.withUnderlyingClient('claude-cli', () => this.claudeConfig.update({
+        nativeAnthropic: selectedProvider(settings, 'claude')?.adapter === 'anthropic-messages',
         enabled,
         baseUrl: connection.baseUrl,
         bearerToken: connection.bearerToken,
@@ -1364,7 +1511,7 @@ export class XwXDeckController {
         const activeOfficialModel = current.mode === 'official'
           ? current.officialModel
           : settings.codexModels.official;
-        const activeCompatibleServiceModel = current.mode === 'compatible'
+        const activeCompatibleServiceModel = !useSavedSelection && current.mode === 'compatible'
           ? current.compatible.model
           : settings.codexModels.compatible || current.compatible.model;
         await this.applyCodexConfigAndAuth({
@@ -1380,6 +1527,7 @@ export class XwXDeckController {
           unifySessionHistory: settings.codexEnhancements.unifySessionHistory
         });
         this.settings = await this.settingsStore.update({
+          codexPreferredMode: enabled ? 'compatible' : 'official',
           codexModels: {
             official: activeOfficialModel,
             compatible: activeCompatibleServiceModel
@@ -1397,13 +1545,17 @@ export class XwXDeckController {
   }
 
   /** 保存 Claude 模型映射；仅在 Claude 兼容服务 代理启用时写入客户端配置。 */
-  async updateClaudeModels(input: Partial<ClaudeModelSettings>): Promise<ClaudeModelSettings> {
+  async updateClaudeModels(input: Partial<ClaudeModelSettings> & { expectedProviderId?: string | null }): Promise<ClaudeModelSettings> {
     return this.serializeMutation(() => this.updateClaudeModelsUnlocked(input));
   }
 
-  private async updateClaudeModelsUnlocked(input: Partial<ClaudeModelSettings>): Promise<ClaudeModelSettings> {
+  private async updateClaudeModelsUnlocked(input: Partial<ClaudeModelSettings> & { expectedProviderId?: string | null }): Promise<ClaudeModelSettings> {
+    const previous = await this.settingsStore.read();
+    const activeService = await this.readUnderlyingClaudeService();
+    if (input.expectedProviderId !== undefined && input.expectedProviderId !== (activeService.enabled ? previous.providers?.selected.claude : null)) throw new Error('服务连接已变化，请刷新后重试。');
+    try {
     this.settings = await this.settingsStore.update({ claudeModels: input as ClaudeModelSettings });
-    const connection = await this.readCompatibleServiceConfig();
+    const connection = await this.readCompatibleServiceConfig('claude');
     const currentService = await this.readUnderlyingClaudeService();
     const catalog = currentService.enabled
       ? await this.loadClaudeCompatibleServiceCatalog()
@@ -1415,6 +1567,7 @@ export class XwXDeckController {
       const service = await this.claudeConfig.read();
       if (service.enabled) {
         await this.claudeConfig.update({
+          nativeAnthropic: selectedProvider(this.settings!, 'claude')?.adapter === 'anthropic-messages',
           enabled: true,
           baseUrl: connection.baseUrl,
           bearerToken: connection.bearerToken,
@@ -1425,6 +1578,10 @@ export class XwXDeckController {
     });
     this.fireChange();
     return this.settings.claudeModels;
+    } catch (error) {
+      this.settings = await this.settingsStore.update(previous);
+      throw error;
+    }
   }
 
   async updateCodexConfig(input: CodexConfigUpdate): Promise<CodexConfigSnapshot> {
@@ -1433,8 +1590,12 @@ export class XwXDeckController {
 
   private async updateCodexConfigUnlocked(input: CodexConfigUpdate): Promise<CodexConfigSnapshot> {
     const settings = await this.settingsStore.read();
+    const config = await this.readUnderlyingCodexConfig();
+    if (input.expectedProviderId !== undefined && input.expectedProviderId !== (config.mode === 'compatible' ? settings.providers?.selected.codex : null)) throw new Error('服务连接已变化，请刷新后重试。');
+    const selected = selectedProvider(settings, 'codex');
     const next = await this.withUnderlyingClient('codex-cli', () => this.applyCodexConfigAndAuth({
       ...input,
+      ...(input.expectedProviderId && selected ? { compatibleBaseUrl: selected.baseUrl, compatibleBearerToken: selected.bearerToken } : {}),
       preserveOfficialLogin: settings.codexEnhancements.preserveOfficialLogin,
       unifySessionHistory: settings.codexEnhancements.unifySessionHistory
     }));
@@ -1553,12 +1714,9 @@ export class XwXDeckController {
     source: 'active' | 'compatible' = 'active',
     refresh = false
   ): Promise<readonly ModelCatalogEntry[]> {
+    const generation = this.compatibleServiceCatalogGeneration;
     const [config, connection] = await Promise.all([this.codexConfig.read(), this.readCompatibleServiceConfig()]);
-    if (source === 'active' && config.mode === 'official') {
-      return config.officialModel
-        ? [{ id: config.officialModel, vendor: 'OpenAI', protocols: ['openai-responses'], clients: ['codex'] }]
-        : [];
-    }
+    if (source === 'active' && config.mode === 'official') return readCodexOfficialModelCatalog(config.officialModel);
     const baseUrl = connection.baseUrl.trim().replace(/\/+$/, '');
     const token = connection.bearerToken.trim();
     if (!baseUrl) throw new Error('请先填写并保存服务商地址。');
@@ -1593,6 +1751,7 @@ export class XwXDeckController {
       }
     }
     const catalog = await this.refreshCompatibleServiceModelCatalog(baseUrl, token, refresh);
+    if (generation !== this.compatibleServiceCatalogGeneration) throw new Error('服务连接已变化，请刷新模型目录。');
     await this.syncCodexCatalogIfCompatibleServiceActive(catalog);
     return catalog;
   }
@@ -2232,7 +2391,7 @@ export class XwXDeckController {
   ): Promise<void> {
     const config = await this.codexConfig.read();
     if (config.mode !== 'compatible') return;
-    const result = await this.codexCatalog.syncIfXwXOwned(catalog);
+    const result = await this.codexCatalog.syncIfXwXOwned(catalog, this.settings?.compatible.providerPreset === 'compatible');
     if (!result) {
       log('[xwxdeck] Skipped Codex catalog refresh because model_catalog_json is user-owned.');
       return;
@@ -2594,7 +2753,9 @@ export class XwXDeckController {
       log(`[xwxdeck] restored official ChatGPT fallback on ${localBaseUrl} (recording=${settings.tracingEnabled})`);
       return;
     }
-    const migratedLegacyTransition = await this.proxy.adoptCodexProviderOnStartup(snapshot.mode);
+    const identity = snapshot.mode === 'official' ? 'official' : providerUpstreamKind(settings);
+    this.codexProviderIdentity = identity;
+    const migratedLegacyTransition = await this.proxy.adoptCodexProviderOnStartup(identity);
     if (migratedLegacyTransition) {
       log(`[xwxdeck] prepared one-time legacy Codex history cleanup for ${snapshot.mode} startup`);
     }
@@ -2706,6 +2867,8 @@ export class XwXDeckController {
     const preserveOfficialLogin = input.preserveOfficialLogin !== false;
     const previousConfig = await this.codexConfig.read();
     const previousMode = this.codexGatewayMode ?? previousConfig.mode;
+    const previousIdentity = this.codexProviderIdentity ?? (previousMode === 'official' ? 'official' : providerUpstreamKind(this.settings ?? await this.settingsStore.read()));
+    const targetIdentity = mode === 'official' ? 'official' : providerUpstreamKind(this.settings ?? await this.settingsStore.read());
     const chatGptWasRunningBeforeUpdate = mode === 'compatible'
       && !isLoopbackUrl(previousConfig.activeBaseUrl)
       && await this.chatGptRunningForRestartNotice();
@@ -2760,7 +2923,7 @@ export class XwXDeckController {
         // Persist the transition before publishing the new route. ChatGPT keeps
         // the same local endpoint during a switch and can issue compact at any
         // instant, including between route publication and config completion.
-        if (previousMode !== mode) await this.proxy.markCodexProviderTransition(previousMode, mode);
+        if (previousIdentity !== targetIdentity) await this.proxy.markCodexProviderTransition(previousIdentity, targetIdentity);
         const modelCatalogPath = await this.ensureCompatibleServiceModelCatalog(
           typeof input.compatibleModel === 'string' ? input.compatibleModel : undefined
         );
@@ -2798,6 +2961,7 @@ export class XwXDeckController {
           && !sameHttpEndpoint(previousConfig.activeBaseUrl, next.activeBaseUrl)) {
           this.markChatGptRestartRecommended('ChatGPT was running when its service switched to the local Gateway');
         }
+        this.codexProviderIdentity = providerUpstreamKind(this.settings!);
         this.setStartupPhase('config-ready');
         if (options.backgroundRefresh) this.scheduleCompatibleServiceModelRefresh('gateway configured');
         return next;
@@ -2829,7 +2993,7 @@ export class XwXDeckController {
     const previousOfficialUpstreamBaseUrl = this.codexOfficialUpstreamBaseUrl;
     const previousSettings = this.settings ?? await this.settingsStore.read();
     try {
-      if (previousMode !== mode) await this.proxy.markCodexProviderTransition(previousMode, mode);
+      if (previousIdentity !== targetIdentity) await this.proxy.markCodexProviderTransition(previousIdentity, targetIdentity);
       await this.codexOfficialAuth.restoreOfficialLogin();
       const officialConfig = await this.codexConfig.read();
       this.codexOfficialAuthMode = officialConfig.authMode;
@@ -2861,6 +3025,7 @@ export class XwXDeckController {
         this.codexOfficialUpstreamBaseUrl = undefined;
       }
       const next = await this.codexConfig.update(managedInput);
+      this.codexProviderIdentity = 'official';
       if (!isLoopbackUrl(next.activeBaseUrl)) this.chatGptRestartRecommended = false;
       return next;
     } catch (error) {
@@ -2881,9 +3046,7 @@ export class XwXDeckController {
   }
 
   private async ensureCompatibleServiceModelCatalog(fallbackModel?: string): Promise<string> {
-    if (this.compatibleServiceCatalog.length) return this.codexCatalog.sync(this.compatibleServiceCatalog);
-    const existing = this.codexCatalog.catalogPath();
-    if (fs.existsSync(existing)) return existing;
+    if (this.compatibleServiceCatalog.length) return this.codexCatalog.sync(this.compatibleServiceCatalog, this.settings?.compatible.providerPreset === 'compatible');
 
     const model = fallbackModel?.trim();
     if (!model) throw new Error('兼容服务 模型目录尚未缓存，请刷新模型列表后重试。');
@@ -2902,7 +3065,7 @@ export class XwXDeckController {
       protocols: [protocol === 'responses' ? 'openai-responses' : 'chat-completions'],
       clients: ['codex']
     }];
-    return this.codexCatalog.sync(this.compatibleServiceCatalog);
+    return this.codexCatalog.sync(this.compatibleServiceCatalog, this.settings?.compatible.providerPreset === 'compatible');
   }
 
   private validateCodexContextWindow(modelId: string, raw: unknown): number | null {
@@ -2911,8 +3074,8 @@ export class XwXDeckController {
       throw new Error('ChatGPT 上下文窗口无效。');
     }
     const catalogEntry = this.compatibleServiceCatalog.find(entry => entry.id === modelId);
-    const builtin = catalogEntry ? undefined : findBuiltInModelCapability(modelId);
-    const variants = codexContextVariants(catalogEntry ?? {
+    const builtin = catalogEntry?.contextWindow !== undefined ? undefined : findBuiltInModelCapability(modelId);
+    const variants = codexContextVariants(catalogEntry?.contextWindow !== undefined ? catalogEntry : {
       id: modelId,
       contextWindow: builtin?.contextWindow,
       capabilitySources: builtin?.contextWindow !== undefined ? { contextWindow: 'builtin' } : undefined
@@ -2962,17 +3125,12 @@ export class XwXDeckController {
     }
     const generation = this.compatibleServiceCatalogGeneration;
     const refresh = (async (): Promise<readonly ModelCatalogEntry[]> => {
-      const catalog = await fetchCompatibleServiceModelCatalog(
-        baseUrl,
-        bearerToken,
-        fetch,
-        path.join(this.userDataDir, 'model-capabilities-cache.json'),
-        this.compatibleServiceCatalog,
-        {
-          forceCapabilityRefresh,
-          catalogMode: profile.modelCatalogMode
-        }
-      );
+      const provider = selectedProvider(this.settings ?? await this.settingsStore.read(), 'codex');
+      const catalog = provider && provider.adapter !== 'auto'
+        ? await this.fetchProviderModels(provider.id, forceCapabilityRefresh)
+        : await fetchCompatibleServiceModelCatalog(baseUrl, bearerToken, fetch,
+          path.join(this.userDataDir, 'model-capabilities-cache.json'), this.compatibleServiceCatalog,
+          { forceCapabilityRefresh, catalogMode: profile.modelCatalogMode });
       if (generation === this.compatibleServiceCatalogGeneration) {
         this.compatibleServiceCatalog = catalog;
         this.compatibleServiceCatalogRefreshedAt = Date.now();
@@ -2998,20 +3156,17 @@ export class XwXDeckController {
   }
 
   private compatibleServiceModelCatalogCachePath(): string {
-    return path.join(this.userDataDir, 'compatible-model-catalog-cache.json');
+    const provider = this.settings && selectedProvider(this.settings, 'codex');
+    return path.join(this.userDataDir, provider ? `provider-${provider.id}-${provider.adapter}-models.json` : 'compatible-model-catalog-cache.json');
   }
 
   private async loadClaudeCompatibleServiceCatalog(): Promise<readonly ModelCatalogEntry[]> {
-    if (this.compatibleServiceCatalog.length) return this.compatibleServiceCatalog;
-    try {
-      return await this.fetchModels('compatible');
-    } catch (error) {
-      // Model routing can still work with an older gateway that does not expose
-      // a catalog. In that case, keep explicit [1m] selections but do not invent
-      // extended-context support for unverified models.
-      log.warn(`[xwxdeck] Claude model capability refresh failed; keeping configured model IDs: ${(error as Error).message}`);
-      return this.compatibleServiceCatalog;
-    }
+    const provider = selectedProvider(this.settings ?? await this.settingsStore.read(), 'claude');
+    if (!provider) return [];
+    return this.fetchProviderModels(provider.id).catch(error => {
+      log.warn(`[xwxdeck] Claude model directory unavailable: ${(error as Error).message}`);
+      return [];
+    });
   }
 
   private async refreshProxyRoutes(): Promise<void> {
@@ -3415,6 +3570,8 @@ function buildCodexGatewayRoutes(
   settings: XwXDeckSettings,
   catalog: readonly ModelCatalogEntry[] = []
 ): TapClientRoute[] {
+  const provider = selectedProvider(settings, 'codex');
+  const adapter = provider?.adapter ?? 'auto';
   const upstreamBaseUrl = settings.compatible.baseUrl.trim().replace(/\/+$/, '');
   if (!upstreamBaseUrl) return [];
   const stripPathPrefix = baseUrlHasV1Suffix(upstreamBaseUrl) ? '/v1' as const : undefined;
@@ -3444,7 +3601,11 @@ function buildCodexGatewayRoutes(
       apiType: 'responses',
       upstreamBaseUrl,
       stripPathPrefix: '/backend-api/codex',
-      compatibleServiceGateway: true,
+      providerId: provider ? providerConnectionIdentity(provider) : undefined,
+      providerName: provider?.displayName,
+      providerAdapter: adapter,
+      defaultProtocol: provider?.codexApiFormat ?? settings.compatible.codexApiFormat,
+      compatibleServiceGateway: !provider || provider.providerPreset === 'compatible',
       capture: false,
       upstreamBearerToken: settings.compatible.bearerToken
     },
@@ -3454,7 +3615,11 @@ function buildCodexGatewayRoutes(
       apiType: 'responses',
       upstreamBaseUrl,
       stripPathPrefix,
-      compatibleServiceGateway: true,
+      providerId: provider ? providerConnectionIdentity(provider) : undefined,
+      providerName: provider?.displayName,
+      providerAdapter: adapter,
+      defaultProtocol: provider?.codexApiFormat ?? settings.compatible.codexApiFormat,
+      compatibleServiceGateway: !provider || provider.providerPreset === 'compatible',
       capture: false,
       upstreamBearerToken: settings.compatible.bearerToken
     },
@@ -3468,7 +3633,11 @@ function buildCodexGatewayRoutes(
       modelProtocols,
       modelMaxOutputTokens,
       modelSupportsCompact,
-      compatibleServiceGateway: true,
+      providerId: provider ? providerConnectionIdentity(provider) : undefined,
+      providerName: provider?.displayName,
+      providerAdapter: adapter,
+      defaultProtocol: provider?.codexApiFormat ?? settings.compatible.codexApiFormat,
+      compatibleServiceGateway: !provider || provider.providerPreset === 'compatible',
       ...(excludedToolNamespaces ? { excludedToolNamespaces } : {}),
       capture,
       upstreamBearerToken: settings.compatible.bearerToken
@@ -3482,7 +3651,11 @@ function buildCodexGatewayRoutes(
       transform: 'responses-to-chat-auto',
       modelProtocols,
       modelMaxOutputTokens,
-      compatibleServiceGateway: true,
+      providerId: provider ? providerConnectionIdentity(provider) : undefined,
+      providerName: provider?.displayName,
+      providerAdapter: adapter,
+      defaultProtocol: provider?.codexApiFormat ?? settings.compatible.codexApiFormat,
+      compatibleServiceGateway: !provider || provider.providerPreset === 'compatible',
       ...(excludedToolNamespaces ? { excludedToolNamespaces } : {}),
       capture,
       upstreamBearerToken: settings.compatible.bearerToken
@@ -3497,7 +3670,11 @@ function buildCodexGatewayRoutes(
       modelProtocols,
       modelMaxOutputTokens,
       modelSupportsCompact,
-      compatibleServiceGateway: true,
+      providerId: provider ? providerConnectionIdentity(provider) : undefined,
+      providerName: provider?.displayName,
+      providerAdapter: adapter,
+      defaultProtocol: provider?.codexApiFormat ?? settings.compatible.codexApiFormat,
+      compatibleServiceGateway: !provider || provider.providerPreset === 'compatible',
       ...(excludedToolNamespaces ? { excludedToolNamespaces } : {}),
       capture,
       upstreamBearerToken: settings.compatible.bearerToken
@@ -3511,7 +3688,11 @@ function buildCodexGatewayRoutes(
       transform: 'responses-to-chat-auto',
       modelProtocols,
       modelMaxOutputTokens,
-      compatibleServiceGateway: true,
+      providerId: provider ? providerConnectionIdentity(provider) : undefined,
+      providerName: provider?.displayName,
+      providerAdapter: adapter,
+      defaultProtocol: provider?.codexApiFormat ?? settings.compatible.codexApiFormat,
+      compatibleServiceGateway: !provider || provider.providerPreset === 'compatible',
       ...(excludedToolNamespaces ? { excludedToolNamespaces } : {}),
       capture,
       upstreamBearerToken: settings.compatible.bearerToken
@@ -3721,3 +3902,20 @@ export const __test = {
   officialCodexUpstream,
   codexHistoryRetryDelayMs
 };
+
+function normalizeProviderApiRoot(value: string): string {
+  const url = new URL(value.trim());
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('请输入不含认证、查询参数的 HTTP(S) API 地址。');
+  url.pathname = url.pathname.replace(/\/(?:responses(?:\/compact)?|chat\/completions|messages|models)\/?$/i, '').replace(/\/+$/, '');
+  return url.toString().replace(/\/+$/, '');
+}
+
+function providerConnectionIdentity(provider: ProviderConnection): string {
+  const revision = createHash('sha256').update(JSON.stringify([provider.baseUrl, provider.bearerToken, provider.adapter, provider.providerPreset, provider.codexApiFormat])).digest('hex').slice(0, 16);
+  return `${provider.id}_${revision}`;
+}
+
+function providerUpstreamKind(settings: XwXDeckSettings): 'compatible' | `provider:${string}` {
+  const provider = selectedProvider(settings, 'codex');
+  return provider ? `provider:${providerConnectionIdentity(provider)}` : 'compatible';
+}

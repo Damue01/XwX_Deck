@@ -1,3 +1,4 @@
+import { testProviderRegistry } from './provider-registry-smoke';
 import assert from 'node:assert/strict';
 import * as crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -213,6 +214,8 @@ try {
   await testApplicationReset();
   await testExitRecovery();
   await testSettings();
+  await testProviderRegistry(root);
+  completed.push('standalone Provider registry migration, isolation, editable failures and official catalog');
   await testCodexConversationDoctor();
   await testTraceDeletionTransactions();
   await testChatGptLifecycle();
@@ -10011,38 +10014,16 @@ async function testManagerIpcContract(): Promise<void> {
   assert.match(rendererSrc, /停止后不再自动迁移。可同时恢复迁移前分类/);
   assert.match(rendererSrc, /checkboxLabel: '恢复迁移前分类'/);
   assert.doesNotMatch(rendererSrc, /data-codex-mode=|data-client-config-toggle|codexActiveProvider|configure兼容服务|id="addProvider"/);
-  assert.match(settingsPage, /aria-label="服务商名称"/);
-  assert.match(settingsPage, /aria-label="地址"/);
-  assert.match(settingsPage, /aria-label="密钥"/);
-  assert.doesNotMatch(settingsPage, /服务商类型|ChatGPT 上游协议|PROVIDER_PROFILES/,
-    'provider settings must expose only name, URL and key');
-  assert.match(rendererStyles, /\.prov-save-bar\s*\{[\s\S]*?justify-content:\s*flex-end/,
-    'provider cancel/save actions must stay right-aligned');
-  assert.match(modelsPage, /const serviceName = providerDisplayName\(bridge\.compatibleServiceConfig\)/,
-    'model configuration must use the saved provider display name');
-
-  const claudeHandler = modelsPage.slice(
-    modelsPage.indexOf('const handleClaudeService'),
-    modelsPage.indexOf('const handleCodexService')
-  );
-  assert.match(claudeHandler, /if \(enabled && !guard兼容服务\(\)\) return;/);
-  assert.ok(claudeHandler.indexOf('guard兼容服务()') < claudeHandler.indexOf('setBusyClaude(true)'));
-  assert.ok(claudeHandler.indexOf('guard兼容服务()') < claudeHandler.indexOf('setModelService'));
-  assert.doesNotMatch(claudeHandler, /await confirm\(/, 'enabling Claude 兼容服务 must not require a second confirmation');
-
-  const codexHandler = modelsPage.slice(
-    modelsPage.indexOf('const handleCodexService'),
-    modelsPage.indexOf('const handleCodexModelChange')
-  );
-  assert.match(codexHandler, /if \(enabled && !guard兼容服务\(\)\) return;/);
-  assert.ok(codexHandler.indexOf('guard兼容服务()') < codexHandler.indexOf('setServices({ ...previous, codex: enabled })'));
-  assert.ok(codexHandler.indexOf('guard兼容服务()') < codexHandler.indexOf('setBusyCodex(true)'));
-  assert.ok(codexHandler.indexOf('guard兼容服务()') < codexHandler.indexOf('setModelService'));
-  assert.doesNotMatch(codexHandler, /await confirm\(/, 'enabling ChatGPT 兼容服务 must not require a second confirmation');
-  assert.doesNotMatch(codexHandler, /isChatGptRunning/,
-    'provider switching must not add a process-detection dependency to a valid configuration write');
-  assert.match(codexHandler, /当前任务未生效时，请重新打开 ChatGPT/,
-    'provider switching must give one conditional manual-restart instruction');
+  const providersPanel = await fs.readFile(path.resolve('src/renderer/features/settings/ProvidersPanel.tsx'), 'utf8');
+  assert.match(providersPanel, /htmlFor="provider-name"/);
+  assert.match(providersPanel, /htmlFor="provider-url"/);
+  assert.match(providersPanel, /htmlFor="provider-key"/);
+  assert.match(providersPanel, /htmlFor="provider-model"/);
+  assert.match(modelsPage, /<ProviderPicker registry=\{bridge.providers\} client="claude"/);
+  assert.match(modelsPage, /<ProviderPicker registry=\{bridge.providers\} client="codex"/);
+  assert.match(modelsPage, /expectedProviderId: bridge.providers\?\.active\.codex/);
+  assert.match(modelsPage, /modelCatalogSource === 'external'/);
+  assert.match(modelsPage, /Promise.allSettled/);
 
   assert.doesNotMatch(xwxDeckController, /ensureCodexGatewayForCurrentService/);
   const startSection = xwxDeckController.slice(
@@ -10083,8 +10064,7 @@ async function testManagerIpcContract(): Promise<void> {
   assert.match(rendererSrc, /setStartupEnabled/);
   assert.match(rendererSrc, /id="versionUpdateCue"/);
   assert.doesNotMatch(rendererSrc, /启用 XwX Trace 以使用该模型|启用 XwX Trace 以切换模型|开启 XwX Trace 后即可使用/);
-  assert.match(rendererSrc, /已切换至 \$\{serviceName\}。当前任务未生效时，请重新打开 ChatGPT。/,
-    'provider switching must explain the loaded-task boundary without forcing a restart');
+  assert.match(modelsPage, /若仍在使用原服务或对话无法继续/);
   assert.match(rendererSrc, /已切回官方服务。/);
   assert.match(rendererSrc, /已选择 \$\{choice\.label\}；协议由 XwX Deck 自动适配。/);
   assert.match(rendererSrc, /modelContextWindow: choice\.contextWindow/,

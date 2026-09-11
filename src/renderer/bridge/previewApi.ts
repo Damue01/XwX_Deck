@@ -1,3 +1,4 @@
+import type { ProviderSnapshot, ProviderConnection } from '../../shared/providers';
 import type {
   ClientId,
   ClaudeModelSettings,
@@ -307,6 +308,7 @@ export function createPreviewApi(): XwXDeckApi {
       traceManaged: false
     }
   };
+  let providers: ProviderSnapshot = { version: 1, connections: [], selected: { codex: null, claude: null }, active: { codex: null, claude: null } };
   return {
     getState: async () => buildState(),
     setStartupEnabled: async (enabled) => {
@@ -464,6 +466,33 @@ export function createPreviewApi(): XwXDeckApi {
     copyText: async value => {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
     },
+    getProviders: async () => structuredClone(providers),
+    saveProvider: async input => {
+      const existing = providers.connections.find(p => p.id === input.id);
+      const provider: ProviderConnection = { id: existing?.id ?? crypto.randomUUID(), displayName: input.displayName, baseUrl: input.baseUrl, bearerToken: input.bearerToken, adapter: input.adapter,
+        providerPreset: input.providerPreset ?? 'auto', codexApiFormat: input.adapter === 'auto' ? 'responses' : input.adapter,
+        codexModel: input.codexModel ?? existing?.codexModel ?? '', codexContextWindow: existing?.codexContextWindow ?? 0,
+        claudeModels: existing?.claudeModels ?? { fable: '', opus: '', sonnet: '', haiku: '' } };
+      providers = { ...providers, connections: existing ? providers.connections.map(p => p.id === provider.id ? provider : p) : [...providers.connections, provider] };
+      return structuredClone(providers);
+    },
+    deleteProvider: async id => {
+      if (Object.values(providers.active).includes(id)) throw new Error('请先切换正在使用此连接的客户端。');
+      providers = { ...providers, connections: providers.connections.filter(p => p.id !== id), selected: { codex: providers.selected.codex === id ? null : providers.selected.codex, claude: providers.selected.claude === id ? null : providers.selected.claude } };
+      return structuredClone(providers);
+    },
+    switchClientProvider: async ({ client, providerId }) => {
+      const provider = providers.connections.find(p => p.id === providerId);
+      if (providerId && !provider) throw new Error('连接不存在。');
+      providers = { ...providers, selected: providerId ? { ...providers.selected, [client]: providerId } : providers.selected, active: { ...providers.active, [client]: providerId } };
+      services = { ...services, [client]: !!providerId };
+      if (client === 'codex') {
+        if (provider) compatible = { ...provider };
+        codex = { ...codex, mode: provider ? 'compatible' : 'official', activeProvider: provider ? 'xwx_deck' : 'openai', compatible: { ...codex.compatible, model: provider?.codexModel || codex.compatible.model } };
+      } else if (provider) claude = { ...provider.claudeModels };
+      return structuredClone(providers);
+    },
+    fetchProviderModels: async () => [],
     getCompatibleServiceConfig: async () => ({ ...compatible }),
     updateCompatibleServiceConfig: async (value) => {
       compatible = {
