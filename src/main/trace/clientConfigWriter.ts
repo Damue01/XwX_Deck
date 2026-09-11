@@ -60,7 +60,12 @@ export interface ClientRestoreResult {
   readonly client: 'claude' | 'codex';
   readonly restoredFields: number;
   readonly conflicts: readonly string[];
+  readonly outcome: 'restored' | 'preserved-external' | 'unresolved-local';
+  /** XwX-owned fields that still point at the local proxy after restoration. */
+  readonly unresolvedLocalReferences: readonly string[];
 }
+
+type ClientRestoreDetails = Pick<ClientRestoreResult, 'client' | 'restoredFields' | 'conflicts'>;
 
 export class ClientConfigWriter {
   constructor(private readonly options: ClientWriterOptions) {}
@@ -125,11 +130,23 @@ export class ClientConfigWriter {
 
   /** 字段级三方合并：只还原当前值仍等于 XwX 写入值的字段。 */
   async restore(record: ClientBackupRecord): Promise<ClientRestoreResult> {
-    const result = record.version === 2
+    const details = record.version === 2
       ? await restoreFieldSafeRecord(record)
       : await restoreLegacyRecord(record);
-    await this.options.backup.remove(record.client);
-    return result;
+    const unresolvedLocalReferences = await findUnresolvedLocalReferences(record);
+    const outcome: ClientRestoreResult['outcome'] = unresolvedLocalReferences.length > 0
+      ? 'unresolved-local'
+      : details.conflicts.length > 0
+        ? 'preserved-external'
+        : 'restored';
+    // Keep the recovery evidence while any field still depends on this local
+    // proxy. A service switch can then stop before destroying the only trusted
+    // copy of the previous direct endpoint, and forced exit can still use the
+    // full-file snapshot as its last resort.
+    if (outcome !== 'unresolved-local') {
+      await this.options.backup.remove(record.client);
+    }
+    return { ...details, outcome, unresolvedLocalReferences };
   }
 }
 
@@ -149,7 +166,7 @@ function claudeManagedFields(
 }
 
 function codexManagedFields(original: string, detection: CodexDetection, writtenValue: string): ClientManagedField[] {
-  if (detection.routeKind === 'chatgpt-oauth') {
+  if (detection.routeKind === 'chatgpt-oauth' && detection.fieldLocation === 'provider-section') {
     const sectionExisted = !!findTomlSection(original, CODEX_TRACE_PROVIDER_SECTION);
     return [
       tomlStringManagedField(original, 'model_provider', CODEX_TRACE_PROVIDER),
@@ -203,7 +220,7 @@ function tomlBooleanManagedField(
   };
 }
 
-async function restoreFieldSafeRecord(record: FieldSafeClientBackupRecord): Promise<ClientRestoreResult> {
+async function restoreFieldSafeRecord(record: FieldSafeClientBackupRecord): Promise<ClientRestoreDetails> {
   const current = await readConfigText(record.configPath);
   if (current === undefined) {
     return {
@@ -224,7 +241,7 @@ async function restoreFieldSafeRecord(record: FieldSafeClientBackupRecord): Prom
 async function restoreClaudeFields(
   record: FieldSafeClientBackupRecord,
   current: string
-): Promise<ClientRestoreResult> {
+): Promise<ClientRestoreDetails> {
   let data: unknown;
   try { data = JSON.parse(current); }
   catch {
@@ -257,7 +274,7 @@ async function restoreClaudeFields(
 async function restoreCodexFields(
   record: FieldSafeClientBackupRecord,
   current: string
-): Promise<ClientRestoreResult> {
+): Promise<ClientRestoreDetails> {
   const conflicts: string[] = [];
   let restoredFields = 0;
   let next = current;
@@ -295,7 +312,7 @@ async function restoreCodexFields(
   return { client: 'codex', restoredFields, conflicts };
 }
 
-async function restoreLegacyRecord(record: Extract<ClientBackupRecord, { version: 1 }>): Promise<ClientRestoreResult> {
+async function restoreLegacyRecord(record: Extract<ClientBackupRecord, { version: 1 }>): Promise<ClientRestoreDetails> {
   const current = await readConfigText(record.configPath);
   if (current === undefined) {
     return { client: record.client, restoredFields: 0, conflicts: record.originalContent === undefined ? [] : ['配置文件已被外部删除'] };
@@ -321,7 +338,7 @@ async function restoreLegacyRecord(record: Extract<ClientBackupRecord, { version
 async function restoreLegacyCodex(
   record: Extract<ClientBackupRecord, { version: 1; client: 'codex' }> | Extract<ClientBackupRecord, { version: 1 }>,
   current: string
-): Promise<ClientRestoreResult> {
+): Promise<ClientRestoreDetails> {
   const localWithV1 = ensureSuffix(record.writtenLocalUrl, '/v1');
   const provider = readTomlTopLevelString(current, 'model_provider')?.trim() || 'openai';
   const sectionHeader = `[model_providers.${provider}]`;
@@ -348,6 +365,82 @@ async function restoreLegacyCodex(
     await writeIfUnchanged(record.configPath, current, next);
   }
   return { client: 'codex', restoredFields: 1, conflicts: [] };
+}
+
+async function findUnresolvedLocalReferences(record: ClientBackupRecord): Promise<string[]> {
+  const current = await readConfigText(record.configPath);
+  if (current === undefined) return [];
+  if (record.version === 1) return legacyLocalReferences(record, current);
+  const unresolved: string[] = [];
+  for (const field of record.fields) {
+    if (typeof field.writtenValue !== 'string'
+      || !sameLocalEndpoint(field.writtenValue, record.writtenLocalUrl)) continue;
+    const currentValue = readManagedStringValue(current, field);
+    if (currentValue && sameLocalEndpoint(currentValue, record.writtenLocalUrl)) {
+      unresolved.push(`${field.sectionHeader ? `${field.sectionHeader}.` : ''}${field.key}`);
+    }
+  }
+  return unresolved;
+}
+
+function readManagedStringValue(text: string, field: ClientManagedField): string | undefined {
+  if (field.format === 'json-env') {
+    try {
+      const data = JSON.parse(text) as unknown;
+      if (!isRecord(data) || !isRecord(data.env)) return undefined;
+      const value = data.env[field.key];
+      return typeof value === 'string' ? value : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  if (field.format !== 'toml-string') return undefined;
+  return field.sectionHeader
+    ? readTomlStringKey(sectionText(text, field.sectionHeader), field.key)
+    : readTomlTopLevelString(text, field.key);
+}
+
+function legacyLocalReferences(
+  record: Extract<ClientBackupRecord, { version: 1 }>,
+  current: string
+): string[] {
+  if (record.client === 'claude') {
+    try {
+      const data = JSON.parse(current) as unknown;
+      const value = isRecord(data) && isRecord(data.env) ? data.env.ANTHROPIC_BASE_URL : undefined;
+      return typeof value === 'string' && sameLocalEndpoint(value, record.writtenLocalUrl)
+        ? ['ANTHROPIC_BASE_URL']
+        : [];
+    } catch {
+      return [];
+    }
+  }
+  const provider = readTomlTopLevelString(current, 'model_provider')?.trim() || 'openai';
+  const values = [
+    ['openai_base_url', readTomlTopLevelString(current, 'openai_base_url')],
+    ['chatgpt_base_url', readTomlTopLevelString(current, 'chatgpt_base_url')],
+    [`[model_providers.${provider}].base_url`, readTomlStringKey(sectionText(current, `[model_providers.${provider}]`), 'base_url')]
+  ] as const;
+  return values.flatMap(([key, value]) => (
+    typeof value === 'string' && sameLocalEndpoint(value, record.writtenLocalUrl) ? [key] : []
+  ));
+}
+
+function sameLocalEndpoint(left: string, right: string): boolean {
+  try {
+    const a = new URL(left);
+    const b = new URL(right);
+    const normalizeHost = (value: string): string => {
+      const host = value.toLowerCase().replace(/^\[|\]$/g, '');
+      return host === 'localhost' || host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(host)
+        ? 'loopback'
+        : host;
+    };
+    const port = (url: URL): string => url.port || (url.protocol === 'https:' ? '443' : '80');
+    return normalizeHost(a.hostname) === normalizeHost(b.hostname) && port(a) === port(b);
+  } catch {
+    return false;
+  }
 }
 
 function parseJsonRecord(text: string | undefined): Record<string, unknown> | undefined {
@@ -429,7 +522,7 @@ export function patchClaudeSettings(
 }
 
 export function patchCodexConfig(original: string, detection: CodexDetection, localProxyValue: string): string {
-  if (detection.routeKind === 'chatgpt-oauth') {
+  if (detection.routeKind === 'chatgpt-oauth' && detection.fieldLocation === 'provider-section') {
     let next = setTomlStringKey(original, 'model_provider', CODEX_TRACE_PROVIDER).text;
     next = ensureTomlSection(next, CODEX_TRACE_PROVIDER_SECTION);
     next = setTomlStringKey(next, 'name', 'XwX Deck', { sectionHeader: CODEX_TRACE_PROVIDER_SECTION }).text;
@@ -454,10 +547,11 @@ function codexConfigKey(detection: CodexDetection): 'base_url' | 'openai_base_ur
 
 function codexProxyValue(detection: CodexDetection, localProxyUrl: string): string {
   const base = localProxyUrl.replace(/\/+$/, '');
+  if (detection.fieldLocation === 'chatgpt-base-url') {
+    return `${base}/backend-api`;
+  }
   if (detection.routeKind === 'chatgpt-oauth') return `${base}/backend-api/codex`;
-  return detection.fieldLocation === 'chatgpt-base-url'
-    ? `${base}/backend-api/`
-    : ensureSuffix(base, '/v1');
+  return ensureSuffix(base, '/v1');
 }
 
 function removeEmptyTomlSection(text: string, header: string): string {

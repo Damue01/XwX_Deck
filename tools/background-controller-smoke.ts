@@ -77,6 +77,18 @@ try {
       }));
       return;
     }
+    if (pathname.endsWith('/messages')) {
+      res.end(JSON.stringify({
+        id: 'msg_isolated_claude',
+        type: 'message',
+        role: 'assistant',
+        model: body.model,
+        content: [{ type: 'text', text: 'isolated claude ok' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }));
+      return;
+    }
     res.end(JSON.stringify({
       id: 'resp_isolated',
       object: 'response',
@@ -110,6 +122,9 @@ try {
     path.join(codexHome, 'auth.json'),
     '{"auth_mode":"api-key","OPENAI_API_KEY":"isolated-openai-key"}\n'
   );
+  await fs.writeFile(path.join(claudeHome, 'settings.json'), `${JSON.stringify({
+    env: { ANTHROPIC_BASE_URL: officialBaseUrl }
+  }, null, 2)}\n`);
 
   first = new XwXDeckController(userData, {
     backgroundGateway: true,
@@ -285,7 +300,23 @@ try {
   assert.equal(state.readiness.recordingEnabled, false, 'stopping Trace must disable persistence immediately');
   assert.equal(state.readiness.codexGatewayEnabled, true,
     'stopping official Trace must retain a non-recording official route for cached localhost tasks');
+  const claudeAfterTraceStop = JSON.parse(await fs.readFile(path.join(claudeHome, 'settings.json'), 'utf8'));
+  assert.equal(claudeAfterTraceStop.env.ANTHROPIC_BASE_URL, officialBaseUrl,
+    'stopping Trace must restore the on-disk Claude upstream for newly started clients');
   const traceCountAfterDisable = await waitForTraceCount(gatewayBase, 1);
+  assert.equal(
+    (await postJson(`${gatewayBase}/v1/messages`, {
+      model: 'claude-after-trace-stop',
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'cached Claude request' }]
+    }, {
+      'user-agent': 'claude-cli/2.1.0',
+      'x-api-key': 'isolated-claude-key',
+      'anthropic-version': '2023-06-01'
+    })).status,
+    200,
+    'a Claude process that cached localhost must keep forwarding after Trace stops'
+  );
   assert.equal(
     (await postJson(`${gatewayBase}/v1/responses`, { model: 'official-after-trace-stop', input: [] })).status,
     200,
@@ -303,7 +334,8 @@ try {
     200,
     'the cached model-directory endpoint must continue forwarding after Trace stops'
   );
-  assert.equal(await waitForTraceCount(gatewayBase, traceCountAfterDisable), traceCountAfterDisable,
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(await readTraceCount(gatewayBase), traceCountAfterDisable,
     'the retained official fallback must not record requests while Trace is off');
 
   assert.equal(await first.detachManager(), true);
@@ -321,6 +353,19 @@ try {
   assert.equal(state.readiness.codexGatewayEnabled, true,
     'manager restart must re-publish the non-recording official fallback');
   assert.equal(
+    (await postJson(`${gatewayBase}/v1/messages`, {
+      model: 'claude-after-fallback-reattach',
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'cached Claude after manager restart' }]
+    }, {
+      'user-agent': 'claude-cli/2.1.0',
+      'x-api-key': 'isolated-claude-key',
+      'anthropic-version': '2023-06-01'
+    })).status,
+    200,
+    'manager restart must re-publish the non-recording Claude fallback'
+  );
+  assert.equal(
     (await postJson(`${gatewayBase}/v1/responses`, { model: 'official-after-fallback-reattach', input: [] })).status,
     200
   );
@@ -334,6 +379,11 @@ try {
   first = second;
   second = undefined;
   await first.shutdown();
+  await assert.rejects(
+    fs.stat(path.join(userData, 'gateway', 'client-fallbacks.json')),
+    /ENOENT/,
+    'a successful explicit proxy close must remove the persisted client fallback'
+  );
   await first.setBackgroundGatewayPaused(true, 'smoke close official direct');
   state = await first.runtimeState();
   assert.equal(state.backgroundGatewayAction, undefined, 'official direct idle mode stays helper-free after a prior Trace pause');
@@ -698,14 +748,18 @@ async function waitForTraceCount(baseUrl: string, minimum: number): Promise<numb
   const deadline = Date.now() + 5_000;
   let observed = 0;
   while (Date.now() < deadline) {
-    const response = await fetch(`${baseUrl}/api/state`, { headers: { accept: 'application/json' } });
-    assert.equal(response.status, 200, `Trace state returned ${response.status}`);
-    const state = await response.json() as { sessions?: Array<{ traceCount?: number }> };
-    observed = (state.sessions ?? []).reduce((total, session) => total + (session.traceCount ?? 0), 0);
+    observed = await readTraceCount(baseUrl);
     if (observed >= minimum) return observed;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   throw new Error(`Trace count did not reach ${minimum}; observed ${observed}`);
+}
+
+async function readTraceCount(baseUrl: string): Promise<number> {
+  const response = await fetch(`${baseUrl}/api/state`, { headers: { accept: 'application/json' } });
+  assert.equal(response.status, 200, `Trace state returned ${response.status}`);
+  const state = await response.json() as { sessions?: Array<{ traceCount?: number }> };
+  return (state.sessions ?? []).reduce((total, session) => total + (session.traceCount ?? 0), 0);
 }
 
 async function waitForClosed(port: number): Promise<void> {

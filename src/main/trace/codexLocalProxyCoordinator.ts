@@ -9,15 +9,21 @@ import {
   isLoopbackUrl
 } from './clientConfig';
 import type { CodexConfigSnapshot } from './codexConfigManager';
-import { findTomlSection, readTomlStringKey, setTomlStringKey } from './toml';
+import {
+  findTomlSection,
+  readTomlStringKey,
+  readTomlTopLevelString,
+  setTomlStringKey
+} from './toml';
 
 const STATE_FILE = 'codex-local-proxy-suspension.json';
-const PROVIDER_SECTION = `[model_providers.${CODEX_STABLE_PROVIDER}]`;
+type CodexLocalProxyField = 'provider-section' | 'openai-base-url' | 'chatgpt-base-url';
 
 interface CodexLocalProxySuspensionRecord {
-  readonly version: 1 | 2;
+  readonly version: 1 | 2 | 3;
   readonly configPath: string;
   readonly preparedProvider: string;
+  readonly fieldLocation: CodexLocalProxyField;
   readonly originalBaseUrl: string;
   readonly directBaseUrl: string;
   readonly restoreOriginal: boolean;
@@ -54,34 +60,40 @@ export class CodexLocalProxyCoordinator {
     const existing = await this.readRecord();
     if (existing) {
       const current = await readTextOrUndefined(existing.configPath);
-      if (current !== undefined && managedProviderBaseUrl(current, existing.preparedProvider) === existing.directBaseUrl) {
+      if (current !== undefined && managedBaseUrl(current, existing) === existing.directBaseUrl) {
         return { status: 'resumed', localBaseUrl: existing.originalBaseUrl };
       }
       await this.removeRecord();
     }
 
     if (!isLoopbackUrl(snapshot.activeBaseUrl)) return { status: 'not-needed' };
-    if (!isXwXManagedProvider(snapshot.activeProvider)) {
+    const fieldLocation: CodexLocalProxyField = snapshot.activeProvider === 'openai'
+      ? snapshot.authMode === 'chatgpt' ? 'chatgpt-base-url' : 'openai-base-url'
+      : 'provider-section';
+    if (fieldLocation === 'provider-section'
+      && !isXwXManagedProvider(snapshot.activeProvider)
+) {
       return { status: 'unsupported', localBaseUrl: snapshot.activeBaseUrl };
     }
     const directBaseUrl = snapshot.authMode === 'chatgpt'
-      ? CODEX_CHATGPT_OAUTH_PROVIDER_TARGET
+      ? fieldLocation === 'provider-section'
+        ? CODEX_CHATGPT_OAUTH_PROVIDER_TARGET
+        : CODEX_CHATGPT_OAUTH_PROVIDER_TARGET.replace(/\/codex$/, '')
       : snapshot.authMode === 'api-key'
         ? `${CODEX_DEFAULT_TARGET}/v1`
         : undefined;
     if (!directBaseUrl) return { status: 'unsupported', localBaseUrl: snapshot.activeBaseUrl };
 
     const original = await readTextOrUndefined(snapshot.configPath);
-    if (original === undefined || providerBaseUrl(original, snapshot.activeProvider) !== snapshot.activeBaseUrl) {
+    if (original === undefined || configBaseUrl(original, snapshot.activeProvider, fieldLocation) !== snapshot.activeBaseUrl) {
       throw new Error('ChatGPT 配置在连接调整前发生了变化。');
     }
-    const next = setTomlStringKey(original, 'base_url', directBaseUrl, {
-      sectionHeader: `[model_providers.${snapshot.activeProvider}]`
-    }).text;
+    const next = setConfigBaseUrl(original, snapshot.activeProvider, fieldLocation, directBaseUrl);
     const record: CodexLocalProxySuspensionRecord = {
-      version: 2,
+      version: 3,
       configPath: snapshot.configPath,
       preparedProvider: snapshot.activeProvider,
+      fieldLocation,
       originalBaseUrl: snapshot.activeBaseUrl,
       directBaseUrl,
       restoreOriginal,
@@ -107,15 +119,18 @@ export class CodexLocalProxyCoordinator {
       await this.removeRecord();
       return { restored: false, conflict: 'ChatGPT 配置已被外部删除，未恢复原连接' };
     }
-    const currentBaseUrl = managedProviderBaseUrl(current, record.preparedProvider);
+    const currentBaseUrl = managedBaseUrl(current, record);
     if (currentBaseUrl !== record.directBaseUrl) {
       await this.removeRecord();
       return { restored: false, conflict: 'ChatGPT 连接已被外部修改，保留当前连接' };
     }
     if (record.restoreOriginal) {
-      const next = setTomlStringKey(current, 'base_url', record.originalBaseUrl, {
-        sectionHeader: PROVIDER_SECTION
-      }).text;
+      const next = setConfigBaseUrl(
+        current,
+        record.preparedProvider,
+        record.fieldLocation,
+        record.originalBaseUrl
+      );
       const latest = await readTextOrUndefined(record.configPath);
       if (latest !== current) throw new Error('ChatGPT 配置在恢复原连接前发生了变化。');
       await writeFileAtomic(record.configPath, next);
@@ -137,7 +152,7 @@ export class CodexLocalProxyCoordinator {
     if (!text) return undefined;
     try {
       const value = JSON.parse(text) as Partial<CodexLocalProxySuspensionRecord>;
-      if (value.version !== 1 && value.version !== 2
+      if (value.version !== 1 && value.version !== 2 && value.version !== 3
         || typeof value.configPath !== 'string'
         || typeof value.originalBaseUrl !== 'string'
         || typeof value.directBaseUrl !== 'string'
@@ -145,9 +160,15 @@ export class CodexLocalProxyCoordinator {
         || typeof value.writtenAt !== 'string') return undefined;
       return {
         ...value,
-        preparedProvider: value.version === 2 && typeof value.preparedProvider === 'string'
+        preparedProvider: value.version !== 1 && typeof value.preparedProvider === 'string'
           ? value.preparedProvider
-          : CODEX_STABLE_PROVIDER
+          : CODEX_STABLE_PROVIDER,
+        fieldLocation: value.version === 3
+          && (value.fieldLocation === 'provider-section'
+            || value.fieldLocation === 'openai-base-url'
+            || value.fieldLocation === 'chatgpt-base-url')
+          ? value.fieldLocation
+          : 'provider-section'
       } as CodexLocalProxySuspensionRecord;
     } catch {
       return undefined;
@@ -165,6 +186,36 @@ function providerBaseUrl(text: string, provider: string): string | undefined {
   return readTomlStringKey(text.slice(section.start, section.end), 'base_url')?.trim();
 }
 
-function managedProviderBaseUrl(text: string, preparedProvider: string): string | undefined {
-  return providerBaseUrl(text, CODEX_STABLE_PROVIDER) ?? providerBaseUrl(text, preparedProvider);
+function configBaseUrl(
+  text: string,
+  provider: string,
+  fieldLocation: CodexLocalProxyField
+): string | undefined {
+  if (fieldLocation === 'provider-section') return providerBaseUrl(text, provider);
+  return readTomlTopLevelString(
+    text,
+    fieldLocation === 'chatgpt-base-url' ? 'chatgpt_base_url' : 'openai_base_url'
+  )?.trim();
+}
+
+function setConfigBaseUrl(
+  text: string,
+  provider: string,
+  fieldLocation: CodexLocalProxyField,
+  value: string
+): string {
+  if (fieldLocation === 'provider-section') {
+    return setTomlStringKey(text, 'base_url', value, {
+      sectionHeader: `[model_providers.${provider}]`
+    }).text;
+  }
+  return setTomlStringKey(
+    text,
+    fieldLocation === 'chatgpt-base-url' ? 'chatgpt_base_url' : 'openai_base_url',
+    value
+  ).text;
+}
+
+function managedBaseUrl(text: string, record: CodexLocalProxySuspensionRecord): string | undefined {
+  return configBaseUrl(text, record.preparedProvider, record.fieldLocation);
 }

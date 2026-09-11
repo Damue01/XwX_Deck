@@ -53,8 +53,8 @@ check(preload.includes('repairApplication') && preload.includes('resetApplicatio
   'preload must expose the repair center actions');
 check(handlers.includes('xwxdeck:repair-application') && handlers.includes('xwxdeck:reset-application'),
   'main process must register the repair center IPC');
-check(runtime.includes('performApplicationResetAtStartup') && runtime.includes('startExitRecoveryGuardian'),
-  'runtime must retain reset and detached exit recovery');
+check(runtime.includes('performApplicationResetAtStartup') && runtime.includes('shutdownControllerWithConfirmation') && runtime.includes('cancelShutdown'),
+  'runtime must retain reset and cancellable configuration recovery');
 check(esbuild.includes("'exit-recovery': 'src/main/exitRecovery.ts'"),
   'build must include the detached exit recovery entrypoint');
 check(applicationReset.includes('assertSafeResetDirectory'),

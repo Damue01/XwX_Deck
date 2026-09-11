@@ -70,6 +70,20 @@ export async function testProviderRegistry(root: string): Promise<void> {
     const sent = requests.find(r => r.path === '/a/api/responses'); assert.ok(sent); assert.equal(sent.authorization, 'Bearer key-a'); assert.equal(sent.key, undefined); assert.equal(sent.cookie, undefined);
     assert.equal(await fs.readFile(path.join(codexHome, 'auth.json'), 'utf8'), auth);
     assert.ok((await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8')).includes(externalSection), 'unrelated external provider sections remain byte stable');
+    await controller.shutdown({ force: true, skipCodexHistoryRepair: true });
+    const direct = await controller.readCodexConfig();
+    assert.equal(direct.activeBaseUrl, a.baseUrl, 'Responses full shutdown preserves the exact API prefix');
+    const directToml = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
+    assert.match(directToml, /requires_openai_auth = false/);
+    assert.match(directToml, /experimental_bearer_token = "key-a"/);
+    assert.equal(await fs.readFile(path.join(codexHome, 'auth.json'), 'utf8'), auth);
+    await controller.start();
+    await controller.switchClientProvider('codex', b.id);
+    await controller.shutdown({ force: true, skipCodexHistoryRepair: true });
+    assert.equal((await controller.readCodexConfig()).activeProvider, 'openai', 'a protocol bridge restores official direct on full exit');
+    await controller.start();
+    assert.equal((await controller.readProviders()).active.codex, b.id, 'a protocol bridge resumes the saved selection');
+    await controller.switchClientProvider('codex', a.id);
     const internal = controller as any; const read = internal.codexConfig.read.bind(internal.codexConfig); internal.codexConfig.read = async () => { throw new Error('fixture unreadable config'); };
     try {
       assert.equal((await controller.readProviders()).connections.length, 3);

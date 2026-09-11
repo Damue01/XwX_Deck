@@ -268,6 +268,7 @@ export class ClientConfigOrchestrator {
         for (const conflict of result.conflicts) {
           log.warn(`[xwx/trace] startup recovery preserved external ${rec.client} change: ${conflict}`);
         }
+        if (result.outcome === 'unresolved-local') { log.warn(`[xwx/trace] retained ${rec.client} recovery record: ${result.unresolvedLocalReferences.join(', ')}`); continue; }
         log(`[compatible/tap] recovered stale ${rec.client} config from previous session (${rec.configPath})`);
       } catch (err) {
         log.warn(`[compatible/tap] failed to recover ${rec.client} config: ${(err as Error).message}`);

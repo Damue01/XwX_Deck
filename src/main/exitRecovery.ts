@@ -1,3 +1,4 @@
+import { restoreCodexPreferredDirectConfiguration } from './app/codexDirectConfiguration';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ClientBackupStore, type ClientBackupRecord } from './trace/clientBackupStore';
@@ -53,8 +54,8 @@ export async function runExitRecovery(options: ExitRecoveryOptions): Promise<Exi
   try {
     for (const record of records) {
       try {
-        await writer.restore(record);
-        restoredClients.push(record.client);
+        const result = await writer.restore(record);
+        if (result.outcome !== 'unresolved-local') restoredClients.push(record.client);
       } catch (error) {
         log.warn(`[exit-recovery] field-safe ${record.client} restore failed: ${(error as Error).message}`);
       }
@@ -63,41 +64,22 @@ export async function runExitRecovery(options: ExitRecoveryOptions): Promise<Exi
       log.warn(`[exit-recovery] Codex local-proxy restore failed: ${(error as Error).message}`);
     });
 
-    if (runtime) {
-      await restoreManagedCodexGateway(options.userDataDir, runtime.gatewayPort, settings.compatibleBaseUrl);
-      let dependent = clientsPointingAt(orchestrator, runtime.gatewayPort);
-      for (const client of dependent) {
-        const record = records.find(item => item.client === (client === 'claude-cli' ? 'claude' : 'codex'));
-        if (!record) continue;
-        await forceRestoreOriginal(record, options.userDataDir);
-        emergencyRestoredClients.push(record.client);
-      }
-      await restoreManagedCodexGateway(options.userDataDir, runtime.gatewayPort, settings.compatibleBaseUrl);
-      dependent = clientsPointingAt(orchestrator, runtime.gatewayPort);
-      if (dependent.length) {
-        await replaceOwnedLoopbackReferences(
-          clientPaths.claudeSettingsPath,
-          clientPaths.codexConfigPath,
-          runtime.gatewayPort,
-          settings.compatibleBaseUrl
-        );
-        dependent = clientsPointingAt(orchestrator, runtime.gatewayPort);
-      }
-      if (dependent.length) {
-        throw new Error(`退出恢复后仍有客户端依赖本地 Gateway：${dependent.join(', ')}`);
-      }
+    await restoreCodexPreferredDirectConfiguration(options.userDataDir);
+    if (runtime && clientsPointingAt(orchestrator, runtime.gatewayPort).length) {
+      throw new Error('退出恢复后仍有客户端依赖本地 Gateway；外部修改和恢复记录已保留。');
     }
   } catch (error) {
     recoveryError = error;
-    log.error(`[exit-recovery] configuration recovery failed before forced process termination: ${(error as Error).message}`);
-  } finally {
+    log.error(`[exit-recovery] configuration recovery failed; local Gateway retained: ${(error as Error).message}`);
+  }
+  if (recoveryError) throw recoveryError;
+  {
     if (runtime && await gatewayStillMatches(runtimeFile, runtime)) {
       await terminateProcess(runtime.pid);
     }
     await cleanupGatewayRuntime(options.userDataDir);
     await terminateProcess(options.managerPid);
   }
-  if (recoveryError) throw recoveryError;
   return {
     restoredClients,
     emergencyRestoredClients,
@@ -121,71 +103,6 @@ async function writeReadyMarker(userDataDir: string): Promise<void> {
   const marker = path.join(userDataDir, 'gateway', 'exit-recovery.ready');
   await fs.promises.mkdir(path.dirname(marker), { recursive: true });
   await writeFileAtomic(marker, `${process.pid}\n`);
-}
-
-async function restoreManagedCodexGateway(
-  userDataDir: string,
-  gatewayPort: number,
-  compatibleServiceBaseUrl: string
-): Promise<void> {
-  const manager = new CodexConfigManager(userDataDir);
-  let snapshot;
-  try {
-    snapshot = await manager.read();
-  } catch (error) {
-    log.warn(`[exit-recovery] could not parse Codex config before fallback restore: ${(error as Error).message}`);
-    return;
-  }
-  if (!endpointUsesPort(snapshot.activeBaseUrl, gatewayPort)) return;
-  const upstreamBaseUrl = snapshot.mode === 'compatible' && snapshot.compatible.baseUrl
-    ? snapshot.compatible.baseUrl
-    : snapshot.authMode === 'api-key'
-      ? 'https://api.openai.com/v1'
-      : 'https://chatgpt.com/backend-api/codex';
-  await manager.restoreCompatibleServiceGateway({
-    upstreamBaseUrl: upstreamBaseUrl || compatibleServiceBaseUrl,
-    gatewayBaseUrl: snapshot.activeBaseUrl
-  }).catch(error => {
-    log.warn(`[exit-recovery] managed Codex Gateway restore failed: ${(error as Error).message}`);
-  });
-}
-
-async function forceRestoreOriginal(record: ClientBackupRecord, userDataDir: string): Promise<void> {
-  const current = await fs.promises.readFile(record.configPath, 'utf8').catch(() => undefined);
-  if (current !== undefined) {
-    const backupDir = path.join(userDataDir, 'backups', 'forced-exit');
-    await fs.promises.mkdir(backupDir, { recursive: true });
-    const name = `${record.client}-${Date.now()}-${path.basename(record.configPath)}.before-recovery`;
-    await writeFileAtomic(path.join(backupDir, name), current);
-  }
-  if (record.originalContent === undefined) {
-    await fs.promises.rm(record.configPath, { force: true });
-  } else {
-    await writeFileAtomic(record.configPath, record.originalContent);
-  }
-}
-
-async function replaceOwnedLoopbackReferences(
-  claudePath: string,
-  codexPath: string,
-  gatewayPort: number,
-  compatibleServiceBaseUrl: string
-): Promise<void> {
-  const pattern = new RegExp(`http://(?:127\\.0\\.0\\.1|localhost):${gatewayPort}(?:/[^\"'\\s]*)?`, 'gi');
-  const claude = await fs.promises.readFile(claudePath, 'utf8').catch(() => undefined);
-  if (claude && pattern.test(claude)) {
-    pattern.lastIndex = 0;
-    await writeFileAtomic(claudePath, claude.replace(pattern, 'https://api.anthropic.com'));
-  }
-  const codex = await fs.promises.readFile(codexPath, 'utf8').catch(() => undefined);
-  if (codex) {
-    pattern.lastIndex = 0;
-    if (pattern.test(codex)) {
-      pattern.lastIndex = 0;
-      const upstream = compatibleServiceBaseUrl || 'https://chatgpt.com/backend-api/codex';
-      await writeFileAtomic(codexPath, codex.replace(pattern, upstream));
-    }
-  }
 }
 
 function clientsPointingAt(orchestrator: ClientConfigOrchestrator, gatewayPort: number): readonly string[] {

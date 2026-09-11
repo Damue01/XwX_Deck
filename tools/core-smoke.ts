@@ -1,3 +1,4 @@
+import { testDirectRestore } from './direct-restore-smoke';
 import { testProviderRegistry } from './provider-registry-smoke';
 import assert from 'node:assert/strict';
 import * as crypto from 'node:crypto';
@@ -212,6 +213,8 @@ assert.equal(continuationOnlyTrayQuitPrompt.detail, '退出可能丢失工具结
 
 try {
   await testApplicationReset();
+  await testDirectRestore(root);
+  completed.push('standalone direct restore ownership, conflicts, rollback and path isolation');
   await testExitRecovery();
   await testSettings();
   await testProviderRegistry(root);
@@ -305,17 +308,21 @@ async function testExitRecovery(): Promise<void> {
   process.env.XWX_DECK_CLIENT_HOME = path.join(base, 'home');
   let result;
   try {
-    result = await runExitRecovery({
-      userDataDir: userData,
-      managerPid: 99102,
-      terminateProcess: async pid => { terminated.push(pid); }
-    });
+    const recover = () => runExitRecovery({ userDataDir: userData, managerPid: 99102, terminateProcess: async pid => { terminated.push(pid); } });
+    await assert.rejects(recover(), /仍有客户端依赖/);
+    assert.deepEqual(terminated, [], 'unresolved externally edited localhost must keep the Gateway alive');
+    assert.equal(JSON.parse(await fs.readFile(paths.claudeSettingsPath, 'utf8')).env.ANTHROPIC_BASE_URL, 'http://localhost:44995');
+    assert.ok(await backup.read('claude'), 'retain field ownership evidence for retry');
+    claudeLive.env.ANTHROPIC_BASE_URL = 'https://user-direct.example';
+    await fs.writeFile(paths.claudeSettingsPath, JSON.stringify(claudeLive));
+    result = await recover();
   } finally {
     if (previousClientHome === undefined) delete process.env.XWX_DECK_CLIENT_HOME;
     else process.env.XWX_DECK_CLIENT_HOME = previousClientHome;
   }
   assert.deepEqual(terminated, [99101, 99102]);
-  assert.ok(result.emergencyRestoredClients.includes('claude'));
+  assert.deepEqual(result.emergencyRestoredClients, []);
+  assert.equal(JSON.parse(await fs.readFile(paths.claudeSettingsPath, 'utf8')).env.ANTHROPIC_BASE_URL, 'https://user-direct.example');
   assert.doesNotMatch(await fs.readFile(paths.claudeSettingsPath, 'utf8'), /localhost:44995|127\.0\.0\.1:44995/);
   assert.doesNotMatch(await fs.readFile(paths.codexConfigPath, 'utf8'), /localhost:44995|127\.0\.0\.1:44995/);
   await assert.rejects(fs.stat(path.join(userData, 'gateway', 'runtime.json')), /ENOENT/);
@@ -1738,14 +1745,12 @@ async function testControllerColdStartTransactions(): Promise<void> {
       (orchestrator as any).restoreAll = async () => {
         throw new Error('injected emergency restore failure');
       };
-      const result = await controller.forceExit();
-      assert.equal(result.helperStopped, true);
-      assert.deepEqual(result.dependentClients, ['claude-cli', 'codex-cli']);
-      assert.equal((controller as any).proxy.isListening(), false);
+      await assert.rejects(controller.forceExit(), /emergency restore failure/);
+      assert.equal((controller as any).proxy.isListening(), true);
       assert.match(await fs.readFile(paths.claudeSettingsPath, 'utf8'), /127\.0\.0\.1:\d+/);
       assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), /127\.0\.0\.1:\d+/);
       (orchestrator as any).restoreAll = restoreAll;
-      await restoreAll();
+      await controller.forceExit();
     }
 
     // Legacy official-Gateway residue must be repaired to direct official
@@ -1827,7 +1832,8 @@ async function testControllerColdStartTransactions(): Promise<void> {
       assert.doesNotMatch(liveConfig, /127\.0\.0\.1:44992/);
       assert.match(liveConfig, /127\.0\.0\.1:\d+\/backend-api\/codex/);
       await controller.shutdown();
-      assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), /base_url = "https:\/\/compatible\.example\/v1"/);
+      assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), /^model_provider = "openai"$/m);
+      assert.equal((await new XwXDeckSettingsStore(userData).read()).codexPreferredMode, 'compatible');
     }
 
     // Authentication conflict: the route prepare phase may run, but failure
@@ -5852,19 +5858,18 @@ async function testCodexOfficialAndCustomTakeover(): Promise<void> {
     .find(result => result.client === 'codex-cli');
   assert.equal(officialTakeover.codexRouteKind, 'chatgpt-oauth');
   const officialDuringTrace = await fs.readFile(paths.codexConfigPath, 'utf8');
-  assert.match(officialDuringTrace, /^model_provider = "xwx_deck"$/m);
-  assert.match(officialDuringTrace, /\[model_providers\.xwx_deck\][\s\S]*base_url = "http:\/\/127\.0\.0\.1:44998\/backend-api\/codex"/);
-  assert.match(officialDuringTrace, /\[model_providers\.xwx_deck\][\s\S]*requires_openai_auth = true/);
-  assert.match(officialDuringTrace, /\[model_providers\.xwx_deck\][\s\S]*supports_websockets = true/);
+  assert.match(officialDuringTrace, /^model_provider = "openai"$/m);
+  assert.match(officialDuringTrace, /^chatgpt_base_url = "http:\/\/127\.0\.0\.1:44998\/backend-api"$/m);
+  assert.doesNotMatch(officialDuringTrace, /\[model_providers\.xwx_deck\]/);
   assert.match(officialDuringTrace, /\[model_providers\.compatible\][\s\S]*base_url = "https:\/\/compatible\.example\/v1"/);
   assert.equal((await new CodexConfigManager(path.join(root, 'codex-detection-user-data')).readFromContent(officialOriginal, paths)).mode, 'official');
   const parsedOfficialDuringTrace = parseToml(officialDuringTrace) as {
     model_provider?: unknown;
+    chatgpt_base_url?: unknown;
     model_providers?: Record<string, Record<string, unknown>>;
   };
-  assert.equal(parsedOfficialDuringTrace.model_provider, 'xwx_deck');
-  assert.equal(parsedOfficialDuringTrace.model_providers?.xwx_deck?.requires_openai_auth, true);
-  assert.equal(parsedOfficialDuringTrace.model_providers?.xwx_deck?.supports_websockets, true);
+  assert.equal(parsedOfficialDuringTrace.model_provider, 'openai');
+  assert.equal(parsedOfficialDuringTrace.chatgpt_base_url, 'http://127.0.0.1:44998/backend-api');
   assert.deepEqual(await fs.readFile(paths.codexAuthPath), officialAuth);
   await orchestrator.restoreAll();
   assert.equal(await fs.readFile(paths.codexConfigPath, 'utf8'), officialOriginal);
@@ -5893,6 +5898,82 @@ async function testCodexOfficialAndCustomTakeover(): Promise<void> {
   assert.equal((await new CodexConfigManager(path.join(root, 'codex-detection-user-data')).readFromContent(customOriginal, paths)).mode, 'compatible');
   await orchestrator.restoreAll();
   assert.equal(await fs.readFile(paths.codexConfigPath, 'utf8'), customOriginal);
+
+  const user_directOriginal = [
+    'model_provider = "user_direct"',
+    '',
+    '[model_providers.user_direct]',
+    'name = "User service owned elsewhere"',
+    'base_url = "https://user-direct.example/openai"',
+    'wire_api = "responses"',
+    'requires_openai_auth = false',
+    'third_party_option = "keep-me"',
+    '',
+    '[model_providers.custom_vendor]',
+    'base_url = "http://localhost:7777/v1"',
+    'vendor_option = "untouched"',
+    ''
+  ].join('\n');
+  await fs.writeFile(paths.codexConfigPath, user_directOriginal);
+  const user_directTakeover = await orchestrator.applyOne('codex-cli', 'http://127.0.0.1:44998');
+  assert.equal(user_directTakeover.status, 'taken');
+  assert.match(
+    await fs.readFile(paths.codexConfigPath, 'utf8'),
+    /\[model_providers\.user_direct\][\s\S]*base_url = "http:\/\/127\.0\.0\.1:44998\/v1"/,
+    'an active User service provider must be eligible for Trace takeover'
+  );
+  const user_directBackup = await backup.read('codex');
+  assert.equal(user_directBackup?.version, 2);
+  assert.ok(user_directBackup?.version === 2 && user_directBackup.fields.some(field => (
+    field.sectionHeader === '[model_providers.user_direct]'
+      && field.key === 'base_url'
+      && field.previous.present
+      && field.previous.value === 'https://user-direct.example/openai'
+  )), 'Trace must retain the exact User service direct endpoint in its field-level ledger');
+  const user_directRestore = await orchestrator.restoreOne('codex-cli');
+  assert.equal(user_directRestore?.outcome, 'restored');
+  assert.equal(await fs.readFile(paths.codexConfigPath, 'utf8'), user_directOriginal);
+
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = path.dirname(paths.codexConfigPath);
+  try {
+    await new CodexConfigManager(path.join(base, 'user_direct-switch-user-data')).update({
+      mode: 'compatible',
+      compatibleModel: 'gpt-5.6-sol',
+      compatibleBaseUrl: 'https://registry.example/openai',
+      compatibleBearerToken: 'registry-fixture-token'
+    });
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+  const afterRegistrySwitch = await fs.readFile(paths.codexConfigPath, 'utf8');
+  assert.match(afterRegistrySwitch, /^model_provider = "xwx_deck"$/m);
+  assert.match(afterRegistrySwitch, /\[model_providers\.user_direct\][\s\S]*base_url = "https:\/\/user-direct\.example\/openai"/);
+  assert.match(afterRegistrySwitch, /\[model_providers\.user_direct\][\s\S]*third_party_option = "keep-me"/);
+  assert.match(afterRegistrySwitch, /\[model_providers\.custom_vendor\][\s\S]*base_url = "http:\/\/localhost:7777\/v1"/,
+    'generic loopback cleanup must not alter an unowned provider section');
+
+  await fs.writeFile(paths.codexConfigPath, user_directOriginal);
+  await orchestrator.applyOne('codex-cli', 'http://127.0.0.1:44998');
+  const localAlias = (await fs.readFile(paths.codexConfigPath, 'utf8'))
+    .replace('http://127.0.0.1:44998/v1', 'http://localhost:44998/v1');
+  await fs.writeFile(paths.codexConfigPath, localAlias);
+  const unresolved = await orchestrator.restoreOne('codex-cli');
+  assert.equal(unresolved?.outcome, 'unresolved-local');
+  assert.deepEqual(unresolved?.unresolvedLocalReferences, ['[model_providers.user_direct].base_url']);
+  assert.ok(await backup.read('codex'), 'an unresolved local route must retain its recovery record');
+  await fs.writeFile(paths.codexConfigPath, user_directOriginal);
+  await backup.remove('codex');
+
+  await orchestrator.applyOne('codex-cli', 'http://127.0.0.1:44998');
+  const externallyUpdatedUserDirect = (await fs.readFile(paths.codexConfigPath, 'utf8'))
+    .replace('http://127.0.0.1:44998/v1', 'https://new-user_direct.example/openai');
+  await fs.writeFile(paths.codexConfigPath, externallyUpdatedUserDirect);
+  const externalRestore = await orchestrator.restoreOne('codex-cli');
+  assert.equal(externalRestore?.outcome, 'preserved-external');
+  assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), /base_url = "https:\/\/new-user_direct\.example\/openai"/);
+  assert.equal(await backup.read('codex'), undefined, 'a safe external direct endpoint consumes the Trace backup');
   completed.push('ChatGPT OAuth and custom Codex provider takeover stay isolated');
 }
 
@@ -9873,38 +9954,13 @@ async function testManagerIpcContract(): Promise<void> {
     'the ChatGPT lifecycle boundary must expose detection only, not process control');
   assert.doesNotMatch(runtime, /showExitModeDialog/,
     'ordinary exit must not offer a multi-choice proxy mode dialog');
-  assert.match(runtime.slice(runtime.indexOf("app.on('before-quit'"), runtime.indexOf('class ShutdownCancelledError')), /controller\?\.detachManager\(\)/,
-    'ordinary exit must detach from an active model data plane');
-  assert.match(runtime, /quit: requestFullShutdownFromTray/,
-    'the tray Exit action must request a full shutdown instead of silently detaching the manager');
-  assert.match(runtime, /function requestFullShutdownFromTray\(\)[\s\S]*?fullShutdownRequested = true;[\s\S]*?app\.quit\(\)/,
-    'tray Exit must mark the full-shutdown intent before Electron enters before-quit');
-  assert.match(runtime, /fullShutdownRequested[\s\S]*?await prepareSafeShutdown\(confirmContext\)/,
-    'tray Exit must inspect live helper activity and confirm risky shutdowns');
-  assert.match(runtime, /confirmContext === 'tray-quit'[\s\S]*?shutdownActivitySnapshot\(\)[\s\S]*?showTrayQuitConfirm\(initial\)[\s\S]*?hideFullShutdownUi\(\)[\s\S]*?startExitRecoveryGuardian\(\)/,
-    'tray Exit must confirm from the cached snapshot, hide immediately, and move live inspection behind the visual exit');
-  assert.match(runtime, /prepareSafeShutdown\(confirmContext\)[\s\S]*?armFullShutdownWatchdog\(\)/,
-    'confirmed tray Exit must arm an independent deadline before lifecycle shutdown work');
-  assert.match(runtime, /fullShutdownRequested[\s\S]*?controller\?\.forceExit\(\)[\s\S]*?app\.exit\(0\)/,
-    'confirmed tray Exit must force a final process exit when graceful shutdown fails');
-  assert.match(runtime, /startExitRecoveryGuardian\(\)[\s\S]*?armFullShutdownWatchdog\(\)/,
-    'confirmed tray Exit must arm a detached recovery process before relying on in-process cleanup');
-  assert.match(runtime, /hideFullShutdownUi\(\);[\s\S]*?await startExitRecoveryGuardian\(\)/,
-    'the visible manager and tray must disappear immediately after confirmation, before background cleanup');
-  assert.match(runtime, /fullShutdownUiHidden \|\| !controller \|\| !managerWindow/,
-    'a second-instance event must not reopen the manager after visual shutdown is committed');
-  assert.match(tray, /dispose\(\)[\s\S]*?this\.tray\?\.destroy\(\)/,
-    'visual shutdown must remove the tray icon instead of leaving an apparently running app');
-  assert.match(runtime, /exit-recovery\.ready[\s\S]*?退出恢复守护进程未能在时限内保存恢复快照/,
-    'the manager must wait for the detached guardian to snapshot runtime and client backups before shutdown continues');
-  assert.match(runtime, /triggerExitRecoveryNow\(\)/,
-    'a graceful shutdown failure must wake the detached recovery guardian immediately');
-  assert.match(runtime, /full-shutdown watchdog expired[\s\S]*?detached recovery guardian finishes client restore and process cleanup[\s\S]*?app\.exit\(1\)/,
-    'the manager watchdog must leave final client recovery and process-tree cleanup to the detached guardian');
-  assert.match(exitRecovery, /writeReadyMarker[\s\S]*?forceRestoreOriginal[\s\S]*?replaceOwnedLoopbackReferences[\s\S]*?terminateProcess\(runtime\.pid\)[\s\S]*?terminateProcess\(options\.managerPid\)/,
-    'the detached guardian must restore owned localhost references before terminating Gateway and manager');
-  assert.match(xwxDeckController, /restoreClientConnectionsBeforeForcedStop\(\)[\s\S]*?clientsPointingAt\(localBaseUrl\)[\s\S]*?this\.proxy\.forceStop\(\)/,
-    'the in-process fallback must still attempt bounded recovery before forcing the Gateway down');
+  const quitting = runtime.slice(runtime.indexOf("app.on('before-quit'"), runtime.indexOf('class ShutdownCancelledError'));
+  assert.doesNotMatch(quitting, /detachManager|forceExit/);
+  assert.match(quitting, /shutdownControllerWithConfirmation/);
+  assert.match(quitting, /cancelShutdown/);
+  assert.doesNotMatch(exitRecovery, /forceRestoreOriginal|replaceOwnedLoopbackReferences/);
+  assert.match(exitRecovery, /if \(recoveryError\) throw recoveryError;[\s\S]*?terminateProcess\(runtime\.pid\)/);
+  assert.match(xwxDeckController, /restoreCodexPreferredDirectConfiguration/);
   assert.match(tray, /state\.backgroundGatewayAction === 'close' \? '关闭代理' : '开启代理'/,
     'the menu-bar proxy action must use the concise demand-driven labels');
   assert.match(tray, /toggleGateway\(state\.backgroundGatewayAction!\)/,

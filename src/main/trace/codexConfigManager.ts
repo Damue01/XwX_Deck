@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { CodexDirectRestore, DIRECT_PROVIDER_FIELDS } from './codexDirectRestore';
 import * as path from 'path';
 import { parse as parseToml } from 'smol-toml';
 import {
@@ -147,10 +148,10 @@ export class CodexConfigManager {
         && !xwxGateway兼容服务)
       ? 'official'
       : 'compatible';
-    const paperProvider = mode === 'compatible' ? activeProvider : COMPATIBLE_SERVICE_PROVIDER;
-    const paperSection = readProviderSection(text ?? '', paperProvider);
-    const managedPaperSection = paperProvider === COMPATIBLE_SERVICE_PROVIDER || isXwXManagedProvider(paperProvider)
-      ? paperSection
+    const compatibleProvider = mode === 'compatible' ? activeProvider : COMPATIBLE_SERVICE_PROVIDER;
+    const compatibleSection = readProviderSection(text ?? '', compatibleProvider);
+    const managedCompatibleSection = compatibleProvider === COMPATIBLE_SERVICE_PROVIDER || isXwXManagedProvider(compatibleProvider)
+      ? compatibleSection
       : readProviderSection(text ?? '', COMPATIBLE_SERVICE_PROVIDER);
     // Codex has one top-level `model` setting shared by whichever provider is
     // active. Keep both snapshot views aligned with that real value so a
@@ -170,10 +171,10 @@ export class CodexConfigManager {
       officialModel: currentModel,
       ...(modelContextWindow !== undefined ? { modelContextWindow } : {}),
       compatible: {
-        provider: paperProvider,
+        provider: compatibleProvider,
         model: currentModel,
-        baseUrl: managedPaperSection.baseUrl,
-        bearerToken: managedPaperSection.bearerToken
+        baseUrl: managedCompatibleSection.baseUrl,
+        bearerToken: managedCompatibleSection.bearerToken
       }
     };
   }
@@ -181,6 +182,7 @@ export class CodexConfigManager {
   async update(input: CodexConfigUpdate): Promise<CodexConfigSnapshot> {
     const paths = resolveClientPaths();
     const original = await readCodexConfigText(paths.codexConfigPath);
+    assertValidCodexToml(original, paths.codexConfigPath);
     const mode = readMode(input.mode);
     const replacesKnownCompatibleServiceRoute = !!cleanString(input.compatibleBaseUrl)
       && !!cleanString(input.compatibleBearerToken)
@@ -203,7 +205,7 @@ export class CodexConfigManager {
     if (imageGenRestore) next = imageGenRestore.text;
 
     try {
-      await writeCodexConfigIfUnchanged(paths.codexConfigPath, original, next);
+      await new CodexDirectRestore(this.userDataDir).write(paths.codexConfigPath, original, next, ['model_provider', 'model', ...DIRECT_PROVIDER_FIELDS], () => writeCodexConfigIfUnchanged(paths.codexConfigPath, original, next));
     } catch (error) {
       // A newly-created record without a corresponding config write would be
       // harmless, but removing it makes the failed transaction fully inert.
@@ -245,7 +247,7 @@ export class CodexConfigManager {
         gatewayBaseUrl: input.preserveActiveBaseUrl ? snapshot.activeBaseUrl : undefined
       });
     }
-    if (next !== (original ?? '')) await writeCodexConfigIfUnchanged(paths.codexConfigPath, original, next);
+    if (next !== (original ?? '')) await new CodexDirectRestore(this.userDataDir).write(paths.codexConfigPath, original, next, ['model_provider', 'model', ...DIRECT_PROVIDER_FIELDS], () => writeCodexConfigIfUnchanged(paths.codexConfigPath, original, next));
     return this.read();
   }
 
@@ -293,6 +295,39 @@ export class CodexConfigManager {
     }
     if (next !== original) await writeCodexConfigIfUnchanged(paths.codexConfigPath, original, next);
     return { restoredFields, conflicts };
+  }
+
+  /** Re-publish a verified, already-running standalone endpoint byte-for-byte.
+   * This records only its base_url when attaching to an earlier helper. */
+  async recordGatewayEndpoint(expectedUrl: string): Promise<void> {
+    const paths = resolveClientPaths();
+    const original = await readCodexConfigText(paths.codexConfigPath);
+    const snapshot = await this.readFromContent(original, paths);
+    if (original === undefined || !isXwXManagedProvider(snapshot.activeProvider) || snapshot.activeBaseUrl !== expectedUrl) throw new Error('ChatGPT Gateway 配置已变化，已停止接管。');
+    await new CodexDirectRestore(this.userDataDir).write(paths.codexConfigPath, original, original,
+      [`model_providers.${CODEX_STABLE_PROVIDER}.base_url`],
+      () => writeCodexConfigIfUnchanged(paths.codexConfigPath, original, original));
+  }
+
+  /** Restore only fields covered by this installation's explicit write ledger. */
+  async restoreDirectConfiguration(input: {
+    officialBaseUrl: string; officialModel: string; officialContextWindow?: number;
+    direct?: { baseUrl: string; bearerToken: string; model: string; contextWindow: number; displayName: string };
+  }): Promise<{ restoredFields: number; conflicts: string[] }> {
+    const paths = resolveClientPaths();
+    return new CodexDirectRestore(this.userDataDir).restore(paths.codexConfigPath, baseline => {
+      const direct = input.direct;
+      let target = baseline;
+      target = setTomlStringKey(target, 'model_provider', direct ? CODEX_STABLE_PROVIDER : 'openai').text;
+      target = setTomlStringKey(target, 'model', direct ? direct.model : input.officialModel).text;
+      target = patchModelContextWindow(target, { modelContextWindow: (direct ? direct.contextWindow : input.officialContextWindow) || null });
+      target = patchProviderConnection(target, CODEX_STABLE_PROVIDER, direct?.displayName || 'XwX Deck', {
+        baseUrl: direct?.baseUrl || input.officialBaseUrl, bearerToken: direct?.bearerToken || ''
+      }, { normalizeV1: false });
+      target = setTomlBooleanKey(target, 'requires_openai_auth', !direct, { sectionHeader: `[model_providers.${CODEX_STABLE_PROVIDER}]` }).text;
+      if (isXwXCodexCatalogPath(readTomlTopLevelString(rootToml(target), 'model_catalog_json'))) target = removeTomlStringKey(target, 'model_catalog_json').text;
+      return target;
+    }, (before, next) => writeCodexConfigIfUnchanged(paths.codexConfigPath, before, next));
   }
 
   private compatibleServiceImageGenRecordPath(): string {

@@ -2,6 +2,7 @@ export interface TrayQuitRisk {
   readonly activeRequests: number;
   readonly pendingContinuations: number;
   readonly chatGptMayBeRunning: boolean;
+  readonly claudeMayBeRunning: boolean;
 }
 
 export function buildTrayQuitPrompt(risk: TrayQuitRisk): Electron.MessageBoxOptions {
@@ -19,8 +20,12 @@ export function buildTrayQuitPrompt(risk: TrayQuitRisk): Electron.MessageBoxOpti
   } else if (pendingContinuations > 0) {
     message = `${pendingContinuations} 个工具调用尚未完成。`;
     detail = '退出可能丢失工具结果。';
-  } else if (risk.chatGptMayBeRunning) {
-    message = 'ChatGPT 正在使用后台代理。';
+  } else if (risk.chatGptMayBeRunning || risk.claudeMayBeRunning) {
+    const clients = [
+      risk.claudeMayBeRunning ? 'Claude' : '',
+      risk.chatGptMayBeRunning ? 'ChatGPT' : ''
+    ].filter(Boolean).join(' 和 ');
+    message = `${clients} 正在使用后台代理。`;
     detail = '若对话无法继续，请重新打开 XwX Deck。';
   }
 
