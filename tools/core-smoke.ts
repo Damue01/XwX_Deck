@@ -22,8 +22,12 @@ import {
 } from '../src/main/app/applicationReset';
 import {
   CodexConversationDoctor,
+  CodexConversationScanCache,
+  readSessionMetaLine,
   isPathInsideCodexHome
 } from '../src/main/app/codexConversationDoctor';
+import { CodexConversationQueryEngine } from '../src/main/app/codexConversationQueryEngine';
+import { CodexConversationWorkerClient } from '../src/main/app/codexConversationWorkerClient';
 import {
   CODEX_EXTENDED_CONTEXT_WINDOW,
   CODEX_STANDARD_LONG_CONTEXT_WINDOW,
@@ -939,7 +943,109 @@ async function testCodexConversationDoctor(): Promise<void> {
     insert.run(duplicateId, '重复文件', duplicatePath, 'xwx_deck', 0, 1_787_280_000, 1_787_280_400, null, null);
     insert.run(emptyId, '空会话文件', emptyPath, 'xwx_deck', 0, 1_787_280_000, 1_787_280_500, null, null);
 
-    const report = await new CodexConversationDoctor().diagnose();
+    const metaLine = await fs.readFile(healthyPath, 'utf8');
+    await fs.appendFile(healthyPath, 'PRIVATE_CONVERSATION_BODY_MUST_NOT_BE_READ\n{malformed body');
+    assert.equal(readSessionMetaLine(healthyPath), metaLine.trim());
+    db.exec("ALTER TABLE threads ADD COLUMN first_user_message TEXT; ALTER TABLE threads ADD COLUMN preview TEXT;");
+    db.exec("UPDATE threads SET first_user_message='PRIVATE_SQLITE_BODY', preview='PRIVATE_SQLITE_PREVIEW';");
+    const conversationScanCache = new CodexConversationScanCache();
+    const initialDoctor = new CodexConversationDoctor({ cache: conversationScanCache });
+    const report = await initialDoctor.diagnose();
+    assert.equal(initialDoctor.performance().inspectedRollouts, 7);
+    assert.equal(initialDoctor.performance().reusedRollouts, 0);
+    assert.equal(initialDoctor.performance().inspectedDatabases, 1);
+    const cachedDoctor = new CodexConversationDoctor({ cache: conversationScanCache });
+    const cachedReport = await cachedDoctor.diagnose();
+    assert.equal(cachedReport.summary.discoveredRollouts, report.summary.discoveredRollouts);
+    assert.equal(cachedDoctor.performance().reusedRollouts, 7);
+    assert.equal(cachedDoctor.performance().inspectedRollouts, 0);
+    assert.equal(cachedDoctor.performance().reusedDatabases, 1);
+    await assert.rejects(
+      () => new CodexConversationDoctor({ isCancelled: () => true }).diagnose(),
+      /对话诊断扫描已取消/
+    );
+    const changedTime = new Date(Date.now() + 2_000);
+    await fs.utimes(healthyPath, changedTime, changedTime);
+    const incrementalDoctor = new CodexConversationDoctor({ cache: conversationScanCache });
+    await incrementalDoctor.diagnose();
+    assert.equal(incrementalDoctor.performance().inspectedRollouts, 1);
+    assert.equal(incrementalDoctor.performance().reusedRollouts, 6);
+    const queryEngine = new CodexConversationQueryEngine();
+    const firstPage = await queryEngine.query({
+      requestId: 'query:1', page: 0, pageSize: 20, query: '', filter: 'all',
+      sortKey: 'status', sortDirection: 'asc'
+    });
+    assert.equal(firstPage.rows.length, 6);
+    assert.equal(firstPage.total, 6);
+    assert.equal('candidatePaths' in firstPage.rows[0], false,
+      'paged IPC rows must not include lazy detail fields');
+    const firstDetail = queryEngine.detail({
+      snapshotId: firstPage.snapshotId,
+      threadId: firstPage.rows[0].threadId
+    });
+    assert.ok(Array.isArray(firstDetail.candidatePaths));
+    const cachedPage = await queryEngine.query({
+      requestId: 'query:2', page: 0, pageSize: 20, query: '', filter: 'issues',
+      sortKey: 'updated', sortDirection: 'desc'
+    });
+    assert.equal(cachedPage.snapshotId, firstPage.snapshotId,
+      'paging and filtering must reuse the worker snapshot without rescanning');
+    const refreshedPage = await queryEngine.query({
+      requestId: 'query:3', page: 0, pageSize: 20, query: '', filter: 'all',
+      sortKey: 'status', sortDirection: 'asc', refresh: true
+    });
+    assert.equal(refreshedPage.performance.reusedRollouts, 7);
+    assert.equal(refreshedPage.performance.inspectedRollouts, 0);
+    await assert.rejects(
+      () => new CodexConversationQueryEngine().query({
+        requestId: 'query:4', page: 0, pageSize: 20, query: '', filter: 'all',
+        sortKey: 'status', sortDirection: 'asc'
+      }, () => true),
+      /对话诊断扫描已取消/
+    );
+    const workerClient = new CodexConversationWorkerClient(
+      path.resolve('dist', 'codex-conversation-worker.js'),
+      40
+    );
+    try {
+      const workerPage = await workerClient.query({
+        requestId: 'worker:1', page: 0, pageSize: 20, query: '', filter: 'all',
+        sortKey: 'status', sortDirection: 'asc'
+      });
+      assert.equal(workerPage.rows.length, 6);
+      const workerDetail = await workerClient.detail({
+        snapshotId: workerPage.snapshotId,
+        threadId: workerPage.rows[0].threadId
+      });
+      assert.equal(workerDetail.threadId, workerPage.rows[0].threadId);
+      workerClient.setActive(false);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      workerClient.setActive(true);
+      const retainedPage = await workerClient.query({
+        requestId: 'worker:cached', page: 0, pageSize: 20, query: '', filter: 'all',
+        sortKey: 'status', sortDirection: 'asc'
+      });
+      assert.equal(retainedPage.snapshotId, workerPage.snapshotId,
+        're-entering before the release deadline must reuse the worker snapshot');
+      workerClient.setActive(false);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const expiredPage = await workerClient.query({
+        requestId: 'worker:expired', page: 0, pageSize: 20, query: '', filter: 'all',
+        sortKey: 'status', sortDirection: 'asc'
+      });
+      assert.notEqual(expiredPage.snapshotId, workerPage.snapshotId,
+        'the worker snapshot must be released after the inactivity deadline');
+      const cancelledRequest = workerClient.query({
+        requestId: 'worker:2', page: 0, pageSize: 20, query: '', filter: 'all',
+        sortKey: 'status', sortDirection: 'asc', refresh: true
+      });
+      assert.equal(workerClient.cancel('worker:2'), true);
+      await assert.rejects(cancelledRequest, /对话诊断扫描已取消/);
+    } finally {
+      await workerClient.dispose();
+    }
+
+    assert.doesNotMatch(JSON.stringify(report), /PRIVATE_CONVERSATION|PRIVATE_SQLITE/);
     assert.equal(report.summary.indexedThreads, 5);
     assert.equal(report.summary.discoveredRollouts, 7);
     assert.equal(report.summary.healthy, 1);
@@ -986,6 +1092,10 @@ async function testCodexConversationDoctor(): Promise<void> {
       const linked = path.join(codexHome, 'sessions', 'outside-link.jsonl');
       await fs.writeFile(outside, '{}\n');
       await fs.symlink(outside, linked);
+      assert.throws(() => readSessionMetaLine(linked), /不在 Codex home/);
+      const linkedDirectory = path.join(codexHome, 'escaped-directory');
+      await fs.symlink(base, linkedDirectory);
+      assert.equal(isPathInsideCodexHome(path.join(linkedDirectory, 'missing.jsonl')), false);
       assert.equal(isPathInsideCodexHome(linked), false, 'a symlink must not escape the Codex home path guard');
     }
 

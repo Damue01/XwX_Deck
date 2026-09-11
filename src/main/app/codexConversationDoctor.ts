@@ -253,17 +253,14 @@ export class CodexConversationDoctor {
 }
 
 export function isPathInsideCodexHome(filePath: string): boolean {
-  const codexHome = realPathOrResolved(path.dirname(resolveClientPaths().codexConfigPath));
-  const target = realPathOrResolved(stripWindowsExtendedPrefix(filePath));
-  const relative = path.relative(codexHome, target);
-  return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative);
-}
-
-function realPathOrResolved(value: string): string {
   try {
-    return fs.realpathSync.native(value);
+    const codexHome = fs.realpathSync.native(path.dirname(resolveClientPaths().codexConfigPath));
+    const target = fs.realpathSync.native(stripWindowsExtendedPrefix(filePath));
+    const relative = path.relative(codexHome, target);
+    return !!relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
   } catch {
-    return path.resolve(value);
+    // A missing target or unresolvable symlink is never safe to open.
+    return false;
   }
 }
 
@@ -666,7 +663,7 @@ async function inspectRollout(
     } catch (error) {
       if (error instanceof CodexConversationScanCancelledError) throw error;
       metaErrorKind = sessionMetaErrorKind(error);
-      metaError = errorMessage(error);
+      metaError = error instanceof SyntaxError ? 'session_meta 首行不是有效 JSON' : errorMessage(error);
     }
   }
   return {
@@ -691,29 +688,28 @@ function assertScanActive(options: CodexConversationDoctorOptions): void {
 }
 
 async function readFirstLine(filePath: string, options: CodexConversationDoctorOptions): Promise<string> {
-  const handle = await fs.promises.open(filePath, 'r');
+  return readSessionMetaLine(filePath, options);
+}
+
+/** Read exactly through the first LF; no buffered read may consume conversation text. */
+export function readSessionMetaLine(filePath: string, options: CodexConversationDoctorOptions = {}): string {
+  if (!isPathInsideCodexHome(filePath)) throw new Error('会话文件不在 Codex home 内。');
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   try {
-    const chunks: Buffer[] = [];
-    let position = 0;
-    while (position < MAX_SESSION_META_BYTES) {
-      assertScanActive(options);
-      const buffer = Buffer.allocUnsafe(Math.min(SESSION_META_CHUNK_BYTES, MAX_SESSION_META_BYTES - position));
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+    const buffer = Buffer.allocUnsafe(MAX_SESSION_META_BYTES);
+    let length = 0;
+    while (length < buffer.length) {
+      if (length % 1024 === 0) assertScanActive(options);
+      const bytesRead = fs.readSync(fd, buffer, length, 1, length);
       if (!bytesRead) break;
-      const chunk = buffer.subarray(0, bytesRead);
-      const newline = chunk.indexOf(0x0a);
-      chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
-      position += bytesRead;
-      if (newline >= 0) {
-        return Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '').replace(/\r$/, '');
-      }
-      if (bytesRead < buffer.length) break;
+      if (buffer[length] === 0x0a) return buffer.subarray(0, length).toString('utf8').replace(/^\uFEFF/, '').replace(/\r$/, '');
+      length += 1;
     }
-    if (!position) throw new Error('JSONL 文件为空');
-    if (position >= MAX_SESSION_META_BYTES) throw new Error('session_meta 首行超过扫描上限');
-    return Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '').replace(/\r$/, '');
+    if (!length) throw new Error('JSONL 文件为空');
+    if (length >= buffer.length) throw new Error('session_meta 首行超过扫描上限');
+    return buffer.subarray(0, length).toString('utf8').replace(/^\uFEFF/, '').replace(/\r$/, '');
   } finally {
-    await handle.close();
+    fs.closeSync(fd);
   }
 }
 
@@ -1015,24 +1011,13 @@ function inspectExistingPathSync(filePath: string, existingStat?: fs.Stats): Rol
     return undefined;
   }
   try {
-    const fd = fs.openSync(filePath, 'r');
-    try {
-      const buffer = Buffer.alloc(MAX_SESSION_META_BYTES);
-      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
-      if (!bytesRead) {
-        return rolloutFromMetaError(filePath, stat, 'JSONL 文件为空', 'empty');
-      }
-      const content = buffer.subarray(0, bytesRead).toString('utf8').replace(/^\uFEFF/, '');
-      const newline = content.indexOf('\n');
-      if (newline < 0 && bytesRead === buffer.length) {
-        return rolloutFromMetaError(filePath, stat, 'session_meta 首行超过扫描上限', 'invalid');
-      }
-      const line = (newline < 0 ? content : content.slice(0, newline)).replace(/\r$/, '');
+    {
+      const line = readSessionMetaLine(filePath);
       let meta: { type?: unknown; payload?: Record<string, unknown> };
       try {
         meta = JSON.parse(line) as { type?: unknown; payload?: Record<string, unknown> };
       } catch (error) {
-        return rolloutFromMetaError(filePath, stat, errorMessage(error), 'invalid');
+        return rolloutFromMetaError(filePath, stat, 'session_meta 首行不是有效 JSON', 'invalid');
       }
       if (meta.type !== 'session_meta' || typeof meta.payload?.id !== 'string') {
         return rolloutFromMetaError(filePath, stat, '首行不是有效的 session_meta', 'invalid');
@@ -1050,8 +1035,6 @@ function inspectExistingPathSync(filePath: string, existingStat?: fs.Stats): Rol
         metaValid: true,
         sessionFields: sessionFieldList(meta.payload)
       };
-    } finally {
-      fs.closeSync(fd);
     }
   } catch (error) {
     return rolloutFromMetaError(filePath, stat, errorMessage(error), 'read_error');
@@ -1084,7 +1067,7 @@ function sqliteFieldList(
 ): Array<{ key: string; value: string }> {
   const visibleColumns = new Set([
     'id', 'rollout_path', 'model_provider', 'model', 'reasoning_effort', 'source',
-    'thread_source', 'cwd', 'title', 'name', 'preview', 'sandbox_policy',
+    'thread_source', 'cwd', 'title', 'name', 'sandbox_policy',
     'approval_mode', 'tokens_used', 'has_user_event', 'archived', 'archived_at',
     'created_at', 'updated_at', 'recency_at', 'history_mode', 'cli_version',
     'git_sha', 'git_branch', 'git_origin_url', 'agent_nickname', 'agent_role',

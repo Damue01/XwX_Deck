@@ -109,7 +109,8 @@ export class CodexConversationWorkerClient {
     );
     worker.on('message', (response: CodexConversationWorkerResponse) => this.handleResponse(response));
     worker.on('error', error => {
-      if (this.worker === worker) this.worker = undefined;
+      if (this.worker !== worker) return;
+      this.worker = undefined;
       this.cancellationFlags.clear();
       this.rejectAll(error);
     });
