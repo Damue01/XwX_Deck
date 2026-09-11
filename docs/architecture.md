@@ -6,9 +6,9 @@
 
 - Renderer 只通过 preload 暴露的窄 API 操作主进程。
 - Controller 管理客户端配置、Trace 状态、模型目录和 Gateway 生命周期。
-- 独立 Gateway helper 在管理器关闭后仍可继续转发，并通过构建 ID 与协议版本拒绝错误附着。
+- 独立 Gateway helper 在管理窗口隐藏后仍可继续转发，并通过构建 ID 与协议版本拒绝错误附着。
 - TraceStore 保存本地请求、响应和会话索引。
-- `applicationReset.ts` 负责有边界的缓存修复和应用重置；`exitRecovery.ts` 在强制退出兜底路径中先恢复客户端配置，再终止 Gateway 与管理器。
+- `applicationReset.ts` 负责有边界的缓存修复和应用重置；`codexDirectRestore.ts` 保存字段所有权并执行三方恢复；`exitRecovery.ts` 的独立恢复入口同样先验证客户端脱离本地端口，再终止进程。恢复失败时保留代理，不强制覆盖外部配置。
 - 价格与用量链路在请求落盘时记录分档、峰谷时段和实际服务模型名，Viewer 只聚合这些可验证数据，不对缺失分桶静默猜价。
 
 ## 独立版边界
@@ -20,7 +20,7 @@
 | Gateway 端口 | `45233-45242` |
 | 配置同步 | 不包含 |
 | 工具页 | 仅本地只读的 ChatGPT 对话诊断 |
-| 默认更新服务 | 不配置 |
+| 默认更新服务 | 独立 GitHub Releases；元数据推送默认关闭 |
 
 ## 改动检查
 

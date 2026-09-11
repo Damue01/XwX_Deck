@@ -37,12 +37,13 @@ check(updateServer.includes(`DEFAULT_UPDATE_SERVER = '${contract.updates.default
 check(updateServer.includes("DEFAULT_METADATA_PUSH_SERVER = ''"), 'metadata push must be disabled by default');
 check(updater.includes('Boolean(updateServerUrl())'), 'updater must require explicit server configuration');
 check(updater.includes('return this.serverUrl();'), 'updater feed must use the GitHub release download root directly');
-check(JSON.stringify(contract.providerFramework?.userFields) === JSON.stringify(['displayName', 'baseUrl', 'key']),
-  'provider settings must expose only name, URL and key');
-check(contract.providerFramework?.discovery === 'automatic',
+check(JSON.stringify(contract.providerFramework?.userFields) === JSON.stringify(['displayName', 'baseUrl', 'key', 'adapter', 'codexModel']),
+  'provider settings must expose the standalone connection fields');
+check(contract.providerFramework?.discovery === 'automatic-or-explicit-adapter',
   'provider model discovery must remain automatic');
-check(contract.providerFramework?.protocolSelection === 'per-model-metadata',
+check(contract.providerFramework?.protocolSelection === 'explicit-adapter-or-per-model-metadata',
   'provider protocol selection must be driven by model metadata');
+check(contract.providerFramework?.defaultConnections?.length === 0 && contract.features?.automaticTraceCleanup === false, 'no default providers or automatic history cleanup');
 check(contract.features?.repairCenter === true, 'repair center must remain enabled');
 check(contract.features?.safeExitRecovery === true, 'safe exit recovery must remain enabled');
 check(contract.features?.toolsPage === true && contract.features?.conversationDiagnostics === true,

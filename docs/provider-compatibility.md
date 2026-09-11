@@ -2,17 +2,11 @@
 
 XwX Deck 的“服务商”指客户端请求最终转发到的模型 API，不限定为 兼容服务。
 
-## 用户只需要填写三项
+## 连接与接口
 
-设置页只显示：
+新安装不预置 API 连接。在设置中添加名称、URL 和 Key；接口可选自动识别、OpenAI Responses、Chat Completions 或 Anthropic Messages。没有目录的服务可填模型 ID。每个连接独立保存客户端偏好，Claude 和 ChatGPT 可使用不同连接。
 
-1. 名称；
-2. URL；
-3. Key。
-
-内部使用哪种模型目录、路径规则和协议适配不会作为用户参数暴露。
-
-服务商名称是唯一显示名称。修改并保存后，设置页、Claude 模型页和 ChatGPT 模型页会同步使用新名称。
+明确指定接口时，完整请求 URL 会去掉末端的 `responses`、`chat/completions` 或 `messages`，保留原始 API 前缀，不额外补 `/v1`。Claude 原生 Messages 直连要求输入以 `/v1` 结尾的完整 API 地址，并使用 `x-api-key`。
 
 ## 自动检索流程
 
@@ -27,7 +21,7 @@ XwX Deck 的“服务商”指客户端请求最终转发到的模型 API，不�
 7. 用缓存快速显示最近一次成功获取的模型目录；
 8. 后台刷新后替换为最新结果。
 
-某个目录返回 404 不会导致其他目录一起失败。只要至少一个目录成功，就会显示可用模型。
+某个目录返回 404 不会导致其他目录一起失败。所有目录缺失时返回空列表，允许手工填写模型 ID，不把这个 ID 冒充服务端目录。
 
 ## 自动协议适配
 
@@ -68,7 +62,7 @@ XwX Deck 的“服务商”指客户端请求最终转发到的模型 API，不�
 | 认证族 | 常见请求头 | XwX Deck 当前状态 |
 |---|---|---|
 | Bearer Token | `Authorization: Bearer ...` | 已支持，作为默认 |
-| Anthropic API Key | `x-api-key` + `anthropic-version` | 后台 Adapter 待补充 |
+| Anthropic API Key | `x-api-key` + `anthropic-version` | 明确选择 Anthropic Messages 时支持 |
 | Google API Key | `x-goog-api-key` | 后台 Adapter 待补充 |
 | Azure API Key | `api-key` | 路径和查询参数 Adapter 待补充 |
 | OAuth | 动态 Bearer Token | 仅官方 ChatGPT 流程已支持 |
@@ -85,7 +79,7 @@ XwX Deck 的“服务商”指客户端请求最终转发到的模型 API，不�
 - 完整请求 URL：如 `/v1/chat/completions`、`/responses`、`/messages`，自动回推模型目录；
 - Anthropic/Coding 兼容挂载：识别 `/anthropic`、`/api/anthropic`、`/claudecode`、`/api/coding` 等常见后缀，并从根路径继续探测。
 
-这些规则位于后台 `providerDiscovery.ts`，不会增加前台字段。
+自动识别规则位于 `providerDiscovery.ts`；明确指定接口的连接通过独立 Adapter 保留路径与认证语义。
 
 ### 仍需后台处理的差异
 
@@ -100,7 +94,7 @@ XwX Deck 的“服务商”指客户端请求最终转发到的模型 API，不�
 - 完整 Endpoint URL 而不是 Base URL；
 - 模型目录需要额外 Header 或独立 URL。
 
-后续实现会继续落在 Provider Adapter 和模型能力元数据层，不重新增加用户配置项。
+后续兼容性修复继续落在 Provider Adapter 和模型能力元数据层；仅在用户需要明确选择时暴露配置。
 
 ## OpenAI 兼容中转站
 
@@ -190,9 +184,8 @@ Codex 的 `image_gen` namespace，反过来也一样。因此不会仅凭 `visio
 
 ## 当前认证边界
 
-当前自动配置以 Bearer Token 为主，尚未实现：
+自动识别以 Bearer Token 为主；明确选择 Anthropic Messages 时支持 `x-api-key`。尚未实现：
 
-- `x-api-key`；
 - Azure 风格 `api-key`；
 - AWS SigV4；
 - Google OAuth；

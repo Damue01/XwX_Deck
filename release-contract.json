@@ -20,7 +20,8 @@
     "configurationSync": false,
     "toolsPage": true,
     "conversationDiagnostics": true,
-    "excelToMarkdown": false
+    "excelToMarkdown": false,
+    "automaticTraceCleanup": false
   },
   "updates": {
     "enabledByDefault": true,
@@ -63,10 +64,10 @@
     ],
     "defaultPreset": "auto",
     "authentication": [
-      "bearer"
+      "bearer",
+      "x-api-key"
     ],
     "futureAuthentication": [
-      "x-api-key",
       "api-key",
       "aws-sigv4",
       "google-oauth"
@@ -74,10 +75,12 @@
     "userFields": [
       "displayName",
       "baseUrl",
-      "key"
+      "key",
+      "adapter",
+      "codexModel"
     ],
-    "discovery": "automatic",
-    "protocolSelection": "per-model-metadata",
+    "discovery": "automatic-or-explicit-adapter",
+    "protocolSelection": "explicit-adapter-or-per-model-metadata",
     "modelDiscoveryCandidates": [
       "base/models",
       "base/v1/models",
@@ -92,10 +95,10 @@
       "gemini-native"
     ],
     "authenticationImplemented": [
-      "bearer"
+      "bearer",
+      "anthropic-api-key"
     ],
     "authenticationPlanned": [
-      "anthropic-api-key",
       "google-api-key",
       "azure-api-key",
       "oauth",
@@ -107,6 +110,12 @@
       "knownIncompatible": "block",
       "restoreOnProviderChange": true,
       "userField": false
-    }
+    },
+    "registryVersion": 1,
+    "defaultConnections": [],
+    "clients": [
+      "codex",
+      "claude"
+    ]
   }
 }

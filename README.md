@@ -74,14 +74,16 @@ Windows 制品必须在原生 Windows x64 主机验证；macOS 制品的签名�
 
 ## 服务商兼容
 
-服务商配置只要求：
+可添加多个服务连接，并为 Claude 与 ChatGPT 分别选择。新安装不预置 API 服务商。连接配置包括：
 
 - 名称；
 - URL；
-- Key。
+- Key；
+- 接口（自动识别、Responses、Chat Completions 或 Anthropic Messages）；
+- 可选模型 ID，用于没有模型目录的服务。
 
-保存后会自动探测可用模型目录，根据每个模型返回的能力元数据选择 Responses、Chat Completions 或 Anthropic Messages。服务商名称会同步显示在模型配置页。
+自动识别根据模型目录元数据选择协议；明确指定接口时保留 API 路径前缀并使用该协议。每个连接分别保存模型和上下文窗口，官方模型目录读取本地客户端缓存。
 
-如果上游完全不提供模型目录，才会退回到手动输入模型或 Endpoint ID。兼容边界见 [服务商兼容说明](docs/provider-compatibility.md)。
+模型目录返回 404/405 时保持为空，可手工填写实际模型或 Endpoint ID；不会生成虚假的单模型目录。兼容边界见 [服务商兼容说明](docs/provider-compatibility.md)。
 
 更多说明见 [docs/README.md](docs/README.md)。

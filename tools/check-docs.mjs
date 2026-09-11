@@ -16,7 +16,8 @@ const docs = [
   'docs/github-release.md',
   'docs/architecture.md',
   'docs/public-release-boundary.md',
-  'docs/roadmap.md'
+  'docs/roadmap.md',
+  'docs/upstream-port.md'
 ];
 const errors = [];
 for (const relative of docs) {

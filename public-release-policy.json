@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "repositoryMode": "standalone",
   "historyStrategy": "new-root-history",
-  "sourceCommit": "0c07a367ae828d929bb39aee5748767d0635b218",
+  "sourceCommit": "e46c8dbd50c586969dead9979d23502fb7e9d155",
   "removedFeatures": [
     "configuration-sync",
     "excel-to-markdown"
@@ -15,6 +15,7 @@
     "paper[h]ub",
     "open[t]race",
     "x3[c]lientremote",
-    "tc-paper[h]ub\\.diezhi\\.net"
+    "tc-paper[h]ub\\.diezhi\\.net",
+    "\\bx3(?:[-_]hub)?\\b"
   ]
 }
