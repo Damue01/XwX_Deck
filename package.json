@@ -36,6 +36,7 @@
     "test:background-controller": "node tools/run-background-controller-smoke.mjs",
     "diagnose:trace": "node tools/trace-integrity.mjs",
     "test:packaged": "node tools/run-packaged-smoke.mjs",
+    "test:packaged-gateway": "node tools/run-packaged-background-gateway-smoke.mjs",
     "dev": "npm run check-types && node esbuild.config.mjs --development && electron .",
     "start": "electron .",
     "preview:web": "node tools/serve-manager-preview.mjs",

@@ -1,3 +1,4 @@
+import * as fs from 'node:fs/promises';
 import type { BrowserWindow } from 'electron';
 import * as path from 'path';
 import Database from '../shared/sqlite';
@@ -51,7 +52,9 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     const required = ${JSON.stringify([
       'getState', 'getTraceStats', 'getUpdateState', 'checkForUpdates', 'setStartupEnabled', 'setTheme', 'setTraceAppearance', 'chooseTraceBackground', 'clearTraceBackground', 'repairApplication', 'resetApplication', 'toggleTracing', 'toggleClient',
       'getCodexConfig', 'getCodexEnhancements', 'updateCodexEnhancements',
-      'diagnoseCodexConversations', 'openCodexConversationPath', 'copyText',
+      'getProviders', 'saveProvider', 'deleteProvider', 'switchClientProvider', 'fetchProviderModels',
+      'diagnoseCodexConversations', 'queryCodexConversations', 'detailCodexConversation', 'cancelCodexConversationScan', 'openCodexConversationPath', 'copyText',
+      'inspectTraceIndexRepair', 'applyTraceIndexRepair',
       'getCompatibleServiceConfig', 'updateCompatibleServiceConfig', 'getModelServices', 'setModelService', 'isChatGptRunning',
       'getClaudeModels', 'updateClaudeModels', 'clearHistory', 'refresh', 'toggleMaximize', 'setManagerView', 'fetchModels',
       'updateTraceDirectories'
@@ -70,6 +73,11 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     // React may still be committing the first render when loadFile resolves;
     // wait for the rail to exist before querying controls.
     await waitFor(() => document.querySelector('.rail-btn[data-page="signal"]'), 'manager UI did not render (root html length=' + (document.getElementById('root') ? document.getElementById('root').innerHTML.length : -1) + ')');
+    const tourSkip = document.querySelector('.tour-skip');
+    if (tourSkip) {
+      tourSkip.click();
+      await waitFor(() => !document.querySelector('.tour-root'), 'onboarding could not be dismissed');
+    }
     const expectedPlatform = ${JSON.stringify(process.platform)};
     if (document.documentElement.dataset.platform !== expectedPlatform) {
       throw new Error('renderer platform marker is missing or incorrect');
@@ -108,7 +116,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     const repairCenterTrigger = document.getElementById('repairCenterTrigger');
     const codexAuthToggle = document.getElementById('codexAuthToggle');
     const codexHistoryToggle = document.getElementById('codexHistoryToggle');
-    const codexServiceToggle = document.getElementById('codexServiceToggle');
+    const codexServicePicker = document.querySelector('input[aria-label="ChatGPT 服务连接"]');
     if (!settingsButton || !modelsButton || !toolsButton || !signalButton || !fieldCanvas || !appearanceTrigger || !captureButton || !stopCaptureButton || !codexTab || !codexPanel) {
       throw new Error('manager interaction controls are missing');
     }
@@ -121,13 +129,32 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     if (
       !codexAuthToggle
       || !codexHistoryToggle
-      || !codexServiceToggle
+      || !codexServicePicker
       || !codexPanel.contains(codexAuthToggle)
       || !codexPanel.contains(codexHistoryToggle)
-      || !codexPanel.contains(codexServiceToggle)
+      || !codexPanel.contains(codexServicePicker)
     ) {
       throw new Error('ChatGPT enhancement controls are not rendered inside the ChatGPT model panel');
     }
+    const selectCodexProvider = async label => {
+      const trigger = codexServicePicker
+        .closest('[data-slot="combobox-input-group"]')
+        ?.querySelector('[data-slot="combobox-trigger"]');
+      if (!trigger) throw new Error('ChatGPT service connection trigger is missing');
+      trigger.click();
+      await waitFor(() => {
+        return [...document.querySelectorAll('[data-slot="combobox-item"]')]
+          .some(item => item.textContent?.trim() === label);
+      }, 'ChatGPT service connection menu did not show ' + label);
+      const option = [...document.querySelectorAll('[data-slot="combobox-item"]')]
+        .find(item => item.textContent?.trim() === label);
+      if (!option) throw new Error('ChatGPT service connection option is missing: ' + label);
+      option.click();
+      await waitFor(
+        () => codexServicePicker.value === label && !codexServicePicker.disabled,
+        'ChatGPT service connection did not switch to ' + label
+      );
+    };
     if (codexAuthToggle.disabled || codexAuthToggle.getAttribute('aria-pressed') !== 'true') {
       throw new Error('ChatGPT official login preference must be enabled and interactive');
     }
@@ -159,6 +186,33 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       'settings navigation click was not handled'
     );
     assertStableViewport('settings');
+    if ((await api.getProviders()).connections.length) throw new Error('fresh installation seeded an API provider');
+    document.querySelector('button[aria-label="添加服务连接"]').click();
+    await waitFor(() => document.getElementById('provider-name'), 'provider editor did not open');
+    const setField = async (id, value) => {
+      const input = document.getElementById(id);
+      const proto = input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(input, value);
+      input.dispatchEvent(new Event(input instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+      await new Promise(resolve => setTimeout(resolve, 30));
+    };
+    await setField('provider-name', 'Fixture API');
+    await setField('provider-url', compatibleServiceBaseUrl);
+    await setField('provider-key', compatibleServiceToken);
+    await setField('provider-adapter', 'responses');
+    await setField('provider-model', 'qa-model');
+    document.getElementById('provider-editor').requestSubmit();
+    await waitFor(() => !document.getElementById('provider-editor') && document.querySelector('.provider-name')?.textContent === 'Fixture API', 'provider editor did not save through IPC');
+    const providerEdit = document.querySelector('button[aria-label="编辑 Fixture API"]');
+    if (!providerEdit || providerEdit.textContent.trim()) throw new Error('provider pencil control is missing');
+    providerEdit.click();
+    await waitFor(() => document.getElementById('provider-url')?.value === compatibleServiceBaseUrl, 'saved connection could not be edited');
+    document.querySelector('#provider-editor button[type="button"]').click();
+    modelsButton.click(); codexTab.click();
+    await selectCodexProvider('Fixture API');
+    settingsButton.click();
+    await waitFor(() => document.getElementById('page-settings')?.classList.contains('current'), 'settings did not reopen');
+
     const clearRowRect = clearHistoryButton.getBoundingClientRect();
     const clearIconRect = clearHistoryIcon.getBoundingClientRect();
     const dataActionRect = dataFolderAction.getBoundingClientRect();
@@ -380,6 +434,8 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     if (compatible.baseUrl !== compatibleServiceBaseUrl || !modelServices.codex) {
       throw new Error('兼容服务/model-service state was not applied from the explicit packaged fixture');
     }
+    const claudeProvider = await api.saveProvider({ displayName: 'Fixture Claude', baseUrl: compatibleServiceBaseUrl.slice(0, -3) + '/anthropic/v1', bearerToken: 'packaged-claude-key', adapter: 'anthropic-messages' });
+    await api.switchClientProvider({ client: 'claude', providerId: claudeProvider.connections.find(p => p.displayName === 'Fixture Claude').id });
     await api.updateClaudeModels({ fable: 'packaged-fable', opus: 'packaged-opus', sonnet: 'packaged-sonnet', haiku: 'packaged-haiku' });
     const claudeEnabled = await api.setModelService({ client: 'claude', enabled: true });
     if (!claudeEnabled.claude || claudeEnabled.claudeStatus.status !== 'active') {
@@ -482,10 +538,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     };
     modelsButton.click();
     codexTab.click();
-    await waitFor(() => codexServiceToggle.getAttribute('aria-checked') === 'true', 'ChatGPT 兼容服务 toggle lost its underlying state during Trace');
-    codexServiceToggle.click();
-    await waitFor(() => codexServiceToggle.getAttribute('aria-checked') === 'false', 'ChatGPT 兼容服务 toggle did not react immediately during Trace');
-    await waitFor(() => codexServiceToggle.getAttribute('aria-busy') !== 'true', 'ChatGPT switch to official service did not finish during Trace');
+    await selectCodexProvider('官方订阅');
     if ((await api.getModelServices()).codex) throw new Error('ChatGPT did not switch to official service during Trace');
     if ((await api.getCodexConfig()).mode !== 'official') throw new Error('ChatGPT underlying config was not official during Trace');
     const immediateOfficialTrace = await api.getState();
@@ -512,9 +565,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     if (traceHistoryOffAgain.historyRestorePending || traceHistoryOffAgain.history?.restoredJsonlFiles !== 1 || traceHistoryOffAgain.history?.restoredStateRows !== 1) {
       throw new Error('history did not restore immediately after re-migration');
     }
-    codexServiceToggle.click();
-    await waitFor(() => codexServiceToggle.getAttribute('aria-checked') === 'true', 'ChatGPT 兼容服务 toggle did not switch back during Trace');
-    await waitFor(() => codexServiceToggle.getAttribute('aria-busy') !== 'true', 'ChatGPT switch back to 兼容服务 did not finish during Trace');
+    await selectCodexProvider(compatible.displayName);
     if (document.querySelector('[role="alertdialog"]')) {
       throw new Error('ChatGPT 兼容服务 must not require a second confirmation');
     }
@@ -565,6 +616,11 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       if (updateAfter.status !== 'ready' || updateAfter.percent !== 100) {
         throw new Error('macOS manual update DMG was not downloaded and verified');
       }
+      await waitFor(() => document.querySelector('[role="alertdialog"]'), 'downloaded update prompt did not appear');
+      const later = [...document.querySelectorAll('[role="alertdialog"] button')].find(button => button.textContent.trim() === '稍后');
+      if (!later) throw new Error('downloaded update prompt has no defer action');
+      later.click();
+      await waitFor(() => !document.querySelector('[role="alertdialog"]'), 'downloaded update prompt did not dismiss');
     }
 
     return {
@@ -630,6 +686,29 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       consoleLog.length ? `\n--- renderer console ---\n${consoleLog.join('\n')}` : ''
     ].join('');
     throw new Error(`packaged renderer smoke failed: ${detail}`);
+  }
+  const screenshotDir = process.env.XWX_DECK_SMOKE_SCREENSHOTS;
+  if (screenshotDir) {
+    await fs.mkdir(screenshotDir, { recursive: true });
+    for (const page of ['settings', 'models', 'tools', 'signal']) {
+      await managerWindow.webContents.executeJavaScript(`document.querySelector('.rail-btn[data-page="${page}"]').click()`);
+      if (page === 'models') await managerWindow.webContents.executeJavaScript(`document.querySelector('[data-client-tab="codex"]').click()`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const obstructed = await managerWindow.webContents.executeJavaScript(`!!document.querySelector('.tour-root, [role="alertdialog"]')`);
+      if (obstructed) throw new Error(`UI capture for ${page} is obstructed by a modal`);
+      await fs.writeFile(path.join(screenshotDir, `${page}.png`), (await managerWindow.webContents.capturePage()).toPNG());
+    }
+    await managerWindow.webContents.executeJavaScript(`document.querySelector('.rail-btn[data-page="settings"]').click()`);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await managerWindow.webContents.executeJavaScript(`document.querySelector('button[aria-label="编辑 Fixture API"]').click()`);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await fs.writeFile(path.join(screenshotDir, 'provider-editor.png'), (await managerWindow.webContents.capturePage()).toPNG());
+    await managerWindow.webContents.executeJavaScript(`document.querySelector('#provider-editor button[type="submit"]').scrollIntoView({block:'nearest'})`);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const saveVisible = await managerWindow.webContents.executeJavaScript(`(() => { const r=document.querySelector('#provider-editor button[type="submit"]').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; })()`);
+    if (!saveVisible) throw new Error('Provider editor save action is not reachable by scrolling');
+    await fs.writeFile(path.join(screenshotDir, 'provider-editor-actions.png'), (await managerWindow.webContents.capturePage()).toPNG());
+
   }
   const restoredStateDb = new Database(stateDbPath, { readonly: true });
   try {

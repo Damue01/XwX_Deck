@@ -129,7 +129,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
     const proceed = await confirm({
       title: `XwX Deck ${version} 已准备好`,
       body: manual
-        ? '将打开已校验的 DMG。打开后，请先从菜单栏安全退出当前 XwX Deck，再把新版拖入“应用程序”并选择覆盖。如果 macOS 再次阻止打开，请按内部安装说明重新放行。'
+        ? '将打开已校验的 DMG。打开后，请先从菜单栏安全退出当前 XwX Deck，再把新版拖入“应用程序”并选择覆盖。如果 macOS 再次阻止打开，请参照安装包中的“首次打开说明”。'
         : '重启后将自动完成更新，无需执行其他安装操作。',
       cancelText: '稍后',
       confirmText: manual ? '打开安装包' : '重启更新'
@@ -275,10 +275,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
 
         {/* Provider */}
         <div className="group">
-          <div className="group-label"><span className="eyebrow">服务商</span></div>
-          <div id="providerList">
-            <ProvidersPanel />
-          </div>
+          <ProvidersPanel />
         </div>
 
         {/* Trace */}

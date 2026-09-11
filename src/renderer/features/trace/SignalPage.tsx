@@ -17,7 +17,8 @@ const TRACE_WAITING_TOAST_ID = 'trace-waiting-client';
 const ENVIRONMENT_OVERRIDE_TOAST_ID = 'environment-override';
 const CHATGPT_CONNECTION_FAILED_TEXT = 'ChatGPT 接入失败，请重启 Trace 后重试。';
 const CHATGPT_CONNECTION_UNSUPPORTED_TEXT = 'ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。';
-const CHATGPT_RESTART_DESCRIPTION = 'ChatGPT 在 XwX Deck 接管连接前已经运行，当前任务可能仍使用旧连接。完全退出并重新打开 ChatGPT 后，新请求才会稳定经过 Gateway。';
+const CHATGPT_RESTART_DESCRIPTION = '当前对话通常可继续使用；若连接未切换、模型未更新或对话无法继续，再完全退出并重新打开 ChatGPT。';
+const TRACE_RESTART_DESCRIPTION = '当前对话通常可继续使用；若新请求未出现在 Trace 中或对话无法继续，再完全退出并重新打开 ChatGPT。';
 export const TRACE_TOGGLE_REQUEST_EVENT = 'xwxdeck:toggle-trace-request';
 
 interface TokenReadoutProps {
@@ -112,7 +113,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
   const togglingRef = React.useRef(false);
   const statsTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const shownChatGptIssueRef = React.useRef<string | undefined>(undefined);
-  const shownChatGptRestartRef = React.useRef(false);
+  const initialRestartNoticeCheckedRef = React.useRef(false);
   const shownEnvironmentIssueRef = React.useRef<string | undefined>(undefined);
 
   const capturing = bridge.runtime?.tracingEnabled === true;
@@ -132,17 +133,14 @@ export function SignalPage({ active }: Props): React.ReactElement {
   }, [capturing]);
 
   React.useEffect(() => {
-    if (!bridge.runtime?.chatGptRestartRecommended) {
-      shownChatGptRestartRef.current = false;
-      return;
-    }
-    if (shownChatGptRestartRef.current) return;
-    shownChatGptRestartRef.current = true;
-    showToast('请重启 ChatGPT', 'info', CHATGPT_RESTART_TOAST_ID, {
+    if (!bridge.booted || initialRestartNoticeCheckedRef.current) return;
+    initialRestartNoticeCheckedRef.current = true;
+    if (!bridge.runtime?.chatGptRestartRecommended) return;
+    showToast('ChatGPT 连接已更新', 'info', CHATGPT_RESTART_TOAST_ID, {
       description: CHATGPT_RESTART_DESCRIPTION,
       timeout: 12_000
     });
-  }, [bridge.runtime?.chatGptRestartRecommended]);
+  }, [bridge.booted, bridge.runtime?.chatGptRestartRecommended]);
 
   React.useEffect(() => {
     if (!environmentIssue) {
@@ -228,7 +226,9 @@ export function SignalPage({ active }: Props): React.ReactElement {
         shownChatGptIssueRef.current = issue;
         showToast(issue, 'error', CHATGPT_CONNECTION_TOAST_ID);
       } else if (next.tracingEnabled) {
-        showToast('Trace 已开启；当前任务未生效时，请手动重启 ChatGPT。', 'info', TRACE_WAITING_TOAST_ID);
+        showToast('Trace 已开启', 'success', TRACE_WAITING_TOAST_ID, next.chatGptRestartRecommended
+          ? { description: TRACE_RESTART_DESCRIPTION, timeout: 12_000 }
+          : {});
       }
     } catch (e) {
       const connectingChatGpt = !capturing
@@ -260,6 +260,14 @@ export function SignalPage({ active }: Props): React.ReactElement {
       bridge.patch({ runtime: next });
       const issue = environmentOverrideIssue(next, id);
       if (issue) showToast(issue, 'error', ENVIRONMENT_OVERRIDE_TOAST_ID);
+      else if (id === 'codex-cli'
+        && next.chatGptRestartRecommended
+        && next.clients.some(client => client.id === 'codex-cli' && client.enabled)) {
+        showToast('ChatGPT 连接已更新', 'info', CHATGPT_RESTART_TOAST_ID, {
+          description: CHATGPT_RESTART_DESCRIPTION,
+          timeout: 12_000
+        });
+      }
     } catch (e) {
       showToast(e instanceof Error && e.message ? e.message : '客户端接入失败', 'error');
     }

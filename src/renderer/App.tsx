@@ -100,7 +100,7 @@ function Shell(): React.ReactElement {
 
 export function App(): React.ReactElement {
   return (
-    <ToastProvider position="bottom-right" timeout={3000}>
+    <ToastProvider position="bottom-right" timeout={3000} limit={1}>
       <BridgeProvider showToast={showToast}>
         <ConfirmDialogProvider>
           <Shell />

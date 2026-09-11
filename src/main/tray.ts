@@ -12,10 +12,13 @@ export interface TrayActions {
 
 export class XwXDeckTray {
   private tray: Tray | undefined;
+  private lastState: XwXDeckRuntimeState | undefined;
+  private pendingGatewayAction: 'close' | 'open' | undefined;
 
   constructor(private readonly actions: TrayActions) {}
 
   refresh(state: XwXDeckRuntimeState): void {
+    this.lastState = state;
     if (!this.tray) {
       this.tray = new Tray(createTrayIcon(state.tracingEnabled));
       this.tray.on('click', this.actions.openManager);
@@ -30,9 +33,20 @@ export class XwXDeckTray {
     }
   }
 
+  setGatewayActionPending(action: 'close' | 'open' | undefined): void {
+    this.pendingGatewayAction = action;
+    if (!this.tray || !this.lastState) return;
+    this.tray.setContextMenu(this.buildMenu(this.lastState));
+    if (process.platform === 'darwin' && app.dock) {
+      app.dock.setMenu(this.buildDockMenu(this.lastState));
+    }
+  }
+
   dispose(): void {
     this.tray?.destroy();
     this.tray = undefined;
+    this.lastState = undefined;
+    this.pendingGatewayAction = undefined;
     if (process.platform === 'darwin' && app.dock) {
       app.dock.setMenu(Menu.buildFromTemplate([]));
     }
@@ -53,22 +67,31 @@ export class XwXDeckTray {
         click: this.actions.showUpdateDetails
       }] : []),
       { type: 'separator' },
-      ...(state.backgroundGatewayAction ? [{
-        label: state.backgroundGatewayAction === 'close' ? '关闭代理' : '开启代理',
-        click: () => this.actions.toggleGateway(state.backgroundGatewayAction!)
-      }] : []),
+      ...this.gatewayMenuItems(state),
       { label: '退出', click: this.actions.quit }
     ]);
   }
 
   private buildDockMenu(state: XwXDeckRuntimeState): Menu {
     return Menu.buildFromTemplate([
-      ...(state.backgroundGatewayAction ? [{
-        label: state.backgroundGatewayAction === 'close' ? '关闭代理' : '开启代理',
-        click: () => this.actions.toggleGateway(state.backgroundGatewayAction!)
-      }] : [])
+      ...this.gatewayMenuItems(state)
       // macOS appends its native “退出” item to the Dock menu.
     ]);
+  }
+
+  private gatewayMenuItems(state: XwXDeckRuntimeState): Electron.MenuItemConstructorOptions[] {
+    if (this.pendingGatewayAction) {
+      return [{
+        label: this.pendingGatewayAction === 'close' ? '正在关闭代理…' : '正在开启代理…',
+        enabled: false
+      }];
+    }
+    if (!state.backgroundGatewayAction) return [];
+    const action = state.backgroundGatewayAction;
+    return [{
+      label: action === 'close' ? '关闭代理' : '开启代理',
+      click: () => this.actions.toggleGateway(action)
+    }];
   }
 }
 

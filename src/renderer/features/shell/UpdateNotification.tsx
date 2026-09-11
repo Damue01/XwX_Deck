@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useBridge } from '@/bridge/store';
-import { toastManager } from '@/components/ui/toast';
-import { showToast } from '@/lib/toast';
+import { closeToast, showToast } from '@/lib/toast';
 
 const MAX_RELEASE_NOTE_LINES = 5;
 const MAX_RELEASE_NOTE_LENGTH = 280;
@@ -21,18 +20,15 @@ export function UpdateNotification(): null {
     notifiedSignature.current = signature;
 
     const id = `xwx-deck-update-${version}`;
-    toastManager.add({
-      id,
-      title: `XwX Deck ${version} 可更新`,
+    showToast(`XwX Deck ${version} 可更新`, 'info', id, {
       description,
-      type: 'info',
       timeout: 5_000,
       actionProps: {
         type: 'button',
         children: '立即下载',
         'aria-label': `下载 XwX Deck ${version}`,
         onClick: () => {
-          toastManager.close(id);
+          closeToast(id);
           void bridge.api.downloadUpdate()
             .then(next => {
               bridge.patch({ updateState: next });
@@ -47,7 +43,7 @@ export function UpdateNotification(): null {
   React.useEffect(() => {
     const version = update?.targetVersion;
     if (!version || update.status === 'available') return;
-    toastManager.close(`xwx-deck-update-${version}`);
+    closeToast(`xwx-deck-update-${version}`);
   }, [update?.status, update?.targetVersion]);
 
   return null;

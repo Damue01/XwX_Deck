@@ -177,13 +177,15 @@ export function OnboardingTour(): React.ReactElement | null {
       )}
 
       <div className="tour-bubble" style={bubbleStyle}>
-        <h3 className="tour-title">{step.title}</h3>
-        <p className="tour-body">{step.lead}</p>
-        {step.points && step.points.length > 0 && (
-          <ul className="tour-points">
-            {step.points.map((p, i) => <li key={i}>{p}</li>)}
-          </ul>
-        )}
+        <div className="tour-content">
+          <h3 className="tour-title">{step.title}</h3>
+          <p className="tour-body">{step.lead}</p>
+          {step.points && step.points.length > 0 && (
+            <ul className="tour-points">
+              {step.points.map((p, i) => <li key={i}>{p}</li>)}
+            </ul>
+          )}
+        </div>
         <div className="tour-foot">
           <div className="tour-dots" aria-hidden="true">
             {STEPS.map((_, i) => <i key={i} className={i === index ? 'on' : undefined} />)}

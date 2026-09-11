@@ -1083,7 +1083,8 @@ html[data-theme="night"] .repair-sheet-popup { box-shadow: -6px 0 8px rgba(0,0,0
 .repair-sheet-close svg { width: 17px; height: 17px; }
 .repair-sheet-body { min-height: 0; padding: 24px 22px 28px; overflow: auto; }
 .repair-action-section { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 20px; padding-bottom: 24px; border-bottom: 1px solid var(--hairline); }
-.repair-action-section + .repair-action-section { margin-top: 24px; padding-bottom: 0; border-bottom: 0; }
+.repair-action-section + .repair-action-section { margin-top: 24px; }
+.repair-action-section:last-child { padding-bottom: 0; border-bottom: 0; }
 .repair-action-copy { min-width: 0; display: block; }
 .repair-action-section h3 { margin: 0 0 8px; font-size: 13.5px; font-weight: 600; color: var(--ink); }
 .repair-action-section p { max-width: 52ch; margin: 0; color: var(--graphite); font-size: 12.5px; line-height: 1.65; }
@@ -1400,8 +1401,9 @@ html[data-theme="night"] .conversation-tool {
   padding: 14px 22px 12px;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: hidden;
 }
+.tour-content { min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
 .tour-title { margin: 0 0 6px; font-size: 20px; font-weight: 650; color: var(--ink); }
 .tour-body { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--ink); }
 .tour-points { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
@@ -1409,7 +1411,7 @@ html[data-theme="night"] .conversation-tool {
 .tour-points li::before { content: ""; position: absolute; left: 4px; top: 8px; width: 5px; height: 5px; border-radius: 999px; background: var(--slate); }
 .tour-points b { color: var(--ink); font-weight: 600; }
 .tour-points code { font-family: var(--mono); background: var(--sunk); border-radius: 4px; padding: .06em .32em; font-size: .92em; }
-.tour-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; position: sticky; bottom: 0; background: var(--surface); padding-top: 8px; }
+.tour-foot { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; margin-top: 14px; background: var(--surface); padding-top: 8px; }
 .tour-dots { display: flex; gap: 6px; }
 .tour-dots i { width: 6px; height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 20%, transparent); transition: width .2s, background .2s; }
 .tour-dots i.on { width: 18px; background: var(--slate); }

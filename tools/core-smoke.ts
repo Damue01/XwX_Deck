@@ -9932,18 +9932,18 @@ async function testManagerIpcContract(): Promise<void> {
     'onboarding must not duplicate the bottom progress indicator with a top fraction');
   assert.match(rendererStyles, /\.tour-bubble\s*\{[\s\S]*?padding:\s*14px 22px 12px/,
     'the onboarding card must keep the compact top spacing verified in the rendered UI');
-  assert.match(rendererSrc, /Trace 已开启；当前任务未生效时，请手动重启 ChatGPT。/,
+  assert.match(rendererSrc, /showToast\('Trace 已开启', 'success'/,
     'enabling Trace must use one concise bottom-right toast');
   assert.match(rendererSrc, /ChatGPT 接入失败，请重启 Trace 后重试。/);
   assert.match(rendererSrc, /ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。/);
   assert.match(
     rendererSrc,
-    /showToast\('请重启 ChatGPT', 'info', CHATGPT_RESTART_TOAST_ID,[\s\S]*?timeout: 12_000/,
+    /showToast\('ChatGPT 连接已更新', 'info', CHATGPT_RESTART_TOAST_ID,[\s\S]*?timeout: 12_000/,
     'a running ChatGPT must receive a visible restart notice after Gateway takeover'
   );
   assert.match(
     rendererSrc,
-    /if \(!bridge\.runtime\?\.chatGptRestartRecommended\) \{[\s\S]*?shownChatGptRestartRef\.current = false;/,
+    /initialRestartNoticeCheckedRef\.current = true;/,
     'the restart notice must reset after returning to a direct connection'
   );
   assert.match(runtime, /if \(PACKAGED_SMOKE_TEST\)/,
@@ -9961,15 +9961,15 @@ async function testManagerIpcContract(): Promise<void> {
   assert.doesNotMatch(exitRecovery, /forceRestoreOriginal|replaceOwnedLoopbackReferences/);
   assert.match(exitRecovery, /if \(recoveryError\) throw recoveryError;[\s\S]*?terminateProcess\(runtime\.pid\)/);
   assert.match(xwxDeckController, /restoreCodexPreferredDirectConfiguration/);
-  assert.match(tray, /state\.backgroundGatewayAction === 'close' \? '关闭代理' : '开启代理'/,
+  assert.match(tray, /action === 'close' \? '关闭代理' : '开启代理'/,
     'the menu-bar proxy action must use the concise demand-driven labels');
-  assert.match(tray, /toggleGateway\(state\.backgroundGatewayAction!\)/,
+  assert.match(tray, /toggleGateway\(action\)/,
     'each proxy menu item must retain the action that was visible when the menu snapshot was built');
   assert.match(tray, /\{ label: '退出', click: this\.actions\.quit \}/,
     'the tray full-exit action must keep the concise native-style label');
   assert.match(tray, /app\.dock\.setMenu\(this\.buildDockMenu\(state\)\)/,
     'the Dock menu must expose the same proxy toggle alongside macOS native Quit');
-  assert.match(tray, /private buildDockMenu[\s\S]*?state\.backgroundGatewayAction === 'close' \? '关闭代理' : '开启代理'/,
+  assert.match(tray, /private buildDockMenu[\s\S]*?gatewayMenuItems\(state\)/,
     'the Dock proxy toggle must match the menu-bar wording');
   assert.doesNotMatch(tray, /label: '打开管理器'|label: '打开'/,
     'clicking the menu-bar or Dock icon must replace redundant open menu items');

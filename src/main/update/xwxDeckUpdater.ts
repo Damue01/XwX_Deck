@@ -272,9 +272,9 @@ export class XwXDeckUpdater {
 
   private requestHeaders(): Record<string, string> {
     return {
-      'X-XwX Deck-Version': app.getVersion(),
-      'X-XwX Deck-Channel': UPDATE_CHANNEL,
-      'X-XwX Deck-Platform': `${process.platform}-${process.arch}`
+      'X-XwX-Deck-Version': app.getVersion(),
+      'X-XwX-Deck-Channel': UPDATE_CHANNEL,
+      'X-XwX-Deck-Platform': `${process.platform}-${process.arch}`
     };
   }
 

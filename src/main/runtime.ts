@@ -748,11 +748,13 @@ async function resolveUpstreamProxyUrl(url: string): Promise<string | undefined>
 
 async function toggleBackgroundGateway(expectedAction: GatewayMenuAction): Promise<void> {
   if (gatewayToggle) return gatewayToggle;
+  tray?.setGatewayActionPending(expectedAction);
   gatewayToggle = toggleBackgroundGatewayOnce(expectedAction);
   try {
     await gatewayToggle;
   } finally {
     gatewayToggle = undefined;
+    tray?.setGatewayActionPending(undefined);
   }
 }
 
@@ -997,24 +999,28 @@ async function runPackagedBackgroundGatewaySmoke(userDataDir: string): Promise<v
     backgroundGateway: true,
     proxyListenPorts: [0],
     disableBackgroundModelRefresh: true,
+    chatGptRunning: async () => false,
+    codexHistoryMutationAllowed: async () => true,
     resolveUpstreamProxyUrl
   });
   await controller.start();
-  await controller.updateCompatibleServiceConfig({
-    baseUrl: compatibleBaseUrl,
-    bearerToken: compatibleBearerToken,
-    codexApiFormat: 'responses'
-  });
-  await controller.updateCodexConfig({
-    mode: 'compatible',
-    compatibleModel,
-    compatibleBaseUrl,
-    compatibleBearerToken
-  });
+  const codex = (await controller.saveProvider({
+    displayName: 'Packaged API', baseUrl: compatibleBaseUrl, bearerToken: compatibleBearerToken,
+    adapter: 'responses', codexModel: compatibleModel
+  })).connections[0];
+  const claude = (await controller.saveProvider({
+    displayName: 'Packaged Claude', baseUrl: compatibleBaseUrl.replace(/\/v1$/, '/anthropic/v1'),
+    bearerToken: compatibleBearerToken, adapter: 'anthropic-messages'
+  })).connections[1];
+  await controller.switchClientProvider('codex', codex.id);
+  await controller.switchClientProvider('claude', claude.id);
+  await controller.enable('packaged background Gateway fallback smoke');
+  await controller.disable();
   const state = await controller.runtimeState();
   if (!state.backgroundGatewayActive || !state.localBaseUrl) {
     throw new Error('Packaged app did not activate its independent Gateway helper.');
   }
+  if (state.tracingEnabled || state.readiness.recordingEnabled) throw new Error('Packaged Trace did not stop before detach.');
   if (!await controller.detachManager()) {
     throw new Error('Packaged manager could not detach from its active Gateway helper.');
   }
@@ -1024,7 +1030,9 @@ async function runPackagedBackgroundGatewaySmoke(userDataDir: string): Promise<v
   await fs.promises.writeFile(resultPath, `${JSON.stringify({
     ok: true,
     localBaseUrl: state.localBaseUrl,
-    backgroundGatewayActive: state.backgroundGatewayActive
+    backgroundGatewayActive: state.backgroundGatewayActive,
+    tracingEnabled: state.tracingEnabled,
+    recordingEnabled: state.readiness.recordingEnabled
   }, null, 2)}\n`, 'utf8');
   quitState = 'ready';
   app.quit();
