@@ -198,7 +198,7 @@ try {
   failModelPreflight = true;
   await assert.rejects(
     first.enable('official-preflight-failure-smoke'),
-    /ChatGPT 上游不可用，原配置未更改/,
+    /无法连接 ChatGPT 目标服务（HTTP 502）.*已保留原服务配置.*检查网络、代理或服务状态后重试/,
     'a 5xx route preflight must stop before publishing localhost into ChatGPT config'
   );
   assert.doesNotMatch(
@@ -460,7 +460,10 @@ try {
 
   await second.shutdown();
   await waitForClosed(Number(new URL(gatewayBase).port));
-  assert.doesNotMatch(await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8'), /127\.0\.0\.1:\d+/);
+  const directCompatibleConfig = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
+  assert.doesNotMatch(directCompatibleConfig, /127\.0\.0\.1:\d+/);
+  assert.match(directCompatibleConfig, /^model_catalog_json = ".*xwx-compatible-catalog\.json"$/m,
+    'detaching the Gateway into direct compatible mode must retain the static XwX catalog pointer');
   await second.setBackgroundGatewayPaused(true, 'smoke close 兼容服务');
   await second.start();
   state = await second.runtimeState();

@@ -165,7 +165,7 @@ try {
     );
   }
   // Standalone surface plus the three read-only conversation-diagnosis methods.
-  assert.equal(result.ipcMethods, 43);
+  assert.equal(result.ipcMethods, 44);
   assert.ok(Math.abs(result.ui.clearRowHeight - 48) <= 0.25, "clearRowHeight exceeds subpixel tolerance");
   assert.deepEqual(result.ui.faviconSize, { width: 256, height: 256 });
   assert.ok(result.ui.appearanceRightDelta <= 1, `appearance controls are misaligned by ${result.ui.appearanceRightDelta}px`);

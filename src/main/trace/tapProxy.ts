@@ -45,6 +45,7 @@ import {
 import { ResponsesContinuationStore } from './responsesContinuationStore';
 import type { GatewayCapturedClient } from './gatewayProtocol';
 import { resolveCompatibleServiceCodexProtocol } from '../app/codexProtocolPolicy';
+import { providerBaseHasVersionRoot } from '../../shared/providerProfiles';
 import { clientRouteMatchesIdentity, detectClientFromUserAgent, detectStrongVscodeSource, identifyClient, refineClaudeSource, refineCodexSource, resolveTraceSource } from './clientAdapters';
 import { TapApiType, TapCaptureMode, TapClientIdentity, TapClientRoute, TapProtocol, TapRoute, TapSessionTracePage, TapTimingSnapshot, TapTraceRecord, TapTraceSource } from './types';
 
@@ -1948,7 +1949,10 @@ function buildUpstreamUrl(
     pathname = pathname.slice(stripPrefix.length) || '/';
   }
   let base = stripTrailingSlash(upstreamBaseUrl);
-  if (transform === 'responses-to-chat' && /\/v1$/i.test(base) && pathname.startsWith('/v1/')) {
+  // Responses bridges use OpenAI's canonical /v1 endpoint paths internally.
+  // A configured /api/v3, /v4, or other version root already supplies that
+  // segment, including when Desktop entered through /backend-api/codex.
+  if (providerBaseHasVersionRoot(base) && pathname.startsWith('/v1/')) {
     pathname = pathname.slice('/v1'.length);
   }
   if (wireProtocol === 'anthropic-messages') {

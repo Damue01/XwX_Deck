@@ -276,7 +276,7 @@ export function createPreviewApi(): XwXDeckApi {
     ? {
         status: 'available', currentVersion: '1.0.0', targetVersion: '1.0.1', channel: 'release',
         portable: false, installMode: hasMacUpdate ? 'manual-dmg' : 'automatic', supported: true, updateAvailable: true,
-        releaseNotes: '新增右下角版本更新提醒\n展示本次更新内容并支持立即下载\n优化便携版原地更新体验'
+        releaseNotes: '新增右下角版本更新提醒\n展示本次更新内容并支持立即下载\n优化 Windows 原地更新体验'
       }
     : { status: 'idle', currentVersion: '浏览器预览', channel: 'release', portable: false, installMode: 'automatic', supported: false, updateAvailable: false };
 
@@ -494,6 +494,23 @@ export function createPreviewApi(): XwXDeckApi {
       return structuredClone(providers);
     },
     fetchProviderModels: async () => [],
+    validateProvider: async ({ providerId }) => {
+      const provider = providers.connections.find(item => item.id === providerId);
+      if (!provider) throw new Error('服务连接不存在。');
+      const match = provider.baseUrl.match(/^(.*)\/(responses|chat\/completions|messages)(?:\/v1)?\/?$/i);
+      if (match) {
+        return {
+          status: 'suggestion',
+          providerId,
+          providerName: provider.displayName,
+          suggestedBaseUrl: match[1],
+          suggestedAdapter: match[2].toLowerCase() === 'chat/completions'
+            ? 'chat-completions'
+            : match[2].toLowerCase() === 'messages' ? 'anthropic-messages' : 'responses'
+        };
+      }
+      return { status: 'valid', providerId, providerName: provider.displayName };
+    },
     getCompatibleServiceConfig: async () => ({ ...compatible }),
     updateCompatibleServiceConfig: async (value) => {
       compatible = {

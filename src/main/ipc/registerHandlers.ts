@@ -47,7 +47,7 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
   };
   const requireUpdater = (): XwXDeckUpdater => {
     const updater = deps.updater();
-    if (!updater) throw new Error('XwX Deck updater is still starting.');
+    if (!updater) throw new Error('更新服务仍在启动，请稍后重试。');
     return updater;
   };
   const handlers: Record<string, InvokeHandler> = {
@@ -92,36 +92,36 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     },
     'xwxdeck:toggle-tracing': () => deps.toggleTracing(),
     'xwxdeck:toggle-client': (_event, client) => {
-      if (!isClientId(client)) throw new Error('Unsupported XwX Deck client.');
+      if (!isClientId(client)) throw new Error('不支持的客户端。');
       return deps.toggleClient(client);
     },
     'xwxdeck:get-codex-config': () => requireController().readCodexConfig(),
     'xwxdeck:is-chatgpt-running': () => isChatGptRunning(),
     'xwxdeck:get-codex-enhancements': () => requireController().readCodexEnhancements(),
     'xwxdeck:update-codex-enhancements': (_event, input) => {
-      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid ChatGPT enhancements payload.');
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('无效的 ChatGPT 增强设置。');
       return requireController().updateCodexEnhancements(input);
     },
     'xwxdeck:get-compatible-config': () => requireController().readCompatibleServiceConfig(),
     'xwxdeck:update-compatible-config': (_event, input) => {
-      if (!input || typeof input !== 'object') throw new Error('Invalid 兼容服务 config payload.');
+      if (!input || typeof input !== 'object') throw new Error('无效的兼容服务配置。');
       return requireController().updateCompatibleServiceConfig(input);
     },
     'xwxdeck:get-model-services': () => requireController().readModelServices(),
     'xwxdeck:set-model-service': (_event, input) => {
-      if (!input || typeof input !== 'object') throw new Error('Invalid model service payload.');
+      if (!input || typeof input !== 'object') throw new Error('无效的模型服务设置。');
       const value = input as { client?: unknown; enabled?: unknown };
-      if (value.client !== 'claude' && value.client !== 'codex') throw new Error('Unsupported model service client.');
-      if (typeof value.enabled !== 'boolean') throw new Error('Invalid model service state.');
+      if (value.client !== 'claude' && value.client !== 'codex') throw new Error('不支持的模型服务客户端。');
+      if (typeof value.enabled !== 'boolean') throw new Error('无效的模型服务开关状态。');
       return requireController().setModelService(value.client, value.enabled);
     },
     'xwxdeck:get-claude-models': () => requireController().readClaudeModels(),
     'xwxdeck:update-claude-models': (_event, input) => {
-      if (!input || typeof input !== 'object') throw new Error('Invalid Claude models payload.');
+      if (!input || typeof input !== 'object') throw new Error('无效的 Claude 模型设置。');
       return requireController().updateClaudeModels(input as Record<string, string>);
     },
     'xwxdeck:update-codex-config': (_event, input) => {
-      if (!input || typeof input !== 'object') throw new Error('Invalid ChatGPT config payload.');
+      if (!input || typeof input !== 'object') throw new Error('无效的 ChatGPT 配置。');
       return requireController().updateCodexConfig(input);
     },
     'xwxdeck:diagnose-codex-conversations': () => requireController().diagnoseCodexConversations(),
@@ -163,6 +163,11 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
       const value = input as { providerId?: unknown; refresh?: unknown } | undefined;
       if (!value || typeof value.providerId !== 'string') throw new Error('无效的连接 ID。');
       return requireController().fetchProviderModels(value.providerId, value.refresh === true);
+    },
+    'xwxdeck:validate-provider': (_event, input) => {
+      const value = input as { providerId?: unknown } | undefined;
+      if (!value || typeof value.providerId !== 'string') throw new Error('无效的连接 ID。');
+      return requireController().validateProvider(value.providerId);
     },
     'xwxdeck:fetch-models': (_event, input) => {
       const source = input && typeof input === 'object' && (input as { source?: unknown }).source === 'compatible'

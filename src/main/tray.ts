@@ -104,5 +104,5 @@ function createTrayIcon(active: boolean): Electron.NativeImage {
   }
   const fallback = nativeImage.createFromPath(assetPath('tray.png'));
   if (!fallback.isEmpty()) return fallback;
-  throw new Error(`Unable to load XwX Deck tray icon (active=${active}).`);
+  throw new Error(`无法加载 XwX Deck 菜单栏图标（活动状态：${active ? '是' : '否'}）。`);
 }

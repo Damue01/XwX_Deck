@@ -8,7 +8,7 @@ import type {
   ModelServiceSnapshot,
 } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
-import { showToast } from '@/lib/toast';
+import { showErrorToast, showToast } from '@/lib/toast';
 import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
 import { ModelPicker } from './ModelPicker';
 import { CodexEnhancements } from './CodexEnhancements';
@@ -28,14 +28,6 @@ const CLAUDE_ROLES: Array<{ key: ClaudeRole; label: string }> = [
   { key: 'sonnet', label: 'Sonnet' },
   { key: 'haiku', label: 'Haiku' },
 ];
-
-function operationError(error: unknown, fallback: string): string {
-  const message = error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string'
-    ? (error as { message: string }).message.trim()
-    : '';
-  if (message.startsWith('Claude 接入失败：检测到环境变量')) return message;
-  return message ? `${fallback}：${message}` : fallback;
-}
 
 const EXTERNAL_CODEX_CATALOG_DESCRIPTION = '请移除其他软件写入的 model_catalog_json，再完全退出并重新打开 ChatGPT。';
 
@@ -139,7 +131,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       bridge.patch({ claudeModels: updated });
       showToast('Claude 模型已保存', 'success');
     } catch (error) {
-      showToast(operationError(error, '无法保存 Claude 模型'), 'error');
+      showErrorToast('无法保存 Claude 模型', error);
     } finally { claudeOperationRef.current = false; setBusyClaude(false); }
   }, [bridge.api, bridge.patch, bridge.providers?.active.claude, claudeModels]);
 
@@ -184,7 +176,11 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       } else {
         showToast(providerId ? '服务已切换' : '已切回官方服务。', 'success');
       }
-    } catch (error) { showToast(operationError(error, '无法切换服务'), 'error'); }
+    } catch (error) {
+      showErrorToast(`无法切换 ${client === 'codex' ? 'ChatGPT' : 'Claude'} 服务`, error, undefined, {
+        timeout: 10_000
+      });
+    }
     finally {
       const results = await Promise.allSettled([bridge.api.getProviders(), bridge.api.getModelServices(), bridge.api.getCodexConfig(), bridge.api.getClaudeModels(), bridge.api.getCompatibleServiceConfig()]);
       const [pr, sr, cr, mr, pc] = results;
@@ -233,7 +229,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
         showToast(`已选择 ${choice.label}；协议由 XwX Deck 自动适配。`, 'success');
       }
     } catch (error) {
-      showToast(operationError(error, '无法保存 ChatGPT 配置'), 'error');
+      showErrorToast('无法保存 ChatGPT 配置', error);
     } finally {
       codexOperationRef.current = false;
       setBusyCodex(false);

@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('xwxDeck', {
   deleteProvider: (id: string) => ipcRenderer.invoke('xwxdeck:delete-provider', id),
   switchClientProvider: (input: unknown) => ipcRenderer.invoke('xwxdeck:switch-client-provider', input),
   fetchProviderModels: (input: unknown) => ipcRenderer.invoke('xwxdeck:fetch-provider-models', input),
+  validateProvider: (input: unknown) => ipcRenderer.invoke('xwxdeck:validate-provider', input),
   getCompatibleServiceConfig: () => ipcRenderer.invoke('xwxdeck:get-compatible-config'),
   updateCompatibleServiceConfig: (payload: unknown) => ipcRenderer.invoke('xwxdeck:update-compatible-config', payload),
   getModelServices: () => ipcRenderer.invoke('xwxdeck:get-model-services'),

@@ -3,7 +3,7 @@ import { Check, ImagePlus, Shirt, Trash2, X } from 'lucide-react';
 import type { XwXDeckRuntimeState, TraceAppearanceSnapshot, TraceSkin } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
 import { Toggle } from '@/features/shell/Toggle';
-import { showToast } from '@/lib/toast';
+import { showErrorToast, showToast } from '@/lib/toast';
 
 interface Props {
   readonly open: boolean;
@@ -18,10 +18,6 @@ const SKINS: ReadonlyArray<{
   { id: 'clean', name: '纯净' },
   { id: 'custom', name: '自定义' },
 ];
-
-function operationError(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
 
 export function AppearanceButton({ id, onClick }: { readonly id: string; readonly onClick: () => void }): React.ReactElement {
   return (
@@ -63,7 +59,7 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
       const next = await bridge.api.setTraceAppearance(patch);
       bridge.patch({ runtime: next });
     } catch (error) {
-      showToast(operationError(error, '无法保存 Trace 外观'), 'error');
+      showErrorToast('无法保存 Trace 外观', error);
     }
   }, [bridge.api, bridge.patch]);
 
@@ -74,7 +70,7 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
       const next = await bridge.api.chooseTraceBackground();
       if (next) bridge.patch({ runtime: next });
     } catch (error) {
-      showToast(operationError(error, '无法选择背景图片'), 'error');
+      showErrorToast('无法选择背景图片', error);
     } finally {
       setBusy(false);
     }
@@ -96,7 +92,7 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
       bridge.patch({ runtime: next });
       showToast('自定义背景已移除', 'success');
     } catch (error) {
-      showToast(operationError(error, '无法移除背景图片'), 'error');
+      showErrorToast('无法移除背景图片', error);
     } finally {
       setBusy(false);
     }

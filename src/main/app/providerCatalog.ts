@@ -8,10 +8,23 @@ export async function fetchProviderCatalog(provider: ProviderConnection, capabil
     return fetchCompatibleServiceModelCatalog(provider.baseUrl, provider.bearerToken, fetch, capabilityCachePath, [], { catalogMode: providerProfile(provider.providerPreset).modelCatalogMode });
   }
   const anthropic = provider.adapter === 'anthropic-messages';
+  if (!anthropic) {
+    const models = await fetchCompatibleServiceModelCatalog(
+      provider.baseUrl,
+      provider.bearerToken,
+      fetch,
+      capabilityCachePath,
+      [],
+      { catalogMode: 'openai' }
+    );
+    return models.map(model => ({
+      ...model,
+      protocols: [provider.adapter === 'responses' ? 'openai-responses' as const : 'chat-completions' as const],
+      clients: ['codex'] as const
+    }));
+  }
   const response = await fetch(`${provider.baseUrl.replace(/\/+$/, '')}/models`, {
-    headers: anthropic
-      ? { 'x-api-key': provider.bearerToken, 'anthropic-version': '2023-06-01' }
-      : { authorization: `Bearer ${provider.bearerToken}` },
+    headers: { 'x-api-key': provider.bearerToken, 'anthropic-version': '2023-06-01' },
     signal: AbortSignal.timeout(12_000)
   });
   if (!response.ok) {
@@ -22,8 +35,8 @@ export async function fetchProviderCatalog(provider: ProviderConnection, capabil
   if (!Array.isArray(payload.data)) throw new Error('服务没有返回有效模型列表。');
   const models: ModelCatalogEntry[] = payload.data.filter(row => typeof row?.id === 'string').map(row => ({
     id: row.id as string, vendor: provider.displayName,
-    protocols: [anthropic ? 'anthropic-messages' : provider.adapter === 'responses' ? 'openai-responses' : 'chat-completions'],
-    clients: anthropic ? ['claude', 'codex'] : provider.adapter === 'chat-completions' ? ['codex'] : ['codex']
+    protocols: ['anthropic-messages'],
+    clients: ['claude', 'codex']
   }));
   if (!models.length) throw new Error('服务没有返回可用模型。');
   return capabilityCachePath ? enrichModelCatalog(models, fetch, capabilityCachePath) : models;

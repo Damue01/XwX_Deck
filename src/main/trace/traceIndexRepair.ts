@@ -98,11 +98,11 @@ async function applyTraceIndexRepairUnlocked(
 ): Promise<AppliedTraceIndexRepair> {
   const plan = await inspectTraceIndexRepair(rootDir);
   if (expectedIndexSha256 && plan.indexSha256 !== expectedIndexSha256) {
-    throw new Error('Trace index no longer matches the inspected recovery plan; no changes were made.');
+    throw new Error('Trace 索引已在扫描后发生变化，本次修复未作任何修改。请重新扫描后再试。');
   }
   const current = await readIndexSnapshot(plan.indexPath);
   if (current.status !== plan.indexStatus || current.sha256 !== plan.indexSha256) {
-    throw new Error('Trace index changed during recovery scan; no changes were made.');
+    throw new Error('Trace 索引在修复检查期间发生变化，本次修复未作任何修改。请重新扫描后再试。');
   }
   const recoveryDir = path.join(plan.rootPath, '_index-recovery');
   await ensureDir(recoveryDir);

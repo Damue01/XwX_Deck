@@ -23,6 +23,7 @@ import type {
 import { useBridge } from '@/bridge/store';
 import { isDesktop } from '@/bridge/api';
 import { showToast } from '@/lib/toast';
+import { userErrorMessage } from '@/lib/errors';
 import { Input } from '@/components/ui/input';
 
 interface Props {
@@ -46,13 +47,7 @@ function fileName(p: string): string {
 }
 
 function diagnosticError(error: unknown): string {
-  const raw = error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string'
-    ? (error as { message: string }).message.split(/\r?\n/, 1)[0]?.trim() || ''
-    : '';
-  return raw
-    .replace(/^Error invoking remote method '[^']+':\s*/u, '')
-    .replace(/^(?:Error:\s*)+/u, '')
-    .trim() || '无法读取对话索引';
+  return userErrorMessage(error, '无法读取对话索引');
 }
 
 function healthStatusLabel(status: CodexConversationHealthRow['status']): string {

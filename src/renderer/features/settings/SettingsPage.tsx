@@ -4,7 +4,8 @@ import { Pencil, Trash2, ArrowDownToLine, Check, LoaderCircle } from 'lucide-rea
 import type { XwXDeckRuntimeState, XwXDeckUpdateState, CompatibleServiceConfigSnapshot } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
 import { isDesktop } from '@/bridge/api';
-import { showToast } from '@/lib/toast';
+import { showErrorToast, showToast } from '@/lib/toast';
+import { userErrorMessage } from '@/lib/errors';
 import { useConfirm, useConfirmChecked } from '@/components/ui/confirm-dialog';
 import { hostFromUrl, isValidServiceUrl } from '@/lib/utils';
 import { useTheme } from '@/lib/theme';
@@ -24,14 +25,6 @@ function formatCacheBytes(bytes: number): string {
   if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${bytes} B`;
 }
-
-function operationError(error: unknown, fallback: string): string {
-  const message = error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string'
-    ? (error as { message: string }).message.trim()
-    : '';
-  return message ? `${fallback}：${message}` : fallback;
-}
-
 
 export function SettingsPage({ active }: Props): React.ReactElement {
   const bridge = useBridge();
@@ -75,7 +68,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
         'success'
       );
     } catch (error) {
-      showToast(operationError(error, '无法修改目录'), 'error');
+      showErrorToast('无法修改目录', error);
     }
   }, [bridge.api, bridge.patch]);
 
@@ -91,8 +84,8 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       setRuntime(next);
       bridge.patch({ runtime: next });
       showToast(bridge.runtime === null ? '浏览器预览不会删除本地数据' : 'Trace 记录已清空', 'success');
-    } catch {
-      showToast('无法清空 Trace 记录', 'error');
+    } catch (error) {
+      showErrorToast('无法清空 Trace 记录', error);
     }
   }, [bridge.api, bridge.patch, bridge.runtime, confirm]);
 
@@ -105,8 +98,8 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       setRuntime(next);
       bridge.patch({ runtime: next });
       showToast(enabled ? '已开启开机启动' : '已关闭开机启动', 'success');
-    } catch {
-      showToast('无法更新开机启动', 'error');
+    } catch (error) {
+      showErrorToast('无法更新开机启动', error);
       try { setRuntime(await bridge.api.getState()); } catch { /* ignore */ }
     } finally {
       setBusyStartup(false);
@@ -144,7 +137,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       }
     } catch (error) {
       promptedUpdateRef.current = '';
-      showToast(operationError(error, manual ? '无法打开安装包' : '无法重启并完成更新'), 'error');
+      showErrorToast(manual ? '无法打开安装包' : '无法重启并完成更新', error);
     }
   }, [bridge.api, bridge.patch, confirm]);
 
@@ -158,8 +151,8 @@ export function SettingsPage({ active }: Props): React.ReactElement {
         ? await bridge.api.downloadUpdate()
         : updateState;
       if (next) setUpdateState(next);
-    } catch {
-      showToast('更新操作失败', 'error');
+    } catch (error) {
+      showErrorToast('更新操作失败', error, undefined, { description: '请检查网络后重试。' });
     }
   }, [bridge.api, confirmReadyUpdate, updateState]);
 
@@ -183,14 +176,17 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       setUpdateState(next);
       bridge.patch({ updateState: next });
       if (next.status === 'error') {
-        showToast('检查更新失败，请稍后再试', 'error');
+        showToast('检查更新失败', 'error', undefined, {
+          description: userErrorMessage(next.error, '请检查网络后重试。'),
+          timeout: 8_000
+        });
       } else if (next.updateAvailable) {
         showToast(next.targetVersion ? `发现新版本 ${next.targetVersion}` : '发现新版本', 'info');
       } else {
         showToast('已是最新版本', 'success');
       }
-    } catch {
-      showToast('检查更新失败，请稍后再试', 'error');
+    } catch (error) {
+      showErrorToast('检查更新失败', error, undefined, { description: '请检查网络后重试。' });
     } finally {
       setCheckingUpdate(false);
     }
@@ -230,7 +226,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       await bridge.api.resetApplication({ resetClientConfigs: result.checked });
     } catch (error) {
       setBusyReset(false);
-      showToast(operationError(error, '无法重置 XwX Deck'), 'error');
+      showErrorToast('无法重置 XwX Deck', error);
     }
   }, [bridge.api, bridge.runtime, busyReset, confirmChecked]);
 
@@ -257,7 +253,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
         showToast(`已清理 ${result.removedCachePaths} 项本地缓存${size ? `（${size}）` : ''}${models}`, 'success');
       }
     } catch (error) {
-      showToast(operationError(error, '无法运行快速修复'), 'error');
+      showErrorToast('无法运行快速修复', error);
     } finally {
       setBusyRepair(false);
     }

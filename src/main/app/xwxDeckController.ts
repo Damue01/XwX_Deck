@@ -2,9 +2,17 @@ import { parse as parseToml } from 'smol-toml';
 import { ClientFallbackStore, type ClientFallbackState } from '../trace/clientFallbackStore';
 import { restoreCodexPreferredDirectConfiguration } from './codexDirectConfiguration';
 import { createHash, randomUUID } from 'crypto';
-import { supportsProviderClient, type ProviderConnection, type ProviderClient, type ProviderInput, type ProviderSnapshot } from '../../shared/providers';
+import {
+  supportsProviderClient,
+  type ProviderConnection,
+  type ProviderClient,
+  type ProviderInput,
+  type ProviderSnapshot,
+  type ProviderValidationResult
+} from '../../shared/providers';
 import { selectedProvider } from './settings';
 import { fetchProviderCatalog } from './providerCatalog';
+import { validateProviderConnection } from './providerValidation';
 import { readCodexOfficialModelCatalog } from './codexOfficialModelCatalog';
 import * as fs from 'fs';
 import * as http from 'http';
@@ -339,6 +347,9 @@ export class XwXDeckController {
     'claude-cli': Promise.resolve(),
     'codex-cli': Promise.resolve()
   };
+  private readonly providerValidationControllers = new Map<string, AbortController>();
+  private readonly providerValidationGenerations = new Map<string, number>();
+  private providerValidationSequence = 0;
   private mutationOperation: Promise<void> = Promise.resolve();
   private shutdownRequested = false;
 
@@ -1304,6 +1315,7 @@ export class XwXDeckController {
       const registry = previous.providers!;
       const existing = input.id ? registry.connections.find(p => p.id === input.id) : undefined;
       if (input.id && !existing) throw new Error('连接已删除，请刷新后重试。');
+      if (input.id) this.cancelProviderValidation(input.id);
       const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
       if (!displayName) throw new Error('请填写服务名称。');
       if (!['auto', 'responses', 'chat-completions', 'anthropic-messages'].includes(input.adapter)) throw new Error('不支持的服务类型。');
@@ -1348,6 +1360,7 @@ export class XwXDeckController {
 
   async deleteProvider(id: string): Promise<ProviderSnapshot> {
     return this.serializeMutation(async () => {
+      this.cancelProviderValidation(id);
       const snapshot = await this.readProviders();
       const settings = await this.settingsStore.read();
       if (!snapshot.connections.some(p => p.id === id)) throw new Error('连接不存在。');
@@ -1413,6 +1426,45 @@ export class XwXDeckController {
     const catalog = await fetchProviderCatalog(provider, path.join(this.userDataDir, 'model-capabilities-cache.json'));
     await writeCompatibleServiceModelCatalogCache(file, provider.baseUrl, provider.bearerToken, catalog, provider.providerPreset);
     return catalog;
+  }
+
+  async validateProvider(id: string): Promise<ProviderValidationResult> {
+    const settings = await this.settingsStore.read();
+    const provider = settings.providers!.connections.find(connection => connection.id === id);
+    if (!provider) throw new Error('服务连接不存在。');
+    const fingerprint = providerConnectionIdentity(provider);
+    this.providerValidationControllers.get(id)?.abort();
+    const controller = new AbortController();
+    const generation = ++this.providerValidationSequence;
+    this.providerValidationControllers.set(id, controller);
+    this.providerValidationGenerations.set(id, generation);
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+    let result: ProviderValidationResult;
+    const catalogRefresh = this.fetchProviderModels(id, true).catch(error => {
+      log.warn(`[xwxdeck] provider model directory validation failed (${provider.displayName}): ${(error as Error).message}`);
+    });
+    try {
+      result = await validateProviderConnection(provider, fetch, controller.signal);
+      await catalogRefresh;
+    } finally {
+      clearTimeout(timeout);
+      if (this.providerValidationControllers.get(id) === controller) {
+        this.providerValidationControllers.delete(id);
+      }
+    }
+    const current = (await this.settingsStore.read()).providers!.connections.find(connection => connection.id === id);
+    const latest = this.providerValidationGenerations.get(id) === generation;
+    if (latest) this.providerValidationGenerations.delete(id);
+    if (!latest || !current || providerConnectionIdentity(current) !== fingerprint) {
+      return { status: 'stale', providerId: id, providerName: provider.displayName };
+    }
+    return result;
+  }
+
+  private cancelProviderValidation(id: string): void {
+    this.providerValidationControllers.get(id)?.abort();
+    this.providerValidationControllers.delete(id);
+    this.providerValidationGenerations.set(id, ++this.providerValidationSequence);
   }
 
   async updateCompatibleServiceConfig(input: Partial<CompatibleServiceSettings>): Promise<CompatibleServiceSettings> {
@@ -2965,7 +3017,7 @@ export class XwXDeckController {
     options: { readonly backgroundRefresh?: boolean } = {}
   ): Promise<CodexConfigSnapshot> {
     const mode = input.mode;
-    if (mode !== 'official' && mode !== 'compatible') throw new Error('Unsupported ChatGPT config mode.');
+    if (mode !== 'official' && mode !== 'compatible') throw new Error('不支持的 ChatGPT 配置模式。');
     const preserveOfficialLogin = input.preserveOfficialLogin !== false;
     const previousConfig = await this.codexConfig.read();
     const previousMode = this.codexGatewayMode ?? previousConfig.mode;
@@ -3600,7 +3652,12 @@ async function assertGatewayUpstreamReachable(baseUrl: string, routePath: string
     });
   } catch (error) {
     log.warn(`[xwxdeck] ChatGPT upstream preflight failed: ${(error as Error).message}`);
-    throw new Error('ChatGPT 上游不可用，原配置未更改。');
+    const timedOut = (error as Error).message.includes('timed out');
+    throw new Error(
+      timedOut
+        ? 'ChatGPT 目标服务连通性检查超时。为避免切换后请求失败，已保留原服务配置；请检查网络、代理或服务状态后重试。'
+        : 'ChatGPT 目标服务连通性检查失败。为避免切换后请求失败，已保留原服务配置；请检查网络、代理或服务状态后重试。'
+    );
   }
   // Authentication failures (401/403), unsupported catalogs (404/405), and
   // rate limits (429) all prove that the configured network path reached its
@@ -3608,7 +3665,9 @@ async function assertGatewayUpstreamReachable(baseUrl: string, routePath: string
   // turn the newly written localhost endpoint into the user's visible 502.
   if (statusCode >= 500) {
     log.warn(`[xwxdeck] ChatGPT upstream preflight returned HTTP ${statusCode}`);
-    throw new Error('ChatGPT 上游不可用，原配置未更改。');
+    throw new Error(
+      `无法连接 ChatGPT 目标服务（HTTP ${statusCode}）。为避免切换后请求失败，已保留原服务配置；请检查网络、代理或服务状态后重试。`
+    );
   }
 }
 
@@ -3946,7 +4005,7 @@ function hostOf(url: string): string {
 
 function chatGptConnectionIssueText(issue: ChatGptConnectionIssue): string {
   return issue === 'failed'
-    ? 'ChatGPT 接入失败，请重启 Trace 后重试。'
+    ? 'ChatGPT 接入失败，Trace 未接管其配置。请检查 ChatGPT 配置后重新开启 Trace。'
     : 'ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。';
 }
 

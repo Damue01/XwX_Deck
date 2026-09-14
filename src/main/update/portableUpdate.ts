@@ -43,17 +43,17 @@ export function readPortableUpdateRequest(argv: readonly string[] = process.argv
   const raw = argumentValue(argv, APPLY_ARG);
   if (!raw) return undefined;
   const value = decodeArgument(raw) as Partial<PortableUpdateRequest>;
-  if (!value || typeof value !== 'object') throw new Error('Invalid portable update request.');
+  if (!value || typeof value !== 'object') throw new Error('更新请求无效。');
   if (typeof value.sourcePath !== 'string' || typeof value.targetPath !== 'string' || typeof value.version !== 'string') {
-    throw new Error('Portable update request is incomplete.');
+    throw new Error('更新请求不完整。');
   }
   const sourcePath = path.resolve(value.sourcePath);
   const targetPath = path.resolve(value.targetPath);
-  validateExecutablePath(sourcePath, 'update source');
-  validateExecutablePath(targetPath, 'update target');
-  if (samePath(sourcePath, targetPath)) throw new Error('Portable update source and target must be different files.');
+  validateExecutablePath(sourcePath, '安装包');
+  validateExecutablePath(targetPath, '当前程序');
+  if (samePath(sourcePath, targetPath)) throw new Error('更新文件不能与当前程序使用同一个文件。');
   const version = value.version.trim();
-  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) throw new Error('Portable update version is invalid.');
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) throw new Error('更新版本号无效。');
   return {
     sourcePath,
     targetPath,
@@ -87,13 +87,13 @@ export function readPortableUpdateLaunchResult(argv: readonly string[] = process
     kind: 'failed',
     message: typeof value?.message === 'string' && value.message.trim()
       ? value.message.trim()
-      : '便携版更新未能完成，已保留原版本。'
+      : '更新未能完成，已保留原版本。'
   };
 }
 
 export async function launchPortableUpdate(request: PortableUpdateRequest): Promise<void> {
-  validateExecutablePath(request.sourcePath, 'update source');
-  validateExecutablePath(request.targetPath, 'update target');
+  validateExecutablePath(request.sourcePath, '更新文件');
+  validateExecutablePath(request.targetPath, '当前程序');
   await assertWindowsExecutable(request.sourcePath);
   const encoded = encodeArgument(request);
   // Reuse the already-extracted Electron executable as the hidden helper.
@@ -144,9 +144,9 @@ export async function replacePortableExecutable(
 ): Promise<PortableReplaceResult> {
   const source = path.resolve(sourcePath);
   const target = path.resolve(targetPath);
-  validateExecutablePath(source, 'update source');
-  validateExecutablePath(target, 'update target');
-  if (samePath(source, target)) throw new Error('Portable update source and target must be different files.');
+  validateExecutablePath(source, '更新文件');
+  validateExecutablePath(target, '当前程序');
+  if (samePath(source, target)) throw new Error('更新文件不能与当前程序使用同一个文件。');
   await assertWindowsExecutable(source);
   await fs.promises.access(target, fs.constants.R_OK | fs.constants.W_OK);
 
@@ -177,7 +177,7 @@ export async function replacePortableExecutable(
 export async function acknowledgePortableUpdateReady(result: PortableUpdateLaunchResult | undefined): Promise<void> {
   if (result?.kind !== 'complete' || !result.readyPath || !result.attemptId) return;
   const readyPath = portableReadyPath(result.readyPath);
-  if (!readyPath) throw new Error('便携版更新启动确认路径无效。');
+  if (!readyPath) throw new Error('更新启动确认路径无效。');
   await fs.promises.writeFile(readyPath, `${JSON.stringify({
     attemptId: result.attemptId,
     version: result.version,
@@ -189,7 +189,7 @@ export async function restorePortableExecutable(backupPath: string, targetPath: 
   const backup = path.resolve(backupPath);
   const target = path.resolve(targetPath);
   validatePortableBackupPath(backup);
-  validateExecutablePath(target, 'update target');
+  validateExecutablePath(target, '当前程序');
   await assertWindowsExecutable(backup);
   const rollbackPath = `${target}.rollback`;
   await removeWithRetry(rollbackPath, 2_000);
@@ -347,13 +347,13 @@ async function removeWithRetry(file: string, timeoutMs: number): Promise<void> {
 
 function validateExecutablePath(file: string, label: string): void {
   if (!path.isAbsolute(file) || path.extname(file).toLowerCase() !== '.exe') {
-    throw new Error(`Invalid portable ${label} path.`);
+    throw new Error(`${label}路径无效。`);
   }
 }
 
 function validatePortableBackupPath(file: string): void {
   if (!path.isAbsolute(file) || !file.toLowerCase().endsWith('.exe.previous')) {
-    throw new Error('Invalid portable update backup path.');
+    throw new Error('更新备份路径无效。');
   }
 }
 
@@ -376,7 +376,7 @@ function decodeArgument(value: string): unknown {
   try {
     return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
   } catch {
-    throw new Error('Invalid encoded portable update argument.');
+    throw new Error('更新参数损坏，请重新下载更新。');
   }
 }
 

@@ -1,4 +1,4 @@
-import type { ProviderSnapshot, ProviderInput, ProviderClient } from '../../shared/providers';
+import type { ProviderSnapshot, ProviderInput, ProviderClient, ProviderValidationResult } from '../../shared/providers';
 // Shared data shapes for the window.xwxDeck bridge surface.
 // All types are plain serialisable objects; nothing from Electron is imported here.
 import type { ProviderPresetId } from '../../shared/providerProfiles';
@@ -339,6 +339,7 @@ export interface XwXDeckApi {
   deleteProvider(id: string): Promise<ProviderSnapshot>;
   switchClientProvider(input: { client: ProviderClient; providerId: string | null }): Promise<ProviderSnapshot>;
   fetchProviderModels(input: { providerId: string; refresh?: boolean }): Promise<readonly ModelCatalogEntry[]>;
+  validateProvider(input: { providerId: string }): Promise<ProviderValidationResult>;
   getCompatibleServiceConfig(): Promise<CompatibleServiceConfigSnapshot>;
   updateCompatibleServiceConfig(payload: Record<string, unknown>): Promise<CompatibleServiceConfigSnapshot>;
 

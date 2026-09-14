@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ClientStateRow, ManagerTraceStats, XwXDeckRuntimeState } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
-import { showToast } from '@/lib/toast';
+import { showErrorToast, showToast } from '@/lib/toast';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { tokenCostPresentation, readoutRange } from '@/lib/format';
 import { Tabs, TabsList, TabsTab } from '@/components/ui/tabs';
@@ -15,7 +15,7 @@ const CHATGPT_CONNECTION_TOAST_ID = 'chatgpt-connection';
 const CHATGPT_RESTART_TOAST_ID = 'chatgpt-restart-recommended';
 const TRACE_WAITING_TOAST_ID = 'trace-waiting-client';
 const ENVIRONMENT_OVERRIDE_TOAST_ID = 'environment-override';
-const CHATGPT_CONNECTION_FAILED_TEXT = 'ChatGPT 接入失败，请重启 Trace 后重试。';
+const CHATGPT_CONNECTION_FAILED_TEXT = 'ChatGPT 接入失败，Trace 未接管其配置。请检查 ChatGPT 配置后重新开启 Trace。';
 const CHATGPT_CONNECTION_UNSUPPORTED_TEXT = 'ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。';
 const CHATGPT_RESTART_DESCRIPTION = '当前对话通常可继续使用；若连接未切换、模型未更新或对话无法继续，再完全退出并重新打开 ChatGPT。';
 const TRACE_RESTART_DESCRIPTION = '当前对话通常可继续使用；若新请求未出现在 Trace 中或对话无法继续，再完全退出并重新打开 ChatGPT。';
@@ -200,8 +200,8 @@ export function SignalPage({ active }: Props): React.ReactElement {
         let hasLiveConversation = false;
         try {
           hasLiveConversation = await bridge.api.disableBreaksCodex();
-        } catch {
-          showToast('无法确认当前请求状态，Trace 未停止。', 'error');
+        } catch (error) {
+          showErrorToast('无法确认当前请求状态，Trace 未停止', error);
           return;
         }
         if (hasLiveConversation) {
@@ -233,14 +233,11 @@ export function SignalPage({ active }: Props): React.ReactElement {
     } catch (e) {
       const connectingChatGpt = !capturing
         && clients.some(client => client.id === 'codex-cli' && client.enabled);
-      showToast(
-        connectingChatGpt
-          ? CHATGPT_CONNECTION_FAILED_TEXT
-          : e instanceof Error && e.message
-            ? e.message
-            : '无法切换捕获状态',
-        'error',
-        connectingChatGpt ? CHATGPT_CONNECTION_TOAST_ID : undefined
+      showErrorToast(
+        connectingChatGpt ? 'ChatGPT 接入失败' : '无法切换 Trace',
+        e,
+        connectingChatGpt ? CHATGPT_CONNECTION_TOAST_ID : undefined,
+        { description: connectingChatGpt ? '已保留原客户端配置，请检查连接后重试。' : '请稍后重试。' }
       );
     } finally {
       togglingRef.current = false;
@@ -269,7 +266,8 @@ export function SignalPage({ active }: Props): React.ReactElement {
         });
       }
     } catch (e) {
-      showToast(e instanceof Error && e.message ? e.message : '客户端接入失败', 'error');
+      const clientName = id === 'codex-cli' ? 'ChatGPT' : 'Claude';
+      showErrorToast(`${clientName} 接入设置失败`, e);
     }
   }, [bridge.api, bridge.patch]);
 

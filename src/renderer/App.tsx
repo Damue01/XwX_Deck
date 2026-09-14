@@ -11,6 +11,7 @@ import { SettingsPage } from '@/features/settings/SettingsPage';
 import { OnboardingTour } from '@/features/onboarding/OnboardingTour';
 import { UpdateNotification } from '@/features/shell/UpdateNotification';
 import { applyTheme } from '@/lib/theme';
+import { userErrorMessage } from '@/lib/errors';
 
 function Shell(): React.ReactElement {
   const bridge = useBridge();
@@ -42,7 +43,10 @@ function Shell(): React.ReactElement {
   }, []);
 
   React.useEffect(() => bridge.api.onNotice(notice => {
-    showToast(notice.message, notice.type ?? 'info');
+    showToast(
+      notice.type === 'error' ? userErrorMessage(notice.message) : notice.message,
+      notice.type ?? 'info'
+    );
   }), [bridge.api]);
 
   React.useEffect(() => {

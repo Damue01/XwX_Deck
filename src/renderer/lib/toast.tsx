@@ -1,5 +1,6 @@
 import type React from 'react';
 import { ToastProvider, toastManager } from '@/components/ui/toast';
+import { userErrorMessage } from '@/lib/errors';
 
 export { ToastProvider };
 
@@ -33,6 +34,19 @@ export function showToast(
     },
     title: message,
     type
+  });
+}
+
+export function showErrorToast(
+  title: string,
+  error: unknown,
+  key?: string,
+  options: ShowToastOptions = {}
+): void {
+  showToast(title, 'error', key, {
+    ...options,
+    description: userErrorMessage(error, options.description ?? '请稍后重试。'),
+    timeout: options.timeout ?? 8_000
   });
 }
 

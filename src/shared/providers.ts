@@ -23,6 +23,22 @@ export interface ProviderRegistry {
 export interface ProviderSnapshot extends ProviderRegistry {
   readonly active: Readonly<Record<ProviderClient, string | null>>;
 }
+export type ProviderValidationStatus =
+  | 'valid'
+  | 'suggestion'
+  | 'authentication-error'
+  | 'model-error'
+  | 'reachable'
+  | 'unavailable'
+  | 'stale';
+export interface ProviderValidationResult {
+  readonly status: ProviderValidationStatus;
+  readonly providerId: string;
+  readonly providerName: string;
+  readonly suggestedBaseUrl?: string;
+  readonly suggestedAdapter?: Exclude<ProviderAdapter, 'auto'>;
+  readonly suggestionReason?: 'base-url' | 'protocol';
+}
 export type ProviderInput = Pick<ProviderConnection, 'displayName' | 'baseUrl' | 'bearerToken' | 'adapter'> & {
   readonly id?: string;
   readonly providerPreset?: ProviderPresetId;

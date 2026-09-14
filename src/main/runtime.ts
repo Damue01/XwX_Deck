@@ -581,7 +581,7 @@ function applyMacApplicationIcon(): {
     return { applied: false, width: 0, height: 0, cornerAlpha: 0, centerAlpha: 0 };
   }
   const image = nativeImage.createFromPath(assetPath('icon-runtime.png'));
-  if (image.isEmpty()) throw new Error('Unable to load the macOS application icon.');
+  if (image.isEmpty()) throw new Error('无法加载 macOS 应用图标。');
   const size = image.getSize();
   const bitmap = image.toBitmap();
   const cornerAlpha = bitmap[3] ?? 0;
@@ -663,7 +663,7 @@ async function reconcileStartupWithIntent(): Promise<void> {
 }
 
 async function restartAndInstall() {
-  if (!updater) throw new Error('XwX Deck updater is still starting.');
+  if (!updater) throw new Error('更新服务仍在启动，请稍后重试。');
   updater.markInstalling();
   await refreshUi();
   if (updater.state().installMode === 'manual-dmg') {

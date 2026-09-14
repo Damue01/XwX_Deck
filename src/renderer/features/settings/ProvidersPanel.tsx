@@ -2,13 +2,55 @@ import * as React from 'react';
 import { Menu } from '@base-ui/react/menu';
 import { Ellipsis, Pencil, Plus } from 'lucide-react';
 import { useBridge } from '@/bridge/store';
-import { showToast } from '@/lib/toast';
+import { showErrorToast, showToast } from '@/lib/toast';
 import {
   type ProviderInput,
-  type ProviderConnection
+  type ProviderConnection,
+  type ProviderValidationResult
 } from '../../../shared/providers';
 
 const empty: ProviderInput = { displayName: '', baseUrl: '', bearerToken: '', adapter: 'auto' };
+const VALIDATION_TOAST_ID = 'provider-validation';
+
+function adapterLabel(adapter: ProviderValidationResult['suggestedAdapter']): string {
+  if (adapter === 'chat-completions') return 'Chat Completions';
+  if (adapter === 'anthropic-messages') return 'Anthropic Messages';
+  return 'OpenAI Responses';
+}
+
+function showValidationResult(result: ProviderValidationResult): void {
+  if (result.status === 'stale') return;
+  if (result.status === 'valid') {
+    showToast(`${result.providerName} 连接验证成功`, 'success', VALIDATION_TOAST_ID);
+    return;
+  }
+  if (result.status === 'suggestion' && result.suggestedBaseUrl && result.suggestedAdapter) {
+    const protocolOnly = result.suggestionReason === 'protocol';
+    showToast(`${result.providerName} 的${protocolOnly ? '接口类型' : '接口地址'}可能有误`, 'info', VALIDATION_TOAST_ID, {
+      description: protocolOnly
+        ? `当前模型通过 ${adapterLabel(result.suggestedAdapter)} 验证。建议在连接中选择该接口；当前配置未更改。`
+        : `建议将 API 地址改为 ${result.suggestedBaseUrl}，接口选择 ${adapterLabel(result.suggestedAdapter)}。当前配置未更改。`,
+      timeout: 12_000
+    });
+    return;
+  }
+  if (result.status === 'authentication-error') {
+    showToast(`${result.providerName} 地址可达，但密钥无效或权限不足`, 'error', VALIDATION_TOAST_ID, { timeout: 8_000 });
+    return;
+  }
+  if (result.status === 'model-error') {
+    showToast(`${result.providerName} 地址可达，但模型 ID 不可用`, 'info', VALIDATION_TOAST_ID, { timeout: 8_000 });
+    return;
+  }
+  if (result.status === 'reachable') {
+    showToast(`${result.providerName} 接口可达，但未能完成模型验证`, 'info', VALIDATION_TOAST_ID, { timeout: 8_000 });
+    return;
+  }
+  showToast(`${result.providerName} 暂时无法完成连接验证`, 'error', VALIDATION_TOAST_ID, {
+    description: '配置已保存且未自动更改，请检查地址或稍后重试。',
+    timeout: 8_000
+  });
+}
 
 export function ProvidersPanel(): React.ReactElement {
   const bridge = useBridge();
@@ -39,7 +81,7 @@ export function ProvidersPanel(): React.ReactElement {
     if (lock.current) return;
     lock.current = true; setBusy(true);
     try { await operation(); }
-    catch (error) { const message = error instanceof Error ? error.message : String(error); showToast(message); }
+    catch (error) { showErrorToast('服务连接操作失败', error); }
     finally { lock.current = false; setBusy(false); }
   };
   const edit = (p: ProviderConnection, trigger: HTMLButtonElement) => {
@@ -51,9 +93,20 @@ export function ProvidersPanel(): React.ReactElement {
     void run(async () => {
       const providers = await bridge.api.saveProvider(draft);
       bridge.patch({ providers });
-      const refreshed = await refresh();
+      const provider = draft.id
+        ? providers.connections.find(item => item.id === draft.id)
+        : providers.connections.at(-1);
       closeEditor();
-      showToast(refreshed ? '连接已保存' : '连接已保存，部分状态未能刷新，请重新进入页面。');
+      showToast('连接已保存，正在后台验证…', 'info', VALIDATION_TOAST_ID);
+      void refresh();
+      if (provider) {
+        void bridge.api.validateProvider({ providerId: provider.id })
+          .then(showValidationResult)
+          .catch(() => showToast(`${provider.displayName} 暂时无法完成连接验证`, 'error', VALIDATION_TOAST_ID, {
+            description: '配置已保存且未自动更改，请检查地址或稍后重试。',
+            timeout: 8_000
+          }));
+      }
     });
   }}>
       <div className="field-row"><label className="fr-label" htmlFor="provider-name">名称</label><div className="fr-value"><input id="provider-name" autoFocus className="txt-input" required maxLength={80} value={draft.displayName} disabled={busy} onChange={e => setDraft({ ...draft, displayName: e.target.value })} /></div></div>
@@ -61,6 +114,7 @@ export function ProvidersPanel(): React.ReactElement {
       <div className="field-row"><label className="fr-label" htmlFor="provider-key">访问密钥</label><div className="fr-value"><input id="provider-key" className="txt-input" type="password" autoComplete="off" required value={draft.bearerToken} disabled={busy} onChange={e => setDraft({ ...draft, bearerToken: e.target.value })} /></div></div>
       <div className="field-row"><label className="fr-label" htmlFor="provider-adapter">接口</label><div className="fr-value"><select id="provider-adapter" className="txt-input" value={draft.adapter} disabled={busy} onChange={e => setDraft({ ...draft, adapter: e.target.value as ProviderInput['adapter'] })}><option value="auto">自动识别</option><option value="responses">OpenAI Responses</option><option value="chat-completions">Chat Completions</option><option value="anthropic-messages">Anthropic Messages</option></select></div></div>
       <div className="field-row"><label className="fr-label" htmlFor="provider-model">模型 ID</label><div className="fr-value"><input id="provider-model" className="txt-input" value={draft.codexModel ?? ''} placeholder="可选；服务无模型目录时填写" disabled={busy} onChange={e => setDraft({ ...draft, codexModel: e.target.value })} /></div></div>
+      <p className="provider-validation-note">保存后会在后台发送最小验证请求；配置不会被自动修改。</p>
       <div className="prov-save-bar"><button type="button" className="provider-text-action" disabled={busy} onClick={closeEditor}>取消</button><button type="submit" className="btn primary" disabled={busy}>保存</button></div>
     </form>;
   return <div id="providerList" aria-busy={busy}>

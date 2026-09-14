@@ -3,7 +3,7 @@ import * as React from 'react';
 import { ChevronRight, LoaderCircle, X } from 'lucide-react';
 import { useBridge } from '@/bridge/store';
 import type { TraceIndexRepairPlan } from '@/bridge/types';
-import { showToast } from '@/lib/toast';
+import { showErrorToast, showToast } from '@/lib/toast';
 
 interface Props {
   readonly quickRepairBusy: boolean;
@@ -31,7 +31,7 @@ export function RepairCenterSheet({
         setIndexPlan(await bridge.api.inspectTraceIndexRepair());
       }
     } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error), 'error');
+      showErrorToast('Trace 索引修复失败', error);
       setIndexPlan(null);
     } finally {
       setIndexBusy(false);

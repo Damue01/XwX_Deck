@@ -59,7 +59,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     const required = ${JSON.stringify([
       'getState', 'getTraceStats', 'getUpdateState', 'checkForUpdates', 'setStartupEnabled', 'setTheme', 'setTraceAppearance', 'chooseTraceBackground', 'clearTraceBackground', 'repairApplication', 'resetApplication', 'toggleTracing', 'toggleClient',
       'getCodexConfig', 'getCodexEnhancements', 'updateCodexEnhancements',
-      'getProviders', 'saveProvider', 'deleteProvider', 'switchClientProvider', 'fetchProviderModels',
+      'getProviders', 'saveProvider', 'deleteProvider', 'switchClientProvider', 'fetchProviderModels', 'validateProvider',
       'diagnoseCodexConversations', 'queryCodexConversations', 'detailCodexConversation', 'cancelCodexConversationScan', 'setCodexConversationDiagnosticsActive', 'openCodexConversationPath', 'copyText',
       'inspectTraceIndexRepair', 'applyTraceIndexRepair',
       'getCompatibleServiceConfig', 'updateCompatibleServiceConfig', 'getModelServices', 'setModelService', 'isChatGptRunning',

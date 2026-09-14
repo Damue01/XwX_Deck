@@ -38,6 +38,8 @@ export interface ClientManagedField {
   readonly sectionHeader?: string;
   readonly previous: ClientManagedValue;
   readonly writtenValue: string | boolean;
+  /** False when XwX temporarily removes a TOML key instead of assigning it. */
+  readonly writtenPresent?: boolean;
   /** Remove a section created only for Trace after all of its managed keys are gone. */
   readonly removeSectionIfEmpty?: boolean;
 }

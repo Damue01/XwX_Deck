@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { CodexEnhancementsSnapshot } from '@/bridge/types';
 import { useConfirm, useConfirmChecked } from '@/components/ui/confirm-dialog';
 import { Toggle } from '@/features/shell/Toggle';
-import { showToast } from '@/lib/toast';
+import { showErrorToast, showToast } from '@/lib/toast';
 
 interface Props {
   readonly enhancements: CodexEnhancementsSnapshot;
@@ -58,8 +58,8 @@ export function CodexEnhancements({ enhancements, onUpdate, onAfterUpdate }: Pro
       await onUpdate({ preserveOfficialLogin: enabled });
       showToast(enabled ? '已开启保留官方登录' : '已关闭保留官方登录');
       onAfterUpdate?.();
-    } catch {
-      showToast('无法更新 ChatGPT 官方登录设置', 'error');
+    } catch (error) {
+      showErrorToast('无法更新 ChatGPT 官方登录设置', error);
     } finally {
       setBusyAuth(false);
     }
@@ -105,8 +105,8 @@ export function CodexEnhancements({ enhancements, onUpdate, onAfterUpdate }: Pro
       });
       showToast(historyResultText(next.history, enabled));
       onAfterUpdate?.();
-    } catch {
-      showToast('无法更新 ChatGPT 会话历史设置', 'error');
+    } catch (error) {
+      showErrorToast('无法更新 ChatGPT 会话历史设置', error);
     } finally {
       setBusyHistory(false);
     }

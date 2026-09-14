@@ -33,12 +33,12 @@ export function resolveManualMacRelease(
   architecture: string
 ): ManualMacReleaseSelection | undefined {
   if (!isRecord(value) || !isValidVersion(value.version)) {
-    throw new Error('The published XwX Deck version is invalid.');
+    throw new Error('更新清单中的版本号无效。');
   }
   if (!isVersionNewer(value.version, currentVersion)) return undefined;
   const artifactName = MAC_DMG_NAMES[architecture];
-  if (!artifactName) throw new Error(`Unsupported macOS architecture: ${architecture}`);
-  if (!Array.isArray(value.files)) throw new Error('The published XwX Deck artifact list is invalid.');
+  if (!artifactName) throw new Error(`当前 Mac 架构暂不支持更新：${architecture}。`);
+  if (!Array.isArray(value.files)) throw new Error('更新清单中的安装包列表无效。');
   const files = value.files;
   const rawArtifact = files.find(item => isRecord(item) && item.name === artifactName);
   // The shared release feed may legitimately contain only the Windows EXE
@@ -54,7 +54,7 @@ export function resolveManualMacRelease(
     || typeof rawArtifact.sha256 !== 'string'
     || !/^[0-9a-f]{64}$/i.test(rawArtifact.sha256)
   ) {
-    throw new Error(`XwX Deck ${value.version} does not contain a valid ${artifactName}.`);
+    throw new Error(`XwX Deck ${value.version} 的更新清单中缺少有效的 ${artifactName}。`);
   }
   return {
     version: value.version,

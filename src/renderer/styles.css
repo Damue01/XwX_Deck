@@ -1440,6 +1440,7 @@ html[data-theme="night"] .conversation-tool {
 .provider-text-action:focus-visible, .provider-edit-trigger:focus-visible, .provider-menu-trigger:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .provider-editor { padding: 8px 0 16px; }
 .provider-editor .txt-input { font-family: var(--sans); }
+.provider-validation-note { margin: 6px 0 0 118px; color: var(--quiet); font-size: 12px; line-height: 1.45; }
 .provider-menu { min-width: 152px; }
 .provider-menu .conversation-header-menu-item { padding: 0 9px; min-height: 34px; font-size: 13px; }
 .provider + .provider { margin-top: 2px; }

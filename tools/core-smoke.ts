@@ -17,6 +17,12 @@ import { parse as parseToml } from 'smol-toml';
 import { parse as parseYaml } from 'yaml';
 import { XwXDeckSettingsStore } from '../src/main/app/settings';
 import {
+  buildProviderValidationPlan,
+  validateProviderConnection
+} from '../src/main/app/providerValidation';
+import type { ProviderConnection } from '../src/shared/providers';
+import { operationError, userErrorMessage } from '../src/renderer/lib/errors';
+import {
   applicationResetRelaunchArgs,
   parseApplicationResetRequest,
   performApplicationRepair,
@@ -217,6 +223,8 @@ try {
   completed.push('standalone direct restore ownership, conflicts, rollback and path isolation');
   await testExitRecovery();
   await testSettings();
+  testRendererErrorMessages();
+  await testProviderValidation();
   await testProviderRegistry(root);
   completed.push('standalone Provider registry migration, isolation, editable failures and official catalog');
   await testCodexConversationDoctor();
@@ -686,6 +694,28 @@ async function testSettings(): Promise<void> {
   assert.equal(arkResponsesRoute?.upstreamBaseUrl, 'https://ark.cn-beijing.volces.com/api/v3');
   assert.equal(arkResponsesRoute?.stripPathPrefix, '/v1',
     'Ark /api/v3 is already an API version root and must not receive an extra /v1');
+  assert.equal(
+    tapProxyTest.buildUpstreamUrl(
+      'https://ark.cn-beijing.volces.com/api/v3',
+      new URL('http://127.0.0.1:45233/backend-api/codex/responses'),
+      '/backend-api/codex',
+      'responses-to-chat',
+      'chat-completions'
+    ).toString(),
+    'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+    'Desktop Responses-to-Chat bridging must preserve Ark v3 without inserting /v1'
+  );
+  assert.equal(
+    tapProxyTest.buildUpstreamUrl(
+      'https://ark.cn-beijing.volces.com/api/v3',
+      new URL('http://127.0.0.1:45233/backend-api/codex/responses/compact'),
+      '/backend-api/codex',
+      'responses-compact-synthetic',
+      'responses'
+    ).toString(),
+    'https://ark.cn-beijing.volces.com/api/v3/responses',
+    'Desktop synthetic compaction must preserve Ark v3 without inserting /v1'
+  );
   const imageAllowedRoute = controllerTest.buildCodexGatewayRoutes({
     ...initial,
     compatible: {
@@ -772,7 +802,7 @@ async function testSettings(): Promise<void> {
   }, '1.0.8', 'arm64'), undefined,
   'a newer Windows-only release must not surface as a broken macOS update');
   assert.throws(() => resolveManualMacRelease({ version: '1.0.9' }, '1.0.8', 'arm64'),
-    /artifact list is invalid/,
+    /更新清单中的安装包列表无效/,
     'a missing release artifact list must remain a manifest error');
   assert.deepEqual(resolveManualMacRelease({
     version: '1.0.9',
@@ -807,7 +837,7 @@ async function testSettings(): Promise<void> {
       size: 1,
       sha256: 'invalid'
     }]
-  }, '1.0.8', 'arm64'), /valid XwX-Deck-mac-arm64\.dmg/);
+  }, '1.0.8', 'arm64'), /更新清单中缺少有效的 XwX-Deck-mac-arm64\.dmg/);
   const updated = await store.update({ tracingEnabled: true, clientEnabled: { claude: false, codex: true } });
   assert.equal(updated.tracingEnabled, true);
   assert.equal((await store.update({ gatewayPaused: true })).gatewayPaused, true);
@@ -864,6 +894,103 @@ async function testSettings(): Promise<void> {
   assert.equal(directories.traceRoot, traceRoot);
   assert.equal(directories.logRoot, logRoot);
   completed.push('settings persistence');
+}
+
+function testRendererErrorMessages(): void {
+  assert.equal(
+    userErrorMessage(new Error("Error invoking remote method 'xwxdeck:switch-client-provider': Error: ChatGPT 目标服务不可达。")),
+    'ChatGPT 目标服务不可达。'
+  );
+  assert.equal(
+    userErrorMessage(new TypeError('fetch failed')),
+    '网络连接失败，请检查网络或代理后重试。'
+  );
+  assert.equal(operationError(undefined, '状态加载失败'), '状态加载失败');
+  completed.push('renderer errors remove IPC internals and preserve actionable causes');
+}
+
+async function testProviderValidation(): Promise<void> {
+  const wrongArk: ProviderConnection = {
+    id: 'ark-wrong',
+    displayName: '火山方舟',
+    providerPreset: 'auto',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses/v1',
+    bearerToken: 'ark-placeholder-key',
+    adapter: 'auto',
+    codexApiFormat: 'responses',
+    codexModel: 'doubao-seed-2-1-pro-260628',
+    codexContextWindow: 0,
+    claudeModels: { fable: '', opus: '', sonnet: '', haiku: '' }
+  };
+  const plan = buildProviderValidationPlan(wrongArk);
+  assert.equal(plan.primary.endpoint, 'https://ark.cn-beijing.volces.com/api/v3/responses/v1/chat/completions');
+  assert.equal(plan.suggestion?.baseUrl, 'https://ark.cn-beijing.volces.com/api/v3');
+  assert.equal(plan.suggestion?.protocol, 'responses');
+
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const suggestion = await validateProviderConnection(wrongArk, async (input, init) => {
+    const url = String(input);
+    requests.push({ url, init });
+    return url.endsWith('/responses/v1/chat/completions')
+      ? new Response(JSON.stringify({ code: 'InvalidAction', message: 'The specified action is invalid' }), { status: 404 })
+      : new Response(JSON.stringify({ id: 'resp_probe', status: 'completed' }), { status: 200 });
+  });
+  assert.deepEqual(suggestion, {
+    status: 'suggestion',
+    providerId: 'ark-wrong',
+    providerName: '火山方舟',
+    suggestedBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    suggestedAdapter: 'responses',
+    suggestionReason: 'base-url'
+  });
+  assert.equal(requests.length, 2, 'only the current endpoint and one high-confidence correction may be probed');
+  assert.equal(requests[1].init?.redirect, 'manual', 'validation must not forward provider credentials through redirects');
+  assert.equal((requests[1].init?.headers as Record<string, string>).authorization, 'Bearer ark-placeholder-key');
+  assert.deepEqual(JSON.parse(String(requests[1].init?.body)), {
+    model: 'doubao-seed-2-1-pro-260628',
+    input: 'Reply with OK.',
+    max_output_tokens: 1,
+    stream: false
+  });
+
+  const correctArk: ProviderConnection = {
+    ...wrongArk,
+    id: 'ark-correct',
+    providerPreset: 'volcengine-ark',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    adapter: 'responses'
+  };
+  assert.equal((await validateProviderConnection(correctArk, async () => new Response('{}', { status: 200 }))).status, 'valid');
+  assert.equal((await validateProviderConnection(correctArk, async () => new Response('{}', { status: 401 }))).status, 'authentication-error');
+  assert.equal((await validateProviderConnection(correctArk, async () => new Response(JSON.stringify({ error: { message: 'model not found' } }), { status: 404 }))).status, 'model-error');
+
+  const protocolRequests: string[] = [];
+  const protocolFallback = await validateProviderConnection({
+    ...correctArk,
+    id: 'ark-auto-protocol',
+    providerPreset: 'auto',
+    adapter: 'auto',
+    codexModel: 'unknown-ark-model'
+  }, async input => {
+    const url = String(input);
+    protocolRequests.push(url);
+    return url.endsWith('/chat/completions')
+      ? new Response(JSON.stringify({ code: 'InvalidAction', message: 'The specified action is invalid' }), { status: 404 })
+      : new Response(JSON.stringify({ id: 'resp_probe', status: 'completed' }), { status: 200 });
+  });
+  assert.deepEqual(protocolRequests, [
+    'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+    'https://ark.cn-beijing.volces.com/api/v3/responses'
+  ]);
+  assert.deepEqual(protocolFallback, {
+    status: 'suggestion',
+    providerId: 'ark-auto-protocol',
+    providerName: '火山方舟',
+    suggestedBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    suggestedAdapter: 'responses',
+    suggestionReason: 'protocol'
+  });
+  completed.push('provider save validation is bounded, non-mutating and suggests exact endpoint corrections');
 }
 
 async function testCodexConversationDoctor(): Promise<void> {
@@ -1270,7 +1397,7 @@ async function testTraceIndexRepair(): Promise<void> {
   const lease = await acquireTraceWriterLease(traceRoot);
   await assert.rejects(applyTraceIndexRepair(traceRoot, plan.indexSha256), /已有写入进程/);
   await lease.release();
-  await assert.rejects(applyTraceIndexRepair(traceRoot, 'stale-hash'), /no longer matches/);
+  await assert.rejects(applyTraceIndexRepair(traceRoot, 'stale-hash'), /索引已在扫描后发生变化/);
   const applied = await applyTraceIndexRepair(traceRoot, plan.indexSha256);
   assert.equal(applied.recoveredSessions, 1);
   assert.ok(applied.backupIndexPath);
@@ -5070,8 +5197,21 @@ async function testModelCatalogMetadata(): Promise<void> {
     'https://ark.cn-beijing.volces.com/api/v3',
     'ark-key',
     async input => {
-      openAiCompatibleRequests.push(String(input));
-      return new Response(JSON.stringify({ data: [{ id: 'ep-ark-demo' }] }), { status: 200 });
+      const url = String(input);
+      openAiCompatibleRequests.push(url);
+      if (url.endsWith('/api/v3/v1/models')) return new Response('', { status: 404 });
+      if (url.endsWith('/api/v3/models')) {
+        return new Response(JSON.stringify({ data: [{
+          id: 'ep-ark-demo',
+          modalities: { input_modalities: ['text'] },
+          token_limits: { context_window: 1_048_576, max_output_token_length: 393_216 },
+          features: {
+            tools: { function_calling: true },
+            structured_outputs: { json_object: false, json_schema: false }
+          }
+        }] }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
     },
     undefined,
     [],
@@ -5085,6 +5225,13 @@ async function testModelCatalogMetadata(): Promise<void> {
     ]
   );
   assert.equal(openAiCompatible[0]?.id, 'ep-ark-demo');
+  assert.equal(openAiCompatible[0]?.contextWindow, 1_048_576);
+  assert.equal(openAiCompatible[0]?.maxOutputTokens, 393_216);
+  assert.deepEqual(openAiCompatible[0]?.inputModalities, ['text']);
+  assert.equal(openAiCompatible[0]?.vision, false);
+  assert.equal(openAiCompatible[0]?.toolCalling, true);
+  assert.equal(openAiCompatible[0]?.structuredOutput, false);
+  assert.equal(openAiCompatible[0]?.capabilitySources?.contextWindow, 'compatible');
   await assert.rejects(
     () => fetchCompatibleServiceModelCatalog(
       'https://ark.cn-beijing.volces.com/api/v3',
@@ -5838,6 +5985,7 @@ async function testCodexOfficialAndCustomTakeover(): Promise<void> {
   await fs.writeFile(paths.codexAuthPath, officialAuth);
   const officialOriginal = [
     'model_provider = "openai"',
+    'model_catalog_json = "/tmp/external-official-catalog.json"',
     '',
     '[model_providers.compatible]',
     'base_url = "https://compatible.example/v1"',
@@ -5860,6 +6008,8 @@ async function testCodexOfficialAndCustomTakeover(): Promise<void> {
   const officialDuringTrace = await fs.readFile(paths.codexConfigPath, 'utf8');
   assert.match(officialDuringTrace, /^model_provider = "openai"$/m);
   assert.match(officialDuringTrace, /^chatgpt_base_url = "http:\/\/127\.0\.0\.1:44998\/backend-api"$/m);
+  assert.doesNotMatch(officialDuringTrace, /^model_catalog_json\s*=/m,
+    'official Trace takeover must temporarily remove a foreign model catalog pointer');
   assert.doesNotMatch(officialDuringTrace, /\[model_providers\.xwx_deck\]/);
   assert.match(officialDuringTrace, /\[model_providers\.compatible\][\s\S]*base_url = "https:\/\/compatible\.example\/v1"/);
   assert.equal((await new CodexConfigManager(path.join(root, 'codex-detection-user-data')).readFromContent(officialOriginal, paths)).mode, 'official');
@@ -5877,6 +6027,7 @@ async function testCodexOfficialAndCustomTakeover(): Promise<void> {
 
   const customOriginal = [
     'model_provider = "compatible"',
+    'model_catalog_json = "/tmp/external-compatible-catalog.json"',
     '',
     '[model_providers.compatible]',
     'base_url = "https://compatible.example/v1"',
@@ -5894,6 +6045,8 @@ async function testCodexOfficialAndCustomTakeover(): Promise<void> {
   assert.equal(customTakeover.codexRouteKind, 'custom-provider');
   const customDuringTrace = await fs.readFile(paths.codexConfigPath, 'utf8');
   assert.match(customDuringTrace, /\[model_providers\.compatible\][\s\S]*base_url = "http:\/\/127\.0\.0\.1:44998\/v1"/);
+  assert.match(customDuringTrace, /^model_catalog_json = "\/tmp\/external-compatible-catalog\.json"$/m,
+    'Trace of an existing custom provider must preserve its matching model catalog');
   assert.doesNotMatch(customDuringTrace, /^chatgpt_base_url\s*=/m);
   assert.equal((await new CodexConfigManager(path.join(root, 'codex-detection-user-data')).readFromContent(customOriginal, paths)).mode, 'compatible');
   await orchestrator.restoreAll();
@@ -6656,18 +6809,31 @@ async function testCodexModelCatalogGateway(): Promise<void> {
 
     const detached = await config.restoreCompatibleServiceGateway({
       upstreamBaseUrl: 'https://compatible.example/v1',
-      gatewayBaseUrl: 'http://127.0.0.1:34117/v1'
+      gatewayBaseUrl: 'http://127.0.0.1:34117/v1',
+      modelCatalogPath: catalogPath
     });
-    assert.equal(detached.restoredFields, 2);
+    assert.equal(detached.restoredFields, 1);
     const detachedToml = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
     assert.match(detachedToml, /\[model_providers\.xwx_deck\][\s\S]*base_url = "https:\/\/compatible\.example\/v1"/);
-    assert.doesNotMatch(detachedToml, /^model_catalog_json\s*=/m, 'clean shutdown must not leave a dead Gateway pointer');
+    assert.match(detachedToml, /^model_catalog_json = ".*xwx-compatible-catalog\.json"$/m,
+      'direct compatible mode must retain the static XwX model catalog pointer');
 
     await config.update({ mode: 'official', officialModel: 'gpt-official' });
     const officialToml = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
-    assert.doesNotMatch(officialToml, /^model_catalog_json\s*=/m, 'returning official removes only the XwX catalog pointer');
+    assert.doesNotMatch(officialToml, /^model_catalog_json\s*=/m, 'returning official removes the XwX catalog pointer');
 
-    await fs.writeFile(path.join(codexHome, 'config.toml'), 'model_catalog_json = "C:/user/catalog.json"\n');
+    const externalCatalogPath = path.join(codexHome, 'external-catalog.json');
+    const externalCatalogBytes = '{"models":[{"slug":"external-only"}]}\n';
+    await fs.writeFile(externalCatalogPath, externalCatalogBytes);
+    await fs.writeFile(path.join(codexHome, 'config.toml'), `model_catalog_json = ${JSON.stringify(externalCatalogPath)}\n`);
+    await config.update({ mode: 'official', officialModel: 'gpt-official' });
+    const officialWithoutExternalCatalog = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
+    assert.doesNotMatch(officialWithoutExternalCatalog, /^model_catalog_json\s*=/m,
+      'an explicit official-mode switch must remove a stale external catalog pointer');
+    assert.equal(await fs.readFile(externalCatalogPath, 'utf8'), externalCatalogBytes,
+      'official pointer cleanup must not modify or delete the external catalog file');
+
+    await fs.writeFile(path.join(codexHome, 'config.toml'), `model_catalog_json = ${JSON.stringify(externalCatalogPath)}\n`);
     await config.update({
       mode: 'compatible',
       compatibleModel: 'deepseek-chat',
@@ -6677,7 +6843,10 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       modelCatalogPath: catalogPath
     });
     const userCatalogToml = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
-    assert.match(userCatalogToml, /^model_catalog_json = "C:\/user\/catalog\.json"$/m, 'a user-owned catalog pointer must be preserved');
+    assert.match(userCatalogToml, /^model_catalog_json = ".*xwx-compatible-catalog\.json"$/m,
+      'an explicit compatible-mode switch must replace a stale external catalog pointer');
+    assert.equal(await fs.readFile(externalCatalogPath, 'utf8'), externalCatalogBytes,
+      'pointer takeover must not modify or delete the external catalog file');
     const userCatalogResult = await catalogManager.syncIfXwXOwned([
       {
         id: 'should-not-overwrite-user-catalog',
@@ -6686,7 +6855,31 @@ async function testCodexModelCatalogGateway(): Promise<void> {
         clients: ['codex']
       }
     ]);
-    assert.equal(userCatalogResult, undefined, 'a user-owned Codex catalog must not be overwritten');
+    assert.equal(userCatalogResult?.changed, true, 'background refresh may update the catalog after its pointer becomes XwX-owned');
+
+    const externalDriftPath = path.join(codexHome, 'external-drift-catalog.json');
+    const externallyChangedPointer = userCatalogToml.replace(
+      /^model_catalog_json = .*$/m,
+      `model_catalog_json = ${JSON.stringify(externalDriftPath)}`
+    );
+    await fs.writeFile(path.join(codexHome, 'config.toml'), externallyChangedPointer);
+    assert.equal(await catalogManager.syncIfXwXOwned([{
+      id: 'must-not-win-a-background-race',
+      vendor: '兼容服务',
+      protocols: ['chat-completions'],
+      clients: ['codex']
+    }]), undefined, 'background refresh must not retake a pointer changed by another tool');
+    const conflictSafeRestore = await config.restoreDirectConfiguration({
+      officialBaseUrl: 'https://api.openai.com/v1',
+      officialModel: 'gpt-official'
+    });
+    assert.ok(conflictSafeRestore.conflicts.some(item => item.startsWith('model_catalog_json ')),
+      'an external pointer edit after takeover must be reported as a field conflict');
+    const conflictSafeToml = parseToml(await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8')) as {
+      model_catalog_json?: unknown;
+    };
+    assert.equal(conflictSafeToml.model_catalog_json, externalDriftPath,
+      'restoration must preserve a catalog pointer changed after XwX takeover');
   } finally {
     if (previousHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = previousHome;
@@ -7644,6 +7837,31 @@ async function testProxyCapture(): Promise<void> {
       type: 'text',
       text: '图片主要讲了什么?'
     }], 'Ark Chat Completions multimodal content must retain image_url and text parts');
+
+    proxy.setClientRoutes([{
+      source: 'codex-cli',
+      path: '/backend-api/codex/responses',
+      apiType: 'responses',
+      upstreamBaseUrl: `http://127.0.0.1:${address.port}/api/v3`,
+      stripPathPrefix: '/backend-api/codex',
+      transform: 'responses-to-chat-auto',
+      modelProtocols: { 'deepseek-v4-flash-ga-260731': 'chat-completions' },
+      capture: false,
+      upstreamBearerToken: 'ark-placeholder-key'
+    }]);
+    const arkDesktopChat = await fetch(`${proxyUrl}/backend-api/codex/responses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'codex-desktop/ark-qa' },
+      body: JSON.stringify({
+        model: 'deepseek-v4-flash-ga-260731',
+        stream: false,
+        input: 'Desktop route compatibility check'
+      })
+    });
+    assert.equal(arkDesktopChat.status, 200);
+    await arkDesktopChat.text();
+    assert.equal(upstreamPaths.at(-1), '/api/v3/chat/completions',
+      'Codex Desktop backend-api ingress must not insert /v1 below an Ark v3 base');
 
     proxy.setClientRoutes([{
       source: 'codex-cli',
@@ -9913,6 +10131,8 @@ async function testManagerIpcContract(): Promise<void> {
   assert.match(runtime, /app\.setAppUserModelId\('app\.xwxdeck\.desktop'\)/,
     'the standalone edition must use an isolated Windows application identity');
   assert.match(rendererSrc, /ChatGPT/);
+  assert.match(modelsPage, /showErrorToast\(`无法切换 \$\{client === 'codex' \? 'ChatGPT' : 'Claude'\} 服务`, error/,
+    'provider-switch failures must separate a clear client-specific title from the actionable cause');
   assert.match(combobox, /top:\s*41/, 'model menus must stay below the Electron draggable titlebar');
   assert.match(combobox, /collisionPadding=\{collisionPadding\}/,
     'the titlebar collision padding must reach the popup positioner');
@@ -9934,7 +10154,7 @@ async function testManagerIpcContract(): Promise<void> {
     'the onboarding card must keep the compact top spacing verified in the rendered UI');
   assert.match(rendererSrc, /showToast\('Trace 已开启', 'success'/,
     'enabling Trace must use one concise bottom-right toast');
-  assert.match(rendererSrc, /ChatGPT 接入失败，请重启 Trace 后重试。/);
+  assert.match(rendererSrc, /ChatGPT 接入失败，Trace 未接管其配置。请检查 ChatGPT 配置后重新开启 Trace。/);
   assert.match(rendererSrc, /ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。/);
   assert.match(
     rendererSrc,
@@ -10018,7 +10238,7 @@ async function testManagerIpcContract(): Promise<void> {
   const updateInstall = runtime.slice(runtime.indexOf('async function restartAndInstall'));
   assert.match(updateInstall, /await prepareSafeShutdown\(\);[\s\S]*?await shutdownControllerWithConfirmation\(shutdown\.forceShutdown, shutdown\.chatGptMayBeRunning\);/,
     'automatic update must share the interactive shutdown guard');
-  assert.match(settingsPage, /showToast\(operationError\(error, manual \? '无法打开安装包' : '无法重启并完成更新'\), 'error'\)/,
+  assert.match(settingsPage, /showErrorToast\(manual \? '无法打开安装包' : '无法重启并完成更新', error\)/,
     'update failures must preserve the actionable shutdown reason');
   assert.match(
     xwxDeckController,
@@ -10032,13 +10252,13 @@ async function testManagerIpcContract(): Promise<void> {
   );
   assert.match(
     rendererSrc,
-    /showToast\(e instanceof Error && e\.message \? e\.message : '客户端接入失败', 'error'\)/,
+    /showErrorToast\(`\$\{clientName\} 接入设置失败`, e\)/,
     'client toggles must preserve actionable backend errors'
   );
   assert.match(
     modelsPage,
-    /message\.startsWith\('Claude 接入失败：检测到环境变量'\)\) return message/,
-    'model service errors must not prefix the concise environment warning'
+    /showErrorToast\('无法保存 Claude 模型', error\)/,
+    'model service errors must keep the action and backend reason in separate fields'
   );
   assert.match(xwxDeckController, /等待请求/);
   assert.match(xwxDeckController, /若客户端已在运行，请重启客户端后发送请求/);

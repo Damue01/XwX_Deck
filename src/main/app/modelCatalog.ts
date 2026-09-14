@@ -4,6 +4,7 @@ import { isRecord } from '../shared/obj';
 import { readTextOrUndefined, writeFileAtomic } from '../shared/fsx';
 import { enrichModelCatalog, enrichModelCatalogCacheFirst } from './modelCapabilities';
 import type { ProviderModelCatalogMode, ProviderPresetId } from '../../shared/providerProfiles';
+import { detectProviderPreset } from '../../shared/providerProfiles';
 import { buildProviderModelUrlCandidates } from './providerDiscovery';
 
 export type ModelProtocol = 'anthropic-messages' | 'openai-responses' | 'chat-completions' | 'gemini';
@@ -156,12 +157,15 @@ export async function fetchCompatibleServiceModelCatalog(
     result.ok
       ? result.entries
       : result.missing ? [] : cachedEntriesForEndpoint(fallbackCatalog, endpoints[index])
-  ))).map(stripUntrustedCompatibleServiceCapabilities);
+  )));
+  const providerCatalog = detectProviderPreset(baseUrl) === 'volcengine-ark'
+    ? discovered
+    : discovered.map(stripUntrustedCompatibleServiceCapabilities);
   const values = capabilityCachePath
     ? options.forceCapabilityRefresh
-      ? await enrichModelCatalog(discovered, fetcher, capabilityCachePath)
-      : await enrichModelCatalogCacheFirst(discovered, fetcher, capabilityCachePath)
-    : await enrichModelCatalog(discovered, fetcher);
+      ? await enrichModelCatalog(providerCatalog, fetcher, capabilityCachePath)
+      : await enrichModelCatalogCacheFirst(providerCatalog, fetcher, capabilityCachePath)
+    : await enrichModelCatalog(providerCatalog, fetcher);
 
   return values;
 }
@@ -323,6 +327,11 @@ function normalizeModelEntry(value: unknown): ModelCatalogEntry | undefined {
   const id = firstString(value.id, value.name, value.model);
   if (!id) return undefined;
   const capabilities = isRecord(value.capabilities) ? value.capabilities : undefined;
+  const tokenLimits = isRecord(value.token_limits) ? value.token_limits : undefined;
+  const modalities = isRecord(value.modalities) ? value.modalities : undefined;
+  const features = isRecord(value.features) ? value.features : undefined;
+  const toolFeatures = isRecord(features?.tools) ? features.tools : undefined;
+  const structuredOutputFeatures = isRecord(features?.structured_outputs) ? features.structured_outputs : undefined;
   const vendor = normalizeVendor(firstString(
     value.vendor,
     value.provider,
@@ -357,25 +366,33 @@ function normalizeModelEntry(value: unknown): ModelCatalogEntry | undefined {
     value.vision_capable,
     capabilities?.vision,
     capabilities?.supports_vision
-  ) ?? modalityVision(value.input_modalities) ?? modalityVision(capabilities?.input_modalities);
-  const inputModalities = normalizeModalities(value.input_modalities ?? capabilities?.input_modalities);
+  ) ?? modalityVision(value.input_modalities)
+    ?? modalityVision(modalities?.input_modalities)
+    ?? modalityVision(capabilities?.input_modalities);
+  const inputModalities = normalizeModalities(
+    value.input_modalities ?? modalities?.input_modalities ?? capabilities?.input_modalities
+  );
   const contextWindow = firstPositiveInt(
     value.context_window, value.max_context_window, value.context_length, value.input_token_limit,
     value.inputTokenLimit, capabilities?.context_window, capabilities?.max_context_window,
-    capabilities?.context_length, capabilities?.input_token_limit, capabilities?.inputTokenLimit
+    capabilities?.context_length, capabilities?.input_token_limit, capabilities?.inputTokenLimit,
+    tokenLimits?.context_window, tokenLimits?.max_input_token_length
   );
   const maxOutputTokens = firstPositiveInt(
     value.max_output_tokens, value.output_token_limit, value.outputTokenLimit,
-    capabilities?.max_output_tokens, capabilities?.output_token_limit, capabilities?.outputTokenLimit
+    capabilities?.max_output_tokens, capabilities?.output_token_limit, capabilities?.outputTokenLimit,
+    tokenLimits?.max_output_token_length
   );
   const reasoning = firstBoolean(value.reasoning, value.supports_reasoning, capabilities?.reasoning, capabilities?.supports_reasoning);
   const toolCalling = firstBoolean(
     value.tool_call, value.supports_tool_calling, value.supports_function_calling,
-    capabilities?.tool_call, capabilities?.supports_tool_calling, capabilities?.supports_function_calling
+    capabilities?.tool_call, capabilities?.supports_tool_calling, capabilities?.supports_function_calling,
+    toolFeatures?.function_calling
   );
   const structuredOutput = firstBoolean(
     value.structured_output, value.supports_structured_output, value.supports_response_schema,
-    capabilities?.structured_output, capabilities?.supports_structured_output, capabilities?.supports_response_schema
+    capabilities?.structured_output, capabilities?.supports_structured_output, capabilities?.supports_response_schema,
+    anyBooleanTrue(structuredOutputFeatures?.json_schema, structuredOutputFeatures?.json_object)
   );
   const interleavedThinking = firstBoolean(value.interleaved, capabilities?.interleaved);
   const responsesCompact = firstBoolean(
@@ -659,6 +676,11 @@ function firstString(...values: readonly unknown[]): string {
 function firstBoolean(...values: readonly unknown[]): boolean | undefined {
   for (const value of values) if (typeof value === 'boolean') return value;
   return undefined;
+}
+
+function anyBooleanTrue(...values: readonly unknown[]): boolean | undefined {
+  const booleans = values.filter((value): value is boolean => typeof value === 'boolean');
+  return booleans.length ? booleans.some(Boolean) : undefined;
 }
 
 function firstPositiveInt(...values: readonly unknown[]): number | undefined {

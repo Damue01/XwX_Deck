@@ -12,6 +12,7 @@ import type {
   XwXDeckUpdateState,
   CompatibleServiceConfigSnapshot,
 } from './types';
+import { operationError } from '@/lib/errors';
 
 export interface BridgeState {
   readonly providers: ProviderSnapshot | null;
@@ -91,7 +92,7 @@ export function BridgeProvider({ children, showToast }: Props): React.ReactEleme
       type MutablePatch = { -readonly [K in keyof BridgeData]?: BridgeData[K] };
       const patch: MutablePatch = { booted: true };
       if (runtimeR.status === 'fulfilled') patch.runtime = runtimeR.value;
-      else showToast(`状态加载失败: ${(runtimeR.reason as Error).message}`);
+      else showToast(operationError(runtimeR.reason, '状态加载失败'));
       if (statsR.status === 'fulfilled') patch.traceStats = statsR.value;
       if (updateR.status === 'fulfilled') patch.updateState = updateR.value;
       if (claudeR.status === 'fulfilled') patch.claudeModels = claudeR.value;

@@ -96,7 +96,7 @@ interface CompatibleServiceImageGenRecord {
 }
 
 export class CodexConfigManager {
-  /** `userDataDir` persists the one field that 兼容服务 temporarily owns. */
+  /** `userDataDir` persists the bounded fields that XwX temporarily owns. */
   constructor(private readonly userDataDir: string) {}
 
   async read(): Promise<CodexConfigSnapshot> {
@@ -205,7 +205,7 @@ export class CodexConfigManager {
     if (imageGenRestore) next = imageGenRestore.text;
 
     try {
-      await new CodexDirectRestore(this.userDataDir).write(paths.codexConfigPath, original, next, ['model_provider', 'model', ...DIRECT_PROVIDER_FIELDS], () => writeCodexConfigIfUnchanged(paths.codexConfigPath, original, next));
+      await new CodexDirectRestore(this.userDataDir).write(paths.codexConfigPath, original, next, ['model_provider', 'model', 'model_catalog_json', ...DIRECT_PROVIDER_FIELDS], () => writeCodexConfigIfUnchanged(paths.codexConfigPath, original, next));
     } catch (error) {
       // A newly-created record without a corresponding config write would be
       // harmless, but removing it makes the failed transaction fully inert.
@@ -261,12 +261,13 @@ export class CodexConfigManager {
   }
 
   /**
-   * Clean application shutdown: detach only the XwX Gateway fields so Codex is
-   * never left pointing at a dead loopback port. External edits win.
+   * Detach the XwX Gateway and publish the catalog pointer required by the
+   * resulting direct mode. External file contents are never touched.
    */
   async restoreCompatibleServiceGateway(input: {
     readonly upstreamBaseUrl: string;
     readonly gatewayBaseUrl: string;
+    readonly modelCatalogPath?: string;
   }): Promise<{ restoredFields: number; conflicts: string[] }> {
     const paths = resolveClientPaths();
     const original = await readCodexConfigText(paths.codexConfigPath);
@@ -288,8 +289,13 @@ export class CodexConfigManager {
     } else if (section.baseUrl && section.baseUrl !== upstreamBaseUrl) {
       conflicts.push('兼容服务 base_url 已被外部修改，保留当前值');
     }
-    const catalog = readTomlTopLevelString(rootToml(next), 'model_catalog_json');
-    if (isXwXCodexCatalogPath(catalog)) {
+    const currentCatalog = readTomlTopLevelString(rootToml(next), 'model_catalog_json');
+    if (input.modelCatalogPath) {
+      if (currentCatalog !== input.modelCatalogPath) {
+        next = setTomlStringKey(next, 'model_catalog_json', input.modelCatalogPath).text;
+        restoredFields += 1;
+      }
+    } else if (currentCatalog !== undefined) {
       next = removeTomlStringKey(next, 'model_catalog_json').text;
       restoredFields += 1;
     }
@@ -312,7 +318,7 @@ export class CodexConfigManager {
   /** Restore only fields covered by this installation's explicit write ledger. */
   async restoreDirectConfiguration(input: {
     officialBaseUrl: string; officialModel: string; officialContextWindow?: number;
-    direct?: { baseUrl: string; bearerToken: string; model: string; contextWindow: number; displayName: string };
+    direct?: { baseUrl: string; bearerToken: string; model: string; contextWindow: number; displayName: string; modelCatalogPath: string };
   }): Promise<{ restoredFields: number; conflicts: string[] }> {
     const paths = resolveClientPaths();
     return new CodexDirectRestore(this.userDataDir).restore(paths.codexConfigPath, baseline => {
@@ -325,7 +331,9 @@ export class CodexConfigManager {
         baseUrl: direct?.baseUrl || input.officialBaseUrl, bearerToken: direct?.bearerToken || ''
       }, { normalizeV1: false });
       target = setTomlBooleanKey(target, 'requires_openai_auth', !direct, { sectionHeader: `[model_providers.${CODEX_STABLE_PROVIDER}]` }).text;
-      if (isXwXCodexCatalogPath(readTomlTopLevelString(rootToml(target), 'model_catalog_json'))) target = removeTomlStringKey(target, 'model_catalog_json').text;
+      target = direct
+        ? setTomlStringKey(target, 'model_catalog_json', direct.modelCatalogPath).text
+        : removeTomlStringKey(target, 'model_catalog_json').text;
       return target;
     }, (before, next) => writeCodexConfigIfUnchanged(paths.codexConfigPath, before, next));
   }
@@ -413,10 +421,7 @@ function patchOfficialConfig(text: string, input: CodexConfigUpdate, authMode: C
   next = setTomlStringKey(next, 'wire_api', 'responses', { sectionHeader }).text;
   next = setTomlBooleanKey(next, 'requires_openai_auth', true, { sectionHeader }).text;
   next = setTomlBooleanKey(next, 'supports_websockets', true, { sectionHeader }).text;
-  const currentCatalog = readTomlTopLevelString(rootToml(next), 'model_catalog_json');
-  if (isXwXCodexCatalogPath(currentCatalog)) {
-    next = removeTomlStringKey(next, 'model_catalog_json').text;
-  }
+  next = removeTomlStringKey(next, 'model_catalog_json').text;
   next = removeTomlBooleanKey(next, 'image_generation', FEATURES_SECTION).text;
   next = removeTomlBooleanKey(next, 'imagegenext', FEATURES_SECTION).text;
   return ensureFinalEol(next);
@@ -448,8 +453,8 @@ function patchCompatibleServiceConfig(text: string, input: CodexConfigUpdate): s
   // 兼容服务 key to a Codex process: keeping its official OAuth header intact
   // lets the same live process switch back to the official route safely.
   const clientBearerToken = gatewayBaseUrl ? '' : upstreamBearerToken;
-  if (!baseUrl) throw new Error('兼容服务 base URL is required.');
-  if (!upstreamBearerToken) throw new Error('兼容服务 bearer token is required.');
+  if (!baseUrl) throw new Error('请填写兼容服务的 API 地址。');
+  if (!upstreamBearerToken) throw new Error('请填写兼容服务的访问密钥。');
 
   let next = text;
   next = setTomlStringKey(next, 'model_provider', CODEX_STABLE_PROVIDER).text;
@@ -461,10 +466,10 @@ function patchCompatibleServiceConfig(text: string, input: CodexConfigUpdate): s
     bearerToken: clientBearerToken
   }, { normalizeV1: !gatewayBaseUrl });
   const catalogPath = cleanString(input.modelCatalogPath);
-  const currentCatalog = readTomlTopLevelString(rootToml(next), 'model_catalog_json');
-  // Respect a user-owned catalog. XwX only creates the root key or refreshes its
-  // own pointer; it never silently replaces another model manager's catalog.
-  if (catalogPath && (!currentCatalog || isXwXCodexCatalogPath(currentCatalog))) {
+  // The selected provider, model and catalog are one operational unit. An
+  // explicit XwX mode switch may replace another manager's pointer, while the
+  // field-level ledger keeps its previous value for conflict-safe restoration.
+  if (catalogPath) {
     next = setTomlStringKey(next, 'model_catalog_json', catalogPath).text;
   }
   next = ensureTomlSection(next, FEATURES_SECTION);
@@ -495,7 +500,7 @@ function patchProviderConnection(
     ? normalizeEndpoint(rawBaseUrl)
     : normalizeCompatibleServiceBaseUrl(rawBaseUrl);
   const bearerToken = cleanString(input.bearerToken);
-  if (!baseUrl) throw new Error('兼容服务 base URL is required.');
+  if (!baseUrl) throw new Error('请填写兼容服务的 API 地址。');
   const sectionHeader = `[model_providers.${provider}]`;
   let next = ensureTomlSection(text, sectionHeader);
   next = removeTomlStringKey(next, 'env_key', sectionHeader).text;
@@ -529,7 +534,7 @@ function imageGenValue(text: string): boolean | undefined {
 
 function readMode(value: unknown): CodexConfigMode {
   if (value === 'official' || value === 'compatible') return value;
-  throw new Error('Unsupported ChatGPT config mode.');
+  throw new Error('不支持的 ChatGPT 配置模式。');
 }
 
 function cleanString(value: unknown): string {
@@ -542,10 +547,10 @@ export function normalizeCompatibleServiceBaseUrl(value: string): string {
   try {
     parsed = new URL(value);
   } catch {
-    throw new Error('兼容服务 base URL must be a valid HTTP URL.');
+    throw new Error('兼容服务的 API 地址格式无效。');
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('兼容服务 base URL must use http or https.');
+    throw new Error('兼容服务的 API 地址必须使用 http 或 https。');
   }
   const pathname = parsed.pathname.replace(/\/+$/, '');
   if (!providerBaseHasVersionRoot(parsed.toString())) {
@@ -558,7 +563,7 @@ function normalizeEndpoint(value: string): string {
   if (!value) return '';
   const parsed = new URL(value);
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('Endpoint URL must use http or https.');
+    throw new Error('服务地址必须使用 http 或 https。');
   }
   return parsed.toString().replace(/\/+$/, '');
 }

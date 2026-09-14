@@ -166,6 +166,9 @@ function claudeManagedFields(
 }
 
 function codexManagedFields(original: string, detection: CodexDetection, writtenValue: string): ClientManagedField[] {
+  const officialCatalog = detection.routeKind === 'custom-provider'
+    ? []
+    : [tomlAbsentManagedField(original, 'model_catalog_json')];
   if (detection.routeKind === 'chatgpt-oauth' && detection.fieldLocation === 'provider-section') {
     const sectionExisted = !!findTomlSection(original, CODEX_TRACE_PROVIDER_SECTION);
     return [
@@ -174,14 +177,33 @@ function codexManagedFields(original: string, detection: CodexDetection, written
       tomlStringManagedField(original, 'base_url', writtenValue, CODEX_TRACE_PROVIDER_SECTION),
       tomlStringManagedField(original, 'wire_api', 'responses', CODEX_TRACE_PROVIDER_SECTION),
       tomlBooleanManagedField(original, 'requires_openai_auth', true, CODEX_TRACE_PROVIDER_SECTION),
-      tomlBooleanManagedField(original, 'supports_websockets', true, CODEX_TRACE_PROVIDER_SECTION)
+      tomlBooleanManagedField(original, 'supports_websockets', true, CODEX_TRACE_PROVIDER_SECTION),
+      ...officialCatalog
     ];
   }
   const sectionHeader = detection.fieldLocation === 'provider-section'
     ? `[model_providers.${detection.provider}]`
     : undefined;
   const key = codexConfigKey(detection);
-  return [tomlStringManagedField(original, key, writtenValue, sectionHeader)];
+  return [tomlStringManagedField(original, key, writtenValue, sectionHeader), ...officialCatalog];
+}
+
+function tomlAbsentManagedField(
+  original: string,
+  key: string,
+  sectionHeader?: string
+): ClientManagedField {
+  const previousValue = sectionHeader
+    ? readTomlStringKey(sectionText(original, sectionHeader), key)
+    : readTomlTopLevelString(original, key);
+  return {
+    format: 'toml-string',
+    key,
+    sectionHeader,
+    previous: previousValue === undefined ? { present: false } : { present: true, value: previousValue },
+    writtenValue: '',
+    writtenPresent: false
+  };
 }
 
 function tomlStringManagedField(
@@ -286,7 +308,10 @@ async function restoreCodexFields(
         ? readTomlStringKey(fragment, field.key)
         : readTomlTopLevelString(fragment, field.key);
     const currentValue = value === undefined ? { present: false } : { present: true, value };
-    if (value === field.writtenValue) {
+    const stillWritten = field.writtenPresent === false
+      ? value === undefined
+      : value === field.writtenValue;
+    if (stillWritten) {
       if (field.format === 'toml-boolean') {
         next = field.previous.present
           ? setTomlBooleanKey(next, field.key, field.previous.value === true, { sectionHeader: field.sectionHeader }).text
@@ -522,8 +547,11 @@ export function patchClaudeSettings(
 }
 
 export function patchCodexConfig(original: string, detection: CodexDetection, localProxyValue: string): string {
+  const withoutExternalCatalog = detection.routeKind === 'custom-provider'
+    ? original
+    : removeTomlStringKey(original, 'model_catalog_json').text;
   if (detection.routeKind === 'chatgpt-oauth' && detection.fieldLocation === 'provider-section') {
-    let next = setTomlStringKey(original, 'model_provider', CODEX_TRACE_PROVIDER).text;
+    let next = setTomlStringKey(withoutExternalCatalog, 'model_provider', CODEX_TRACE_PROVIDER).text;
     next = ensureTomlSection(next, CODEX_TRACE_PROVIDER_SECTION);
     next = setTomlStringKey(next, 'name', 'XwX Deck', { sectionHeader: CODEX_TRACE_PROVIDER_SECTION }).text;
     next = setTomlStringKey(next, 'base_url', localProxyValue, { sectionHeader: CODEX_TRACE_PROVIDER_SECTION }).text;
@@ -533,9 +561,9 @@ export function patchCodexConfig(original: string, detection: CodexDetection, lo
   }
   const key = codexConfigKey(detection);
   if (detection.fieldLocation !== 'provider-section') {
-    return setTomlStringKey(original, key, localProxyValue).text;
+    return setTomlStringKey(withoutExternalCatalog, key, localProxyValue).text;
   }
-  return setTomlStringKey(original, key, localProxyValue, {
+  return setTomlStringKey(withoutExternalCatalog, key, localProxyValue, {
     sectionHeader: `[model_providers.${detection.provider}]`
   }).text;
 }

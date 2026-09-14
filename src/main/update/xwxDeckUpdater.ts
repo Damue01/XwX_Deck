@@ -125,7 +125,7 @@ export class XwXDeckUpdater {
       try {
         if (this.manualMac) await this.checkManualMacUpdate();
         else if (updater) await updater.checkForUpdates();
-        else throw new Error('The XwX Deck updater is not available.');
+        else throw new Error('当前环境无法启动更新服务。');
       } catch (error) {
         const message = errorMessage(error);
         this.setState({
@@ -145,11 +145,11 @@ export class XwXDeckUpdater {
 
   async downloadUpdate(): Promise<XwXDeckUpdateState> {
     if (!this.stateValue.updateAvailable || !this.stateValue.targetVersion) {
-      throw new Error('No XwX Deck update is available.');
+      throw new Error('当前没有可下载的 XwX Deck 更新。');
     }
     if (this.stateValue.status === 'downloading') return this.state();
     if (this.manualMac) return this.downloadManualMacUpdate();
-    if (!this.updater) throw new Error('Updates are not available on this platform yet.');
+    if (!this.updater) throw new Error('当前平台暂不支持自动更新。');
     this.setState({
       ...this.stateValue,
       status: 'downloading',
@@ -174,7 +174,7 @@ export class XwXDeckUpdater {
       this.stateValue.status !== 'ready'
       || ((this.portable || this.manualMac) && !this.downloadedFile)
     ) {
-      throw new Error('The XwX Deck update is not ready to install.');
+      throw new Error('更新尚未下载完成，暂时不能安装。');
     }
     this.setState({ ...this.stateValue, status: 'installing', error: undefined });
   }
@@ -194,13 +194,13 @@ export class XwXDeckUpdater {
   async quitAndInstall(): Promise<void> {
     if (this.manualMac) {
       const installer = this.downloadedFile;
-      if (!installer) throw new Error('The macOS XwX Deck installer is incomplete.');
+      if (!installer) throw new Error('macOS 安装包不完整，请重新下载。');
       const openError = await shell.openPath(installer);
-      if (openError) throw new Error(openError);
+      if (openError) throw new Error(`无法打开 macOS 安装包：${openError}`);
       this.setState({ ...this.stateValue, status: 'ready', error: undefined });
       return;
     }
-    if (!this.updater) throw new Error('Updates are not available on this platform yet.');
+    if (!this.updater) throw new Error('当前平台暂不支持自动更新。');
     if (!this.portable) {
       this.updater.quitAndInstall(false, true);
       return;
@@ -208,7 +208,7 @@ export class XwXDeckUpdater {
     const sourcePath = this.downloadedFile;
     const targetPath = process.env.PORTABLE_EXECUTABLE_FILE;
     if (!sourcePath || !targetPath || !this.stateValue.targetVersion) {
-      throw new Error('The portable XwX Deck update is incomplete.');
+      throw new Error('更新文件不完整，请重新下载。');
     }
     await launchPortableUpdate({
       sourcePath,
@@ -283,7 +283,7 @@ export class XwXDeckUpdater {
       headers: this.requestHeaders(),
       cache: 'no-store'
     });
-    if (!response.ok) throw new Error(`Update server returned HTTP ${response.status}.`);
+    if (!response.ok) throw new Error(`更新服务器返回 HTTP ${response.status}。`);
     const selection = resolveManualMacRelease(await response.json(), app.getVersion(), process.arch);
     if (!selection) {
       this.downloadedFile = undefined;
@@ -306,7 +306,7 @@ export class XwXDeckUpdater {
   private async downloadManualMacUpdate(): Promise<XwXDeckUpdateState> {
     const artifact = this.manualArtifact;
     if (!artifact || !this.stateValue.targetVersion) {
-      throw new Error('The macOS XwX Deck installer metadata is incomplete.');
+      throw new Error('macOS 安装包信息不完整，请重新检查更新。');
     }
     const updateDirectory = path.join(app.getPath('userData'), 'updates');
     const target = path.join(updateDirectory, artifact.name);
@@ -332,7 +332,7 @@ export class XwXDeckUpdater {
         { headers: this.requestHeaders(), cache: 'no-store' }
       );
       if (!response.ok || !response.body) {
-        throw new Error(`Installer download returned HTTP ${response.status}.`);
+        throw new Error(`安装包下载失败（HTTP ${response.status}），请稍后重试。`);
       }
       const handle = await fs.promises.open(temporary, 'wx');
       const hash = createHash('sha256');
@@ -346,7 +346,7 @@ export class XwXDeckUpdater {
           if (done) break;
           const chunk = Buffer.from(value);
           transferred += chunk.length;
-          if (transferred > artifact.size) throw new Error('Installer download exceeded the published size.');
+          if (transferred > artifact.size) throw new Error('安装包大小超过发布清单，已停止下载。');
           hash.update(chunk);
           await handle.write(chunk);
           const now = Date.now();
@@ -366,9 +366,9 @@ export class XwXDeckUpdater {
       } finally {
         await handle.close();
       }
-      if (transferred !== artifact.size) throw new Error('Installer download size does not match the published release.');
+      if (transferred !== artifact.size) throw new Error('安装包大小与发布清单不一致，已丢弃本次下载。');
       if (hash.digest('hex') !== artifact.sha256.toLowerCase()) {
-        throw new Error('Installer SHA-256 verification failed.');
+        throw new Error('安装包完整性校验失败，已丢弃本次下载。');
       }
       await fs.promises.rm(target, { force: true });
       await fs.promises.rename(temporary, target);

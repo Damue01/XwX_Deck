@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useBridge } from '@/bridge/store';
-import { closeToast, showToast } from '@/lib/toast';
+import { closeToast, showErrorToast, showToast } from '@/lib/toast';
+import { userErrorMessage } from '@/lib/errors';
 
 const MAX_RELEASE_NOTE_LINES = 5;
 const MAX_RELEASE_NOTE_LENGTH = 280;
@@ -32,9 +33,12 @@ export function UpdateNotification(): null {
           void bridge.api.downloadUpdate()
             .then(next => {
               bridge.patch({ updateState: next });
-              if (next.status === 'error') showToast('更新下载失败', 'error');
+              if (next.status === 'error') showToast('更新下载失败', 'error', undefined, {
+                description: userErrorMessage(next.error, '请检查网络后重试。'),
+                timeout: 8_000
+              });
             })
-            .catch(() => showToast('更新下载失败', 'error'));
+            .catch(error => showErrorToast('更新下载失败', error, undefined, { description: '请检查网络后重试。' }));
         }
       }
     });

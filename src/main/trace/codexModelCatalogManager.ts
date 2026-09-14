@@ -29,8 +29,8 @@ export interface CodexCatalogSyncResult {
 /**
  * Materializes the startup-only model catalog shared by Codex CLI/App.
  * The catalog is intentionally service-scoped: while 兼容服务 is selected it
- * contains 兼容服务 models; returning to the official service removes only the
- * XwX-owned `model_catalog_json` pointer from config.toml.
+ * contains 兼容服务 models; an explicit switch to the official service removes
+ * the pointer from config.toml so a catalog for another provider cannot leak in.
  */
 export class CodexModelCatalogManager {
   private writes: Promise<unknown> = Promise.resolve();

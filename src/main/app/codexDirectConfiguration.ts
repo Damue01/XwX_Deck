@@ -1,6 +1,7 @@
 import { selectedProvider, XwXDeckSettingsStore } from './settings';
 import { CodexConfigManager } from '../trace/codexConfigManager';
 import { CodexOfficialAuthManager } from '../trace/codexOfficialAuthManager';
+import { CodexModelCatalogManager } from '../trace/codexModelCatalogManager';
 
 /** Standalone registry semantics only. Protocol bridges need the Gateway;
  * restore official direct for those, retaining the selection for next launch. */
@@ -21,6 +22,7 @@ export async function restoreCodexPreferredDirectConfiguration(userDataDir: stri
     officialModel: settings.codexModels.official,
     officialContextWindow: settings.codexModels.officialContextWindow,
     ...(useDirect ? { direct: { baseUrl: provider.baseUrl, bearerToken: provider.bearerToken, model: provider.codexModel,
-      contextWindow: provider.codexContextWindow, displayName: provider.displayName } } : {})
+      contextWindow: provider.codexContextWindow, displayName: provider.displayName,
+      modelCatalogPath: new CodexModelCatalogManager().catalogPath() } } : {})
   });
 }
