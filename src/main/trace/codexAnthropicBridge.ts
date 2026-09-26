@@ -759,14 +759,80 @@ function chatToolToAnthropic(value: unknown): JsonObject | undefined {
   const fn = object(object(value).function);
   const name = text(fn.name);
   if (!name) return undefined;
-  const schema = isObject(fn.parameters) ? { ...fn.parameters } : { type: 'object', properties: {} };
-  if (schema.type !== 'object') schema.type = 'object';
+  const schema = normalizeAnthropicToolSchema(fn.parameters);
   return {
     name,
     ...(text(fn.description) ? { description: text(fn.description) } : {}),
     input_schema: schema,
     ...(typeof fn.strict === 'boolean' ? { strict: fn.strict } : {})
   };
+}
+
+/**
+ * Bedrock rejects oneOf/allOf/anyOf at the root of an Anthropic tool schema.
+ * Codex uses those shapes for discriminated unions, so expose the union's
+ * object fields at the root while keeping conflicting field constraints nested.
+ */
+function normalizeAnthropicToolSchema(value: unknown): JsonObject {
+  const source = isObject(value) ? value : {};
+  const result: JsonObject = {};
+  for (const [key, item] of Object.entries(source)) {
+    if (!['oneOf', 'allOf', 'anyOf'].includes(key)) result[key] = item;
+  }
+  result.type = 'object';
+  result.properties = isObject(result.properties) ? { ...result.properties } : {};
+
+  mergeSchemaGroup(result, source.allOf, 'allOf');
+  mergeSchemaGroup(result, source.oneOf, 'anyOf');
+  mergeSchemaGroup(result, source.anyOf, 'anyOf');
+  return result;
+}
+
+function mergeSchemaGroup(target: JsonObject, value: unknown, propertyJoin: 'allOf' | 'anyOf'): void {
+  if (!Array.isArray(value) || !value.length) return;
+  const branches = value.map(normalizeAnthropicToolSchema);
+  const targetProperties = target.properties as JsonObject;
+  const propertyNames = new Set(branches.flatMap(branch => Object.keys(object(branch.properties))));
+
+  for (const name of propertyNames) {
+    const schemas = branches
+      .map(branch => object(branch.properties)[name])
+      .filter(item => item !== undefined);
+    if (!schemas.length) continue;
+    const existing = targetProperties[name];
+    const branchSchema = joinSchemas(schemas, propertyJoin);
+    targetProperties[name] = existing === undefined
+      ? branchSchema
+      : joinSchemas([existing, branchSchema], 'allOf');
+  }
+
+  const branchRequired = branches.map(branch => stringArray(branch.required));
+  const required = propertyJoin === 'allOf'
+    ? branchRequired.flat()
+    : intersectStrings(branchRequired);
+  const combinedRequired = [...new Set([...stringArray(target.required), ...required])];
+  if (combinedRequired.length) target.required = combinedRequired;
+}
+
+function joinSchemas(values: unknown[], keyword: 'allOf' | 'anyOf'): unknown {
+  const unique: unknown[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const key = JSON.stringify(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique.length === 1 ? unique[0] : { [keyword]: unique };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function intersectStrings(groups: string[][]): string[] {
+  if (!groups.length) return [];
+  return groups[0].filter(value => groups.every(group => group.includes(value)));
 }
 
 function toolChoiceToAnthropic(value: unknown, context: CodexToolContext): JsonObject | undefined {

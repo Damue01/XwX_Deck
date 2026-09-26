@@ -22,6 +22,40 @@ export class CodexDirectRestore {
   private readonly file: string;
   constructor(userDataDir: string) { this.file = path.join(userDataDir, 'codex-direct-restore.json'); }
 
+  /** Upgrade only recorded public-edition fields; preserve the original ledger. */
+  async migrateSnapshot(configPath: string, destination: string): Promise<{
+    version: 1; configPath: string; originalExisted: boolean; originalContent: string;
+    writtenContent: string; baselineWasManaged: boolean; writtenAt: string; ownedFieldPaths: string[];
+  } | undefined> {
+    const bytes = await readOwnedText(this.file);
+    const state = this.parse(bytes, configPath);
+    if (!state) return undefined;
+    const current = await readOwnedText(configPath);
+    if (current === undefined) throw new Error('ChatGPT 配置已被外部删除，保留恢复记录。');
+    let originalContent = current;
+    let writtenContent = current;
+    for (const [key, value] of Object.entries(state.fields)) {
+      originalContent = put(originalContent, key, value.before);
+      writtenContent = put(writtenContent, key, value.written);
+    }
+    const snapshot = { version: 1 as const, configPath, originalExisted: true,
+      originalContent, writtenContent, baselineWasManaged: false,
+      writtenAt: new Date().toISOString(), ownedFieldPaths: Object.keys(state.fields) };
+    // Never overwrite either an earlier snapshot or the old evidence file.
+    await fs.copyFile(this.file, `${this.file}.migrated.bak`, 1).catch(error => {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    });
+    const temporary = `${destination}.${process.pid}-${Date.now()}.migrating`;
+    try {
+      await fs.writeFile(temporary, JSON.stringify(snapshot, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+      await fs.link(temporary, destination);
+    } finally {
+      await fs.rm(temporary, { force: true });
+    }
+    if (await readOwnedText(this.file) === bytes) await fs.unlink(this.file);
+    return snapshot;
+  }
+
   async write(configPath: string, before: string | undefined, next: string, explicit: readonly string[], publish: () => Promise<void>): Promise<void> {
     const previous = await readOwnedText(this.file);
     const state = this.parse(previous, configPath) ?? { version: 1 as const, configPath, fields: {} };

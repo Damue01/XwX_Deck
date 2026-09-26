@@ -1,5 +1,6 @@
 import { app, net, shell } from 'electron';
 import { NsisUpdater } from 'electron-updater/out/NsisUpdater';
+import { CancellationToken } from 'electron-updater/out/types';
 import type { ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from 'electron-updater/out/types';
 import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
@@ -58,6 +59,8 @@ export class XwXDeckUpdater {
     && app.isPackaged
     && (process.platform === 'win32' || this.manualMac);
   private checkPromise: Promise<XwXDeckUpdateState> | undefined;
+  private downloadCancellation: CancellationToken | undefined;
+  private manualDownloadAbort: AbortController | undefined;
   private downloadedFile: string | undefined;
   private manualArtifact: PublishedArtifact | undefined;
   private stateValue: XwXDeckUpdateState;
@@ -157,14 +160,20 @@ export class XwXDeckUpdater {
       percent: 0,
       transferred: 0
     });
+    const cancellation = new CancellationToken();
+    this.downloadCancellation = cancellation;
     try {
-      await this.updater.downloadUpdate();
+      await this.updater.downloadUpdate(cancellation);
     } catch (error) {
-      this.setState({
-        ...this.stateValue,
-        status: 'error',
-        error: errorMessage(error)
-      });
+      if (!cancellation.cancelled) {
+        this.setState({
+          ...this.stateValue,
+          status: 'error',
+          error: errorMessage(error)
+        });
+      }
+    } finally {
+      if (this.downloadCancellation === cancellation) this.downloadCancellation = undefined;
     }
     return this.state();
   }
@@ -189,6 +198,29 @@ export class XwXDeckUpdater {
 
   cancelInstallation(): void {
     this.setState({ ...this.stateValue, status: 'ready', error: undefined });
+  }
+
+  async discardDownloadedUpdate(): Promise<XwXDeckUpdateState> {
+    if (this.stateValue.status === 'installing') throw new Error('更新正在安装，无法取消。');
+    this.downloadCancellation?.cancel();
+    this.manualDownloadAbort?.abort();
+    const downloadedFile = this.downloadedFile;
+    this.downloadedFile = undefined;
+    if (downloadedFile) {
+      await fs.promises.rm(downloadedFile, { force: true }).catch(error => {
+        log.warn(`[updater] could not remove cancelled update ${downloadedFile}: ${errorMessage(error)}`);
+      });
+    }
+    this.setState({
+      ...this.stateValue,
+      status: this.stateValue.updateAvailable ? 'available' : this.portable ? 'portable' : 'idle',
+      percent: undefined,
+      transferred: undefined,
+      total: undefined,
+      bytesPerSecond: undefined,
+      error: undefined
+    });
+    return this.state();
   }
 
   async quitAndInstall(): Promise<void> {
@@ -311,6 +343,8 @@ export class XwXDeckUpdater {
     const updateDirectory = path.join(app.getPath('userData'), 'updates');
     const target = path.join(updateDirectory, artifact.name);
     const temporary = `${target}.download-${process.pid}-${Date.now()}`;
+    const abort = new AbortController();
+    this.manualDownloadAbort = abort;
     this.setState({
       ...this.stateValue,
       status: 'downloading',
@@ -376,7 +410,11 @@ export class XwXDeckUpdater {
       this.setState(this.manualDownloadedState(transferred));
     } catch (error) {
       await fs.promises.rm(temporary, { force: true }).catch(() => undefined);
-      this.setState({ ...this.stateValue, status: 'error', error: errorMessage(error) });
+      if (!abort.signal.aborted) {
+        this.setState({ ...this.stateValue, status: 'error', error: errorMessage(error) });
+      }
+    } finally {
+      if (this.manualDownloadAbort === abort) this.manualDownloadAbort = undefined;
     }
     return this.state();
   }

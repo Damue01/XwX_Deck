@@ -1,11 +1,21 @@
+import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { promisify } from 'util';
 import { ClaudeModelSettings } from '../app/settings';
 import type { ModelCatalogEntry } from '../app/modelCatalog';
 import { CLAUDE_MODEL_OVERRIDE_ENV_KEYS, claudeCompatibleServiceModelEnv } from '../app/claudeModelPolicy';
 import { writeFileAtomic } from '../shared/fsx';
 import { isRecord } from '../shared/obj';
-import { claudeCloudProviderMode, ClientPaths, readClaudeSettingsBaseUrl, resolveClientPaths } from './clientConfig';
+import {
+  CLAUDE_CLOUD_PROVIDER_ENV_KEYS,
+  claudeCloudProviderMode,
+  ClientPaths,
+  readClaudeSettingsBaseUrl,
+  resolveClientPaths
+} from './clientConfig';
+
+const execFileAsync = promisify(execFile);
 
 interface ManagedValue {
   readonly present: boolean;
@@ -39,6 +49,32 @@ export interface ClaudeCompatibleServiceUpdate {
   readonly catalog?: readonly ModelCatalogEntry[];
 }
 
+export interface ClaudeEnvironmentOverride {
+  readonly name: string;
+  readonly scopes: readonly ('process' | 'user' | 'machine')[];
+  readonly canRemoveAutomatically: boolean;
+}
+
+export interface ClaudeEnvironmentOverrideSnapshot {
+  readonly platform: 'windows' | 'other';
+  readonly overrides: readonly ClaudeEnvironmentOverride[];
+  readonly canRemoveAutomatically: boolean;
+}
+
+export interface ClaudeEnvironmentCleanupResult extends ClaudeEnvironmentOverrideSnapshot {
+  readonly backupPath?: string;
+}
+
+interface ClaudeConfigManagerOptions {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly platform?: NodeJS.Platform;
+}
+
+interface WindowsEnvironmentValue {
+  readonly type: 'REG_SZ' | 'REG_EXPAND_SZ';
+  readonly value: string;
+}
+
 const STATE_FILE = 'claude-compatible-state.json';
 const MANAGED_KEYS = [
   'ANTHROPIC_BASE_URL',
@@ -48,19 +84,47 @@ const MANAGED_KEYS = [
   'ANTHROPIC_API_KEY',
   ...CLAUDE_MODEL_OVERRIDE_ENV_KEYS
 ] as const;
+const CLAUDE_RUNTIME_OVERRIDE_ENV_KEYS = [
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  ...CLAUDE_MODEL_OVERRIDE_ENV_KEYS,
+  ...CLAUDE_CLOUD_PROVIDER_ENV_KEYS
+] as const;
+const WINDOWS_USER_ENVIRONMENT_KEY = 'HKCU\\Environment';
+const WINDOWS_MACHINE_ENVIRONMENT_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment';
 
 export class ClaudeConfigManager {
   private operation: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly userDataDir: string,
-    private readonly paths: ClientPaths | (() => ClientPaths) = resolveClientPaths
+    private readonly paths: ClientPaths | (() => ClientPaths) = resolveClientPaths,
+    private readonly options: ClaudeConfigManagerOptions = {}
   ) {}
 
   async read(): Promise<ClaudeCompatibleServiceSnapshot> {
     return this.serialized(async () => {
       const configPath = this.clientPaths().claudeSettingsPath;
       return this.inspect(configPath, await readConfigText(configPath));
+    });
+  }
+
+  /** Snapshot the exact current bytes before an explicit user-confirmed switch. */
+  async backupBeforeConfirmedRepair(): Promise<string> {
+    return this.serialized(async () => {
+      const file = this.clientPaths().claudeSettingsPath;
+      const original = await fs.promises.readFile(file).catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        throw error;
+      });
+      if (!original) return '';
+      const backupDir = path.join(this.userDataDir, 'backups');
+      await fs.promises.mkdir(backupDir, { recursive: true });
+      const backupPath = path.join(backupDir, `claude-settings-before-repair-${Date.now()}-${Math.random().toString(16).slice(2, 10)}.json`);
+      await writeFileAtomic(backupPath, original);
+      if (!(await fs.promises.readFile(file)).equals(original)) throw new Error('Claude 配置又被修改，请重新修复。');
+      return backupPath;
     });
   }
 
@@ -76,6 +140,192 @@ export class ClaudeConfigManager {
     return this.serialized(() => input.enabled ? this.enable(input) : this.disable());
   }
 
+  /** Explicit official selection clears API overrides after reversible takeover ends. */
+  async switchToOfficial(): Promise<ClaudeCompatibleServiceSnapshot> {
+    return this.serialized(async () => {
+      await this.disable();
+      const configPath = this.clientPaths().claudeSettingsPath;
+      const original = await readConfigText(configPath);
+      if (original === undefined) return disabledSnapshot(configPath);
+      const data = parseSettings(original);
+      const env = isRecord(data.env) ? { ...data.env } : {};
+      const keys = [...MANAGED_KEYS, ...CLAUDE_CLOUD_PROVIDER_ENV_KEYS];
+      if (!keys.some(key => Object.prototype.hasOwnProperty.call(env, key))) {
+        return disabledSnapshot(configPath);
+      }
+      const backupDir = path.join(this.userDataDir, 'backups');
+      await fs.promises.mkdir(backupDir, { recursive: true });
+      await writeFileAtomic(path.join(backupDir,
+        `claude-settings-before-official-${Date.now()}-${Math.random().toString(16).slice(2, 10)}.json`), original);
+      for (const key of keys) delete env[key];
+      const next = { ...data };
+      if (Object.keys(env).length) next.env = env;
+      else delete next.env;
+      await writeConfigIfUnchanged(configPath, original, formatSettings(next, original));
+      return disabledSnapshot(configPath);
+    });
+  }
+
+  /** Confirmed repair changes managed keys in the latest file, preserving
+   * unrelated JSON and allowing a damaged old ownership record. */
+  async repair(input: ClaudeCompatibleServiceUpdate): Promise<ClaudeCompatibleServiceSnapshot> {
+    return this.serialized(async () => {
+      const configPath = this.clientPaths().claudeSettingsPath;
+      const original = await readConfigText(configPath);
+      const data = parseSettings(original);
+      const env = isRecord(data.env) ? { ...data.env } : {};
+      const statePath = this.statePath();
+      const originalState = await readConfigText(statePath);
+      let state: ClaudeCompatibleServiceState | undefined;
+      try { state = parseClaudeCompatibleServiceState(originalState); }
+      catch {
+        if (originalState !== undefined) await this.backupRepairState(originalState);
+      }
+      if (state?.configPath !== configPath) state = undefined;
+      if (input.enabled) {
+        const baseUrl = input.nativeAnthropic
+          ? (input.baseUrl || '').trim().replace(/\/v1\/?$/, '')
+          : claudeCompatibleServiceBaseUrl(input.baseUrl || '');
+        const bearerToken = input.bearerToken?.trim() || '';
+        if (!baseUrl || !bearerToken) throw new Error('所选 Claude 服务地址或密钥不完整。');
+        assertNoRuntimeOverride(data, baseUrl, this.options.env ?? process.env);
+        const previous = state ? captureMissingValues(state.previous, env) : captureValues(env);
+        const written = buildWrittenValues(baseUrl, bearerToken, input.models, input.catalog, data.model);
+        if (input.nativeAnthropic) {
+          written.ANTHROPIC_AUTH_TOKEN = '';
+          written.ANTHROPIC_API_KEY = bearerToken;
+        }
+        for (const key of MANAGED_KEYS) {
+          if (written[key]) env[key] = written[key];
+          else delete env[key];
+        }
+        const nextContent = formatSettings({ ...data, env }, original);
+        const nextStateContent = JSON.stringify({
+          version: 1, enabled: true, configPath, fileExisted: state?.fileExisted ?? original !== undefined,
+          previous, written
+        } satisfies ClaudeCompatibleServiceState, null, 2);
+        await writeConfigIfUnchanged(configPath, original, nextContent);
+        let stateWritten = false;
+        try {
+          await writeInternalStateIfUnchanged(statePath, originalState, nextStateContent);
+          stateWritten = true;
+          const result = await this.inspect(configPath, await readConfigText(configPath));
+          if (!result.enabled) throw new Error(result.detail || 'Claude 配置写后未生效。');
+          return result;
+        } catch (error) {
+          await restoreContentIfUnchanged(configPath, nextContent, original);
+          if (stateWritten) await restoreInternalStateIfUnchanged(statePath, nextStateContent, originalState);
+          throw error;
+        }
+      }
+      for (const key of MANAGED_KEYS) {
+        const expected = state?.written[key];
+        if (state && (expected ? env[key] !== expected : Object.prototype.hasOwnProperty.call(env, key))) continue;
+        const previous = state?.previous[key];
+        if (previous?.present) env[key] = previous.value;
+        else delete env[key];
+      }
+      const next = { ...data };
+      if (Object.keys(env).length) next.env = env;
+      else delete next.env;
+      const nextContent = formatSettings(next, original);
+      await writeConfigIfUnchanged(configPath, original, nextContent);
+      try {
+        if (originalState !== undefined) await removeInternalStateIfUnchanged(statePath, originalState);
+      } catch (error) {
+        await restoreContentIfUnchanged(configPath, nextContent, original);
+        throw error;
+      }
+      return disabledSnapshot(configPath);
+    });
+  }
+
+  private async backupRepairState(content: string): Promise<void> {
+    const backupDir = path.join(this.userDataDir, 'backups');
+    await fs.promises.mkdir(backupDir, { recursive: true });
+    await writeFileAtomic(path.join(backupDir,
+      `claude-state-before-repair-${Date.now()}-${Math.random().toString(16).slice(2, 10)}.json`), content);
+  }
+
+  async readEnvironmentOverrides(): Promise<ClaudeEnvironmentOverrideSnapshot> {
+    return this.serialized(() => inspectClaudeEnvironmentOverrides(
+      this.options.env ?? process.env,
+      this.options.platform ?? process.platform
+    ));
+  }
+
+  async clearEnvironmentOverrides(expectedNames: readonly string[]): Promise<ClaudeEnvironmentCleanupResult> {
+    return this.serialized(async () => {
+      const env = this.options.env ?? process.env;
+      const platform = this.options.platform ?? process.platform;
+      const snapshot = await inspectClaudeEnvironmentOverrides(env, platform);
+      const expected = [...new Set(expectedNames)].sort();
+      const current = snapshot.overrides.map(item => item.name).sort();
+      if (expected.length === 0 || expected.some(name => !CLAUDE_RUNTIME_OVERRIDE_ENV_KEYS.includes(
+        name as typeof CLAUDE_RUNTIME_OVERRIDE_ENV_KEYS[number]
+      ))) {
+        throw new Error('无效的 Claude 环境变量清理请求。');
+      }
+      if (expected.join('\n') !== current.join('\n')) {
+        throw new Error('Claude 环境变量在确认后发生了变化，未删除；请重新切换并确认。');
+      }
+      const machineOverrides = snapshot.overrides.filter(item => item.scopes.includes('machine'));
+      if (machineOverrides.length) {
+        throw new Error(`检测到系统级环境变量 ${machineOverrides.map(item => item.name).join('、')}，XwX Deck 不会自动删除管理员配置。`);
+      }
+
+      const processValues = Object.fromEntries(current.map(name => [name, env[name]]));
+      let userValues: Record<string, WindowsEnvironmentValue> = {};
+      if (platform === 'win32') {
+        userValues = await readWindowsEnvironment(WINDOWS_USER_ENVIRONMENT_KEY);
+      }
+      const backupPath = path.join(
+        this.userDataDir,
+        'backups',
+        `claude-environment-before-standardization-${Date.now()}.json`
+      );
+      await writeFileAtomic(backupPath, `${JSON.stringify({
+        version: 1,
+        createdAt: new Date().toISOString(),
+        platform,
+        variables: current.map(name => ({
+          name,
+          processValue: processValues[name],
+          userValue: userValues[name]
+        }))
+      }, null, 2)}\n`);
+
+      const removedUserValues: Array<{ name: string; value: WindowsEnvironmentValue }> = [];
+      try {
+        if (platform === 'win32') {
+          for (const name of current) {
+            const value = userValues[name];
+            if (!value) continue;
+            await deleteWindowsEnvironmentValue(WINDOWS_USER_ENVIRONMENT_KEY, name);
+            removedUserValues.push({ name, value });
+          }
+        }
+        for (const name of current) delete env[name];
+      } catch (error) {
+        for (const item of removedUserValues.reverse()) {
+          await writeWindowsEnvironmentValue(WINDOWS_USER_ENVIRONMENT_KEY, item.name, item.value).catch(() => undefined);
+        }
+        for (const [name, value] of Object.entries(processValues)) {
+          if (value === undefined) delete env[name];
+          else env[name] = value;
+        }
+        throw error;
+      }
+
+      if (platform === 'win32') await broadcastWindowsEnvironmentChange().catch(() => undefined);
+      const after = await inspectClaudeEnvironmentOverrides(env, platform);
+      if (after.overrides.length) {
+        throw new Error(`Claude 环境变量仍在生效：${after.overrides.map(item => item.name).join('、')}。请关闭相关终端或配置工具后重试。`);
+      }
+      return { ...after, backupPath };
+    });
+  }
+
   private async enable(input: ClaudeCompatibleServiceUpdate): Promise<ClaudeCompatibleServiceSnapshot> {
     const baseUrl = input.nativeAnthropic ? (input.baseUrl || '').trim().replace(/\/v1\/?$/, '') : claudeCompatibleServiceBaseUrl(input.baseUrl || '');
     const bearerToken = input.bearerToken?.trim() || '';
@@ -84,8 +334,21 @@ export class ClaudeConfigManager {
 
     const configPath = this.clientPaths().claudeSettingsPath;
     const original = await readConfigText(configPath);
-    const data = parseSettings(original);
-    assertNoRuntimeOverride(data, baseUrl);
+    let data: Record<string, unknown>;
+    try {
+      data = parseSettings(original);
+    } catch (error) {
+      if (original === undefined) throw error;
+      const backupDir = path.join(this.userDataDir, 'backups');
+      await fs.promises.mkdir(backupDir, { recursive: true });
+      const backupPath = path.join(
+        backupDir,
+        `claude-settings-invalid-before-recovery-${Date.now()}.json`
+      );
+      await writeFileAtomic(backupPath, original);
+      data = {};
+    }
+    assertNoRuntimeOverride(data, baseUrl, this.options.env ?? process.env);
     const env = isRecord(data.env) ? { ...data.env } : {};
     const originalState = await readConfigText(this.statePath());
     const existingState = parseClaudeCompatibleServiceState(originalState);
@@ -348,24 +611,165 @@ function disabledSnapshot(configPath: string): ClaudeCompatibleServiceSnapshot {
   return { enabled: false, status: 'disabled', configPath };
 }
 
-function assertNoRuntimeOverride(data: Record<string, unknown>, expectedBaseUrl: string): void {
-  const cloudMode = claudeCloudProviderMode(data, process.env);
+function assertNoRuntimeOverride(
+  data: Record<string, unknown>,
+  expectedBaseUrl: string,
+  env: NodeJS.ProcessEnv
+): void {
+  const cloudMode = claudeCloudProviderMode(data, env);
   if (cloudMode) throw new Error(`Claude 当前启用了 ${cloudMode}，请先切换为普通 Anthropic 网关模式。`);
-  const runtimeKeys = [
-    'ANTHROPIC_BASE_URL',
-    'ANTHROPIC_API_KEY',
-    'ANTHROPIC_AUTH_TOKEN',
-    'ANTHROPIC_MODEL',
-    'ANTHROPIC_FAST_MODEL'
-  ] as const;
-  const conflicts = runtimeKeys.filter(key => !!process.env[key]?.trim());
+  const conflicts = activeClaudeEnvironmentKeys(env);
   if (conflicts.length) {
-    const baseMatches = process.env.ANTHROPIC_BASE_URL?.trim() === expectedBaseUrl;
+    const baseMatches = env.ANTHROPIC_BASE_URL?.trim() === expectedBaseUrl;
     const onlyMatchingBase = conflicts.length === 1 && conflicts[0] === 'ANTHROPIC_BASE_URL' && baseMatches;
     if (!onlyMatchingBase) {
       throw new Error(`Claude 接入失败：检测到环境变量 ${conflicts.join('、')}，本地配置已失效，请移除相关环境变量后重试。`);
     }
   }
+}
+
+function activeClaudeEnvironmentKeys(env: NodeJS.ProcessEnv): string[] {
+  return CLAUDE_RUNTIME_OVERRIDE_ENV_KEYS.filter(key => {
+    return claudeEnvironmentValueIsActive(key, env[key]);
+  });
+}
+
+async function inspectClaudeEnvironmentOverrides(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform
+): Promise<ClaudeEnvironmentOverrideSnapshot> {
+  const active = activeClaudeEnvironmentKeys(env);
+  const windows = platform === 'win32';
+  const [userValues, machineValues] = windows
+    ? await Promise.all([
+        readWindowsEnvironment(WINDOWS_USER_ENVIRONMENT_KEY),
+        readWindowsEnvironment(WINDOWS_MACHINE_ENVIRONMENT_KEY)
+      ])
+    : [{}, {}];
+  const user = activeWindowsEnvironmentKeys(userValues);
+  const machine = activeWindowsEnvironmentKeys(machineValues);
+  return mergeClaudeEnvironmentOverrideScopes(active, user, machine, windows);
+}
+
+export function mergeClaudeEnvironmentOverrideScopes(
+  processNames: readonly string[],
+  userNames: readonly string[],
+  machineNames: readonly string[],
+  windows = true
+): ClaudeEnvironmentOverrideSnapshot {
+  const processSet = new Set(processNames);
+  const userSet = new Set(userNames);
+  const machineSet = new Set(machineNames);
+  const overrides = CLAUDE_RUNTIME_OVERRIDE_ENV_KEYS
+    .filter(name => processSet.has(name) || userSet.has(name) || machineSet.has(name))
+    .map(name => {
+      const scopes: Array<'process' | 'user' | 'machine'> = [];
+      if (processSet.has(name)) scopes.push('process');
+      if (userSet.has(name)) scopes.push('user');
+      if (machineSet.has(name)) scopes.push('machine');
+      return {
+        name,
+        scopes,
+        canRemoveAutomatically: !scopes.includes('machine')
+      };
+    });
+  return {
+    platform: windows ? 'windows' : 'other',
+    overrides,
+    canRemoveAutomatically: overrides.every(item => item.canRemoveAutomatically)
+  };
+}
+
+function activeWindowsEnvironmentKeys(
+  values: Readonly<Record<string, WindowsEnvironmentValue>>
+): string[] {
+  return CLAUDE_RUNTIME_OVERRIDE_ENV_KEYS.filter(name => (
+    claudeEnvironmentValueIsActive(name, values[name]?.value)
+  ));
+}
+
+function claudeEnvironmentValueIsActive(name: string, raw: string | undefined): boolean {
+  const value = raw?.trim();
+  if (!value) return false;
+  if (CLAUDE_CLOUD_PROVIDER_ENV_KEYS.includes(
+    name as typeof CLAUDE_CLOUD_PROVIDER_ENV_KEYS[number]
+  )) {
+    return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+  }
+  return true;
+}
+
+async function readWindowsEnvironment(key: string): Promise<Record<string, WindowsEnvironmentValue>> {
+  let stdout = '';
+  try {
+    const result = await execFileAsync('reg.exe', ['query', key], {
+      windowsHide: true,
+      encoding: 'utf8',
+      timeout: 5_000
+    });
+    stdout = String(result.stdout);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException & { code?: number }).code;
+    if (code === 1 || String((error as Error).message).includes('exit code 1')) return {};
+    throw error;
+  }
+  const values: Record<string, WindowsEnvironmentValue> = {};
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^\s{4}([^\s]+)\s+(REG_SZ|REG_EXPAND_SZ)\s*(.*)$/.exec(line);
+    if (!match) continue;
+    values[match[1].toUpperCase()] = {
+      type: match[2] as WindowsEnvironmentValue['type'],
+      value: match[3] ?? ''
+    };
+  }
+  return values;
+}
+
+async function deleteWindowsEnvironmentValue(key: string, name: string): Promise<void> {
+  await execFileAsync('reg.exe', ['delete', key, '/v', name, '/f'], {
+    windowsHide: true,
+    encoding: 'utf8',
+    timeout: 5_000
+  });
+}
+
+async function writeWindowsEnvironmentValue(
+  key: string,
+  name: string,
+  value: WindowsEnvironmentValue
+): Promise<void> {
+  await execFileAsync('reg.exe', ['add', key, '/v', name, '/t', value.type, '/d', value.value, '/f'], {
+    windowsHide: true,
+    encoding: 'utf8',
+    timeout: 5_000
+  });
+}
+
+async function broadcastWindowsEnvironmentChange(): Promise<void> {
+  const script = [
+    'Add-Type -TypeDefinition @\'',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'public static class XwxDeckEnvironmentBroadcast {',
+    '  [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]',
+    '  public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);',
+    '}',
+    '\'@;',
+    '$result = [UIntPtr]::Zero;',
+    '[void][XwxDeckEnvironmentBroadcast]::SendMessageTimeout([IntPtr]0xffff, 0x001A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$result)'
+  ].join('\n');
+  await execFileAsync('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-WindowStyle',
+    'Hidden',
+    '-Command',
+    script
+  ], {
+    windowsHide: true,
+    encoding: 'utf8',
+    timeout: 8_000
+  });
 }
 
 async function readConfigText(file: string): Promise<string | undefined> {

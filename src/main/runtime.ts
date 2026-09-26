@@ -1,32 +1,47 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import { app, dialog, nativeImage, Notification, session, shell } from 'electron';
 import {
-  APPLICATION_RESET_ARG,
   applicationResetRelaunchArgs,
+  applicationRelaunchExecutable,
   parseApplicationResetRequest,
   performApplicationRepair,
-  performApplicationResetAtStartup,
   type ApplicationResetRequest
 } from './app/applicationReset';
-import { gatewayMenuActionMatches, type GatewayMenuAction } from './app/gatewayMenuAction';
-import { isChatGptRunning, isClaudeRunning } from './app/chatGptLifecycle';
+import {
+  forceCloseClientsForReset,
+  isChatGptRunning,
+  isClaudeRunning,
+  listClientsForReset,
+  resetClientLabels,
+  stopStalledExitRecovery
+} from './app/chatGptLifecycle';
 import {
   ClientId,
   XwXDeckController,
   XwXDeckRuntimeState,
   ShutdownDrainTimeoutError
 } from './app/xwxDeckController';
-import { buildTrayQuitPrompt } from './app/shutdownPrompt';
+import { buildTrayQuitPrompt, shouldConfirmTrayQuit } from './app/shutdownPrompt';
+import {
+  beginExitRecoveryReport,
+  completeExitRecoveryAfterVerifiedStartup,
+  readExitRecoveryNotice
+} from './app/exitRecoveryReport';
+import { lifecycleFailure, traceStoppedNotice, type LifecycleNotice } from '../shared/lifecycleNotice';
 import {
   isStartupHiddenLaunch,
   readStartupSettings,
   startupRegistrationMatches,
-  setStartupEnabled as setLoginStartupEnabled
+  setStartupEnabled as setLoginStartupEnabled,
+  type StartupSettingsSnapshot
 } from './app/startup';
 import { registerIpcHandlers } from './ipc/registerHandlers';
 import { assetPath } from './shared/assets';
 import { errorMessage } from './shared/error';
+import { childProcessEnvironment } from './shared/processEnvironment';
 import { initLogger, log } from './shared/logger';
 import { runPackagedSmokeTest } from './smoke/packagedSmoke';
 import { loadModelsDevPricingCache, refreshModelsDevPricingCache } from './trace/modelsDevPricing';
@@ -51,36 +66,53 @@ let metadataSubscriber: MetadataInvalidationSubscriber | undefined;
 let quitState: 'idle' | 'cleaning' | 'ready' = 'idle';
 let fullShutdownRequested = false;
 let tracingToggle: Promise<XwXDeckRuntimeState | undefined> | undefined;
-let gatewayToggle: Promise<void> | undefined;
+let exitRecoveryGuardianStarted = false;
+let exitRecoveryGuardianId: string | undefined;
+let fullShutdownUiHidden = false;
+let fullShutdownWatchdog: NodeJS.Timeout | undefined;
+let emergencyExitRequested = false;
+let startupRecoveryNotice: LifecycleNotice | undefined;
+let startupSettingsCache: { value: StartupSettingsSnapshot; checkedAt: number } | undefined;
 let macApplicationIcon = { applied: false, width: 0, height: 0, cornerAlpha: 0, centerAlpha: 0 };
 
 const PACKAGED_SMOKE_TEST = process.env.XWX_DECK_SMOKE_TEST === '1';
 const PACKAGED_BACKGROUND_GATEWAY_SMOKE = process.env.XWX_DECK_BACKGROUND_GATEWAY_SMOKE === '1';
 const START_HIDDEN = isStartupHiddenLaunch();
 const PORTABLE_UPDATE_RESULT = readPortableUpdateLaunchResult();
+const FULL_SHUTDOWN_WATCHDOG_MS = 15_000;
+const SHUTDOWN_INSPECTION_TIMEOUT_MS = 8_000;
+const EXIT_GUARDIAN_START_TIMEOUT_MS = 3_000;
 
-if (process.env.XWX_DECK_PORTABLE_UPDATE_SMOKE === '1') {
-  runPortableUpdateSmoke();
-} else {
-  startMainProcess();
-}
+const PORTABLE_UPDATE_SMOKE = process.env.XWX_DECK_PORTABLE_UPDATE_SMOKE === '1';
+const RESET_SMOKE = process.env.XWX_DECK_RESET_SMOKE === '1';
+const STARTUP_SMOKE = PORTABLE_UPDATE_SMOKE || RESET_SMOKE;
+startMainProcess();
 
-function runPortableUpdateSmoke(): void {
-  app.whenReady()
-    .then(async () => {
-      const resultPath = process.env.XWX_DECK_PORTABLE_UPDATE_SMOKE_RESULT;
-      if (!resultPath || PORTABLE_UPDATE_RESULT?.kind !== 'complete') {
-        throw new Error('Portable update smoke did not restart through a completed update.');
-      }
-      await acknowledgePortableUpdateReady(PORTABLE_UPDATE_RESULT);
-      await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
-      await fs.promises.writeFile(resultPath, `${JSON.stringify(PORTABLE_UPDATE_RESULT, null, 2)}\n`, 'utf8');
-      app.exit(0);
-    })
-    .catch(error => {
-      console.error('[updater] portable update smoke failed', error);
-      app.exit(1);
-    });
+async function finishRestartSmoke(): Promise<void> {
+  const resultPath = process.env.XWX_DECK_PORTABLE_UPDATE_SMOKE_RESULT;
+  if (!resultPath || PORTABLE_UPDATE_SMOKE && PORTABLE_UPDATE_RESULT?.kind !== 'complete') {
+    throw new Error('Portable update smoke did not restart through a completed update.');
+  }
+  const win = managerWindow?.current();
+  if (!win || !controller) throw new Error('Updated manager did not initialize.');
+  await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+    const deadline = Date.now() + 10000;
+    const check = () => {
+      if (document.querySelector('button')) return resolve(true);
+      if (Date.now() >= deadline) return reject(new Error('Updated manager UI did not render.'));
+      setTimeout(check, 50);
+    };
+    check();
+  })`);
+  const state = await controller.runtimeState({ fast: true });
+  await handlePortableUpdateLaunchResult();
+  await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
+  await fs.promises.writeFile(resultPath, `${JSON.stringify({ ...PORTABLE_UPDATE_RESULT,
+    pid: process.pid, windowReady: true, readiness: state.readiness, lastError: state.lastError,
+    tracingEnabled: state.tracingEnabled
+  }, null, 2)}\n`, 'utf8');
+  await controller.forceExit();
+  app.exit(0);
 }
 
 function startMainProcess(): void {
@@ -89,7 +121,7 @@ function startMainProcess(): void {
     app.setPath('userData', path.resolve(process.env.XWX_DECK_PREVIEW_USER_DATA));
     isolatedUserData = true;
   }
-  if ((PACKAGED_SMOKE_TEST || PACKAGED_BACKGROUND_GATEWAY_SMOKE) && process.env.XWX_DECK_SMOKE_USER_DATA) {
+  if ((PACKAGED_SMOKE_TEST || PACKAGED_BACKGROUND_GATEWAY_SMOKE || STARTUP_SMOKE) && process.env.XWX_DECK_SMOKE_USER_DATA) {
     app.setPath('userData', path.resolve(process.env.XWX_DECK_SMOKE_USER_DATA));
     isolatedUserData = true;
   }
@@ -104,6 +136,14 @@ function startMainProcess(): void {
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
     app.quit();
+    // runtime.ts is loaded through a dynamic import. Electron may already be
+    // ready by the time an updater-launched replacement loses this lock, so
+    // app.whenReady() below would otherwise resolve before the process exits
+    // and let the losing instance start a second Gateway helper. That races the
+    // still-closing version for the shared control files, port and Trace writer
+    // lease, and the helper then exits with code 1 until those processes are
+    // cleared. A losing instance must not register or run any startup work.
+    return;
   } else {
     app.on('second-instance', (_event, argv) => {
       if (isStartupHiddenLaunch(argv)) return;
@@ -111,37 +151,13 @@ function startMainProcess(): void {
     });
   }
 
-  // The reset destroys userData, so it must never run in a process that lost the
-  // single-instance race — that process would delete the live instance's data
-  // and then quit, taking the app down with it.
+  // Older releases relaunch with a reset flag. Hand that request to a detached
+  // Node worker too: Chromium must be fully stopped before its profile is wiped.
   if (resetRequest && gotLock) {
-    try {
-      const reset = performApplicationResetAtStartup(standaloneUserDataDir, resetRequest, {
-        allowedParentDir: path.dirname(standaloneUserDataDir)
-      });
-      if (reset.removedClientFiles.length) {
-        console.info(`[xwxdeck] removed ${reset.removedClientFiles.length} client core config file(s) during reset`);
-      }
-      if (reset.skippedClientFiles.length) {
-        recordStartupResetFailure(
-          standaloneUserDataDir,
-          `未能删除客户端配置：${reset.skippedClientFiles.join('、')}`
-        );
-      }
-    } catch (error) {
-      // The logger is not initialised this early and a packaged build has no
-      // console, so persist the reason where the app can surface it after boot
-      // instead of dying before the first window with no trace of why.
-      recordStartupResetFailure(standaloneUserDataDir, errorMessage(error));
-      console.error(`[xwxdeck] application reset failed: ${errorMessage(error)}`);
-    }
-  }
-  if (resetRequest) {
-    process.argv.splice(
-      0,
-      process.argv.length,
-      ...process.argv.filter(value => !value.startsWith(APPLICATION_RESET_ARG))
-    );
+    void launchApplicationResetWorker(resetRequest, standaloneUserDataDir)
+      .catch(error => recordStartupResetFailure(standaloneUserDataDir, errorMessage(error)))
+      .finally(() => app.exit(0));
+    return;
   }
 
   app.setName('XwX Deck');
@@ -158,6 +174,16 @@ function startMainProcess(): void {
     .then(async () => {
       const userDataDir = app.getPath('userData');
       initLogger(userDataDir);
+      const startupStartedAt = Date.now();
+      let startupPhaseAt = startupStartedAt;
+      const reportStartupPhase = (phase: string) => {
+        const now = Date.now();
+        log.info(`[xwx-deck] startup ${phase}: phase=${now - startupPhaseAt}ms total=${now - startupStartedAt}ms`);
+        startupPhaseAt = now;
+      };
+      await waitForPriorExitRecovery(userDataDir);
+      reportStartupPhase('previous-exit-recovery');
+      startupRecoveryNotice = await readExitRecoveryNotice(userDataDir);
       reportPendingResetFailure();
       if (PACKAGED_BACKGROUND_GATEWAY_SMOKE) {
         await runPackagedBackgroundGatewaySmoke(userDataDir);
@@ -169,8 +195,9 @@ function startMainProcess(): void {
         bundledCachePath: assetPath('models-dev-pricing.json')
       };
       const pricingRuleCount = await loadModelsDevPricingCache(pricingOptions);
+      reportStartupPhase('local-pricing-cache');
       log.info(`[pricing] loaded ${pricingRuleCount} exact models.dev rules`);
-      if (!PACKAGED_SMOKE_TEST) {
+      if (!PACKAGED_SMOKE_TEST && !STARTUP_SMOKE) {
         runDetached('refresh models.dev pricing', async () => {
           const result = await refreshModelsDevPricingCache(pricingOptions);
           log.info(`[pricing] ${result.status}: ${result.ruleCount} exact rules`);
@@ -179,34 +206,32 @@ function startMainProcess(): void {
       controller = new XwXDeckController(userDataDir, {
         backgroundGateway: !PACKAGED_SMOKE_TEST,
         resolveUpstreamProxyUrl,
-        ...(PACKAGED_SMOKE_TEST ? { codexHistoryMutationAllowed: async () => true } : {})
+        ...(PACKAGED_SMOKE_TEST ? { codexHistoryMutationAllowed: async () => true } : {}),
+        ...(STARTUP_SMOKE ? { disableBackgroundModelRefresh: true, proxyListenPorts: [0] } : {})
       });
       updater = new XwXDeckUpdater();
       managerWindow = new ManagerWindow({
         state: currentState,
         preloadPath: path.join(__dirname, 'preload.js'),
         iconPath: assetPath('icon.png'),
-        hidden: PACKAGED_SMOKE_TEST,
+        hidden: PACKAGED_SMOKE_TEST || STARTUP_SMOKE,
         onClosed: undefined,
         onRendererRecoveryExhausted: details => {
           log.error(`[xwxdeck] manager recovery exhausted: reason=${details.reason} code=${details.exitCode}`);
           if (!PACKAGED_SMOKE_TEST && Notification.isSupported()) {
             new Notification({
               title: 'XwX Deck 管理窗口需要重启',
-              body: '图形进程连续异常退出；追踪仍在托盘运行，请退出并重新启动 XwX Deck。'
+              body: '管理窗口连续异常退出，后台连接状态尚未确认。请重新打开 XwX Deck；若对话仍连接失败，再完全退出并重新打开相应客户端。'
             }).show();
           }
         }
       });
       tray = new XwXDeckTray({
         openManager: () => runDetached('open manager from tray', openManager),
-        toggleTracing: () => runDetached('toggle tracing from tray', toggleTracingFromTray),
+        toggleTracing: enabled => runDetached('toggle tracing from tray', () => toggleTracingFromTray(enabled)),
         showUpdateDetails: () => runDetached('show update details from tray', () => managerWindow?.showUpdateDetails() ?? Promise.resolve()),
         quit: requestFullShutdownFromTray,
-        toggleGateway: expectedAction => runDetached(
-          `run ${expectedAction} background Gateway action`,
-          () => toggleBackgroundGateway(expectedAction)
-        )
+
       });
       registerIpcHandlers({
         controller: () => controller,
@@ -218,11 +243,30 @@ function startMainProcess(): void {
         refreshUi,
         setStartupEnabled,
         restartAndInstall,
+        cancelUpdate,
         toggleTracing,
         toggleClient,
         openDashboard,
         clearHistory,
         repairApplication,
+        repairUnreadableSettings: async () => {
+          if (!controller) throw new Error('XwX Deck 仍在启动。');
+          const result = await controller.repairUnreadableSettings();
+          await refreshUi();
+          return result;
+        },
+        repairInvalidCodexConfiguration: async () => {
+          if (!controller) throw new Error('XwX Deck 仍在启动。');
+          const result = await controller.repairInvalidCodexConfiguration();
+          await refreshUi();
+          return result;
+        },
+        repairClientProviderSwitch: async (client, providerId) => {
+          if (!controller) throw new Error('XwX Deck 仍在启动。');
+          const result = await controller.repairClientProviderSwitch(client, providerId);
+          await refreshUi();
+          return result;
+        },
         resetApplication
       });
       controller.onDidChange(() => runDetached('refresh UI after controller change', refreshUi));
@@ -233,7 +277,7 @@ function startMainProcess(): void {
         }
       });
       await updater.start();
-      await reconcileStartupWithIntent();
+      reportStartupPhase('updater-initialization');
       await controller.start();
       const metadataUrl = metadataPushUrl();
       if (!PACKAGED_SMOKE_TEST && metadataUrl) {
@@ -251,9 +295,18 @@ function startMainProcess(): void {
         }, { logger: log });
         metadataSubscriber.start();
       }
-      await restoreLegacyOfficialHistoryIfChatGptStopped('startup');
       await refreshUi();
+      reportStartupPhase('first-ui-state');
       if (!START_HIDDEN || PACKAGED_SMOKE_TEST) await openManager();
+      reportStartupPhase('manager-window');
+      if (!PACKAGED_SMOKE_TEST && !STARTUP_SMOKE) {
+        runDetached('reconcile startup registration', reconcileStartupWithIntent);
+        runDetached('restore legacy official history after startup', () => restoreLegacyOfficialHistoryIfChatGptStopped('startup'));
+      }
+      if (STARTUP_SMOKE) {
+        await finishRestartSmoke();
+        return;
+      }
       await handlePortableUpdateLaunchResult();
       if (PACKAGED_SMOKE_TEST) {
         const win = managerWindow.current();
@@ -318,12 +371,11 @@ function startMainProcess(): void {
       updater.scheduleStartupCheck();
     })
     .catch(err => {
-      log.error('[xwxdeck] failed to start', err);
       if (PACKAGED_SMOKE_TEST || PACKAGED_BACKGROUND_GATEWAY_SMOKE) {
         void finishPackagedSmokeTest({ ok: false, error: errorMessage(err) }, 1);
         return;
       }
-      dialog.showErrorBox('XwX Deck failed to start', errorMessage(err));
+      void handleStartupFailure(err);
     });
 
   app.on('window-all-closed', () => {
@@ -340,37 +392,128 @@ function startMainProcess(): void {
     log.info(`[xwxdeck] before-quit requested (state=${quitState})`);
     if (quitState === 'ready') return;
     event.preventDefault();
-    if (quitState === 'cleaning') return;
+    if (quitState === 'cleaning') {
+      requestEmergencyExit('repeated quit request');
+      return;
+    }
+    // Closing the manager window does not quit this tray application. Therefore
+    // every before-quit event represents an explicit application exit (Dock,
+    // Cmd+Q, application menu, tray, updater, or system logout) and must fully
+    // detach clients from the local Gateway before the helper is terminated.
+    // Previously only the tray's own Quit item set this flag, so Cmd+Q and the
+    // macOS application menu silently detached the manager while leaving Codex
+    // pointed at localhost.
+    fullShutdownRequested = true;
     quitState = 'cleaning';
     void (async () => {
       try {
         const confirmContext: ShutdownConfirmContext = 'tray-quit';
         const shutdown = await prepareSafeShutdown(confirmContext);
+        hideFullShutdownUi();
+        armFullShutdownWatchdog();
+        await withOperationTimeout(
+          startExitRecoveryGuardian(),
+          EXIT_GUARDIAN_START_TIMEOUT_MS,
+          '退出恢复守护进程启动超时。'
+        );
         await controller?.beginShutdown();
         await shutdownControllerWithConfirmation(
           shutdown.forceShutdown,
           shutdown.chatGptMayBeRunning,
           confirmContext
         );
-        log.info('[xwxdeck] application exit restored direct client configuration and stopped the Gateway');
+        log.info('[xwx-deck] explicit application exit restored direct client configuration and stopped the Gateway');
+        clearFullShutdownWatchdog();
         quitState = 'ready';
         app.exit(0);
       } catch (err) {
+        if (fullShutdownRequested && !(err instanceof ShutdownCancelledError)) {
+          log.warn(`[xwx-deck] graceful exit failed; forcing final exit: ${errorMessage(err)}`);
+          requestEmergencyExit(`graceful exit failed: ${errorMessage(err)}`);
+          return;
+        }
+        clearFullShutdownWatchdog();
+        await cancelExitRecoveryGuardian();
         await controller?.cancelShutdown().catch(() => undefined);
         quitState = 'idle';
         fullShutdownRequested = false;
         if (err instanceof ShutdownCancelledError) {
-          log.info('[xwxdeck] shutdown cancelled by user');
+          log.info('[xwx-deck] shutdown cancelled by user');
+          await restoreFullShutdownUi();
           await refreshUi().catch(() => undefined);
           return;
         }
+        await restoreFullShutdownUi();
         const message = errorMessage(err);
-        log.warn(`[xwxdeck] shutdown cancelled: ${message}`);
-        await showManagerNotice(`未能退出：${message}`, 'error');
+        log.warn(`[xwx-deck] shutdown cancelled: ${message}`);
+        await managerWindow?.showNotice(lifecycleFailure(err, '退出 XwX Deck'));
         await refreshUi().catch(() => undefined);
       }
     })();
   });
+}
+
+async function handleStartupFailure(error: unknown): Promise<void> {
+  const notice = lifecycleFailure(error, '启动 XwX Deck');
+  const message = notice.description ?? '请查看运行日志后重试。';
+  log.error('[xwx-deck] failed to start', error);
+  metadataSubscriber?.stop();
+  hideFullShutdownUi();
+
+  let cleanupError: unknown;
+  if (controller) {
+    try {
+      await withStartupCleanupTimeout(controller.forceExit(), 10_000);
+    } catch (failure) {
+      cleanupError = failure;
+      log.error(`[xwx-deck] startup failure cleanup did not complete: ${errorMessage(failure)}`);
+    }
+  }
+
+  try {
+    if (PORTABLE_UPDATE_RESULT?.kind !== 'complete') dialog.showErrorBox(
+      notice.message,
+      cleanupError
+        ? `${message}\n\n程序将退出；后台恢复进程会继续清理本地 Gateway。`
+        : `${message}\n\n程序已结束本次启动，请重新打开 XwX Deck。`
+    );
+  } catch {
+    // Logging above is the last fallback when Electron cannot create a dialog.
+  }
+
+  if (cleanupError) {
+    await startExitRecoveryGuardian().catch(guardianError => {
+      log.error(`[xwx-deck] startup recovery guardian failed to start: ${errorMessage(guardianError)}`);
+    });
+    await triggerExitRecoveryNow().catch(guardianError => {
+      log.error(`[xwx-deck] startup recovery guardian trigger failed: ${errorMessage(guardianError)}`);
+    });
+  }
+  quitState = 'ready';
+  app.exit(1);
+}
+
+async function withStartupCleanupTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  return withOperationTimeout(operation, timeoutMs, '启动失败后的 Gateway 清理超时。');
+}
+
+async function withOperationTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+        timer.unref?.();
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 class ShutdownCancelledError extends Error {
@@ -384,7 +527,13 @@ interface SafeShutdownPreparation {
   readonly forceShutdown: boolean;
   readonly chatGptMayBeRunning: boolean;
   readonly claudeMayBeRunning: boolean;
-  readonly activity: { readonly activeRequests: number; readonly pendingContinuations: number };
+  readonly activity: {
+    readonly activeRequests: number;
+    readonly activeUserResponses: number;
+    readonly pendingContinuations: number;
+  };
+  readonly modelDependencies: ReturnType<XwXDeckController['shutdownModelDependencies']>;
+  readonly inspectionFailed?: boolean;
 }
 
 async function inspectSafeShutdown(): Promise<SafeShutdownPreparation> {
@@ -393,7 +542,8 @@ async function inspectSafeShutdown(): Promise<SafeShutdownPreparation> {
       forceShutdown: false,
       chatGptMayBeRunning: false,
       claudeMayBeRunning: false,
-      activity: { activeRequests: 0, pendingContinuations: 0 }
+      activity: { activeRequests: 0, activeUserResponses: 0, pendingContinuations: 0 },
+      modelDependencies: []
     };
   }
   const requiresChatGptExit = controller.requiresCodexClientExitBeforeShutdown();
@@ -419,7 +569,8 @@ async function inspectSafeShutdown(): Promise<SafeShutdownPreparation> {
     forceShutdown: chatGptMayBeRunning || claudeMayBeRunning || hasActiveConversation,
     chatGptMayBeRunning,
     claudeMayBeRunning,
-    activity
+    activity,
+    modelDependencies: controller.shutdownModelDependencies()
   };
 }
 
@@ -429,33 +580,52 @@ async function prepareSafeShutdown(
   confirmContext: ShutdownConfirmContext = 'default'
 ): Promise<SafeShutdownPreparation> {
   if (confirmContext === 'tray-quit') {
+    // The activity snapshot is maintained by the helper. Do not delay the
+    // user's exit behind process enumeration or history repair.
     const activity = controller?.shutdownActivitySnapshot()
-      ?? { activeRequests: 0, pendingContinuations: 0 };
-    const chatGptMayBeRunning = controller?.requiresCodexClientExitBeforeShutdown() === true;
-    const claudeMayBeRunning = controller?.requiresClaudeClientExitBeforeShutdown() === true;
-    const initial = {
-      claudeMayBeRunning,
-      forceShutdown: chatGptMayBeRunning
-        || activity.activeRequests > 0
-        || activity.pendingContinuations > 0,
-      chatGptMayBeRunning,
-      activity
+      ?? { activeRequests: 0, activeUserResponses: 0, pendingContinuations: 0 };
+    const shutdown: SafeShutdownPreparation = {
+      forceShutdown: activity.activeRequests > 0 || activity.pendingContinuations > 0,
+      chatGptMayBeRunning: true, // Skip optional history repair on exit.
+      claudeMayBeRunning: false,
+      activity,
+      modelDependencies: controller?.shutdownModelDependencies() ?? []
     };
-    const confirmed = await showTrayQuitConfirm(initial);
-    if (!confirmed) throw new ShutdownCancelledError();
-    try {
-      return await inspectSafeShutdown();
-    } catch (error) {
-      log.warn(`[xwxdeck] live shutdown inspection failed after confirmation; forcing recovery: ${errorMessage(error)}`);
-      return { ...initial, forceShutdown: true };
+    const riskyExit = shouldConfirmTrayQuit({
+      activeUserResponses: shutdown.activity.activeUserResponses,
+      pendingContinuations: shutdown.activity.pendingContinuations,
+      modelDependencies: shutdown.modelDependencies
+    });
+    if (riskyExit) {
+      const confirmed = await showTrayQuitConfirm(shutdown);
+      if (!confirmed) throw new ShutdownCancelledError();
     }
+    // Merely having ChatGPT or Claude open is not destructive. The regular
+    // drain gate restores and verifies their direct configuration before the
+    // helper stops. Force only after the user accepted a concrete risk.
+    return { ...shutdown, forceShutdown: riskyExit };
   }
-  const shutdown = await inspectSafeShutdown();
+  const shutdown = await inspectSafeShutdownWithinLimit();
   if (shutdown.forceShutdown) {
-    const confirmed = await showImmediateShutdownConfirm(shutdown.activity);
+    const confirmed = shutdown.inspectionFailed
+      ? await showTrayQuitConfirm(shutdown)
+      : await showImmediateShutdownConfirm(shutdown.activity);
     if (!confirmed) throw new ShutdownCancelledError();
   }
   return shutdown;
+}
+
+async function inspectSafeShutdownWithinLimit(): Promise<SafeShutdownPreparation> {
+  try { return await withOperationTimeout(
+    inspectSafeShutdown(),
+    SHUTDOWN_INSPECTION_TIMEOUT_MS,
+    '安全退出检查超时。'
+  ); } catch (error) {
+    log.warn(`[xwx-deck] shutdown inspection failed; offering forced continuation: ${errorMessage(error)}`);
+    return { forceShutdown: true, chatGptMayBeRunning: true, claudeMayBeRunning: true,
+      activity: controller?.shutdownActivitySnapshot() ?? { activeRequests: 0, activeUserResponses: 0, pendingContinuations: 0 },
+      modelDependencies: controller?.shutdownModelDependencies() ?? [], inspectionFailed: true };
+  }
 }
 
 async function shutdownControllerWithConfirmation(
@@ -474,6 +644,21 @@ async function shutdownControllerWithConfirmation(
     if (!(error instanceof ShutdownDrainTimeoutError)) throw error;
     const activity = await controller.shutdownActivity();
     if (confirmContext === 'tray-quit') {
+      const lateRisk: SafeShutdownPreparation = {
+        forceShutdown: true,
+        chatGptMayBeRunning: skipCodexHistoryRepair,
+        claudeMayBeRunning: controller.requiresClaudeClientExitBeforeShutdown(),
+        activity,
+        modelDependencies: controller.shutdownModelDependencies()
+      };
+      if (shouldConfirmTrayQuit({
+        activeUserResponses: activity.activeUserResponses,
+        pendingContinuations: activity.pendingContinuations,
+        modelDependencies: lateRisk.modelDependencies
+      })) {
+        const confirmed = await showTrayQuitConfirm(lateRisk);
+        if (!confirmed) throw new ShutdownCancelledError();
+      }
       await controller.shutdown({ force: true, skipCodexHistoryRepair });
       return;
     }
@@ -519,11 +704,238 @@ function reportPendingResetFailure(): void {
   } catch { /* a malformed breadcrumb is not worth blocking startup */ }
 }
 
+function armFullShutdownWatchdog(): NodeJS.Timeout {
+  if (fullShutdownWatchdog) return fullShutdownWatchdog;
+  fullShutdownWatchdog = setTimeout(() => {
+    log.error(
+      `[xwx-deck] full-shutdown watchdog expired after ${FULL_SHUTDOWN_WATCHDOG_MS}ms; `
+      + 'terminating the manager while the detached recovery guardian finishes client restore and process cleanup'
+    );
+    quitState = 'ready';
+    app.exit(1);
+  }, FULL_SHUTDOWN_WATCHDOG_MS);
+  fullShutdownWatchdog.unref?.();
+  return fullShutdownWatchdog;
+}
+
+function clearFullShutdownWatchdog(): void {
+  if (fullShutdownWatchdog) clearTimeout(fullShutdownWatchdog);
+  fullShutdownWatchdog = undefined;
+}
+
+function requestEmergencyExit(reason: string): void {
+  if (emergencyExitRequested || quitState === 'ready') return;
+  emergencyExitRequested = true;
+  fullShutdownRequested = true;
+  quitState = 'cleaning';
+  hideFullShutdownUi();
+  armFullShutdownWatchdog();
+  log.warn(`[xwx-deck] emergency exit requested: ${reason}`);
+  void (async () => {
+    await withOperationTimeout(
+      startExitRecoveryGuardian(),
+      EXIT_GUARDIAN_START_TIMEOUT_MS,
+      '退出恢复守护进程启动超时。'
+    ).catch(error => {
+      log.error(`[xwx-deck] exit recovery guardian failed to start: ${errorMessage(error)}`);
+    });
+    await triggerExitRecoveryNow().catch(error => {
+      log.error(`[xwx-deck] exit recovery guardian trigger failed: ${errorMessage(error)}`);
+    });
+    await withOperationTimeout(
+      controller?.forceExit() ?? Promise.resolve({ helperStopped: true, dependentClients: [] }),
+      4_000,
+      '进程内强制退出超时。'
+    ).catch(error => {
+      log.error(`[xwx-deck] forced helper stop failed: ${errorMessage(error)}`);
+    });
+    clearFullShutdownWatchdog();
+    quitState = 'ready';
+    app.exit(0);
+  })();
+}
+
+function hideFullShutdownUi(): void {
+  if (fullShutdownUiHidden) return;
+  fullShutdownUiHidden = true;
+  managerWindow?.current()?.hide();
+  tray?.dispose();
+  if (process.platform === 'darwin' && app.dock) {
+    void app.dock.hide();
+  }
+  log.info('[xwx-deck] full-shutdown UI hidden; detached recovery continues in background');
+}
+
+async function restoreFullShutdownUi(): Promise<void> {
+  if (!fullShutdownUiHidden) return;
+  fullShutdownUiHidden = false;
+  if (process.platform === 'darwin' && app.dock) await app.dock.show();
+  await refreshUi().catch(() => undefined);
+  await openManager().catch(() => undefined);
+}
+
+async function startExitRecoveryGuardian(): Promise<void> {
+  if (exitRecoveryGuardianStarted) return;
+  const userDataDir = app.getPath('userData');
+  await beginExitRecoveryReport(userDataDir, process.pid).catch(error => {
+    log.warn(`[xwx-deck] could not record exit recovery intent: ${errorMessage(error)}`);
+  });
+  const controlDir = path.join(userDataDir, 'gateway');
+  const readyFile = path.join(controlDir, 'exit-recovery.ready');
+  await fs.promises.mkdir(controlDir, { recursive: true });
+  await Promise.all([
+    fs.promises.rm(path.join(controlDir, 'exit-recovery-now'), { force: true }).catch(() => undefined),
+    fs.promises.rm(path.join(controlDir, 'exit-recovery-cancel'), { force: true }).catch(() => undefined),
+    fs.promises.rm(readyFile, { force: true }).catch(() => undefined)
+  ]);
+  const recoveryPath = path.join(__dirname, 'exit-recovery.js');
+  const recoveryId = randomUUID();
+  const child = spawn(process.execPath, [recoveryPath], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    env: {
+      ...childProcessEnvironment(),
+      ELECTRON_RUN_AS_NODE: '1',
+      XWX_EXIT_RECOVERY: '1',
+      XWX_EXIT_RECOVERY_USER_DATA: userDataDir,
+      XWX_EXIT_RECOVERY_MANAGER_PID: String(process.pid),
+      XWX_EXIT_RECOVERY_DELAY_MS: '6000',
+      XWX_EXIT_RECOVERY_ID: recoveryId
+    }
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  child.unref();
+  const readyDeadline = Date.now() + 1_500;
+  while (Date.now() < readyDeadline) {
+    const ready = await readExitRecoveryReadyMarker(readyFile);
+    if (ready?.recoveryId === recoveryId) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  const ready = await readExitRecoveryReadyMarker(readyFile);
+  if (ready?.recoveryId !== recoveryId) {
+    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    throw new Error('退出恢复守护进程未能在时限内保存恢复快照。');
+  }
+  exitRecoveryGuardianId = recoveryId;
+  exitRecoveryGuardianStarted = true;
+  log.info(`[xwx-deck] exit recovery guardian armed pid=${child.pid ?? 'unknown'}`);
+}
+
+interface ExitRecoveryReadyMarker {
+  readonly recoveryId?: string;
+  readonly pid?: number;
+}
+
+async function waitForPriorExitRecovery(userDataDir: string): Promise<void> {
+  const readyFile = path.join(userDataDir, 'gateway', 'exit-recovery.ready');
+  const first = await fs.promises.readFile(readyFile).catch(() => undefined);
+  if (!first) return;
+  log.info('[xwx-deck] waiting for the previous version exit recovery before starting Gateway');
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const contents = await fs.promises.readFile(readyFile).catch(() => undefined);
+    if (!contents) return;
+    const marker = parseExitRecoveryReadyMarker(contents.toString('utf8'));
+    if (!marker?.pid || !processIsAlive(marker.pid)) {
+      const current = await fs.promises.readFile(readyFile).catch(() => undefined);
+      if (current?.equals(contents)) await fs.promises.rm(readyFile, { force: true }).catch(() => undefined);
+      continue;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  const stale = await fs.promises.readFile(readyFile).catch(() => undefined);
+  if (!stale) return;
+  const marker = parseExitRecoveryReadyMarker(stale.toString('utf8'));
+  if (marker?.pid) {
+    const stoppedOwnWorker = await stopStalledExitRecovery(marker.pid);
+    const stopDeadline = Date.now() + 2_000;
+    while (stoppedOwnWorker && processIsAlive(marker.pid) && Date.now() < stopDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (stoppedOwnWorker && processIsAlive(marker.pid)) throw new Error(`系统未允许关闭旧恢复进程 ${marker.pid}，请重试启动。`);
+  }
+  const current = await fs.promises.readFile(readyFile).catch(() => undefined);
+  if (current?.equals(stale)) await fs.promises.rm(readyFile, { force: true });
+  log.warn('[xwx-deck] cleared stalled prior exit recovery; continuing startup and client recovery');
+}
+
+async function readExitRecoveryReadyMarker(file: string): Promise<ExitRecoveryReadyMarker | undefined> {
+  const contents = await fs.promises.readFile(file, 'utf8').catch(() => undefined);
+  return contents === undefined ? undefined : parseExitRecoveryReadyMarker(contents);
+}
+
+function parseExitRecoveryReadyMarker(contents: string): ExitRecoveryReadyMarker | undefined {
+  const trimmed = contents.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const pid = Number(trimmed);
+    return Number.isSafeInteger(pid) && pid > 0 ? { pid } : undefined;
+  }
+  try {
+    const value = JSON.parse(trimmed) as { recoveryId?: unknown; pid?: unknown };
+    return {
+      recoveryId: typeof value.recoveryId === 'string' ? value.recoveryId : undefined,
+      pid: Number.isSafeInteger(value.pid) && Number(value.pid) > 0 ? Number(value.pid) : undefined
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+async function triggerExitRecoveryNow(): Promise<void> {
+  if (!exitRecoveryGuardianId) throw new Error('退出恢复守护进程尚未就绪。');
+  const marker = path.join(app.getPath('userData'), 'gateway', 'exit-recovery-now');
+  await fs.promises.mkdir(path.dirname(marker), { recursive: true });
+  await fs.promises.writeFile(marker, `${exitRecoveryGuardianId}\n`, 'utf8');
+}
+
+async function cancelExitRecoveryGuardian(): Promise<void> {
+  if (!exitRecoveryGuardianId) return;
+  const recoveryId = exitRecoveryGuardianId;
+  const controlDir = path.join(app.getPath('userData'), 'gateway');
+  const marker = path.join(controlDir, 'exit-recovery-cancel');
+  const readyFile = path.join(controlDir, 'exit-recovery.ready');
+  await fs.promises.mkdir(path.dirname(marker), { recursive: true });
+  await fs.promises.writeFile(marker, `${recoveryId}\n`, 'utf8').catch(() => undefined);
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    const ready = await readExitRecoveryReadyMarker(readyFile);
+    if (ready?.recoveryId !== recoveryId) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  const remaining = await readExitRecoveryReadyMarker(readyFile);
+  if (remaining?.recoveryId === recoveryId && remaining.pid) {
+    const stoppedOwnWorker = await stopStalledExitRecovery(remaining.pid);
+    const stoppedAt = Date.now() + 2_000;
+    while (stoppedOwnWorker && processIsAlive(remaining.pid) && Date.now() < stoppedAt) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (stoppedOwnWorker && processIsAlive(remaining.pid)) throw new Error('旧恢复进程尚未退出，请重试操作。');
+    const current = await readExitRecoveryReadyMarker(readyFile);
+    if (current?.recoveryId === recoveryId) await fs.promises.rm(readyFile, { force: true });
+  }
+  exitRecoveryGuardianId = undefined;
+  exitRecoveryGuardianStarted = false;
+}
+
 async function showTrayQuitConfirm(shutdown: SafeShutdownPreparation): Promise<boolean> {
   const options = buildTrayQuitPrompt({
-    ...shutdown.activity,
-    chatGptMayBeRunning: shutdown.chatGptMayBeRunning,
-    claudeMayBeRunning: shutdown.claudeMayBeRunning
+    activeUserResponses: shutdown.activity.activeUserResponses,
+    pendingContinuations: shutdown.activity.pendingContinuations,
+    modelDependencies: shutdown.modelDependencies,
+    inspectionFailed: shutdown.inspectionFailed
   });
   const owner = managerWindow?.current();
   const result = owner ? await dialog.showMessageBox(owner, options) : await dialog.showMessageBox(options);
@@ -597,11 +1009,26 @@ function applyMacApplicationIcon(): {
 
 async function currentState(): Promise<XwXDeckRuntimeState> {
   if (!controller) throw new Error('XwX Deck 仍在启动。');
+  const desiredEnabled = await controller.readStartupIntent().catch(() => undefined);
+  const startup = cachedStartupSettings();
   return {
-    ...(await controller.runtimeState()),
-    startup: readStartupSettings(),
+    ...(await controller.runtimeState({ fast: true })),
+    lifecycleNotice: startupRecoveryNotice,
+    startup: { ...startup, desiredEnabled,
+      warning: desiredEnabled === undefined ? '暂时无法读取开机启动偏好，原设置已保留；可稍后重试。'
+        : startupRegistrationMatches(startup, desiredEnabled) ? undefined
+        : startup.warning ?? (startup.supported ? '选择已保存，系统登录项尚未同步；可点击重试。' : undefined) },
     update: updateState()
   };
+}
+
+function cachedStartupSettings(): StartupSettingsSnapshot {
+  if (startupSettingsCache && Date.now() - startupSettingsCache.checkedAt < 3_000) {
+    return startupSettingsCache.value;
+  }
+  const value = readStartupSettings();
+  startupSettingsCache = { value, checkedAt: Date.now() };
+  return value;
 }
 
 function updateState() {
@@ -616,31 +1043,43 @@ function updateState() {
   };
 }
 
-async function refreshUi(): Promise<XwXDeckRuntimeState | undefined> {
-  if (!controller) return undefined;
-  const state = await currentState();
-  tray?.refresh(state);
-  managerWindow?.sendState(state);
-  return state;
+let uiRefreshInFlight: Promise<XwXDeckRuntimeState | undefined> | undefined;
+let uiRefreshAgain = false;
+
+function refreshUi(): Promise<XwXDeckRuntimeState | undefined> {
+  if (!controller) return Promise.resolve(undefined);
+  if (uiRefreshInFlight) {
+    uiRefreshAgain = true;
+    return uiRefreshInFlight;
+  }
+  uiRefreshInFlight = (async () => {
+    let state: XwXDeckRuntimeState;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      uiRefreshAgain = false;
+      state = await currentState();
+      tray?.refresh(state);
+      managerWindow?.sendState(state);
+      if (!uiRefreshAgain) break;
+    }
+    return state!;
+  })().finally(() => {
+    uiRefreshInFlight = undefined;
+    if (uiRefreshAgain) runDetached('refresh UI after concurrent change', refreshUi);
+  });
+  return uiRefreshInFlight;
 }
 
 async function setStartupEnabled(enabled: boolean): Promise<XwXDeckRuntimeState | undefined> {
   if (!controller) return undefined;
-  const previous = readStartupSettings();
-  await setLoginStartupEnabled(enabled);
+  await controller.setStartupIntent(enabled);
   try {
-    await controller.setStartupIntent(enabled);
+    const actual = await setLoginStartupEnabled(enabled);
+    startupSettingsCache = { value: actual, checkedAt: Date.now() };
   } catch (error) {
-    if (previous.supported) {
-      try {
-        await setLoginStartupEnabled(previous.enabled);
-      } catch (rollbackError) {
-        log.warn(`[xwxdeck] startup registration rollback failed: ${errorMessage(rollbackError)}`);
-      }
-    }
-    throw error;
+    startupSettingsCache = { value: { ...readStartupSettings(), warning: errorMessage(error) }, checkedAt: Date.now() };
+    log.warn(`[xwx-deck] startup selection retained for retry: ${errorMessage(error)}`);
   }
-  return refreshUi();
+  return currentState();
 }
 
 /**
@@ -655,15 +1094,17 @@ async function reconcileStartupWithIntent(): Promise<void> {
   if (!current.supported || startupRegistrationMatches(current, intent)) return;
   try {
     await setLoginStartupEnabled(intent);
+    startupSettingsCache = undefined;
   } catch (error) {
     const actual = readStartupSettings();
-    if (actual.supported) await controller.setStartupIntent(actual.enabled);
-    log.warn(`[xwxdeck] startup reconcile failed; persisted actual OS state: ${errorMessage(error)}`);
+    startupSettingsCache = { value: { ...actual, warning: errorMessage(error) }, checkedAt: Date.now() };
+    log.warn(`[xwx-deck] startup reconcile pending; user selection retained: ${errorMessage(error)}`);
   }
 }
 
 async function restartAndInstall() {
-  if (!updater) throw new Error('更新服务仍在启动，请稍后重试。');
+  if (!updater) throw new Error('XwX Deck updater is still starting.');
+  if (quitState === 'cleaning') throw new Error('XwX Deck 正在退出，请稍候。');
   updater.markInstalling();
   await refreshUi();
   if (updater.state().installMode === 'manual-dmg') {
@@ -678,22 +1119,33 @@ async function restartAndInstall() {
     return updater.state();
   }
   try {
-    // Automatic/portable replacement cannot leave an old-version data plane
-    // behind. Mark this as an explicit full shutdown before any quit path can
-    // re-enter `before-quit`; ordinary manager exit uses its own confirmation
-    // and persists the proxy as closed.
     fullShutdownRequested = true;
+    quitState = 'cleaning';
     const portable = updater.state().portable;
+    await prepareSafeShutdown();
+    armFullShutdownWatchdog();
+    await withOperationTimeout(
+      startExitRecoveryGuardian(),
+      EXIT_GUARDIAN_START_TIMEOUT_MS,
+      '退出恢复守护进程启动超时。'
+    );
     await controller?.beginShutdown();
-    const shutdown = await prepareSafeShutdown();
-    await shutdownControllerWithConfirmation(shutdown.forceShutdown, shutdown.chatGptMayBeRunning);
+    await withOperationTimeout(
+      controller?.forceExit() ?? Promise.resolve({ helperStopped: true, dependentClients: [] }),
+      8_000,
+      '更新前停止 Gateway 超时。'
+    );
+    hideFullShutdownUi();
     quitState = 'ready';
     await updater.quitAndInstall();
     if (portable) app.quit();
   } catch (error) {
+    clearFullShutdownWatchdog();
+    await cancelExitRecoveryGuardian();
     await controller?.cancelShutdown().catch(() => undefined);
     quitState = 'idle';
     fullShutdownRequested = false;
+    await restoreFullShutdownUi();
     if (error instanceof ShutdownCancelledError) {
       updater.cancelInstallation();
       await refreshUi();
@@ -706,13 +1158,21 @@ async function restartAndInstall() {
   return updater.state();
 }
 
+async function cancelUpdate() {
+  if (!updater) throw new Error('XwX Deck updater is still starting.');
+  const state = await updater.discardDownloadedUpdate();
+  await refreshUi().catch(() => undefined);
+  return state;
+}
+
 async function handlePortableUpdateLaunchResult(): Promise<void> {
   if (!PORTABLE_UPDATE_RESULT || PACKAGED_SMOKE_TEST) return;
   if (PORTABLE_UPDATE_RESULT.kind === 'failed') {
-    dialog.showErrorBox('XwX Deck 更新未完成', `已恢复可用版本并重新启动。\n\n${PORTABLE_UPDATE_RESULT.message}`);
+    dialog.showErrorBox('XwX Deck 更新未完成', `原路径程序已重新打开。\n\n${PORTABLE_UPDATE_RESULT.message}`);
     return;
   }
   await acknowledgePortableUpdateReady(PORTABLE_UPDATE_RESULT);
+  if (PORTABLE_UPDATE_SMOKE) return;
   if (Notification.isSupported()) {
     new Notification({
       title: 'XwX Deck 更新完成',
@@ -728,9 +1188,10 @@ async function handlePortableUpdateLaunchResult(): Promise<void> {
   runDetached('clean portable update files', () => cleanupPortableUpdateFiles(cleanupPaths));
 }
 
-async function toggleTracing(): Promise<XwXDeckRuntimeState | undefined> {
-  if (tracingToggle) return tracingToggle;
-  tracingToggle = toggleTracingOnce();
+async function toggleTracing(enabled?: boolean, force = false): Promise<XwXDeckRuntimeState | undefined> {
+  if (force) return toggleTracingOnce(enabled, true);
+  if (tracingToggle) await tracingToggle.catch(() => undefined);
+  tracingToggle = toggleTracingOnce(enabled, force);
   try {
     return await tracingToggle;
   } finally {
@@ -746,92 +1207,10 @@ async function resolveUpstreamProxyUrl(url: string): Promise<string | undefined>
   throw new Error(`系统代理规则暂不受 XwX Deck Gateway 支持：${selected.rule}`);
 }
 
-async function toggleBackgroundGateway(expectedAction: GatewayMenuAction): Promise<void> {
-  if (gatewayToggle) return gatewayToggle;
-  tray?.setGatewayActionPending(expectedAction);
-  gatewayToggle = toggleBackgroundGatewayOnce(expectedAction);
-  try {
-    await gatewayToggle;
-  } finally {
-    gatewayToggle = undefined;
-    tray?.setGatewayActionPending(undefined);
-  }
-}
-
-async function toggleBackgroundGatewayOnce(expectedAction: GatewayMenuAction): Promise<void> {
-  if (!controller) return;
-  const action = await controller.backgroundGatewayAction();
-  if (!gatewayMenuActionMatches(expectedAction, action)) {
-    log.warn(`[xwxdeck] ignored stale Gateway menu action: shown=${expectedAction} current=${action ?? 'hidden'}`);
-    await refreshUi();
-    return;
-  }
-  if (action === 'close') {
-    try {
-      const shutdown = await inspectSafeShutdown();
-      await controller.beginShutdown();
-      await controller.shutdown({
-        drainTimeoutMs: 1_000,
-        skipCodexHistoryRepair: shutdown.chatGptMayBeRunning
-      });
-      await controller.finishShutdown(true);
-      log.info('[xwxdeck] background Gateway closed without controlling ChatGPT; menu action switched to open');
-      await showManagerNotice('代理已关闭。', 'success');
-    } catch (error) {
-      await controller.cancelShutdown().catch(() => undefined);
-      if (error instanceof ShutdownDrainTimeoutError) {
-        log.info('[xwxdeck] background Gateway close deferred because a conversation is active');
-        await showManagerNotice('有请求正在进行，暂未关闭代理。', 'info');
-        return;
-      }
-      // A dead or wedged control channel used to dead-end here with
-      // "代理未关闭：Gateway control request timed out." while the Gateway kept
-      // running and the clients kept pointing at it. The user asked for the
-      // proxy to close, so escalate the same way the exit path does: restore
-      // client configuration first, then stop the helper by PID.
-      log.warn(
-        `[xwxdeck] background Gateway close failed over the control channel; forcing stop: ${errorMessage(error)}`
-      );
-      try {
-        const forced = await controller.forceExit();
-        await controller.finishShutdown(true);
-        log.info('[xwxdeck] background Gateway force-stopped after control-channel failure');
-        await showManagerNotice(
-          forced.dependentClients.length
-            ? `代理已强制关闭，但 ${forced.dependentClients.join('、')} 的配置可能仍指向本地代理，请重启该客户端。`
-            : '代理已关闭（控制通道无响应，已强制停止）。',
-          forced.dependentClients.length ? 'info' : 'success'
-        );
-      } catch (forceError) {
-        await controller.cancelShutdown().catch(() => undefined);
-        log.error(`[xwxdeck] forced background Gateway stop failed: ${errorMessage(forceError)}`);
-        await showManagerNotice(`代理未关闭：${errorMessage(forceError)}`, 'error');
-        return;
-      }
-    }
-  } else if (action === 'open') {
-    try {
-      const wasPaused = await controller.backgroundGatewayPaused();
-      await controller.setBackgroundGatewayPaused(false, 'user selected 开启代理');
-      if (wasPaused) await controller.start();
-      if (!controller.backgroundGatewayActive()) await controller.startBackgroundGateway();
-      log.info('[xwxdeck] background Gateway opened without controlling ChatGPT');
-      await showManagerNotice('代理已开启；未生效时请重启 ChatGPT。', 'success');
-    } catch (error) {
-      await controller.setBackgroundGatewayPaused(true, 'Gateway open failed').catch(() => undefined);
-      await showManagerNotice(`代理未开启：${errorMessage(error)}`, 'error');
-      return;
-    }
-  } else {
-    return;
-  }
-  await refreshUi();
-}
-
-async function toggleTracingOnce(): Promise<XwXDeckRuntimeState | undefined> {
+async function toggleTracingOnce(enabled?: boolean, force = false): Promise<XwXDeckRuntimeState | undefined> {
   if (!controller) return undefined;
   try {
-    await controller.toggle();
+    await controller.toggle(enabled, force);
   } catch (err) {
     log.warn(`[xwxdeck] toggle failed: ${errorMessage(err)}`);
     await refreshUi();
@@ -842,25 +1221,24 @@ async function toggleTracingOnce(): Promise<XwXDeckRuntimeState | undefined> {
 
 /** Tray actions never create hidden native dialogs. Unsafe stops are deferred
  * and explained in the manager's bottom-right notice surface. */
-async function toggleTracingFromTray(): Promise<void> {
-  if (controller && await controller.disableBreaksCodex()) {
-    await showManagerNotice('有请求正在进行，暂未停止 Trace。', 'info');
-    return;
-  }
+async function toggleTracingFromTray(enabled: boolean): Promise<void> {
   try {
-    const next = await toggleTracing();
+    const next = await toggleTracing(enabled);
     if (next) {
-      await showManagerNotice(next.tracingEnabled
-        ? 'Trace 已开启；未生效时请重启 ChatGPT。'
-        : 'Trace 已停止。', 'success');
+      await managerWindow?.showNotice(next.lastError
+        ? lifecycleFailure(next.lastError, '更新 Trace 配置')
+        : next.tracingEnabled
+          ? { message: 'Trace 已开启', description: '先发送一条新消息；若仍无记录，客户端可能未读取新连接，请完全退出并重新打开相应客户端。', type: 'success' }
+          : traceStoppedNotice(next.backgroundGatewayAction === 'close'));
     }
   } catch (err) {
-    await showManagerNotice(`无法切换 Trace：${errorMessage(err)}`, 'error');
+    log.warn(`[xwx-deck] tray Trace toggle failed: ${errorMessage(err)}`);
+    await managerWindow?.showNotice(lifecycleFailure(err, '切换 Trace'));
   }
 }
 
-async function showManagerNotice(message: string, type: 'success' | 'error' | 'info'): Promise<void> {
-  await managerWindow?.showNotice({ message, type });
+async function showManagerNotice(message: string, type: 'success' | 'error' | 'info', details: Pick<LifecycleNotice, 'description' | 'action'> = {}): Promise<void> {
+  await managerWindow?.showNotice({ message, type, ...details });
 }
 
 async function toggleClient(client: ClientId): Promise<XwXDeckRuntimeState | undefined> {
@@ -896,46 +1274,94 @@ async function clearHistory(): Promise<XwXDeckRuntimeState | undefined> {
   return refreshUi();
 }
 
+async function launchApplicationResetWorker(
+  request: ApplicationResetRequest,
+  userDataDir: string,
+  waitForRecovery = false
+): Promise<void> {
+  const job = {
+    managerPid: process.pid,
+    userDataDir,
+    executable: applicationRelaunchExecutable(),
+    relaunchArgs: applicationResetRelaunchArgs(process.argv),
+    waitForRecovery,
+    request
+  };
+  const child = spawn(process.execPath, [path.join(__dirname, 'application-reset-worker.js')], {
+    detached: true,
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    windowsHide: true,
+    env: { ...childProcessEnvironment(), ELECTRON_RUN_AS_NODE: '1', XWX_APPLICATION_RESET_JOB: JSON.stringify(job) }
+  });
+  await withOperationTimeout(new Promise<void>((resolve, reject) => {
+    child.once('message', message => {
+      if ((message as { type?: string })?.type === 'ready') resolve();
+      else reject(new Error('重置进程返回了无效的就绪状态。'));
+    });
+    child.once('error', reject);
+    child.once('exit', code => reject(new Error(`重置进程启动失败（${code}）。`)));
+  }), 5_000, '重置进程启动超时。').catch(error => {
+    child.kill();
+    throw error;
+  });
+  child.unref();
+}
+
 async function resetApplication(request: ApplicationResetRequest): Promise<void> {
   if (!controller) throw new Error('XwX Deck 仍在启动。');
+  if (quitState === 'cleaning') throw new Error('XwX Deck 正在退出，请稍候。');
   if (request.resetClientConfigs) {
-    let clientsRunning: { chatGpt: boolean; claude: boolean };
+    let running: Awaited<ReturnType<typeof listClientsForReset>>;
     try {
-      const [chatGpt, claude] = await Promise.all([isChatGptRunning(), isClaudeRunning()]);
-      clientsRunning = { chatGpt, claude };
+      running = await listClientsForReset();
     } catch (error) {
-      log.warn(`[xwxdeck] could not verify client processes before reset: ${errorMessage(error)}`);
-      throw new Error('无法确认 Claude 和 ChatGPT 是否已退出。请关闭两个客户端后重试。');
+      log.warn(`[xwx-deck] could not verify client processes before reset: ${errorMessage(error)}`);
+      throw new Error(`系统进程查询失败，尚未开始重置；再次点击重置可重新检测：${errorMessage(error)}`);
     }
-    const running = [
-      clientsRunning.claude ? 'Claude' : '',
-      clientsRunning.chatGpt ? 'ChatGPT' : ''
-    ].filter(Boolean);
     if (running.length) {
-      throw new Error(`请先退出 ${running.join(' 和 ')}，再删除客户端配置。`);
+      const options = {
+        type: 'warning' as const,
+        title: '关闭客户端并重置？',
+        message: '检测到客户端仍在运行',
+        detail: `${resetClientLabels(running).join('\n')}\n\n确认后 XwX Deck 将强制关闭这些进程，未保存的工作会丢失。客户端完全退出后才会继续重置。`,
+        buttons: ['取消', '强制关闭并继续重置'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true
+      };
+      const owner = managerWindow?.current();
+      const answer = owner ? await dialog.showMessageBox(owner, options) : await dialog.showMessageBox(options);
+      if (answer.response !== 1) throw new Error('已取消重置。');
+      await forceCloseClientsForReset(running);
     }
-  }
-
-  const shutdown = await inspectSafeShutdown();
-  if (shutdown.chatGptMayBeRunning) {
-    throw new Error('ChatGPT 仍在使用 XwX Deck 代理。请先退出 ChatGPT，再重置。');
-  }
-  if (shutdown.activity.activeRequests > 0 || shutdown.activity.pendingContinuations > 0) {
-    throw new Error('仍有 AI 请求或工具调用正在进行，请等待完成后再重置。');
   }
 
   fullShutdownRequested = true;
-  await controller.beginShutdown();
+  quitState = 'cleaning';
+  armFullShutdownWatchdog();
   try {
-    await controller.shutdown({ drainTimeoutMs: 1_000 });
+    await withOperationTimeout(
+      startExitRecoveryGuardian(),
+      EXIT_GUARDIAN_START_TIMEOUT_MS,
+      '退出恢复守护进程启动超时。'
+    );
+    await controller.beginShutdown();
+    const stopped = await withOperationTimeout(controller.forceExit(), 8_000, '重置前停止 Gateway 超时。');
     metadataSubscriber?.stop();
-    app.relaunch({ args: applicationResetRelaunchArgs(process.argv, request) });
+    const waitForRecovery = stopped.dependentClients.length > 0;
+    if (!waitForRecovery) await cancelExitRecoveryGuardian();
+    await launchApplicationResetWorker(request, app.getPath('userData'), waitForRecovery);
+    hideFullShutdownUi();
+    clearFullShutdownWatchdog();
     quitState = 'ready';
     app.exit(0);
   } catch (error) {
+    clearFullShutdownWatchdog();
+    await cancelExitRecoveryGuardian();
     await controller.cancelShutdown().catch(() => undefined);
     fullShutdownRequested = false;
     quitState = 'idle';
+    await restoreFullShutdownUi();
     throw error;
   }
 }
@@ -943,18 +1369,21 @@ async function resetApplication(request: ApplicationResetRequest): Promise<void>
 async function repairApplication(): Promise<{
   removedCachePaths: number;
   removedBytes: number;
+  chromiumCacheCleared: boolean;
+  traceRetention: import('./app/xwxDeckController').TraceRetentionRepairResult;
   refreshedModels?: number;
 }> {
   const updateStatus = updater?.state().status;
   // 'ready' matters too: the verified installer lives under updates/ and the
   // updater still points at it, so clearing the cache would silently break the
   // pending install while the UI kept claiming it was downloaded.
-  if (updateStatus === 'downloading' || updateStatus === 'installing' || updateStatus === 'ready') {
-    throw new Error('XwX Deck 有待安装的更新，请先完成或取消更新，再运行快速修复。');
-  }
+  const preserveUpdates = updateStatus === 'downloading' || updateStatus === 'installing' || updateStatus === 'ready';
+  if (!controller) throw new Error('XwX Deck 仍在启动。');
+  const traceRetention = await controller.repairTraceRetention();
   await session.defaultSession.clearCache();
   const result = performApplicationRepair(app.getPath('userData'), {
-    allowedParentDir: path.dirname(app.getPath('userData'))
+    allowedParentDir: path.dirname(app.getPath('userData')),
+    preserveUpdates
   });
   log.info(
     `[xwxdeck] quick repair cleared Chromium cache and ${result.removedCachePaths.length} app cache path(s), `
@@ -971,6 +1400,8 @@ async function repairApplication(): Promise<{
   return {
     removedCachePaths: result.removedCachePaths.length,
     removedBytes: result.removedBytes,
+    chromiumCacheCleared: true,
+    traceRetention,
     ...(refreshedModels === undefined ? {} : { refreshedModels })
   };
 }
@@ -1005,11 +1436,11 @@ async function runPackagedBackgroundGatewaySmoke(userDataDir: string): Promise<v
   });
   await controller.start();
   const codex = (await controller.saveProvider({
-    displayName: 'Packaged API', baseUrl: compatibleBaseUrl, bearerToken: compatibleBearerToken,
+    displayName: 'Packaged_API', baseUrl: compatibleBaseUrl, bearerToken: compatibleBearerToken,
     adapter: 'responses', codexModel: compatibleModel
   })).connections[0];
   const claude = (await controller.saveProvider({
-    displayName: 'Packaged Claude', baseUrl: compatibleBaseUrl.replace(/\/v1$/, '/anthropic/v1'),
+    displayName: 'Packaged_Claude', baseUrl: compatibleBaseUrl.replace(/\/v1$/, '/anthropic/v1'),
     bearerToken: compatibleBearerToken, adapter: 'anthropic-messages'
   })).connections[1];
   await controller.switchClientProvider('codex', codex.id);
@@ -1020,7 +1451,9 @@ async function runPackagedBackgroundGatewaySmoke(userDataDir: string): Promise<v
   if (!state.backgroundGatewayActive || !state.localBaseUrl) {
     throw new Error('Packaged app did not activate its independent Gateway helper.');
   }
-  if (state.tracingEnabled || state.readiness.recordingEnabled) throw new Error('Packaged Trace did not stop before detach.');
+  if (state.tracingEnabled || state.readiness.recordingEnabled) {
+    throw new Error('Packaged fallback must forward without recording after Trace stops.');
+  }
   if (!await controller.detachManager()) {
     throw new Error('Packaged manager could not detach from its active Gateway helper.');
   }

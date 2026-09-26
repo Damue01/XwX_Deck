@@ -170,10 +170,14 @@ export function resolveCompatibleServiceReasoningProfile(model: string): Compati
   }
   if (/^kimi-k2(?:-5|-6|-7)(?:-|$)/.test(id)) return thinkingWithEffort(LADDER_XHIGH, 'high');
 
-  // M2.x reasoning could not be disabled by any accepted field. On M3 the
-  // effort ladder is a compatibility shim — `reasoning_effort: none` returns
-  // 200 while reasoning continues — so only the toggle is published, and
-  // `adaptive` is the sole accepted "on" value (`enabled` returns 400).
+  // M2.5 exposes an effort selector on the Chat route. Forward every chosen
+  // value, including `none`, as reasoning_effort rather than treating it as a
+  // thinking-off toggle.
+  if (id === 'minimax-m2-5') {
+    return effortOnly(['none', 'minimal', 'low', 'medium', 'high'], 'medium');
+  }
+  // Other M2.x profiles remain unchanged. On M3 the effort ladder is a
+  // compatibility shim, so only the toggle is published.
   if (/^minimax-m2(?:-|$)/.test(id)) return OMIT;
   if (/^minimax-m3(?:-|$)/.test(id)) {
     return {

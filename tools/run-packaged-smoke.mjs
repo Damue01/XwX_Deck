@@ -67,7 +67,7 @@ try {
   const upstreamAddress = upstreamServer.address();
   if (!upstreamAddress || typeof upstreamAddress === 'string') throw new Error('Packaged smoke upstream did not expose a TCP port.');
   compatibleServiceRoot = `http://${nonLoopbackIpv4Address()}:${upstreamAddress.port}/qa-openai`;
-  claudeOriginal = `${JSON.stringify({ env: { ANTHROPIC_BASE_URL: `${compatibleServiceRoot}/anthropic` } }, null, 2)}\n`;
+  claudeOriginal = `${JSON.stringify({ permissions: { allow: ['Read'] }, env: { ANTHROPIC_BASE_URL: `${compatibleServiceRoot}/anthropic` } }, null, 2)}\n`;
   codexOriginal = `model_provider = "compatible"\nmodel = "qa-model"\nservice_tier = "default"\n\n[model_providers.compatible]\nbase_url = "${compatibleServiceRoot}/v1"\nwire_api = "responses"\nrequires_openai_auth = true\nexperimental_bearer_token = "packaged-compatible-key"\nname = "兼容服务"\n\n[features]\njs_repl = false\nimage_gen = true\n`;
   await mkdir(dirname(claudePath), { recursive: true });
   await mkdir(dirname(codexPath), { recursive: true });
@@ -205,10 +205,11 @@ try {
   assert.equal(result.codexEnhancements.migrated.migratedJsonlFiles, 1);
   assert.equal(result.codexEnhancements.restored.restoredStateRows, 126);
   assert.deepEqual(result.clients.map(client => client.status), ['taken', 'taken']);
-  assert.equal(await readFile(claudePath, 'utf8'), claudeOriginal);
+  assert.deepEqual(JSON.parse(await readFile(claudePath, 'utf8')), { permissions: { allow: ['Read'] } },
+    'the explicit official choice removes managed connection fields and retains unrelated settings');
   const stableCodexConfig = await readFile(codexPath, 'utf8');
-  assert.match(stableCodexConfig, /^model_provider = "xwx_deck"$/m);
-  assert.match(stableCodexConfig, /\[model_providers\.xwx_deck\][\s\S]*name = "Fixture API"/);
+  assert.match(stableCodexConfig, /^model_provider = "Fixture_API"$/m);
+  assert.match(stableCodexConfig, /\[model_providers\.Fixture_API\][\s\S]*name = "Fixture_API"/);
   assert.ok(stableCodexConfig.includes(`base_url = "${compatibleServiceRoot}/v1"`));
   assert.doesNotMatch(stableCodexConfig, /127\.0\.0\.1/);
   assert.match(stableCodexConfig, /\[features\][\s\S]*js_repl = false/);

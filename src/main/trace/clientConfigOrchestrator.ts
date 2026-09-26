@@ -163,7 +163,13 @@ export class ClientConfigOrchestrator {
     if (!rec) return;
     const result = await this.writer.restore(rec);
     for (const conflict of result.conflicts) {
-      log.warn(`[xwx/trace] preserved external ${rec.client} config change: ${conflict}`);
+      log(`[xwx/trace] preserved external ${rec.client} config change: ${conflict}`);
+    }
+    if (result.outcome === 'unresolved-local') {
+      log.warn(
+        `[xwx/trace] ${rec.client} still depends on the local proxy after restore: `
+        + result.unresolvedLocalReferences.join(', ')
+      );
     }
     return result;
   }
@@ -218,7 +224,13 @@ export class ClientConfigOrchestrator {
         const result = await this.writer.restore(rec);
         results.push(result);
         for (const conflict of result.conflicts) {
-          log.warn(`[xwx/trace] preserved external ${rec.client} config change: ${conflict}`);
+          log(`[xwx/trace] preserved external ${rec.client} config change: ${conflict}`);
+        }
+        if (result.outcome === 'unresolved-local') {
+          log.warn(
+            `[xwx/trace] ${rec.client} still depends on the local proxy after restore: `
+            + result.unresolvedLocalReferences.join(', ')
+          );
         }
       } catch (err) {
         log.warn(`[compatible/tap] failed to restore ${rec.client} config (${rec.configPath}): ${(err as Error).message}`);
@@ -257,7 +269,8 @@ export class ClientConfigOrchestrator {
    * 死端口对应的是「XwX Trace 上次没正常关闭」的残留 → 强制 restore。
    * 活端口对应的是「另一个窗口的 XwX Trace 还活着」（跟 tapPortLock owner 共享），不动。
    */
-  async recoverOnStartup(probe: PortProbe): Promise<void> {
+  async recoverOnStartup(probe: PortProbe): Promise<string[]> {
+    const issues: string[] = [];
     const records = await this.backup.listAll();
     for (const rec of records) {
       const port = parsePort(rec.writtenLocalUrl);
@@ -266,14 +279,23 @@ export class ClientConfigOrchestrator {
       try {
         const result = await this.writer.restore(rec);
         for (const conflict of result.conflicts) {
-          log.warn(`[xwx/trace] startup recovery preserved external ${rec.client} change: ${conflict}`);
+          log(`[xwx/trace] startup recovery preserved external ${rec.client} change: ${conflict}`);
         }
-        if (result.outcome === 'unresolved-local') { log.warn(`[xwx/trace] retained ${rec.client} recovery record: ${result.unresolvedLocalReferences.join(', ')}`); continue; }
+        if (result.outcome === 'unresolved-local') {
+          issues.push(`${rec.client === 'codex' ? 'ChatGPT' : 'Claude'} 配置仍指向已停止的本地服务`);
+          log.warn(
+            `[xwx/trace] startup recovery kept ${rec.client} backup because local references remain: `
+            + result.unresolvedLocalReferences.join(', ')
+          );
+          continue;
+        }
         log(`[compatible/tap] recovered stale ${rec.client} config from previous session (${rec.configPath})`);
       } catch (err) {
+        issues.push(`${rec.client === 'codex' ? 'ChatGPT' : 'Claude'}：${(err as Error).message}`);
         log.warn(`[compatible/tap] failed to recover ${rec.client} config: ${(err as Error).message}`);
       }
     }
+    return issues;
   }
 
   private clientPaths(): ClientPaths {

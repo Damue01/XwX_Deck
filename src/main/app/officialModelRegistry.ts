@@ -43,6 +43,7 @@ const GLM_CLAUDE_CODE = 'https://docs.z.ai/devpack/latest-model#switching-models
 const DEEPSEEK_MODELS = 'https://api-docs.deepseek.com/quick_start/pricing';
 const DEEPSEEK_CLAUDE_CODE = 'https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code';
 const VOLCENGINE_ARK = 'https://www.volcengine.com/docs/82379';
+const DEEPSEEK_RESPONSES = 'https://api-docs.deepseek.com/guides/responses_api/';
 
 export const OFFICIAL_MODEL_REGISTRY: readonly OfficialModelRecord[] = [
   {
@@ -75,10 +76,11 @@ export const OFFICIAL_MODEL_REGISTRY: readonly OfficialModelRecord[] = [
   {
     modelId: 'deepseek-v4-pro',
     vendor: 'DeepSeek',
-    verifiedAt: '2026-07-28',
+    verifiedAt: '2026-09-24',
     sources: [
       { label: 'DeepSeek Models & Pricing', url: DEEPSEEK_MODELS },
-      { label: 'DeepSeek Claude Code integration', url: DEEPSEEK_CLAUDE_CODE }
+      { label: 'DeepSeek Claude Code integration', url: DEEPSEEK_CLAUDE_CODE },
+      { label: 'DeepSeek Responses API', url: DEEPSEEK_RESPONSES }
     ],
     capability: {
       contextWindow: 1_000_000,
@@ -89,17 +91,18 @@ export const OFFICIAL_MODEL_REGISTRY: readonly OfficialModelRecord[] = [
       toolCalling: true,
       structuredOutput: true
     },
-    protocols: ['chat-completions', 'anthropic-messages'],
+    protocols: ['openai-responses', 'chat-completions', 'anthropic-messages'],
     claudeOneMillionRoles: ['opus', 'sonnet'],
-    codexRecommendedProtocol: 'chat-completions'
+    codexRecommendedProtocol: 'responses'
   },
   {
     modelId: 'deepseek-v4-flash',
     vendor: 'DeepSeek',
-    verifiedAt: '2026-07-28',
+    verifiedAt: '2026-09-24',
     sources: [
       { label: 'DeepSeek Models & Pricing', url: DEEPSEEK_MODELS },
-      { label: 'DeepSeek Claude Code integration', url: DEEPSEEK_CLAUDE_CODE }
+      { label: 'DeepSeek Claude Code integration', url: DEEPSEEK_CLAUDE_CODE },
+      { label: 'DeepSeek Responses API', url: DEEPSEEK_RESPONSES }
     ],
     capability: {
       contextWindow: 1_000_000,
@@ -110,9 +113,9 @@ export const OFFICIAL_MODEL_REGISTRY: readonly OfficialModelRecord[] = [
       toolCalling: true,
       structuredOutput: true
     },
-    protocols: ['chat-completions', 'anthropic-messages'],
+    protocols: ['openai-responses', 'chat-completions', 'anthropic-messages'],
     claudeOneMillionRoles: [],
-    codexRecommendedProtocol: 'chat-completions'
+    codexRecommendedProtocol: 'responses'
   },
   {
     modelId: 'glm-5.2',

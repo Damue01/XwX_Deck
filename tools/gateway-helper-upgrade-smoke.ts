@@ -165,7 +165,7 @@ async function testLegacyHelperWithoutAbandonEndpoint(): Promise<void> {
 }
 
 async function testV5HelperUpgrade(): Promise<void> {
-  assert.equal(GATEWAY_HELPER_PROTOCOL_VERSION, 13,
+  assert.equal(GATEWAY_HELPER_PROTOCOL_VERSION, 14,
     'this regression verifies replacement of the v5 helper missing current routing and portability behavior');
   const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'xwx-gateway-upgrade-v5-'));
   const testUserData = path.join(testRoot, 'user-data');
@@ -635,7 +635,7 @@ async function testControllerStartupAcrossLegacyPortabilityGap(): Promise<void> 
       'controller startup must survive a legacy helper portability 404 and restore the Codex Gateway');
     assert.equal(state.readiness.codexRouteReady, true);
     assert.equal(state.readiness.codexConfigReady, true);
-    const replacement = JSON.parse(await fs.readFile(runtimeFile, 'utf8')) as {
+    const replacement = await waitForProtocol(GATEWAY_HELPER_PROTOCOL_VERSION, testControlDir) as {
       helperProtocolVersion?: number; gatewayPort: number; pid: number;
     };
     assert.equal(replacement.helperProtocolVersion, GATEWAY_HELPER_PROTOCOL_VERSION);

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ModelCatalogEntry } from '@/bridge/types';
+import { Badge } from '@/components/ui/badge';
 import {
   Combobox,
   ComboboxInput,
@@ -16,13 +17,33 @@ function vendorRank(vendor: string): number {
   return i === -1 ? VENDOR_ORDER.length : i;
 }
 
+/**
+ * A short annotation carried by a single row. Capability facts belong to the
+ * model, so they are shown next to the model instead of behind a dialog that
+ * interrupts an unrelated operation.
+ */
+export interface ModelPickerNote {
+  /** Badge text rendered at the end of the row. */
+  readonly label: string;
+  /** Full explanation, surfaced as the row title. */
+  readonly hint: string;
+}
+
 interface Props {
   readonly id?: string;
   readonly value: string;
   readonly catalog: readonly ModelCatalogEntry[];
   readonly onChange: (modelId: string) => void;
   readonly disabled?: boolean;
+  /** Persist an explicitly emptied input for optional model selections. */
+  readonly allowEmpty?: boolean;
   readonly allowCustomValue?: (modelId: string) => boolean;
+  /**
+   * Annotates a row without blocking it. A model that needs something enabled
+   * stays selectable on purpose: choosing it is what offers to enable that
+   * thing, so greying it out would leave the user with no way forward.
+   */
+  readonly noteFor?: (modelId: string) => ModelPickerNote | undefined;
   /** data attribute passthrough for parity with original markup */
   readonly dataAttr?: Record<string, string>;
 }
@@ -38,7 +59,9 @@ export function ModelPicker({
   catalog,
   onChange,
   disabled,
+  allowEmpty,
   allowCustomValue,
+  noteFor,
   dataAttr
 }: Props): React.ReactElement {
   const [query, setQuery] = React.useState('');
@@ -65,7 +88,10 @@ export function ModelPicker({
         value={value}
         onValueChange={next => { const v = (next ?? '').trim(); if (v) onChange(v); }}
         onInputValueChange={(next, eventDetails) => {
-          if (eventDetails.reason === 'input-change') setQuery(next);
+          if (eventDetails.reason === 'input-change') {
+            setQuery(next);
+            if (allowEmpty && value && !next.trim()) onChange('');
+          }
         }}
         onOpenChange={open => { if (!open) setQuery(''); }}
         disabled={disabled}
@@ -73,11 +99,21 @@ export function ModelPicker({
         <ComboboxInput id={id} size="sm" placeholder="搜索或输入模型名…" />
         <ComboboxPopup className="xwx-combobox-popup">
           <ComboboxList>
-            {filtered.map(mid => (
-              <ComboboxItem key={mid} value={mid} className="xwx-combobox-item">
-                <span>{mid}</span>
-              </ComboboxItem>
-            ))}
+            {filtered.map(mid => {
+              const note = noteFor?.(mid);
+              return (
+                <ComboboxItem key={mid} value={mid} className="xwx-combobox-item" title={note?.hint}>
+                  <span className="model-choice-content">
+                    <span className="model-option-id">{mid}</span>
+                    {note ? (
+                      <Badge size="sm" variant="secondary" className="ml-auto font-sans">
+                        {note.label}
+                      </Badge>
+                    ) : null}
+                  </span>
+                </ComboboxItem>
+              );
+            })}
             {showCustom && (
               <ComboboxItem value={query.trim()} className="xwx-combobox-item">使用 “{query.trim()}”</ComboboxItem>
             )}

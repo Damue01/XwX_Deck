@@ -24,16 +24,19 @@ export interface TraceProxy {
   broadcastTrace(trace: TapTraceRecord): void;
   broadcastReset(): void;
   start(): Promise<string>;
+  /** Attach only to an existing owned helper; connection repair must never spawn one. */
+  attachExisting?(): Promise<boolean>;
   stop(): Promise<void>;
   forceStop(): Promise<void>;
   activeRequestCount(): number;
+  activeUserResponseCount(): number;
   pendingContinuationCount(): number;
   capturedClientIds(): readonly GatewayCapturedClient[];
   refreshShutdownActivity(): Promise<void>;
   abandonCodexContinuations(): void;
   prepareForShutdown(options?: { timeoutMs?: number; quietPeriodMs?: number }): Promise<boolean>;
   forcePrepareForShutdown(): Promise<void>;
-  cancelPreparedShutdown(): void;
+  cancelPreparedShutdown(): void | Promise<void>;
   localBaseUrl(): string | undefined;
   isListening(): boolean;
   setRoutes(routes: readonly TapRoute[], fallbackBaseUrl: string | undefined, fallbackProxyUrl?: string): void;

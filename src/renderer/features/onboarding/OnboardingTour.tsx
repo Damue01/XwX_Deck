@@ -18,7 +18,7 @@ const STEPS: readonly TourStep[] = [
     page: 'signal',
     selector: '#captureBtn',
     title: '开始一次请求追踪',
-    lead: '开始前会先检查已启用客户端的配置和上游；成功接入的请求会经过 XwX Deck，并计入本地用量。',
+    lead: '开启时先确认本地转发就绪；上游是否可用，要在客户端发送新消息后验证。成功接入的请求会计入本地用量。',
     points: [
       <>再次点击可停止记录并安全恢复 Trace 临时配置；已启用的第三方模型服务不会因此关闭。</>,
       <>中央大数字显示累计用量，点它可在 <b>Token</b> 与 <b>费用</b> 之间切换。</>
@@ -37,9 +37,10 @@ const STEPS: readonly TourStep[] = [
   {
     page: 'models',
     selector: '[data-tour="models-proxy"]',
-    title: '一键接入模型服务',
-    lead: '打开代理开关，XwX Deck 会自动改写该客户端的配置，让它走设置页保存的兼容模型服务。',
+    title: '选择客户端使用的模型服务',
+    lead: '为 Claude 或 ChatGPT 选择官方订阅，或选择你在设置页保存的模型服务。XwX Deck 只修改当前客户端对应的配置。',
     points: [
+      <>服务选择保存成功后，模型目录会单独刷新；目录失败不会撤销已经完成的服务切换。</>,
       <>关闭时只恢复仍由 XwX Deck 管理的字段，外部并发修改会保留。</>,
       <>Claude 可为 Fable / Opus / Sonnet / Haiku 分别指定模型。</>,
       <>ChatGPT 设一个默认模型即可，随时用 <code>/model</code> 临时切换。</>
@@ -61,6 +62,7 @@ export function OnboardingTour(): React.ReactElement | null {
     try {
       const query = new URLSearchParams(location.search);
       if (query.get('tour') === '1') return true;
+      if (query.has('scenario')) return false;
       if (query.get('appearance') === '1') return false;
       return localStorage.getItem(STORAGE_KEY) !== 'true';
     } catch { return true; }

@@ -108,7 +108,7 @@ try {
   assert.equal(result.recordingEnabled, false);
 
   runtime = await waitForRuntime(join(userData, 'gateway', 'runtime.json'));
-  assert.equal(runtime.helperProtocolVersion, 13, 'packaged helper must publish its compatibility protocol');
+  assert.equal(runtime.helperProtocolVersion, 14, 'packaged helper must publish its compatibility protocol');
   assert.equal(result.localBaseUrl, `http://127.0.0.1:${runtime.gatewayPort}`);
   const response = await request(runtime.gatewayPort, '/v1/responses', {
     model,
@@ -137,7 +137,7 @@ try {
 
   const token = (await readFile(join(userData, 'gateway', 'control.token'), 'utf8')).trim();
   const status = await request(runtime.controlPort, '/control/status', undefined, 'GET', { authorization: `Bearer ${token}` });
-  assert.equal(JSON.parse(status.text).helperProtocolVersion, 13);
+  assert.equal(JSON.parse(status.text).helperProtocolVersion, 14);
   await request(runtime.controlPort, '/control/stop', {}, 'POST', { authorization: `Bearer ${token}` });
   await waitForClosed(runtime.controlPort);
   console.log('PASS packaged ASAR Gateway survives manager exit and serves non-recording Claude/ChatGPT fallbacks');

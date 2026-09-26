@@ -1,9 +1,23 @@
 import { Dialog } from '@base-ui/react/dialog';
 import * as React from 'react';
 import { ChevronRight, LoaderCircle, X } from 'lucide-react';
-import { useBridge } from '@/bridge/store';
 import type { TraceIndexRepairPlan } from '@/bridge/types';
 import { showErrorToast, showToast } from '@/lib/toast';
+import { useBridge } from '@/bridge/store';
+import {
+  DIAGNOSTIC_NOTICE_EVENT,
+  OPEN_REPAIR_EVENT,
+  clearLastDiagnosticNotice,
+  noticeActionLabel,
+  readLastDiagnosticNotice,
+  runNoticeAction
+} from '@/lib/toast';
+import { lifecycleFailure, type LifecycleNotice } from '../../../shared/lifecycleNotice';
+
+function subscribeDiagnosticNotices(listener: () => void): () => void {
+  window.addEventListener(DIAGNOSTIC_NOTICE_EVENT, listener);
+  return () => window.removeEventListener(DIAGNOSTIC_NOTICE_EVENT, listener);
+}
 
 interface Props {
   readonly quickRepairBusy: boolean;
@@ -16,8 +30,8 @@ export function RepairCenterSheet({
   onQuickRepair,
   onOpenReset,
 }: Props): React.ReactElement {
-  const [open, setOpen] = React.useState(false);
   const bridge = useBridge();
+  const [open, setOpen] = React.useState(false);
   const [indexPlan, setIndexPlan] = React.useState<TraceIndexRepairPlan | null>(null);
   const [indexBusy, setIndexBusy] = React.useState(false);
   const repairIndex = async (apply: boolean): Promise<void> => {
@@ -38,10 +52,50 @@ export function RepairCenterSheet({
     }
   };
 
+
+  const recentNotice = React.useSyncExternalStore(subscribeDiagnosticNotices, readLastDiagnosticNotice);
+  const currentNotice = bridge.runtime?.lastError
+    ? lifecycleFailure(bridge.runtime.lastError, '恢复运行状态')
+    : bridge.runtime?.connectionNotice ?? bridge.runtime?.lifecycleNotice;
+  const notices = [currentNotice, recentNotice]
+    .filter((notice, index, values) => notice && values.findIndex(item =>
+      item?.message === notice.message && item?.description === notice.description) === index);
+
+  React.useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener(OPEN_REPAIR_EVENT, show);
+    return () => window.removeEventListener(OPEN_REPAIR_EVENT, show);
+  }, []);
+
   const openReset = React.useCallback(() => {
     setOpen(false);
     window.setTimeout(onOpenReset, 180);
   }, [onOpenReset]);
+
+  const renderNoticeActions = (notice: LifecycleNotice): React.ReactNode => {
+    const actions = [notice.action, notice.secondaryAction]
+      .filter((action, index, values): action is NonNullable<LifecycleNotice['action']> =>
+        !!action && action !== 'repair' && values.indexOf(action) === index);
+    if (actions.length === 0) return null;
+    return (
+      <span className="repair-notice-actions">
+        {actions.map((action, index) => (
+          <button
+            type="button"
+            className="btn repair-action-button"
+            key={action}
+            onClick={() => {
+              clearLastDiagnosticNotice();
+              setOpen(false);
+              runNoticeAction(action);
+            }}
+          >
+            {(index === 0 ? notice.actionLabel : notice.secondaryActionLabel) ?? noticeActionLabel(action)}
+          </button>
+        ))}
+      </span>
+    );
+  };
 
   return (
     <section className="group repair-entry-group">
@@ -66,7 +120,7 @@ export function RepairCenterSheet({
             <header className="repair-sheet-header">
               <span className="repair-sheet-heading">
                 <Dialog.Title>诊断与修复</Dialog.Title>
-                <Dialog.Description className="sr-only">清理本地缓存或重新初始化配置</Dialog.Description>
+                <Dialog.Description className="sr-only">查看当前问题或重置本地数据</Dialog.Description>
               </span>
               <Dialog.Close
                 type="button"
@@ -79,6 +133,27 @@ export function RepairCenterSheet({
             </header>
 
             <div className="repair-sheet-body">
+              {notices.length > 0 ? (
+                <section className="repair-notices" aria-label="问题提示">
+                  <p className="repair-recent-label">问题提示</p>
+                  {notices.map((notice, index) => notice ? (
+                    <article className="repair-notice" key={`${notice.message}:${notice.description}`}>
+                      <span className="repair-action-copy">
+                        <h3>{index === 0 && currentNotice ? '当前问题' : '最近一次失败'}：{notice.message}</h3>
+                        {notice.description ? <p>{notice.description}</p> : null}
+                      </span>
+                      {renderNoticeActions(notice)}
+                      {notice === recentNotice && notice !== currentNotice ? (
+                        <button type="button" className="repair-notice-dismiss"
+                          aria-label="移除最近一次失败"
+                          onClick={clearLastDiagnosticNotice}>
+                          <X className="ic" aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </article>
+                  ) : null)}
+                </section>
+              ) : null}
               <section className="repair-action-section">
                 <span className="repair-action-copy">
                   <h3>Trace 索引修复</h3>
@@ -113,8 +188,8 @@ export function RepairCenterSheet({
 
               <section className="repair-action-section">
                 <span className="repair-action-copy">
-                  <h3>完全重置</h3>
-                  <p>删除全部本地数据；确认时可同时删除 Claude / ChatGPT 配置。</p>
+                  <h3>重置 XwX Deck</h3>
+                  <p>删除 Deck 设置、缓存、Trace 记录和日志，重新开始。Claude 与 ChatGPT 配置默认保留。</p>
                 </span>
                 <button
                   type="button"
@@ -122,7 +197,7 @@ export function RepairCenterSheet({
                   id="resetApplication"
                   onClick={openReset}
                 >
-                  完全重置
+                  重置
                 </button>
               </section>
             </div>

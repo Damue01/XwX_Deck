@@ -18,6 +18,7 @@ await esbuild.build({
     preload: 'src/main/preload.ts',
     'gateway-helper': 'src/main/gatewayHelper.ts',
     'exit-recovery': 'src/main/exitRecovery.ts',
+    'application-reset-worker': 'src/main/applicationResetWorker.ts',
     'codex-conversation-worker': 'src/main/codexConversationWorker.ts'
   },
   bundle: true,

@@ -16,6 +16,7 @@ import { assetPath } from './shared/assets';
 import { loadModelsDevPricingCache, refreshModelsDevPricingCache } from './trace/modelsDevPricing';
 import { MetadataInvalidationSubscriber } from './update/metadataInvalidationSubscriber';
 import { metadataPushUrl } from './update/updateServer';
+import { sanitizeGatewayStartupError, writeGatewayStartupError } from './trace/gatewayStartupError';
 
 const userDataDir = requiredEnv('XwX_GATEWAY_USER_DATA');
 const traceRoot = requiredEnv('XwX_GATEWAY_TRACE_ROOT');
@@ -25,9 +26,17 @@ const tokenFile = path.join(controlDir, 'control.token');
 const runtimeFile = path.join(controlDir, 'runtime.json');
 const bootstrapFile = path.join(controlDir, 'bootstrap.json');
 const portabilityFile = path.join(userDataDir, 'codex-portability', 'opaque-origins.json');
+const startupAttemptId = process.env.XWX_GATEWAY_START_ATTEMPT?.trim();
 
-void run().catch(error => {
-  console.error('[gateway-helper] fatal', error);
+void run().catch(async error => {
+  initLogger(userDataDir);
+  const message = sanitizeGatewayStartupError(error);
+  log.error(`[gateway-helper] fatal: ${message}`);
+  if (startupAttemptId) {
+    await writeGatewayStartupError(userDataDir, startupAttemptId, process.pid, error).catch(writeError => {
+      log.error(`[gateway-helper] failed to persist startup error: ${sanitizeGatewayStartupError(writeError)}`);
+    });
+  }
   process.exit(1);
 });
 
@@ -52,7 +61,9 @@ async function run(): Promise<void> {
   const store = new TraceStore(
     traceRoot,
     () => traceRetention.maxSessions,
-    () => traceRetention.maxStorageBytes > 0 ? traceRetention.maxStorageBytes : undefined
+    () => traceRetention.maxStorageBytes > 0 ? traceRetention.maxStorageBytes : undefined,
+    undefined,
+    () => traceRetention.usageOnly === true
   );
   const proxy = new TapProxy(store, listenPorts, portabilityFile);
   let generation = bootstrap?.generation ?? -1;
@@ -60,6 +71,9 @@ async function run(): Promise<void> {
   let stopping = false;
   const capturedClients = new Set<GatewayCapturedClient>();
   let retentionCleanupScheduled = false;
+  let retentionCleanupRunning = false;
+  let retentionCleanupTimer: NodeJS.Timeout | undefined;
+  let lastRetentionCleanupAt = 0;
 
   const setRecordingEnabled = (enabled: boolean): void => {
     const changed = proxy.isRecordingEnabled() !== enabled;
@@ -68,18 +82,28 @@ async function run(): Promise<void> {
   };
 
   const scheduleRetentionCleanup = (): void => {
-    if (retentionCleanupScheduled) return;
+    if (retentionCleanupScheduled || retentionCleanupRunning
+      || (traceRetention.maxSessions <= 0 && traceRetention.maxStorageBytes <= 0)) return;
     retentionCleanupScheduled = true;
-    setImmediate(() => {
+    const delay = traceRetention.maxSessions > 0
+      ? 0
+      : Math.max(0, 30_000 - (Date.now() - lastRetentionCleanupAt));
+    retentionCleanupTimer = setTimeout(() => {
       retentionCleanupScheduled = false;
+      retentionCleanupTimer = undefined;
+      if (traceRetention.maxSessions <= 0 && traceRetention.maxStorageBytes <= 0) return;
+      retentionCleanupRunning = true;
+      lastRetentionCleanupAt = Date.now();
       void store.cleanup().catch(error => {
         log.warn(`[gateway-helper] Trace retention cleanup failed: ${(error as Error).message}`);
-      });
-    });
+      }).finally(() => { retentionCleanupRunning = false; });
+    }, delay);
   };
 
   if (bootstrap) {
     if (bootstrap.recording) await store.assertIndexReadable();
+    // A saved usage-only choice may have been made while this helper was offline.
+    if (traceRetention.usageOnly) await store.clearDetailedHistory();
     proxy.setRoutes(bootstrap.routes, bootstrap.fallbackBaseUrl, bootstrap.fallbackProxyUrl);
     proxy.setClientRoutes(bootstrap.clientRoutes);
     setRecordingEnabled(bootstrap.recording);
@@ -113,6 +137,7 @@ async function run(): Promise<void> {
     const capturedClient = capturedClientForSource(trace.source);
     if (capturedClient) capturedClients.add(capturedClient);
     proxy.broadcastTrace(trace);
+    scheduleRetentionCleanup();
   });
 
   const baseUrl = await proxy.start();
@@ -144,6 +169,7 @@ async function run(): Promise<void> {
     helperBuildId: GATEWAY_HELPER_BUILD_ID,
     gatewayPort,
     activeRequests: proxy.activeRequestCount(),
+    activeUserResponses: proxy.activeUserResponseCount(),
     pendingContinuations: proxy.pendingContinuationCount(),
     recording: proxy.isRecordingEnabled(),
     generation,
@@ -172,7 +198,16 @@ async function run(): Promise<void> {
         if (body.recording === true) await store.assertIndexReadable();
         const nextRetention = normalizeTraceRetention(body.traceRetention);
         const retentionChanged = nextRetention.maxSessions !== traceRetention.maxSessions
-          || nextRetention.maxStorageBytes !== traceRetention.maxStorageBytes;
+          || nextRetention.maxStorageBytes !== traceRetention.maxStorageBytes
+          || nextRetention.usageOnly !== traceRetention.usageOnly;
+        if (nextRetention.usageOnly && !traceRetention.usageOnly) {
+          if (proxy.activeRequestCount() > 0) {
+            throw new Error('仍有请求正在处理，请等待请求结束后再切换为仅用量模式。');
+          }
+          // No request may append while the old details are being deleted.
+          await store.clearDetailedHistory();
+          proxy.broadcastReset();
+        }
         const nextRoutes = array<TapRoute>(body.routes);
         const nextClientRoutes = array<TapClientRoute>(body.clientRoutes);
         proxy.setRoutes(nextRoutes, string(body.fallbackBaseUrl), string(body.fallbackProxyUrl));

@@ -1,12 +1,12 @@
 # Codex Desktop 第三方模型网关设计
 
-> 当前状态（2026-08-17）：Responses、Chat Completions 与 Anthropic Messages 本地实现和隔离回归已纳入当前套件；真实 ChatGPT/Codex Desktop + 各公开服务商的端到端验收仍需按版本记录。公开边界见[独立仓库边界](public-release-boundary.md)。
+> 当前状态（2026-09-26）：Responses、Chat Completions 与 Anthropic Messages 本地实现和隔离回归已纳入当前套件；真实 ChatGPT/Codex Desktop + 各公开服务商的端到端验收仍需按版本记录。公开边界见[独立仓库边界](public-release-boundary.md)。
 
 ## 目标与边界
 
 目标是在不修改 Codex Desktop 本体的前提下，让 兼容服务 的 Responses、Chat Completions 与 Anthropic Messages 模型都能出现在原生模型选择器中，并在 Trace 关闭时继续正常调用。
 
-本阶段只扩展现有 兼容服务 连接，不新增多服务商页面、账号池、OAuth、远程网关或组合路由。内部结构保留逐模型协议和后续 provider 命名空间的扩展点。
+每个连接拥有持久 Provider 身份与独立模型选择。两客户端可选择不同连接；不提供账号池、OAuth、远程网关或组合路由。
 
 ## 运行链路
 
@@ -27,9 +27,9 @@ Gateway 复用当前 `TapProxy`。代理生命周期属于服务连接，记录�
 
 兼容服务 启用时，XwX Deck 管理以下字段：
 
-- 顶层 `model_provider = "xwx_deck"` 与当前 `model`。
-- `[model_providers.xwx_deck]` 的连接、认证和 `wire_api = "responses"`。
-- 顶层 `model_catalog_json`，但仅在该字段缺失或已指向 XwX 管理的目录时写入；用户自有目录不覆盖。
+- 顶层 `model_provider` 使用所选连接的持久 Provider ID；显式启用统一历史时使用 `xwx_deck`。
+- 对应 `[model_providers.<id>]` 的连接、认证和 `wire_api = "responses"`。
+- 顶层 `model_catalog_json` 在明确切换服务时更新；外部目录文件不修改或删除，自动刷新不接管外部配置。
 - XwX 管理的目录文件 `$CODEX_HOME/xwx-compatible-catalog.json`。
 
 兼容服务 的真实 URL 和密钥继续由 XwX Deck 设置保存。Codex 运行期间连接本地 Gateway；Gateway 再连接真实 兼容服务。默认保留现有 `auth.json`，兼容服务 Key 只由 Gateway 在转发到 兼容服务 时注入；关闭“保留官方登录”时，Key 才临时写入 `auth.json`，切回官方后原样恢复。
@@ -42,10 +42,10 @@ Gateway 复用当前 `TapProxy`。代理生命周期属于服务连接，记录�
 
 模型存在性与能力字段按 [兼容服务 模型能力维护](model-capability-maintenance.md) 的四层链路解析。逐模型协议选择顺序：
 
-1. 原生 Claude 在 Messages 端点存在时使用 Anthropic Messages；单一服务端协议保持权威。
-2. 多协议模型采用厂商官方注册表中的 Codex 推荐路径。
-3. GPT 使用 Responses；其他存在 Chat Completions 的第三方模型优先本地 Chat bridge。
-4. 实测路由覆盖优先：Claude 使用 Anthropic Messages；GPT 与 兼容服务 `codex-auto-review` 使用 Responses；其余（含 Grok）使用 Chat Completions。Grok 虽然普通 Responses 请求可成功，但不接受 Codex 的 `type: "custom"` 工具变体，会以 "unknown variant `custom`" 拒绝，因此走 Chat Completions 桥接。
+1. 服务声明 Responses 时优先直通。
+2. 否则使用明确声明的 Chat Completions 或 Anthropic Messages；端点返回的模型成员关系也是声明证据。
+3. 缺少声明时使用所选连接的默认协议，不按模型名或厂商猜测。
+4. Claude 原生 Messages 不需要转换；仅需要转换的选择显示灰色「需转换」徽标。
 
 协议在每个请求到达 Gateway 时根据 `model` 决定，不能依赖 XwX Deck 页面上最后一次选择，因此 Codex Desktop 内直接切换模型也能立即生效。
 
@@ -55,9 +55,8 @@ Gateway 复用当前 `TapProxy`。代理生命周期属于服务连接，记录�
 
 已知质量升级项：
 
-- 当前 Chat SSE 会先完整折叠再生成 Responses SSE；后续改为真正增量转换。
-- 增加客户端取消、背压和最大响应缓冲保护。
-- `previous_response_id` 只有完整 `input` 可用时才能由 Chat-only 模型合成 Compact；后续增加有界响应状态缓存。
+- Chat SSE 增量转换，并处理客户端取消、背压和断流错误。
+- 跨协议续接使用有界上下文和可移植检查点；缺少可用历史时明确报错，不伪造恢复。
 - 不向第三方模型声明无法兑现的 OpenAI Fast tier、WebSocket、Hosted Web Search 或 Image Generation。
 
 ## Anthropic Messages 兼容范围
@@ -71,9 +70,9 @@ Anthropic SSE 使用按块增量转换：文本、thinking、签名和工具参�
 ## 当前实现结果
 
 - 复用 `TapProxy` 建立常驻 Gateway；关闭 Trace 只停止落盘，不中断模型转发。
-- 启用 兼容服务 时生成 `$CODEX_HOME/xwx-compatible-catalog.json`，并在不覆盖用户自有目录的前提下写入 `model_catalog_json`。
-- Codex 始终使用 Responses；Gateway 按逐模型元数据决定 Responses 直通、Chat Completions 转换或 Anthropic Messages 转换，名称只作临时兜底。
-- 普通退出 XwX Deck 管理器只分离控制面，正在服务模型请求的 helper 与固定端口继续保留；显式“关闭代理”才完成字段级恢复和停服。官方直连且 Trace 关闭时不启动无用途的 Gateway；仅用于 Dashboard 的 viewer helper 会随管理器退出。
+- 启用兼容服务时生成 `$CODEX_HOME/xwx-compatible-catalog.json`，明确选择连接后写入目录指针，保留外部目录文件。
+- Codex 使用 Responses；Gateway 按逐模型声明选择直通或协议转换，缺少声明时使用连接默认值。
+- 关闭窗口隐藏管理器，所需 Gateway 继续运行；菜单、托盘、Dock 和 Cmd+Q 退出执行字段级恢复与停服。恢复失败或客户端仍依赖本地端口时取消退出并保留 Gateway。所选 Provider 不自动切回官方；转换模型仍需要本地 Gateway。
 - 当前实现通过源码级隔离回归不等于真实 ChatGPT + 服务商三协议端到端通过，也不证明任一平台安装包已经完成公开发布验证。制品边界统一以[GitHub 发布流程](github-release.md)和对应 Release 证据为准。
 - `model_catalog_json` 是启动时读取的配置；目录生成或模型列表变化后，已运行的 Codex Desktop 仍需重启才能可靠刷新原生选择器。
 - 能力未核验的对话条目仍进入 Codex 目录并允许用户选择；上下文最终使用 256K fallback，未知输出使用 8192 token，未知工具能力按兼容模式尝试。模型选择器只显示模型名，不展示逐行能力诊断；embedding、图片生成、OCR 和没有 Codex 转换链路的 Gemini-only 模型在目录生成前过滤。

@@ -1,5 +1,8 @@
-export const CODEX_STANDARD_LONG_CONTEXT_WINDOW = 272_000;
+export const CODEX_STANDARD_LONG_CONTEXT_WINDOW = 262_144;
 export const CODEX_EXTENDED_CONTEXT_WINDOW = 1_000_000;
+/** Codex accepts an explicit operational window in this safe range. */
+export const CODEX_MIN_CONTEXT_WINDOW = 16_384;
+export const CODEX_MAX_CONTEXT_WINDOW = 2_000_000;
 
 export interface CodexContextCapableModel {
   readonly id: string;

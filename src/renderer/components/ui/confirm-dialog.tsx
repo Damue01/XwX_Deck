@@ -86,9 +86,8 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
         {children}
       <AlertDialog.Root
         open={state.open}
-        onOpenChange={(open, details) => {
+        onOpenChange={open => {
           if (!open) {
-            details.preventUnmountOnClose();
             settle(false);
           }
         }}

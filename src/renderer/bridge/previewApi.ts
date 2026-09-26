@@ -219,6 +219,7 @@ export function createPreviewApi(): XwXDeckApi {
 
   const buildState = (): XwXDeckRuntimeState => ({
     ...state,
+    traceStorageBytes: 0, traceWarningGB: 2, traceAutoCleanup: false,
     backgroundGatewayActive: state.tracingEnabled,
     backgroundGatewayAction: state.tracingEnabled ? 'close' : undefined,
     chatGptRestartRecommended,
@@ -283,6 +284,7 @@ export function createPreviewApi(): XwXDeckApi {
   let claude: ClaudeModelSettings = { fable: '', opus: '', sonnet: '', haiku: '' };
   let codex: CodexConfigSnapshot = {
     configPath: '', authPath: '', exists: false,
+    modelCatalogSource: 'none',
     mode: 'official', officialModel: 'gpt-5.6-sol', authMode: 'unknown' as CodexAuthMode,
     activeProvider: 'openai', activeBaseUrl: 'https://api.openai.com/v1',
     compatible: { provider: 'compatible', model: 'gpt-5.6-sol', baseUrl: '', bearerToken: '' }
@@ -346,7 +348,8 @@ export function createPreviewApi(): XwXDeckApi {
     checkForUpdates: async () => update,
     downloadUpdate: async () => { update = { ...update, status: 'ready', percent: 100 }; return update; },
     restartAndInstall: async () => update,
-    repairApplication: async () => ({ removedCachePaths: 0, removedBytes: 0 }),
+    cancelUpdate: async () => { update = { ...update, status: 'idle' }; return update; },
+    repairApplication: async () => ({ removedCachePaths: 0, removedBytes: 0, chromiumCacheCleared: true, traceRetention: { legacyLimitsFound: false, persistedSettingsChanged: false, settings: { maxSessions: 0, maxStorageMB: 0 }, helper: { state: 'not-running' } } }),
     resetApplication: async () => undefined,
     toggleTracing: async () => {
       state.tracingEnabled = !state.tracingEnabled;
@@ -367,6 +370,13 @@ export function createPreviewApi(): XwXDeckApi {
     },
     getClaudeModels: async () => ({ ...claude }),
     updateClaudeModels: async (value) => { claude = { ...claude, ...(value as Partial<ClaudeModelSettings>) }; return claude; },
+    repairUnreadableSettings: async () => ({ backupPath: 'preview/settings.backup.json', lostProviderSettings: false }),
+    repairInvalidCodexConfiguration: async () => ({ backupPath: 'preview/config.backup.toml', mode: codex.mode, conflicts: [] }),
+    repairClientProviderSwitch: async () => structuredClone(providers),
+    getClaudeEnvironmentOverrides: async () => ({ platform: 'other', overrides: [], canRemoveAutomatically: false }),
+    clearClaudeEnvironmentOverrides: async () => ({ platform: 'other', overrides: [], canRemoveAutomatically: false }),
+    getClaudeDesktopSync: async () => ({ enabled: false, supported: false, active: false, configPath: '', modelCount: 0 }),
+    updateClaudeDesktopSync: async (enabled) => ({ enabled, supported: false, active: false, configPath: '', modelCount: 0 }),
     getCodexConfig: async () => structuredClone(codex),
     isChatGptRunning: async () => new URLSearchParams(location.search).get('chatgptRunning') === '1',
     getCodexEnhancements: async () => structuredClone(codexEnhancements),

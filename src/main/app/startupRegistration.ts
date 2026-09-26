@@ -5,6 +5,11 @@
  */
 export const STARTUP_HIDDEN_ARG = '--hidden';
 
+/** Electron parses this path as a Windows command line when checking approval. */
+export function startupLoginItemPath(executable: string): string {
+  return `"${executable.replace(/^"|"$/g, '')}"`;
+}
+
 export interface StartupRegistrationSnapshot {
   readonly enabled: boolean;
   readonly supported: boolean;
@@ -24,7 +29,7 @@ export function startupRegistrationMatches(
   if (!actual.supported || actual.enabled !== expectedEnabled) return false;
   return expectedEnabled
     ? actual.executableWillLaunchAtLogin !== false
-    : actual.executableWillLaunchAtLogin !== true;
+    : true;
 }
 
 export async function waitForStartupRegistration<T extends StartupRegistrationSnapshot>(

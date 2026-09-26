@@ -1,3 +1,4 @@
+import { testManagerIpc } from './manager-ipc-regressions';
 import { testDirectRestore } from './direct-restore-smoke';
 import { testProviderRegistry } from './provider-registry-smoke';
 import assert from 'node:assert/strict';
@@ -43,7 +44,7 @@ import {
 } from '../src/shared/codexContextVariants';
 import { gatewayMenuActionMatches } from '../src/main/app/gatewayMenuAction';
 import { XwXDeckController, __test as controllerTest } from '../src/main/app/xwxDeckController';
-import { buildTrayQuitPrompt } from '../src/main/app/shutdownPrompt';
+import { buildTrayQuitPrompt, shouldConfirmTrayQuit } from '../src/main/app/shutdownPrompt';
 import { __test as chatGptLifecycleTest } from '../src/main/app/chatGptLifecycle';
 import { runExitRecovery } from '../src/main/exitRecovery';
 import {
@@ -54,7 +55,7 @@ import { claudeCompatibleServiceModelEnv } from '../src/main/app/claudeModelPoli
 import {
   isKnownNonConversationalModel,
   resolveCatalogCodexProtocol,
-  resolveCompatibleServiceCodexProtocol
+  resolveProviderCodexProtocol
 } from '../src/main/app/codexProtocolPolicy';
 import {
   fetchCompatibleServiceModelCatalog,
@@ -187,35 +188,47 @@ assert.deepEqual(
   'deferred history work must back off to ten minutes instead of logging every 30 seconds forever'
 );
 const idleTrayQuitPrompt = buildTrayQuitPrompt({
-  activeRequests: 0,
+  activeUserResponses: 0,
   pendingContinuations: 0,
-  chatGptMayBeRunning: true
+  modelDependencies: []
 });
 assert.deepEqual(idleTrayQuitPrompt.buttons, ['取消', '确认']);
 assert.equal(idleTrayQuitPrompt.defaultId, 0);
-assert.equal(idleTrayQuitPrompt.message, 'ChatGPT 正在使用后台代理。');
-assert.equal(idleTrayQuitPrompt.detail, '若对话无法继续，请重新打开 XwX Deck。');
+assert.equal(shouldConfirmTrayQuit({ activeUserResponses: 0, pendingContinuations: 0, modelDependencies: [] }), false,
+  'an idle client or auxiliary transport request must not trigger an exit prompt');
 const activeTrayQuitPrompt = buildTrayQuitPrompt({
-  activeRequests: 2,
+  activeUserResponses: 2,
   pendingContinuations: 1,
-  chatGptMayBeRunning: true
+  modelDependencies: []
 });
-assert.equal(activeTrayQuitPrompt.message, '2 个请求进行中，1 个工具调用未完成。');
-assert.equal(activeTrayQuitPrompt.detail, '退出会中断回复，并可能丢失工具结果。');
+assert.equal(activeTrayQuitPrompt.message, '2 个回复正在生成，1 个会话等待工具调用。');
+assert.match(activeTrayQuitPrompt.detail, /中断回复.*丢失工具结果/);
 const requestOnlyTrayQuitPrompt = buildTrayQuitPrompt({
-  activeRequests: 1,
+  activeUserResponses: 1,
   pendingContinuations: 0,
-  chatGptMayBeRunning: false
+  modelDependencies: []
 });
-assert.equal(requestOnlyTrayQuitPrompt.message, '1 个请求正在进行。');
-assert.equal(requestOnlyTrayQuitPrompt.detail, '退出会中断正在生成的回复。');
+assert.equal(requestOnlyTrayQuitPrompt.message, '1 个回复正在生成。');
+assert.match(requestOnlyTrayQuitPrompt.detail, /中断正在生成的回复/);
 const continuationOnlyTrayQuitPrompt = buildTrayQuitPrompt({
-  activeRequests: 0,
+  activeUserResponses: 0,
   pendingContinuations: 2,
-  chatGptMayBeRunning: false
+  modelDependencies: []
 });
-assert.equal(continuationOnlyTrayQuitPrompt.message, '2 个工具调用尚未完成。');
-assert.equal(continuationOnlyTrayQuitPrompt.detail, '退出可能丢失工具结果。');
+assert.equal(continuationOnlyTrayQuitPrompt.message, '2 个会话正在等待工具调用。');
+assert.match(continuationOnlyTrayQuitPrompt.detail, /工具结果/);
+const conversionTrayQuitPrompt = buildTrayQuitPrompt({
+  activeUserResponses: 0,
+  pendingContinuations: 0,
+  modelDependencies: [{ clientName: 'ChatGPT', model: 'claude-opus-5' }]
+});
+assert.equal(conversionTrayQuitPrompt.message, '当前 ChatGPT 模型需要 XwX Deck。');
+assert.match(conversionTrayQuitPrompt.detail, /claude-opus-5.*转换协议.*切换其他模型/);
+assert.equal(shouldConfirmTrayQuit({
+  activeUserResponses: 0,
+  pendingContinuations: 0,
+  modelDependencies: [{ clientName: 'ChatGPT', model: 'claude-opus-5' }]
+}), false, 'future model dependencies are not active interruptions');
 
 try {
   await testApplicationReset();
@@ -354,7 +367,7 @@ async function testApplicationReset(): Promise<void> {
       ['electron.exe', 'dist/main/runtime.js', '--xwxdeck-reset=app', '--inspect=0'],
       { resetClientConfigs: true }
     ),
-    ['dist/main/runtime.js', '--inspect=0', '--xwxdeck-reset=clients']
+    ['dist/main/runtime.js', '--inspect=0']
   );
 
   const resetRoot = path.join(root, 'application-reset');
@@ -923,7 +936,7 @@ async function testProviderValidation(): Promise<void> {
     claudeModels: { fable: '', opus: '', sonnet: '', haiku: '' }
   };
   const plan = buildProviderValidationPlan(wrongArk);
-  assert.equal(plan.primary.endpoint, 'https://ark.cn-beijing.volces.com/api/v3/responses/v1/chat/completions');
+  assert.equal(plan.primary.endpoint, 'https://ark.cn-beijing.volces.com/api/v3/responses/v1/responses');
   assert.equal(plan.suggestion?.baseUrl, 'https://ark.cn-beijing.volces.com/api/v3');
   assert.equal(plan.suggestion?.protocol, 'responses');
 
@@ -931,7 +944,7 @@ async function testProviderValidation(): Promise<void> {
   const suggestion = await validateProviderConnection(wrongArk, async (input, init) => {
     const url = String(input);
     requests.push({ url, init });
-    return url.endsWith('/responses/v1/chat/completions')
+    return url.endsWith('/responses/v1/responses')
       ? new Response(JSON.stringify({ code: 'InvalidAction', message: 'The specified action is invalid' }), { status: 404 })
       : new Response(JSON.stringify({ id: 'resp_probe', status: 'completed' }), { status: 200 });
   });
@@ -968,6 +981,7 @@ async function testProviderValidation(): Promise<void> {
   const protocolFallback = await validateProviderConnection({
     ...correctArk,
     id: 'ark-auto-protocol',
+    codexApiFormat: 'chat-completions',
     providerPreset: 'auto',
     adapter: 'auto',
     codexModel: 'unknown-ark-model'
@@ -1529,8 +1543,8 @@ async function testControllerColdStartTransactions(): Promise<void> {
       await controller.start();
       await assert.rejects(controller.enable('system-proxy-preflight'), /unsupported SOCKS-only system proxy/);
       const preservedConfig = await fs.readFile(paths.codexConfigPath, 'utf8');
-      assert.match(preservedConfig, /base_url = "https:\/\/chatgpt\.com\/backend-api\/codex"/,
-        'stable-provider migration may proceed but must keep the official ChatGPT endpoint');
+      assert.match(preservedConfig, /chatgpt_base_url = "https:\/\/chatgpt\.com\/backend-api"/,
+        'official configuration keeps the direct ChatGPT endpoint');
       assert.doesNotMatch(preservedConfig, /127\.0\.0\.1:\d+/,
         'failed proxy resolution must never publish a localhost endpoint to ChatGPT');
       await controller.shutdown();
@@ -1641,10 +1655,9 @@ async function testControllerColdStartTransactions(): Promise<void> {
         onStartupPhase: phase => phases.push(phase),
         beforeShutdownConfigVerification: async () => {
           if (!injectShutdownConflict) return;
-          const liveGateway = (await fs.readFile(paths.codexConfigPath, 'utf8'))
-            .replace(/base_url = "https:\/\/chatgpt\.com\/backend-api\/codex"/, (line: string) => (
-              line.replace('https://chatgpt.com/backend-api/codex', shutdownConflictBaseUrl)
-            ));
+          const restoredConfig = await fs.readFile(paths.codexConfigPath, 'utf8');
+          const liveGateway = `chatgpt_base_url = "${shutdownConflictBaseUrl}"\n`
+            + restoredConfig.replace(/^chatgpt_base_url\s*=.*\n?/gm, '');
           await fs.writeFile(paths.codexConfigPath, liveGateway);
         },
         beforeCompatibleServiceServiceReapply: async client => {
@@ -1669,7 +1682,7 @@ async function testControllerColdStartTransactions(): Promise<void> {
         'a running ChatGPT must receive a restart recommendation after a new Gateway takeover');
       assert.ok(phases.indexOf('proxy-listening') < phases.indexOf('routes-ready'));
       assert.ok(phases.indexOf('routes-ready') < phases.indexOf('config-ready'));
-      assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), /127\.0\.0\.1:\d+\/backend-api\/codex/);
+      assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), /127\.0\.0\.1:\d+\/backend-api(?:\/codex)?/);
       await controller.updateCompatibleServiceConfig({
         displayName: '研发网关',
         baseUrl: 'https://compatible.example/v1',
@@ -1715,7 +1728,7 @@ async function testControllerColdStartTransactions(): Promise<void> {
       assert.equal(switched.readiness.codexRouteReady, true, 'official Gateway route stays published');
       assert.equal(switched.clients.find(client => client.id === 'codex-cli')?.status, 'taken');
       const officialTraceConfig = await fs.readFile(paths.codexConfigPath, 'utf8');
-      assert.match(officialTraceConfig, /base_url = "http:\/\/127\.0\.0\.1:\d+\/backend-api\/codex"/);
+      assert.match(officialTraceConfig, /base_url = "http:\/\/127\.0\.0\.1:\d+\/backend-api(?:\/codex)?"/);
       assert.match(officialTraceConfig, /^model = "gpt-5\.5"$/m, 'returning official restores the last official model');
       const rememberedModels = (await new XwXDeckSettingsStore(userData).read()).codexModels;
       assert.deepEqual(rememberedModels, {
@@ -1736,15 +1749,13 @@ async function testControllerColdStartTransactions(): Promise<void> {
         'the display-only [1M] variant must never enter the upstream model id');
       assert.match(extendedOfficialToml, /^model_context_window = 1000000$/m);
       assert.match(extendedOfficialToml, /^model_auto_compact_token_limit = 900000$/m);
-      await assert.rejects(controller.updateCodexConfig({
-        mode: 'official',
-        officialModel: 'gpt-5.5',
-        modelContextWindow: CODEX_EXTENDED_CONTEXT_WINDOW
-      }), /不支持 1,000,000 token 上下文配置/);
-      await assert.rejects(controller.updateCodexConfig({
-        mode: 'official',
-        officialModel: 'deepseek-chat'
-      }), /不是可用于官方 ChatGPT\/OpenAI 服务的模型/);
+      const manuallyConfigured = await controller.updateCodexConfig({
+        mode: 'official', officialModel: 'gpt-5.5', modelContextWindow: CODEX_EXTENDED_CONTEXT_WINDOW
+      });
+      assert.equal(manuallyConfigured.modelContextWindow, CODEX_EXTENDED_CONTEXT_WINDOW, 'explicit context choice survives missing capability metadata');
+      const explicitModel = await controller.updateCodexConfig({ mode: 'official', officialModel: 'deepseek-chat' });
+      assert.equal(explicitModel.officialModel, 'deepseek-chat', 'model names must not silently change an explicit service choice');
+      await controller.updateCodexConfig({ mode: 'official', officialModel: 'gpt-5.6-sol', modelContextWindow: CODEX_EXTENDED_CONTEXT_WINDOW });
       switched = await controller.runtimeState();
       assert.equal(switched.readiness.codexConfigReady, true, 'a rejected official model must restore the Trace overlay');
       assert.equal(switched.readiness.codexRouteReady, true);
@@ -1855,8 +1866,7 @@ async function testControllerColdStartTransactions(): Promise<void> {
       assert.equal((controller as any).proxy.isListening(), false);
     }
 
-    // The in-process fallback reports unresolved dependencies, while the
-    // detached exit guardian owns the final restore-and-kill guarantee.
+    // Failed restoration must keep the data plane alive for dependent clients.
     {
       const base = path.join(root, 'controller-retained-force-exit');
       const userData = path.join(base, 'user-data');
@@ -1957,14 +1967,17 @@ async function testControllerColdStartTransactions(): Promise<void> {
       assert.ok(phases.indexOf('routes-ready') < phases.indexOf('config-ready'));
       const liveConfig = await fs.readFile(paths.codexConfigPath, 'utf8');
       assert.doesNotMatch(liveConfig, /127\.0\.0\.1:44992/);
-      assert.match(liveConfig, /127\.0\.0\.1:\d+\/backend-api\/codex/);
+      assert.match(liveConfig, /127\.0\.0\.1:\d+\/backend-api(?:\/codex)?/);
       await controller.shutdown();
-      assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), /^model_provider = "openai"$/m);
+      const directConfig = await fs.readFile(paths.codexConfigPath, 'utf8');
+      assert.match(directConfig, /^model_provider = "xwx_deck"$/m);
+      assert.match(directConfig, /base_url = "https:\/\/compatible\.example\/v1"/);
+      assert.doesNotMatch(directConfig, /127\.0\.0\.1:\d+/);
       assert.equal((await new XwXDeckSettingsStore(userData).read()).codexPreferredMode, 'compatible');
     }
 
-    // Authentication conflict: the route prepare phase may run, but failure
-    // must leave config.toml byte-identical and remove the provisional route.
+    // An authentication conflict preserves external credentials, while the
+    // explicit service selection is saved directly with an actionable warning.
     {
       const base = path.join(root, 'controller-auth-conflict');
       const userData = path.join(base, 'user-data');
@@ -1982,21 +1995,24 @@ async function testControllerColdStartTransactions(): Promise<void> {
       const auth = new CodexOfficialAuthManager(userData);
       await auth.useCompatibleServiceKey('old-compatible-key');
       await fs.writeFile(paths.codexAuthPath, '{"auth_mode":"chatgpt","external":"changed"}\n');
-      const configBefore = await fs.readFile(paths.codexConfigPath, 'utf8');
-      await assert.rejects(controller.updateCodexConfig({
+      const selected = await controller.updateCodexConfig({
         mode: 'compatible',
         compatibleModel: 'deepseek-chat',
         compatibleBaseUrl: 'https://compatible.example/v1',
         compatibleBearerToken: 'new-compatible-key'
-      }), /auth\.json/);
-      assert.equal(await fs.readFile(paths.codexConfigPath, 'utf8'), configBefore);
+      });
+      assert.match(selected.warning ?? '', /auth\.json/);
+      assert.equal(await fs.readFile(paths.codexAuthPath, 'utf8'), '{"auth_mode":"chatgpt","external":"changed"}\n');
+      const direct = await fs.readFile(paths.codexConfigPath, 'utf8');
+      assert.match(direct, /https:\/\/compatible\.example\/v1/);
+      assert.doesNotMatch(direct, /127\.0\.0\.1:\d+/);
       const state = await controller.runtimeState();
       assert.equal(state.readiness.codexGatewayEnabled, false);
       assert.equal(state.readiness.codexRouteReady, false);
-      assert.equal(state.readiness.startupPhase, 'degraded');
+      assert.match(state.lastError ?? '', /auth\.json/);
       assert.equal(
         (await new XwXDeckSettingsStore(userData).read()).compatible.baseUrl,
-        ''
+        'https://compatible.example/v1'
       );
       await fs.writeFile(paths.codexAuthPath, '{"OPENAI_API_KEY":"old-compatible-key"}\n');
       await controller.shutdown();
@@ -2053,7 +2069,7 @@ async function testControllerColdStartTransactions(): Promise<void> {
         assert.equal(state.clients.find(client => client.id === 'codex-cli')?.status, 'taken');
         const tracedConfig = await fs.readFile(paths.codexConfigPath, 'utf8');
         assert.doesNotMatch(tracedConfig, new RegExp(`127\\.0\\.0\\.1:${address.port}`));
-        assert.match(tracedConfig, /127\.0\.0\.1:\d+\/backend-api\/codex/);
+        assert.match(tracedConfig, /127\.0\.0\.1:\d+\/backend-api(?:\/codex)?/);
         await controller.disable();
         assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), new RegExp(`127\\.0\\.0\\.1:${address.port}/backend-api/codex`));
         await controller.shutdown();
@@ -2103,7 +2119,7 @@ async function testControllerColdStartTransactions(): Promise<void> {
         const state = await controller.runtimeState();
         const chatGpt = state.clients.find(client => client.id === 'codex-cli');
         assert.equal(chatGpt?.status, 'skipped');
-        assert.equal(chatGpt?.detail, 'ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。');
+        assert.equal(chatGpt?.detail, 'ChatGPT 当前连接与 Trace 存在冲突。请重新打开 Deck 并开启 Trace；若仍无法接入，到“模型配置”重新选择服务后重启 ChatGPT。');
         assert.equal(await fs.readFile(paths.codexConfigPath, 'utf8'), originalConfig);
         await controller.shutdown();
       } finally {
@@ -2151,7 +2167,7 @@ async function testControllerColdStartTransactions(): Promise<void> {
       await controller.disable();
       const repairedConfig = await fs.readFile(paths.codexConfigPath, 'utf8');
       assert.doesNotMatch(repairedConfig, new RegExp(`127\\.0\\.0\\.1:${deadPort}`));
-      assert.ok(repairedConfig.includes(`base_url = "${traceState.localBaseUrl}/backend-api/codex"`),
+      assert.equal(await new CodexConfigManager(userData).referencesLocalGateway(traceState.localBaseUrl!), true,
         'stopping Trace keeps the healthy official fallback for tasks that cached the replacement endpoint');
       await controller.shutdown();
       assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), /base_url = "https:\/\/chatgpt\.com\/backend-api\/codex"/,
@@ -3802,7 +3818,7 @@ async function testCodexGatewayTransitionMatrix(): Promise<void> {
         bearerToken: 'compatible-secret'
       }
     },
-    catalog as any
+    catalog.map(model => ({ ...model, protocolsDeclared: true })) as any
   ).map(route => ({ ...route, capture: false }));
   assert.ok(localCompatibleServiceRoutes.every(route => route.webSocket === undefined),
     '兼容服务 routes must remain HTTP/SSE even when a model advertises Responses');
@@ -4780,7 +4796,7 @@ async function testCodexProtocolPolicy(): Promise<void> {
   assert.deepEqual(findOfficialModelRecord('provider/GLM_5.2')?.claudeOneMillionRoles, ['opus', 'sonnet']);
   assert.deepEqual(findOfficialModelRecord('models/kimi-k3')?.claudeOneMillionRoles, ['fable', 'opus', 'sonnet', 'haiku']);
   assert.equal(findOfficialModelRecord('deepseek-v4-pro')?.capability.maxOutputTokens, 393_216);
-  assert.equal(findOfficialModelRecord('deepseek-v4-flash-260425')?.codexRecommendedProtocol, 'chat-completions',
+  assert.equal(findOfficialModelRecord('deepseek-v4-flash-260425')?.codexRecommendedProtocol, 'responses',
     'dated DeepSeek V4 snapshots share the base model protocol contract');
   assert.equal(findOfficialModelRecord('doubao-seed-2-1-turbo-260628')?.codexRecommendedProtocol, 'chat-completions');
   assert.equal(resolveCatalogCodexProtocol({
@@ -4788,20 +4804,20 @@ async function testCodexProtocolPolicy(): Promise<void> {
     vendor: '火山方舟',
     protocols: ['openai-responses', 'chat-completions'],
     clients: ['codex']
-  }), 'chat-completions');
+  }), 'responses');
   assert.equal(resolveCatalogCodexProtocol({
     id: 'doubao-seed-2-1-turbo-260628',
     vendor: '火山方舟',
     protocols: ['openai-responses', 'chat-completions'],
     clients: ['codex']
-  }), 'chat-completions');
-  assert.equal(resolveCompatibleServiceCodexProtocol('gpt-5.6-terra'), 'responses');
-  assert.equal(resolveCompatibleServiceCodexProtocol('GROK-4'), 'chat-completions');
-  assert.equal(resolveCompatibleServiceCodexProtocol('deepseek-v3.2'), 'chat-completions');
-  assert.equal(resolveCompatibleServiceCodexProtocol('qwen3-coder'), 'chat-completions');
-  assert.equal(resolveCompatibleServiceCodexProtocol('custom-model'), 'chat-completions');
-  assert.equal(resolveCompatibleServiceCodexProtocol('claude-sonnet-4-5'), 'anthropic-messages');
-  assert.equal(resolveCompatibleServiceCodexProtocol('codex-auto-review'), 'responses');
+  }), 'responses');
+  assert.equal(resolveProviderCodexProtocol(undefined, 'gpt-5.6-terra'), 'responses');
+  assert.equal(resolveProviderCodexProtocol(undefined, 'GROK-4'), 'responses');
+  assert.equal(resolveProviderCodexProtocol(undefined, 'deepseek-v3.2'), 'responses');
+  assert.equal(resolveProviderCodexProtocol(undefined, 'qwen3-coder'), 'responses');
+  assert.equal(resolveProviderCodexProtocol(undefined, 'custom-model'), 'responses');
+  assert.equal(resolveProviderCodexProtocol(undefined, 'claude-sonnet-4-5'), 'responses');
+  assert.equal(resolveProviderCodexProtocol(undefined, 'codex-auto-review'), 'responses');
   const claudeEntry = (patch: Partial<ModelCatalogEntry> = {}): ModelCatalogEntry => ({
     id: 'claude-sonnet-4-5',
     vendor: 'Anthropic',
@@ -4823,7 +4839,7 @@ async function testCodexProtocolPolicy(): Promise<void> {
       id,
       vendor: '兼容服务',
       protocols: ['openai-responses', 'chat-completions', 'anthropic-messages']
-    })), 'chat-completions', `${id} must prefer the Chat bridge when 兼容服务 exposes several protocols`);
+    })), 'responses', `${id} must prefer explicitly published Responses regardless of vendor`);
   }
   assert.equal(resolveCatalogCodexProtocol(claudeEntry({
     id: 'gpt-5.6',
@@ -5308,7 +5324,7 @@ async function testModelCatalogMetadata(): Promise<void> {
   assert.equal(discoveredGpt.toolCalling, true, '兼容服务 tool metadata must not override maintained sources');
   assert.equal(discoveredGpt.capabilitySources?.vision, 'builtin');
   const shared = discovered.find(item => item.id === 'shared-model');
-  assert.deepEqual(shared?.protocols, ['openai-responses', 'chat-completions', 'anthropic-messages']);
+  assert.deepEqual(shared?.protocols, ['anthropic-messages']);
   assert.deepEqual(shared?.clients, ['codex', 'claude']);
   const partialRefresh = await fetchCompatibleServiceModelCatalog(
     'https://compatible.example/v1',
@@ -6169,7 +6185,7 @@ async function testCodexProviderSwitch(): Promise<void> {
     ].join('\n'));
     const stableProvider = await new CodexConfigManager(
       path.join(root, 'codex-provider-rename-user-data')
-    ).ensureStableProvider();
+    ).read();
     assert.equal(stableProvider.activeProvider, 'xwx_deck');
     const stableProviderToml = await fs.readFile(path.join(process.env.CODEX_HOME, 'config.toml'), 'utf8');
     assert.match(stableProviderToml, /\[model_providers\.xwx_deck\]/);
@@ -6215,12 +6231,12 @@ async function testCodexProviderSwitch(): Promise<void> {
     assert.match(compatibleToml, /\[model_providers\.xwx_deck\][\s\S]*name = "XwX Deck"/);
     assert.match(compatibleToml, /\[model_providers\.xwx_deck\][\s\S]*wire_api = "responses"/);
     assert.match(compatibleToml, /\[model_providers\.xwx_deck\][\s\S]*supports_websockets = false/);
-    assert.match(compatibleToml, /\[features\][\s\S]*js_repl = false/);
+    assert.match(compatibleToml, /\[features\][\s\S]*js_repl = true/);
     assert.match(compatibleToml, /^image_gen = true$/m,
       'an unknown provider must preserve the user image namespace by default');
-    assert.doesNotMatch(compatibleToml, /^\s*image_generation\s*=/m);
+    assert.match(compatibleToml, /^image_generation = true$/m);
     // imagegenext is deprecated: a pre-existing key must be cleaned up, never re-written.
-    assert.doesNotMatch(compatibleToml, /^\s*imagegenext\s*=/m);
+    assert.match(compatibleToml, /^imagegenext = true$/m);
     assert.match(compatibleToml, /\[features\][\s\S]*web_search = true/);
     const detected = detectCodexUpstream(resolveClientPaths());
     assert.ok(!('reason' in detected));
@@ -6245,14 +6261,14 @@ async function testCodexProviderSwitch(): Promise<void> {
     });
     assert.equal(official.mode, 'official');
     assert.equal(official.officialModel, 'qa-official-model');
-    assert.equal(official.activeProvider, 'xwx_deck');
+    assert.equal(official.activeProvider, 'openai');
     assert.equal(official.modelContextWindow, CODEX_STANDARD_LONG_CONTEXT_WINDOW);
     const officialToml = await fs.readFile(path.join(process.env.CODEX_HOME, 'config.toml'), 'utf8');
-    assert.ok(officialToml.indexOf('model_provider = "xwx_deck"') < officialToml.indexOf('[windows]'));
-    assert.match(officialToml, /\[model_providers\.xwx_deck\][\s\S]*base_url = "https:\/\/api\.openai\.com\/v1"/);
-    assert.match(officialToml, /\[model_providers\.xwx_deck\][\s\S]*supports_websockets = true/);
-    assert.match(officialToml, /^model_context_window = 272000$/m);
-    assert.match(officialToml, /^model_auto_compact_token_limit = 244800$/m);
+    assert.ok(officialToml.indexOf('model_provider = "openai"') < officialToml.indexOf('[windows]'));
+    assert.equal(official.activeBaseUrl, "https://api.openai.com/v1");
+    assert.match(officialToml, /^model_provider = "openai"$/m);
+    assert.match(officialToml, /^model_context_window = 262144$/m);
+    assert.match(officialToml, /^model_auto_compact_token_limit = 235929$/m);
     assert.match(officialToml, /^image_gen = true$/m, 'returning to official restores the prior image setting');
     assert.doesNotMatch(officialToml, /^\s*image_generation\s*=/m);
     assert.doesNotMatch(officialToml, /^\s*imagegenext\s*=/m);
@@ -6362,7 +6378,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
   }), [
     {
       modelId: 'gpt-5.6-sol',
-      label: 'gpt-5.6-sol[272K]',
+      label: 'gpt-5.6-sol[256K]',
       contextWindow: CODEX_STANDARD_LONG_CONTEXT_WINDOW
     },
     {
@@ -6427,7 +6443,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       {
         id: 'gpt-compatible',
         vendor: 'OpenAI',
-        protocols: ['openai-responses'],
+        protocolsDeclared: true, protocols: ['openai-responses'],
         clients: ['codex'],
         reasoningLevels: ['low', 'xhigh', 'turbo'],
         defaultReasoningLevel: 'xhigh',
@@ -6436,11 +6452,11 @@ async function testCodexModelCatalogGateway(): Promise<void> {
         maxOutputTokens: 131_072,
         capabilitySources: { contextWindow: 'models.dev', maxOutputTokens: 'models.dev' }
       },
-      { id: 'deepseek-chat', vendor: 'DeepSeek', protocols: ['chat-completions'], clients: ['codex'], vision: true },
+      { id: 'deepseek-chat', vendor: 'DeepSeek', protocolsDeclared: true, protocols: ['chat-completions'], clients: ['codex'], vision: true },
       {
         id: 'claude-sonnet-4-5',
         vendor: 'Anthropic',
-        protocols: ['anthropic-messages'],
+        protocolsDeclared: true, protocols: ['anthropic-messages'],
         clients: ['codex'],
         toolCalling: true,
         contextWindow: 200_000,
@@ -6452,20 +6468,20 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       {
         id: 'claude-unknown-limits',
         vendor: 'Anthropic',
-        protocols: ['anthropic-messages'],
+        protocolsDeclared: true, protocols: ['anthropic-messages'],
         clients: ['codex'],
         toolCalling: true
       },
       {
         id: 'text-embedding-v4',
         vendor: '兼容服务',
-        protocols: ['chat-completions'],
+        protocolsDeclared: true, protocols: ['chat-completions'],
         clients: ['codex']
       },
       {
         id: 'qwen-vl-ocr',
         vendor: '兼容服务',
-        protocols: ['chat-completions'],
+        protocolsDeclared: true, protocols: ['chat-completions'],
         clients: ['codex']
       },
       {
@@ -6473,7 +6489,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
         // the model-catalog modality enum.
         id: 'claude-opus-4-8',
         vendor: 'Anthropic',
-        protocols: ['anthropic-messages'],
+        protocolsDeclared: true, protocols: ['anthropic-messages'],
         clients: ['codex'],
         reasoning: true,
         reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -6486,7 +6502,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
         // native Codex catalog must supply max/ultra and the low default.
         id: 'gpt-5.6-sol',
         vendor: 'OpenAI',
-        protocols: ['openai-responses'],
+        protocolsDeclared: true, protocols: ['openai-responses'],
         clients: ['codex'],
         reasoning: true,
         reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
@@ -6504,14 +6520,14 @@ async function testCodexModelCatalogGateway(): Promise<void> {
         // supported_reasoning_levels field (empty), never omit it.
         id: 'doubao-seed-nonreasoning',
         vendor: '兼容服务',
-        protocols: ['chat-completions'],
+        protocolsDeclared: true, protocols: ['chat-completions'],
         clients: ['codex'],
         inputModalities: ['text', 'image', 'audio', 'video']
       },
       {
         id: 'qwen3.7-max',
         vendor: 'Alibaba',
-        protocols: ['chat-completions'],
+        protocolsDeclared: true, protocols: ['chat-completions'],
         clients: ['codex'],
         reasoning: true,
         reasoningLevels: ['low', 'medium', 'high'],
@@ -6520,7 +6536,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       {
         id: 'doubao-seed-2-0-pro',
         vendor: 'Volcengine',
-        protocols: ['chat-completions'],
+        protocolsDeclared: true, protocols: ['chat-completions'],
         clients: ['codex'],
         reasoning: true,
         reasoningLevels: ['minimal', 'low', 'medium', 'high'],
@@ -6529,7 +6545,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       {
         id: 'grok-4.6',
         vendor: 'xAI',
-        protocols: ['chat-completions'],
+        protocolsDeclared: true, protocols: ['chat-completions'],
         clients: ['codex'],
         reasoning: true,
         reasoningLevels: ['low', 'medium', 'high'],
@@ -6538,7 +6554,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       {
         id: 'grok-4.20-0309-reasoning',
         vendor: 'xAI',
-        protocols: ['chat-completions'],
+        protocolsDeclared: true, protocols: ['chat-completions'],
         clients: ['codex'],
         reasoning: true,
         reasoningLevels: ['low', 'medium', 'high'],
@@ -6547,7 +6563,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       {
         id: 'gpt-5.4',
         vendor: 'OpenAI',
-        protocols: ['openai-responses'],
+        protocolsDeclared: true, protocols: ['openai-responses'],
         clients: ['codex'],
         reasoning: true,
         reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
@@ -6559,7 +6575,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
         // so the sourced levels must survive.
         id: 'gpt-5.6-nova',
         vendor: 'OpenAI',
-        protocols: ['openai-responses', 'chat-completions'],
+        protocolsDeclared: true, protocols: ['openai-responses', 'chat-completions'],
         clients: ['codex'],
         reasoning: true,
         reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
@@ -6571,7 +6587,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
         // levels even though no aggregator sourced any.
         id: 'doubao-seed-2-1-turbo',
         vendor: 'Volcengine',
-        protocols: ['chat-completions'],
+        protocolsDeclared: true, protocols: ['chat-completions'],
         clients: ['codex'],
         reasoning: true
       }
@@ -6602,9 +6618,9 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       { effort: 'xhigh', description: 'xhigh reasoning effort' }
     ]);
     assert.equal(catalog.models[0].default_reasoning_level, 'xhigh');
-    assert.equal(catalog.models[0].context_window, 272_000, 'verified GPT 1M models must default to the standard Codex window');
+    assert.equal(catalog.models[0].context_window, CODEX_STANDARD_LONG_CONTEXT_WINDOW, 'verified GPT 1M models must default to the standard Codex window');
     assert.equal(catalog.models[0].max_context_window, 1_000_000);
-    assert.equal(catalog.models[0].auto_compact_token_limit, 244_800);
+    assert.equal(catalog.models[0].auto_compact_token_limit, Math.floor(CODEX_STANDARD_LONG_CONTEXT_WINDOW * 0.9));
     assert.equal(catalog.models[1].description, 'DeepSeek · 兼容服务');
     assert.deepEqual(catalog.models[1].input_modalities, ['text', 'image']);
     assert.equal(catalog.models[2].context_window, 200_000);
@@ -6767,7 +6783,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       {
         id: 'opus5',
         vendor: 'Anthropic',
-        protocols: ['anthropic-messages'],
+        protocolsDeclared: true, protocols: ['anthropic-messages'],
         clients: ['codex'],
         contextWindow: 1_000_000
       }
@@ -6784,7 +6800,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       {
         id: 'opus5',
         vendor: 'Anthropic',
-        protocols: ['anthropic-messages'],
+        protocolsDeclared: true, protocols: ['anthropic-messages'],
         clients: ['codex'],
         contextWindow: 1_000_000
       }
@@ -6812,11 +6828,11 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       gatewayBaseUrl: 'http://127.0.0.1:34117/v1',
       modelCatalogPath: catalogPath
     });
-    assert.equal(detached.restoredFields, 1);
+    assert.equal(detached.restoredFields, 2);
     const detachedToml = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
     assert.match(detachedToml, /\[model_providers\.xwx_deck\][\s\S]*base_url = "https:\/\/compatible\.example\/v1"/);
-    assert.match(detachedToml, /^model_catalog_json = ".*xwx-compatible-catalog\.json"$/m,
-      'direct compatible mode must retain the static XwX model catalog pointer');
+    assert.doesNotMatch(detachedToml, /^model_catalog_json\s*=/m,
+      'restoring a scoped Gateway removes its managed catalog pointer');
 
     await config.update({ mode: 'official', officialModel: 'gpt-official' });
     const officialToml = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
@@ -6826,7 +6842,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
     const externalCatalogBytes = '{"models":[{"slug":"external-only"}]}\n';
     await fs.writeFile(externalCatalogPath, externalCatalogBytes);
     await fs.writeFile(path.join(codexHome, 'config.toml'), `model_catalog_json = ${JSON.stringify(externalCatalogPath)}\n`);
-    await config.update({ mode: 'official', officialModel: 'gpt-official' });
+    await config.update({ mode: 'official', officialModel: 'gpt-official', takeOverExternalConfig: true });
     const officialWithoutExternalCatalog = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
     assert.doesNotMatch(officialWithoutExternalCatalog, /^model_catalog_json\s*=/m,
       'an explicit official-mode switch must remove a stale external catalog pointer');
@@ -6836,6 +6852,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
     await fs.writeFile(path.join(codexHome, 'config.toml'), `model_catalog_json = ${JSON.stringify(externalCatalogPath)}\n`);
     await config.update({
       mode: 'compatible',
+      takeOverExternalConfig: true,
       compatibleModel: 'deepseek-chat',
       compatibleBaseUrl: 'https://compatible.example/v1',
       compatibleBearerToken: 'qa-key',
@@ -6851,7 +6868,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
       {
         id: 'should-not-overwrite-user-catalog',
         vendor: '兼容服务',
-        protocols: ['chat-completions'],
+        protocolsDeclared: true, protocols: ['chat-completions'],
         clients: ['codex']
       }
     ]);
@@ -6866,7 +6883,7 @@ async function testCodexModelCatalogGateway(): Promise<void> {
     assert.equal(await catalogManager.syncIfXwXOwned([{
       id: 'must-not-win-a-background-race',
       vendor: '兼容服务',
-      protocols: ['chat-completions'],
+      protocolsDeclared: true, protocols: ['chat-completions'],
       clients: ['codex']
     }]), undefined, 'background refresh must not retake a pointer changed by another tool');
     const conflictSafeRestore = await config.restoreDirectConfiguration({
@@ -7076,7 +7093,7 @@ async function testCodexEnhancements(): Promise<void> {
       compatibleBearerToken: 'qa-compatible-key',
       unifySessionHistory: false
     });
-    assert.equal(restoredConfig.activeProvider, 'xwx_deck');
+    assert.equal(restoredConfig.activeProvider, 'openai');
     assert.equal(restoredConfig.compatible.baseUrl, 'https://compatible.example/v1');
     const restored = await history.restoreSeparatedHistory();
     assert.equal(restored.restoredJsonlFiles, 2);
@@ -7338,7 +7355,7 @@ async function testCodexCustomHistoryProviders(): Promise<void> {
     );
     const restoredV3 = await history.restoreSeparatedHistory();
     assert.equal(restoredV3.restoredJsonlFiles, 5);
-    assert.match(await fs.readFile(liveV3Path, 'utf8'), /"model_provider":"compatible"/);
+    assert.match(await fs.readFile(liveV3Path, 'utf8'), /"model_provider":"legacy-custom-provider"/);
   } finally {
     if (previousHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = previousHome;
@@ -8060,6 +8077,7 @@ async function testProxyCapture(): Promise<void> {
       apiType: 'responses',
       upstreamBaseUrl: `http://127.0.0.1:${address.port}`,
       transform: 'responses-to-chat-auto',
+      modelProtocols: { 'deepseek-chat': 'chat-completions' },
       capture: false
     }]);
     const autoChat = await fetch(`${proxyUrl}/v1/responses`, {
@@ -8069,7 +8087,7 @@ async function testProxyCapture(): Promise<void> {
     });
     assert.equal(autoChat.status, 200);
     await autoChat.text();
-    assert.equal(upstreamPaths.at(-1), '/v1/chat/completions', 'non-GPT models use the Completion bridge per request');
+    assert.equal(upstreamPaths.at(-1), '/v1/chat/completions', 'an explicitly declared Chat protocol uses the bridge per request');
     proxy.setClientRoutes([{
       source: 'codex-cli',
       path: '/v1/responses',
@@ -10072,351 +10090,13 @@ async function testPortableUpdateReplacement(): Promise<void> {
 }
 
 async function testManagerIpcContract(): Promise<void> {
-  // Manager UI is now a React SPA — read all renderer source files as the contract surface.
-  const updateNotification = await fs.readFile(path.resolve('src/renderer/features/shell/UpdateNotification.tsx'), 'utf8');
-  const settingsPage = await fs.readFile(path.resolve('src/renderer/features/settings/SettingsPage.tsx'), 'utf8');
-  const repairCenter = await fs.readFile(path.resolve('src/renderer/features/settings/RepairCenterSheet.tsx'), 'utf8');
-  const modelsPage = await fs.readFile(path.resolve('src/renderer/features/models/ModelsPage.tsx'), 'utf8');
-  const toolsPage = await fs.readFile(path.resolve('src/renderer/features/tools/ToolsPage.tsx'), 'utf8');
-  const onboardingTour = await fs.readFile(path.resolve('src/renderer/features/onboarding/OnboardingTour.tsx'), 'utf8');
-  const combobox = await fs.readFile(path.resolve('src/renderer/components/ui/combobox.tsx'), 'utf8');
-  const rendererStyles = await fs.readFile(path.resolve('src/renderer/styles.css'), 'utf8');
-  const xwxDeckController = await fs.readFile(path.resolve('src/main/app/xwxDeckController.ts'), 'utf8');
-  const rendererSrc = (await Promise.all([
-    'src/renderer/App.tsx',
-    'src/renderer/bridge/api.ts',
-    'src/renderer/bridge/types.ts',
-    'src/renderer/bridge/previewApi.ts',
-    'src/renderer/features/shell/Titlebar.tsx',
-    'src/renderer/features/shell/Rail.tsx',
-    'src/renderer/features/shell/Toggle.tsx',
-    'src/renderer/features/trace/SignalPage.tsx',
-    'src/renderer/features/trace/ParticleField.tsx',
-    'src/renderer/features/models/ModelsPage.tsx',
-    'src/renderer/features/models/ModelPicker.tsx',
-    'src/renderer/features/models/CodexEnhancements.tsx',
-    'src/renderer/features/tools/ToolsPage.tsx',
-    'src/renderer/features/settings/SettingsPage.tsx',
-    'src/renderer/features/settings/RepairCenterSheet.tsx',
-  ].map(f => fs.readFile(path.resolve(f), 'utf8')))).join('\n');
-  const indexHtml = await fs.readFile(path.resolve('dist', 'renderer', 'index.html'), 'utf8');
-  const preload = await fs.readFile(path.resolve('src', 'main', 'preload.ts'), 'utf8');
-  const bootstrap = await fs.readFile(path.resolve('src', 'main', 'main.ts'), 'utf8');
-  const runtime = await fs.readFile(path.resolve('src', 'main', 'runtime.ts'), 'utf8');
-  const exitRecovery = await fs.readFile(path.resolve('src', 'main', 'exitRecovery.ts'), 'utf8');
-  const chatGptLifecycle = await fs.readFile(path.resolve('src', 'main', 'app', 'chatGptLifecycle.ts'), 'utf8');
-  const main = `${bootstrap}\n${runtime}`;
-  const ipcHandlers = await fs.readFile(path.resolve('src', 'main', 'ipc', 'registerHandlers.ts'), 'utf8');
-  const startup = await fs.readFile(path.resolve('src', 'main', 'app', 'startup.ts'), 'utf8');
-  const updater = await fs.readFile(path.resolve('src', 'main', 'update', 'xwxDeckUpdater.ts'), 'utf8');
-  const tray = await fs.readFile(path.resolve('src', 'main', 'tray.ts'), 'utf8');
-  const managerWindow = await fs.readFile(path.resolve('src', 'main', 'window', 'managerWindow.ts'), 'utf8');
-  const mainProcess = `${main}\n${ipcHandlers}\n${managerWindow}\n${startup}`;
-  const expected = [
-    'getState', 'getTraceStats', 'getUpdateState', 'checkForUpdates', 'downloadUpdate', 'restartAndInstall',
-    'setStartupEnabled', 'setTheme', 'toggleTracing', 'toggleClient', 'getCodexConfig', 'isChatGptRunning', 'getCodexEnhancements', 'updateCodexEnhancements',
-    'diagnoseCodexConversations', 'openCodexConversationPath', 'copyText',
-    'getCompatibleServiceConfig', 'updateCompatibleServiceConfig',
-    'getModelServices', 'setModelService', 'getClaudeModels', 'updateClaudeModels',
-    'updateCodexConfig', 'fetchModels', 'chooseDirectory', 'updateTraceDirectories', 'setTraceAppearance',
-    'chooseTraceBackground', 'clearTraceBackground', 'repairApplication', 'resetApplication',
-    'openDashboard', 'openDataFolder',
-    'openLogFolder', 'clearHistory', 'disableBreaksCodex', 'refresh', 'minimizeWindow', 'toggleMaximize', 'setManagerView', 'closeWindow', 'onNotice'
-  ];
-  for (const method of expected) assert.match(preload, new RegExp(`\\b${method}:`), `preload must expose ${method}`);
-  assert.match(rendererSrc, /window\.xwxDeck/);
-  assert.match(indexHtml, /<title>XwX Deck<\/title>/);
-  assert.match(runtime, /path\.join\(app\.getPath\('appData'\), 'xwx-deck'\)[\s\S]*app\.setName\('XwX Deck'\);[\s\S]*app\.setPath\('userData', standaloneUserDataDir\);/,
-    'the standalone edition must use an isolated user-data directory');
-  assert.match(runtime, /app\.setAppUserModelId\('app\.xwxdeck\.desktop'\)/,
-    'the standalone edition must use an isolated Windows application identity');
-  assert.match(rendererSrc, /ChatGPT/);
-  assert.match(modelsPage, /showErrorToast\(`无法切换 \$\{client === 'codex' \? 'ChatGPT' : 'Claude'\} 服务`, error/,
-    'provider-switch failures must separate a clear client-specific title from the actionable cause');
-  assert.match(combobox, /top:\s*41/, 'model menus must stay below the Electron draggable titlebar');
-  assert.match(combobox, /collisionPadding=\{collisionPadding\}/,
-    'the titlebar collision padding must reach the popup positioner');
-  assert.match(onboardingTour, /getBoundingClientRect\(\)/,
-    'onboarding highlights must measure the real target element');
-  assert.match(onboardingTour, /ResizeObserver/,
-    'onboarding highlights must follow target and layout size changes');
-  assert.match(onboardingTour, /getComputedStyle\(page\)\.transform === 'none'/,
-    'onboarding must wait for page transitions before accepting a target position');
-  assert.doesNotMatch(onboardingTour, /setRect\(null\)/,
-    'onboarding steps must retain the previous spotlight instead of flashing a full-screen backdrop');
-  assert.match(onboardingTour, /document\.body\.dataset\.tourActive = 'true'/,
-    'onboarding must expose its active state so underlying page transitions can be suppressed');
-  assert.match(rendererStyles, /body\[data-tour-active="true"\] \.page\s*\{\s*transition:\s*none;/,
-    'onboarding navigation must not animate the whole page underneath the spotlight');
-  assert.doesNotMatch(onboardingTour, /tour-kicker|\{index \+ 1\}\s*\/\s*\{STEPS\.length\}/,
-    'onboarding must not duplicate the bottom progress indicator with a top fraction');
-  assert.match(rendererStyles, /\.tour-bubble\s*\{[\s\S]*?padding:\s*14px 22px 12px/,
-    'the onboarding card must keep the compact top spacing verified in the rendered UI');
-  assert.match(rendererSrc, /showToast\('Trace 已开启', 'success'/,
-    'enabling Trace must use one concise bottom-right toast');
-  assert.match(rendererSrc, /ChatGPT 接入失败，Trace 未接管其配置。请检查 ChatGPT 配置后重新开启 Trace。/);
-  assert.match(rendererSrc, /ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。/);
-  assert.match(
-    rendererSrc,
-    /showToast\('ChatGPT 连接已更新', 'info', CHATGPT_RESTART_TOAST_ID,[\s\S]*?timeout: 12_000/,
-    'a running ChatGPT must receive a visible restart notice after Gateway takeover'
-  );
-  assert.match(
-    rendererSrc,
-    /initialRestartNoticeCheckedRef\.current = true;/,
-    'the restart notice must reset after returning to a direct connection'
-  );
-  assert.match(runtime, /if \(PACKAGED_SMOKE_TEST\)/,
-    'isolated packaged smoke must never inspect the user\'s real ChatGPT process');
-  assert.doesNotMatch(runtime, /forceQuitChatGpt|requestChatGptQuit|launchChatGpt/,
-    'runtime must never close, force-quit, or launch ChatGPT');
-  assert.doesNotMatch(chatGptLifecycle, /forceQuitChatGpt|requestChatGptQuit|launchChatGpt|taskkill\.exe|osascript|SIGKILL/,
-    'the ChatGPT lifecycle boundary must expose detection only, not process control');
-  assert.doesNotMatch(runtime, /showExitModeDialog/,
-    'ordinary exit must not offer a multi-choice proxy mode dialog');
-  const quitting = runtime.slice(runtime.indexOf("app.on('before-quit'"), runtime.indexOf('class ShutdownCancelledError'));
-  assert.doesNotMatch(quitting, /detachManager|forceExit/);
-  assert.match(quitting, /shutdownControllerWithConfirmation/);
-  assert.match(quitting, /cancelShutdown/);
-  assert.doesNotMatch(exitRecovery, /forceRestoreOriginal|replaceOwnedLoopbackReferences/);
-  assert.match(exitRecovery, /if \(recoveryError\) throw recoveryError;[\s\S]*?terminateProcess\(runtime\.pid\)/);
-  assert.match(xwxDeckController, /restoreCodexPreferredDirectConfiguration/);
-  assert.match(tray, /action === 'close' \? '关闭代理' : '开启代理'/,
-    'the menu-bar proxy action must use the concise demand-driven labels');
-  assert.match(tray, /toggleGateway\(action\)/,
-    'each proxy menu item must retain the action that was visible when the menu snapshot was built');
-  assert.match(tray, /\{ label: '退出', click: this\.actions\.quit \}/,
-    'the tray full-exit action must keep the concise native-style label');
-  assert.match(tray, /app\.dock\.setMenu\(this\.buildDockMenu\(state\)\)/,
-    'the Dock menu must expose the same proxy toggle alongside macOS native Quit');
-  assert.match(tray, /private buildDockMenu[\s\S]*?gatewayMenuItems\(state\)/,
-    'the Dock proxy toggle must match the menu-bar wording');
-  assert.doesNotMatch(tray, /label: '打开管理器'|label: '打开'/,
-    'clicking the menu-bar or Dock icon must replace redundant open menu items');
-  assert.doesNotMatch(tray, /追踪已暂停|继续追踪/,
-    'the internal paused intent must remain visually identical to ordinary disabled tracing');
-  const gatewayToggleRuntime = runtime.slice(
-    runtime.indexOf('async function toggleBackgroundGatewayOnce'),
-    runtime.indexOf('async function toggleTracingOnce')
-  );
-  assert.doesNotMatch(gatewayToggleRuntime, /dialog\.|showImmediateShutdownConfirm|showSystemConfirm/,
-    'tray proxy actions must use manager toasts instead of native dialogs');
-  assert.match(gatewayToggleRuntime, /drainTimeoutMs: 1_000[\s\S]*?error instanceof ShutdownDrainTimeoutError[\s\S]*?showManagerNotice/,
-    'tray proxy close must drain once and defer with a toast instead of forcing an active request closed');
-  assert.match(gatewayToggleRuntime, /showManagerNotice\('代理已关闭。', 'success'\)/,
-    'the successful proxy-close notice must stay concise');
-  assert.match(runtime, /controller\.startBackgroundGateway\(\)/,
-    'the same proxy action must support reopening a stopped Gateway');
-  const traceToggleRuntime = runtime.slice(
-    runtime.indexOf('async function toggleTracingOnce'),
-    runtime.indexOf('async function toggleTracingFromTray')
-  );
-  assert.doesNotMatch(traceToggleRuntime, /confirmChatGptMayNeedRestart|showSystemConfirm/,
-    'enabling Trace from the manager must not show a system notification');
-  assert.doesNotMatch(rendererSrc, /void bridge\.api\.toggleTracing\(\)/,
-    'the Space shortcut must not bypass the page toggle guard');
-  assert.match(rendererSrc, /window\.dispatchEvent\(new Event\(TRACE_TOGGLE_REQUEST_EVENT\)\)/,
-    'the Space shortcut must share the button Toast and confirmation flow');
-  assert.match(runtime, /gatewayMenuActionMatches\(expectedAction, action\)/,
-    'a stale proxy menu click must refresh instead of executing the opposite current action');
-  assert.match(runtime, /requiresChatGptExit = controller\.requiresCodexClientExitBeforeShutdown\(\)/,
-    'official direct shutdown must bypass unnecessary ChatGPT running-state detection');
-  assert.match(xwxDeckController, /requiresCodexClientExitBeforeShutdown[\s\S]*?this\.codexGatewayEnabled[\s\S]*?this\.active[\s\S]*?takeover\.client === 'codex-cli'[\s\S]*?takeover\.status === 'taken'/,
-    'explicit proxy shutdown must detect whether ChatGPT may own live rollout files');
-  assert.doesNotMatch(runtime, /重新检测并退出/,
-    'shutdown must not offer a retry loop that performs no action');
-  assert.doesNotMatch(runtime, /requestChatGptQuit|showChatGptForceQuitDialog|等待完成后关闭|SHUTDOWN_WAIT_SLICE_MS/,
-    'confirmed shutdown must not expose or enter a separate waiting flow');
-  assert.match(xwxDeckController, /!options\.skipCodexHistoryRepair[\s\S]*?deferred ChatGPT provider history repair because ChatGPT may still be running/,
-    'shutdown must defer live rollout repair while ChatGPT may still be running');
-  assert.match(xwxDeckController, /async shutdownActivity[\s\S]*?await this\.proxy\.refreshShutdownActivity\(\)/,
-    'the shutdown prompt must refresh helper activity instead of displaying a stale cached count');
-  assert.match(xwxDeckController, /async disableBreaksCodex[\s\S]*?await this\.shutdownActivity\(\)[\s\S]*?activeRequests > 0 \|\| activity\.pendingContinuations > 0/,
-    'stopping Trace must warn only for live helper activity, not a ChatGPT process');
-  assert.match(rendererSrc, /title: '停止 Trace'[\s\S]*?当前仍有对话正在进行。[\s\S]*?confirmText: '确认停止'/,
-    'the live Trace stop warning must stay inside the styled manager dialog');
-  const updateInstall = runtime.slice(runtime.indexOf('async function restartAndInstall'));
-  assert.match(updateInstall, /await prepareSafeShutdown\(\);[\s\S]*?await shutdownControllerWithConfirmation\(shutdown\.forceShutdown, shutdown\.chatGptMayBeRunning\);/,
-    'automatic update must share the interactive shutdown guard');
-  assert.match(settingsPage, /showErrorToast\(manual \? '无法打开安装包' : '无法重启并完成更新', error\)/,
-    'update failures must preserve the actionable shutdown reason');
-  assert.match(
-    xwxDeckController,
-    /Claude 接入失败：检测到环境变量 ANTHROPIC_BASE_URL，本地配置已失效，请移除相关环境变量后重试/,
-    'Claude environment overrides must use a direct actionable warning'
-  );
-  assert.match(
-    rendererSrc,
-    /showToast\(environmentIssue, 'error', ENVIRONMENT_OVERRIDE_TOAST_ID\)/,
-    'Trace must actively surface the Claude environment override'
-  );
-  assert.match(
-    rendererSrc,
-    /showErrorToast\(`\$\{clientName\} 接入设置失败`, e\)/,
-    'client toggles must preserve actionable backend errors'
-  );
-  assert.match(
-    modelsPage,
-    /showErrorToast\('无法保存 Claude 模型', error\)/,
-    'model service errors must keep the action and backend reason in separate fields'
-  );
-  assert.match(xwxDeckController, /等待请求/);
-  assert.match(xwxDeckController, /若客户端已在运行，请重启客户端后发送请求/);
-  assert.match(xwxDeckController, /const capture = settings\.tracingEnabled && settings\.clientEnabled\.codex !== false/,
-    'the retained official fallback must stop recording when Trace is off');
-  assert.doesNotMatch(rendererSrc, /切换为直连上游/);
-  assert.match(rendererSrc, /data-client-tab="codex"/);
-  assert.match(rendererSrc, />模型配置<\/h1>/);
-  assert.match(rendererSrc, /data-page=\{id\}/);
-  assert.match(rendererSrc, /id="page-tools"/);
-  assert.match(toolsPage, /id="conversationDoctor"/);
-  assert.match(toolsPage, /queryCodexConversations/);
-  assert.match(toolsPage, /SQLite · threads/);
-  assert.match(toolsPage, /JSONL · session_meta/);
-  assert.doesNotMatch(toolsPage, /Excel 转 Markdown|excelDropzone|convertExcelFiles/,
-    'the standalone tools page must contain only conversation diagnosis');
-  assert.match(rendererSrc, /data-model-service|setModelService/);
-  assert.match(rendererSrc, /id="codexAuthToggle"/);
-  assert.match(rendererSrc, /id="codexHistoryToggle"/);
-  assert.match(rendererSrc, /保留官方登录/);
-  assert.match(rendererSrc, /管理会话历史/);
-  assert.doesNotMatch(rendererSrc, /id="codexHistoryMigrate"|id="codexHistoryRestore"/);
-  assert.match(
-    rendererSrc,
-    /id="codexAuthToggle"[\s\S]*?checked=\{enhancements\.preserveOfficialLogin === true\}[\s\S]*?onToggle=\{handleAuth\}/,
-    'official login preservation must remain an interactive preference'
-  );
-  assert.match(rendererSrc, /已有会话将归入 xwx_deck，切换服务后仍可见。操作前会备份/);
-  assert.match(rendererSrc, /停止后不再自动迁移。可同时恢复迁移前分类/);
-  assert.match(rendererSrc, /checkboxLabel: '恢复迁移前分类'/);
-  assert.doesNotMatch(rendererSrc, /data-codex-mode=|data-client-config-toggle|codexActiveProvider|configure兼容服务|id="addProvider"/);
-  const providersPanel = await fs.readFile(path.resolve('src/renderer/features/settings/ProvidersPanel.tsx'), 'utf8');
-  assert.match(providersPanel, /htmlFor="provider-name"/);
-  assert.match(providersPanel, /htmlFor="provider-url"/);
-  assert.match(providersPanel, /htmlFor="provider-key"/);
-  assert.match(providersPanel, /htmlFor="provider-model"/);
-  assert.match(modelsPage, /<ProviderPicker registry=\{bridge.providers\} client="claude"/);
-  assert.match(modelsPage, /<ProviderPicker registry=\{bridge.providers\} client="codex"/);
-  assert.match(modelsPage, /expectedProviderId: bridge.providers\?\.active\.codex/);
-  assert.match(modelsPage, /modelCatalogSource === 'external'/);
-  assert.match(modelsPage, /Promise.allSettled/);
-
-  assert.doesNotMatch(xwxDeckController, /ensureCodexGatewayForCurrentService/);
-  const startSection = xwxDeckController.slice(
-    xwxDeckController.indexOf('async start()'),
-    xwxDeckController.indexOf('async toggle()')
-  );
-  assert.match(startSection, /this\.codexGatewayEnabled = false/);
-  assert.doesNotMatch(startSection, /setModelService|updateCodexConfig|ensureCodexGatewayForCurrentService/);
-  assert.match(rendererSrc, /updateTraceDirectories/);
-  assert.match(rendererSrc, /id="traceDataPath"/);
-  assert.match(rendererSrc, /id="traceLogPath"/);
-  assert.match(rendererSrc, /id="changeDataFolder"/);
-  assert.match(settingsPage, /aria-disabled=\{tracing \|\| undefined\}/,
-    'the Trace directory action must remain present and focusable while Trace is active');
-  assert.match(rendererStyles, /\.trace-row-action\[aria-disabled="true"\] svg \{ opacity: 0; transform: scale\(\.82\); \}/,
-    'the active Trace directory icon must stay hidden until the row is hovered or focused');
-  assert.match(rendererStyles, /\.trace-row:hover \.trace-row-action\[aria-disabled="true"\] svg,[\s\S]*?opacity: 1; transform: scale\(1\); \}/,
-    'hovering or focusing the active Trace directory row must match the log-directory icon strength');
-  assert.match(rendererStyles, /\.trace-row-action:hover:not\(:disabled\) \{ background: var\(--surface\); color: var\(--ink\); box-shadow: var\(--shadow-soft\); \}/,
-    'the active Trace and log directory actions must share the same button hover feedback');
-  assert.doesNotMatch(rendererStyles, /\.trace-row-action:hover[^{]*aria-disabled/,
-    'the Trace directory aria-disabled explanation state must not suppress hover feedback');
-  assert.match(settingsPage, /请先停止 Trace，再修改数据目录/,
-    'the active Trace directory action must explain why the path cannot change yet');
-  assert.match(rendererSrc, /id="clearHistory"/);
-  assert.match(repairCenter, /id="repairCenterTrigger"/);
-  assert.match(repairCenter, /id="quickRepairApplication"/);
-  assert.match(repairCenter, /id="resetApplication"/);
-  assert.match(repairCenter, /<Dialog\.Title>诊断与修复<\/Dialog\.Title>/);
-  assert.match(repairCenter, /删除 XwX Deck 缓存（含模型目录）和更新残留/);
-  assert.match(settingsPage, /Claude settings\.json \/ claude\.json 和 ChatGPT config\.toml \/ auth\.json/);
-  assert.match(settingsPage, /checkboxLabel: '同时删除 Claude 与 ChatGPT 的核心配置'/);
-  assert.match(settingsPage, /核心配置由客户端下次启动时自行生成/,
-    'reset must leave client regeneration to Claude and ChatGPT');
-  assert.doesNotMatch(rendererSrc, /openStorageFolder/);
-  assert.match(rendererSrc, />开机启动</);
-  assert.match(rendererSrc, /id="startupToggle"/);
-  assert.match(rendererSrc, /setStartupEnabled/);
-  assert.match(rendererSrc, /id="versionUpdateCue"/);
-  assert.doesNotMatch(rendererSrc, /启用 XwX Trace 以使用该模型|启用 XwX Trace 以切换模型|开启 XwX Trace 后即可使用/);
-  assert.match(modelsPage, /若仍在使用原服务或对话无法继续/);
-  assert.match(rendererSrc, /已切回官方服务。/);
-  assert.match(rendererSrc, /已选择 \$\{choice\.label\}；协议由 XwX Deck 自动适配。/);
-  assert.match(rendererSrc, /modelContextWindow: choice\.contextWindow/,
-    'the selected display variant must persist its numeric window separately from the model id');
-  assert.match(rendererSrc, /协议由 XwX Deck 自动适配/);
-  assert.doesNotMatch(settingsPage, /showToast\(`发现新版本 \$\{next\.targetVersion\}`, 'success'\)/, 'the actionable update toast must be the sole new-version notification');
-  assert.match(rendererSrc, /恢复迁移前分类/);
-  assert.match(updateNotification, /timeout:\s*5_000/, 'new-version toast must close after five seconds');
-  assert.doesNotMatch(updateNotification, /timeout:\s*15_000/);
-  const restartConfirmation = settingsPage.slice(
-    settingsPage.indexOf('const confirmReadyUpdate'),
-    settingsPage.indexOf('const handleUpdateClick')
-  );
-  assert.match(restartConfirmation, /await confirm\(/, 'ready update action must ask for confirmation');
-  assert.match(restartConfirmation, /if \(!proceed\) return;/);
-  assert.match(restartConfirmation, /await bridge\.api\.restartAndInstall\(\)/);
-  assert.match(restartConfirmation, /manual \? '打开安装包' : '重启更新'/);
-  const updateClickHandler = settingsPage.slice(
-    settingsPage.indexOf('const handleUpdateClick'),
-    settingsPage.indexOf('React.useEffect(() => {', settingsPage.indexOf('const handleUpdateClick'))
-  );
-  assert.match(updateClickHandler, /confirmReadyUpdate\(updateState\.targetVersion/);
-  assert.doesNotMatch(updateClickHandler, /restartAndInstall\(\)/, 'ready-state clicks must not quit without confirmation');
-  assert.match(rendererSrc, /className="brand">XwX Deck</);
-  assert.doesNotMatch(rendererSrc, /id="updateStatus"|id="checkUpdate"/);
-  assert.doesNotMatch(rendererSrc, /keepOpenAiLogin|gptProxy/);
-  assert.match(ipcHandlers, /const handlers:\s*Record<string, InvokeHandler>/);
-  assert.match(ipcHandlers, /const requireController/);
-  assert.match(ipcHandlers, /xwxdeck:set-startup-enabled/);
-  assert.match(startup, /setLoginItemSettings/);
-  assert.match(startup, /STARTUP_HIDDEN_ARG/, 'startup must expose the hidden-launch argument');
-  // The literal lives in the electron-free startupRegistration module so the
-  // reset path can filter it out of relaunch args without importing `app`.
-  {
-    const startupRegistration = await fs.readFile(
-      path.resolve('src', 'main', 'app', 'startupRegistration.ts'),
-      'utf8'
-    );
-    assert.match(startupRegistration, /STARTUP_HIDDEN_ARG = '--hidden'/);
-    const applicationReset = await fs.readFile(
-      path.resolve('src', 'main', 'app', 'applicationReset.ts'),
-      'utf8'
-    );
-    assert.doesNotMatch(applicationReset, /from '\.\/startup'/,
-      'the reset path must stay importable without Electron');
-    assert.match(applicationReset, /STARTUP_HIDDEN_ARG/,
-      'reset relaunch args must drop the hidden-launch flag so onboarding is visible');
-  }
-  assert.match(startup, /process\.platform === 'darwin'/, 'packaged macOS builds must support login items');
-  assert.match(main, /isStartupHiddenLaunch/);
-  assert.match(runtime, /app\.on\('activate'/, 'macOS Dock activation must re-open the manager');
-  assert.match(tray, /trayTemplate\.png/, 'macOS must use a transparent menu-bar template icon');
-  assert.match(tray, /setTemplateImage\(template\)/);
-  assert.doesNotMatch(tray, /createFromDataURL/, 'tray fallback must not depend on Electron SVG decoding');
-  assert.match(updater, /process\.platform === 'darwin'/, 'packaged macOS builds must support manual DMG update checks');
-  assert.match(updater, /installMode:\s*this\.manualMac \? 'manual-dmg' : 'automatic'/);
-  assert.doesNotMatch(updater, /MacUpdater/, 'unsigned macOS builds must not use automatic MacUpdater replacement');
-  assert.doesNotMatch(bootstrap, /disable-gpu|disableHardwareAcceleration/);
-  assert.match(runtime, /child-process-gone/);
-  assert.doesNotMatch(rendererSrc, /setUpdateChannel|data-update-channel|stage 提前体验/);
-  assert.doesNotMatch(preload, /set-update-channel|setUpdateChannel/);
-  assert.doesNotMatch(mainProcess, /set-update-channel|setUpdateChannel/);
-  assert.match(managerWindow, /transparent:\s*false/);
-  assert.match(managerWindow, /DEFAULT_WIDTH\s*=\s*1040/);
-  assert.match(managerWindow, /DEFAULT_HEIGHT\s*=\s*560/);
-  assert.match(managerWindow, /useContentSize:\s*true/);
-  assert.match(managerWindow, /fitContentSize\(win, targetContentWidth, targetContentHeight\)/);
-  assert.match(managerWindow, /creating a fresh manager window after renderer exit/);
-  assert.doesNotMatch(managerWindow, /reloadIgnoringCache/);
-  assert.match(managerWindow, /win\.hide\(\)/);
-  assert.match(rendererSrc, /isDesktop\(\) \? null : canvas\.getContext\('webgl'/);
-  assert.doesNotMatch(rendererSrc, /SyncPage|page-sync|配置同步|Excel 转 Markdown/);
-  assert.doesNotMatch(preload, /config-sync|excel-progress|convertExcel|chooseExcel|openExcel|readExcel/);
-  assert.doesNotMatch(ipcHandlers, /config-sync|excel-progress|convert-excel|choose-excel|open-excel|read-excel/);
-  assert.doesNotMatch(runtime, /ConfigSyncService/);
-  completed.push('public manager IPC and release-only contract');
+  await testManagerIpc();
+  const runtime = await fs.readFile('src/main/runtime.ts', 'utf8');
+  const product = JSON.parse(await fs.readFile('package.json', 'utf8'));
+  assert.equal(product.build.appId, 'app.xwxdeck.desktop');
+  assert.match(runtime, /app\.setPath\('userData', standaloneUserDataDir\)/);
+  assert.equal(product.build.publish[0].url, 'https://github.com/Damue01/XwX_Deck/releases/latest/download');
+  completed.push('manager IPC payloads, registered channels and standalone identity');
 }
 
 async function testViewerMessageContract(): Promise<void> {

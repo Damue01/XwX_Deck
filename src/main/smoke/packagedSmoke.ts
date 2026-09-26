@@ -54,8 +54,19 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     const preserveTrace = ${JSON.stringify(preserveTrace)};
     const compatibleServiceBaseUrl = ${JSON.stringify(compatibleServiceBaseUrl)};
     const compatibleServiceToken = ${JSON.stringify(compatibleServiceToken)};
-    const api = window.xwxDeck;
-    if (!api) throw new Error('window.xwxDeck is missing');
+    if (!window.xwxDeck) throw new Error('window.xwxDeck is missing');
+    const api = new Proxy({}, { get(_target, name) {
+      const value = window.xwxDeck[name];
+      if (typeof value !== 'function') return value;
+      return async (...args) => {
+        let timer;
+        try {
+          return await Promise.race([value(...args), new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('IPC timed out: ' + String(name))), 15000);
+          })]);
+        } finally { clearTimeout(timer); }
+      };
+    }});
     const required = ${JSON.stringify([
       'getState', 'getTraceStats', 'getUpdateState', 'checkForUpdates', 'setStartupEnabled', 'setTheme', 'setTraceAppearance', 'chooseTraceBackground', 'clearTraceBackground', 'repairApplication', 'resetApplication', 'toggleTracing', 'toggleClient',
       'getCodexConfig', 'getCodexEnhancements', 'updateCodexEnhancements',
@@ -71,7 +82,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
 
     const waitFor = async (check, message, timeout = 5000) => {
       const started = Date.now();
-      while (!check()) {
+      while (!(await check())) {
         if (Date.now() - started > timeout) throw new Error(message);
         await new Promise(resolve => setTimeout(resolve, 50));
       }
@@ -123,7 +134,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     const repairCenterTrigger = document.getElementById('repairCenterTrigger');
     const codexAuthToggle = document.getElementById('codexAuthToggle');
     const codexHistoryToggle = document.getElementById('codexHistoryToggle');
-    const codexServicePicker = document.querySelector('input[aria-label="ChatGPT 服务连接"]');
+    const codexServicePicker = document.querySelector('input[aria-label="ChatGPT 使用的模型服务"]');
     if (!settingsButton || !modelsButton || !toolsButton || !signalButton || !fieldCanvas || !appearanceTrigger || !captureButton || !stopCaptureButton || !codexTab || !codexPanel) {
       throw new Error('manager interaction controls are missing');
     }
@@ -158,7 +169,16 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       if (!option) throw new Error('ChatGPT service connection option is missing: ' + label);
       option.click();
       await waitFor(
-        () => codexServicePicker.value === label && !codexServicePicker.disabled,
+        async () => {
+          const confirm = [...document.querySelectorAll('[role="alertdialog"] button')]
+            .find(button => button.textContent.trim() === '备份并切换');
+          if (confirm) confirm.click();
+          const registry = await api.getProviders();
+          const expectedId = label === '官方订阅' ? null
+            : registry.connections.find(provider => provider.displayName === label)?.id;
+          return codexServicePicker.value === label && !codexServicePicker.disabled
+            && registry.active.codex === expectedId;
+        },
         'ChatGPT service connection did not switch to ' + label
       );
     };
@@ -194,7 +214,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     );
     assertStableViewport('settings');
     if ((await api.getProviders()).connections.length) throw new Error('fresh installation seeded an API provider');
-    document.querySelector('button[aria-label="添加服务连接"]').click();
+    document.querySelector('button[aria-label="添加模型服务"]').click();
     await waitFor(() => document.getElementById('provider-name'), 'provider editor did not open');
     const setField = async (id, value) => {
       const input = document.getElementById(id);
@@ -203,23 +223,24 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       input.dispatchEvent(new Event(input instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
       await new Promise(resolve => setTimeout(resolve, 30));
     };
-    await setField('provider-name', 'Fixture API');
+    await setField('provider-name', 'Fixture_API');
     await setField('provider-url', compatibleServiceBaseUrl);
     await setField('provider-key', compatibleServiceToken);
-    await setField('provider-adapter', 'responses');
-    await setField('provider-model', 'qa-model');
     document.getElementById('provider-editor').requestSubmit();
-    await waitFor(() => !document.getElementById('provider-editor') && document.querySelector('.provider-name')?.textContent === 'Fixture API', 'provider editor did not save through IPC');
-    const providerEdit = document.querySelector('button[aria-label="编辑 Fixture API"]');
+    await waitFor(() => !document.getElementById('provider-editor') && document.querySelector('.provider-name')?.textContent === 'Fixture_API', 'provider editor did not save through IPC');
+    const providerEdit = document.querySelector('button[aria-label="编辑模型服务 Fixture_API"]');
     if (!providerEdit || providerEdit.textContent.trim()) throw new Error('provider pencil control is missing');
     providerEdit.click();
     await waitFor(() => document.getElementById('provider-url')?.value === compatibleServiceBaseUrl, 'saved connection could not be edited');
-    document.querySelector('#provider-editor button[type="button"]').click();
+    [...document.querySelectorAll('#provider-editor button')].find(button => button.textContent.trim() === '取消').click();
     modelsButton.click(); codexTab.click();
-    await selectCodexProvider('Fixture API');
+    await selectCodexProvider('Fixture_API');
     settingsButton.click();
     await waitFor(() => document.getElementById('page-settings')?.classList.contains('current'), 'settings did not reopen');
 
+    const traceSettings = document.querySelector('.trace-section-trigger');
+    if (traceSettings?.getAttribute('aria-expanded') !== 'true') traceSettings.click();
+    await waitFor(() => !document.getElementById('trace-settings-content')?.hidden, 'Trace settings did not expand');
     const clearRowRect = clearHistoryButton.getBoundingClientRect();
     const clearIconRect = clearHistoryIcon.getBoundingClientRect();
     const dataActionRect = dataFolderAction.getBoundingClientRect();
@@ -474,8 +495,8 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     if (compatible.baseUrl !== compatibleServiceBaseUrl || !modelServices.codex) {
       throw new Error('兼容服务/model-service state was not applied from the explicit packaged fixture');
     }
-    const claudeProvider = await api.saveProvider({ displayName: 'Fixture Claude', baseUrl: compatibleServiceBaseUrl.slice(0, -3) + '/anthropic/v1', bearerToken: 'packaged-claude-key', adapter: 'anthropic-messages' });
-    await api.switchClientProvider({ client: 'claude', providerId: claudeProvider.connections.find(p => p.displayName === 'Fixture Claude').id });
+    const claudeProvider = await api.saveProvider({ displayName: 'Fixture_Claude', baseUrl: compatibleServiceBaseUrl.slice(0, -3) + '/anthropic/v1', bearerToken: 'packaged-claude-key', adapter: 'anthropic-messages' });
+    await api.switchClientProvider({ client: 'claude', providerId: claudeProvider.connections.find(p => p.displayName === 'Fixture_Claude').id });
     await api.updateClaudeModels({ fable: 'packaged-fable', opus: 'packaged-opus', sonnet: 'packaged-sonnet', haiku: 'packaged-haiku' });
     const claudeEnabled = await api.setModelService({ client: 'claude', enabled: true });
     if (!claudeEnabled.claude || claudeEnabled.claudeStatus.status !== 'active') {
@@ -507,8 +528,8 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       throw new Error('closing history unification with keep-current selected changed or queued history');
     }
     const legacyAuthUpdate = await api.updateCodexEnhancements({ preserveOfficialLogin: false });
-    if (legacyAuthUpdate.preserveOfficialLogin || legacyAuthUpdate.authMode !== 'unknown') {
-      throw new Error('disabling login preservation did not project the managed Gateway credential');
+    if (legacyAuthUpdate.preserveOfficialLogin || legacyAuthUpdate.authMode !== 'chatgpt') {
+      throw new Error('direct provider credentials must preserve the official login file');
     }
     const restoredAuthUpdate = await api.updateCodexEnhancements({ preserveOfficialLogin: true });
     if (!restoredAuthUpdate.preserveOfficialLogin || restoredAuthUpdate.authMode !== 'chatgpt') {
@@ -523,7 +544,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     captureButton.click();
     await waitFor(() => document.body.dataset.capturing === 'true', 'capture button click did not start tracing');
     await waitFor(
-      () => document.getElementById('liveBoard')?.getAttribute('aria-hidden') === 'false',
+      () => document.getElementById('liveBoard')?.inert === false,
       'clean Trace skin did not reveal the live board after capture started'
     );
     const classicAppearance = await api.setTraceAppearance({ skin: 'classic' });
@@ -743,7 +764,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     }
     await managerWindow.webContents.executeJavaScript(`document.querySelector('.rail-btn[data-page="settings"]').click()`);
     await new Promise(resolve => setTimeout(resolve, 300));
-    await managerWindow.webContents.executeJavaScript(`document.querySelector('button[aria-label="编辑 Fixture API"]').click()`);
+    await managerWindow.webContents.executeJavaScript(`document.querySelector('button[aria-label="编辑模型服务 Fixture_API"]').click()`);
     await new Promise(resolve => setTimeout(resolve, 400));
     await fs.writeFile(path.join(screenshotDir, 'provider-editor.png'), (await managerWindow.webContents.capturePage()).toPNG());
     await managerWindow.webContents.executeJavaScript(`document.querySelector('#provider-editor button[type="submit"]').scrollIntoView({block:'nearest'})`);

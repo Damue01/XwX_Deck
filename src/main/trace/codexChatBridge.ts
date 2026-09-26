@@ -287,6 +287,16 @@ function applyReasoningOptions(
   const enabled = reasoningRequested(body);
   if (enabled === undefined) return;
 
+  const effort = body.reasoning?.effort;
+  // MiniMax M2.5's `none` is an effort value, not a thinking-off switch.
+  if (model.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') === 'minimax-m2-5'
+    && config.effortParam === 'reasoning_effort') {
+    if (typeof effort === 'string' && ['none', 'minimal', 'low', 'medium', 'high'].includes(effort)) {
+      result.reasoning_effort = effort;
+    }
+    return;
+  }
+
   if (supportsThinking) {
     switch ((config.thinkingParam ?? 'thinking').trim().toLowerCase()) {
       case 'thinking':
@@ -305,7 +315,6 @@ function applyReasoningOptions(
     return;
   }
   if (!supportsEffort) return;
-  const effort = body.reasoning?.effort;
   if (typeof effort !== 'string') return;
   const mapped = mapReasoningEffort(effort, config.effortValueMode);
   if (!mapped) return;

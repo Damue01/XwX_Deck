@@ -28,7 +28,7 @@ function historyResultText(
       : 'ChatGPT 正在运行；完全退出后自动恢复迁移前分类';
   }
   if (history.skippedReason === 'no_matching_history') {
-    return '现有本地会话已经归入 xwx_deck';
+    return '没有需要迁移的现有会话';
   }
   if (history.skippedReason === 'no_backup_ledger') {
     return '没有可恢复的迁移前分类记录';
@@ -130,7 +130,7 @@ export function CodexEnhancements({ enhancements, onUpdate, onAfterUpdate }: Pro
             id="codexAuthToggle"
             checked={enhancements.preserveOfficialLogin === true}
             busy={busyAuth}
-            ariaLabel="切换第三方服务商时保留现有的 OAuth 或 OpenAI API Key"
+            ariaLabel="切换第三方模型服务时保留现有的 OAuth 或 OpenAI API Key"
             title="适用于 ChatGPT OAuth 和 OpenAI API Key"
             onToggle={handleAuth}
           />

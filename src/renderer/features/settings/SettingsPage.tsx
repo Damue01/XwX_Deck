@@ -1,59 +1,55 @@
 import { ProvidersPanel } from './ProvidersPanel';
 import * as React from 'react';
-import { Pencil, Trash2, ArrowDownToLine, Check, LoaderCircle } from 'lucide-react';
-import type { XwXDeckRuntimeState, XwXDeckUpdateState, CompatibleServiceConfigSnapshot } from '@/bridge/types';
+import { Trash2, Pencil, ChevronDown, ArrowDownToLine, Check, LoaderCircle } from 'lucide-react';
+import type { XwXDeckRuntimeState, XwXDeckUpdateState } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
 import { isDesktop } from '@/bridge/api';
 import { showErrorToast, showToast } from '@/lib/toast';
-import { userErrorMessage } from '@/lib/errors';
+import { updateFailureDescription } from '../../../shared/updateFeedback';
 import { useConfirm, useConfirmChecked } from '@/components/ui/confirm-dialog';
 import { hostFromUrl, isValidServiceUrl } from '@/lib/utils';
 import { useTheme } from '@/lib/theme';
 import { Toggle } from '@/features/shell/Toggle';
 import { RepairCenterSheet } from '@/features/settings/RepairCenterSheet';
+import { announceAvailableUpdate } from '@/features/shell/UpdateNotification';
 
 interface Props {
   readonly active: boolean;
 }
 
-const SERVICE_URL_PLACEHOLDER = 'https://gateway.example.com/v1';
-const DEFAULT_PROVIDER_NAME = '兼容服务';
-
-function formatCacheBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '';
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${bytes} B`;
-}
-
 export function SettingsPage({ active }: Props): React.ReactElement {
   const bridge = useBridge();
   const [runtime, setRuntime] = React.useState<XwXDeckRuntimeState | null>(bridge.runtime);
-  const [compatibleService, set兼容服务] = React.useState<CompatibleServiceConfigSnapshot | null>(bridge.compatibleServiceConfig);
   const [updateState, setUpdateState] = React.useState<XwXDeckUpdateState | null>(bridge.updateState);
   const [busyStartup, setBusyStartup] = React.useState(false);
   const [busyRepair, setBusyRepair] = React.useState(false);
   const [busyReset, setBusyReset] = React.useState(false);
   const [checkingUpdate, setCheckingUpdate] = React.useState(false);
+  const [traceOpen, setTraceOpen] = React.useState(false);
   const promptedUpdateRef = React.useRef<string>('');
   const [theme, setTheme] = useTheme(runtime?.theme, bridge.api.setTheme);
   const confirm = useConfirm();
   const confirmChecked = useConfirmChecked();
 
   React.useEffect(() => { if (bridge.runtime) setRuntime(bridge.runtime); }, [bridge.runtime]);
-  React.useEffect(() => { if (bridge.compatibleServiceConfig) set兼容服务(bridge.compatibleServiceConfig); }, [bridge.compatibleServiceConfig]);
   React.useEffect(() => { if (bridge.updateState) setUpdateState(bridge.updateState); }, [bridge.updateState]);
 
   const traceRoot = runtime?.traceRoot || '—';
   const logRoot = runtime?.logRoot || '—';
-  const tracing = runtime?.tracingEnabled === true;
   const startupSupported = runtime?.startup?.supported !== false;
-  const startupEnabled = startupSupported && runtime?.startup?.enabled === true;
-
+  const startupEnabled = startupSupported && (runtime?.startup?.desiredEnabled ?? runtime?.startup?.enabled) === true;
   const changeDir = React.useCallback(async (kind: 'trace' | 'logs') => {
+    let resumeTrace = false;
     try {
       const selected = await bridge.api.chooseDirectory({ kind });
       if (!selected) return;
+      if (kind === 'trace' && (runtime?.tracingEnabled || runtime?.backgroundGatewayActive)) {
+        if (!await confirm({ title: '暂停 Trace 并更改目录？',
+          body: 'Deck 会自动暂停转发并更改目录，完成后恢复原来的 Trace 开关。进行中的请求可能中断。',
+          confirmText: '暂停并更改', cancelText: '取消' })) return;
+        await bridge.api.toggleTracing(false, true);
+        resumeTrace = runtime.tracingEnabled;
+      }
       const next = await bridge.api.updateTraceDirectories(
         kind === 'trace'
           ? { traceRoot: selected }
@@ -68,9 +64,18 @@ export function SettingsPage({ active }: Props): React.ReactElement {
         'success'
       );
     } catch (error) {
-      showErrorToast('无法修改目录', error);
+      showErrorToast('修改目录失败', error);
+    } finally {
+      if (resumeTrace) {
+        try {
+          const restored = await bridge.api.toggleTracing(true);
+          setRuntime(restored); bridge.patch({ runtime: restored });
+        } catch (error) {
+          showErrorToast('目录操作已结束，重新开启 Trace 未完成', error);
+        }
+      }
     }
-  }, [bridge.api, bridge.patch]);
+  }, [bridge.api, bridge.patch, confirm, runtime?.tracingEnabled, runtime?.backgroundGatewayActive]);
 
   const handleClear = React.useCallback(async () => {
     if (!(await confirm({
@@ -89,22 +94,24 @@ export function SettingsPage({ active }: Props): React.ReactElement {
     }
   }, [bridge.api, bridge.patch, bridge.runtime, confirm]);
 
-  const handleStartup = React.useCallback(async () => {
+
+  const saveStartup = React.useCallback(async (enabled: boolean) => {
     if (busyStartup) return;
-    const enabled = !startupEnabled;
     setBusyStartup(true);
     try {
       const next = await bridge.api.setStartupEnabled(enabled);
       setRuntime(next);
       bridge.patch({ runtime: next });
-      showToast(enabled ? '已开启开机启动' : '已关闭开机启动', 'success');
+      showToast(next.startup?.warning ? '开机启动选择已保存，系统同步待完成'
+        : enabled ? '已开启开机启动' : '已关闭开机启动', next.startup?.warning ? 'info' : 'success', undefined,
+        { description: next.startup?.warning });
     } catch (error) {
-      showErrorToast('无法更新开机启动', error);
-      try { setRuntime(await bridge.api.getState()); } catch { /* ignore */ }
+      showErrorToast('更新开机启动失败', error);
     } finally {
       setBusyStartup(false);
     }
-  }, [bridge.api, bridge.patch, busyStartup, startupEnabled]);
+  }, [bridge.api, bridge.patch, busyStartup]);
+  const handleStartup = () => saveStartup(!startupEnabled);
 
   const updateAvailable = updateState?.updateAvailable === true && !!updateState.targetVersion;
   const updateDownloading = updateState?.status === 'downloading';
@@ -137,7 +144,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       }
     } catch (error) {
       promptedUpdateRef.current = '';
-      showErrorToast(manual ? '无法打开安装包' : '无法重启并完成更新', error);
+      showErrorToast(manual ? '打开安装包失败' : '重启并完成更新失败', error);
     }
   }, [bridge.api, bridge.patch, confirm]);
 
@@ -150,11 +157,33 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       const next = updateState?.updateAvailable
         ? await bridge.api.downloadUpdate()
         : updateState;
-      if (next) setUpdateState(next);
+      if (next) {
+        setUpdateState(next);
+        bridge.patch({ updateState: next });
+        if (next.status === 'error') {
+          showToast('更新下载失败', 'error', undefined, {
+            description: updateFailureDescription(next.error),
+            timeout: 12_000
+          });
+        }
+      }
     } catch (error) {
-      showErrorToast('更新操作失败', error, undefined, { description: '请检查网络后重试。' });
+      showErrorToast('更新操作失败', error);
     }
   }, [bridge.api, confirmReadyUpdate, updateState]);
+
+  const handleCancelUpdate = React.useCallback(async () => {
+    const downloading = updateState?.status === 'downloading';
+    try {
+      const next = await bridge.api.cancelUpdate();
+      setUpdateState(next);
+      bridge.patch({ updateState: next });
+      promptedUpdateRef.current = '';
+      showToast(downloading ? '已取消更新下载' : '已取消待安装更新', 'success');
+    } catch (error) {
+      showErrorToast('取消更新失败', error);
+    }
+  }, [bridge.api, bridge.patch, updateState?.status]);
 
   React.useEffect(() => {
     const version = updateState?.targetVersion || '';
@@ -175,18 +204,27 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       const next = await bridge.api.checkForUpdates();
       setUpdateState(next);
       bridge.patch({ updateState: next });
-      if (next.status === 'error') {
+      if (!next.supported) {
+        showToast('当前运行方式不支持应用内更新检查', 'info');
+      } else if (next.status === 'error') {
         showToast('检查更新失败', 'error', undefined, {
-          description: userErrorMessage(next.error, '请检查网络后重试。'),
-          timeout: 8_000
+          description: updateFailureDescription(next.error),
+          timeout: 12_000
         });
       } else if (next.updateAvailable) {
-        showToast(next.targetVersion ? `发现新版本 ${next.targetVersion}` : '发现新版本', 'info');
+        // A manual repeat check should still show the actionable notice even
+        // when the automatic version notification was already shown.
+        announceAvailableUpdate(next, () => bridge.api.downloadUpdate(), downloaded => bridge.patch({ updateState: downloaded }));
+      } else if (next.status === 'up-to-date' || next.status === 'portable') {
+        showToast('当前更新通道暂无可用新版本', 'info');
       } else {
-        showToast('已是最新版本', 'success');
+        showToast('更新检查尚未完成，无法确认是否有新版本', 'info');
       }
     } catch (error) {
-      showErrorToast('检查更新失败', error, undefined, { description: '请检查网络后重试。' });
+      showToast('检查更新失败', 'error', undefined, {
+        description: updateFailureDescription(error),
+        timeout: 12_000
+      });
     } finally {
       setCheckingUpdate(false);
     }
@@ -195,23 +233,21 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   const handleReset = React.useCallback(async () => {
     if (busyReset) return;
     const result = await confirmChecked({
-      title: '完全重置 XwX Deck？',
+      title: '重置 XwX Deck？',
       body: (
         <span className="reset-confirm-copy">
           <span>
-            将删除 XwX Deck 的设置、缓存、日志和默认 Trace 数据，并重新进入新手引导。
-            自定义 Trace 与日志目录保留。
+            将删除 XwX Deck 的设置、缓存、Trace 记录和运行日志，清空自定义 Trace、日志目录中的内容。
           </span>
           <span className="reset-confirm-client-note">
-            勾选后还会删除 Claude settings.json / claude.json 和 ChatGPT config.toml / auth.json；
-            对应客户端需要重新登录和初始化，核心配置由客户端下次启动时自行生成。
+            勾选下面选项后，还会删除 Claude、ChatGPT／Codex 的核心配置。若客户端仍在运行，将弹窗询问是否强制关闭；未保存的工作会丢失。Skills、Agents 不受影响。
           </span>
         </span>
       ),
-      checkboxLabel: '同时删除 Claude 与 ChatGPT 的核心配置',
+      checkboxLabel: '同时删除 Claude 与 ChatGPT／Codex 的核心配置',
       checkboxDefaultChecked: false,
       cancelText: '取消',
-      confirmText: '完全重置',
+      confirmText: '重置',
       tone: 'danger',
       size: 'wide'
     });
@@ -221,12 +257,21 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       return;
     }
     setBusyReset(true);
-    showToast('正在停止代理并准备重置…', 'info');
+    showToast('正在准备重置…', 'info');
     try {
       await bridge.api.resetApplication({ resetClientConfigs: result.checked });
     } catch (error) {
       setBusyReset(false);
-      showErrorToast('无法重置 XwX Deck', error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === '已取消重置。') return;
+      if (/客户端未能完全关闭|无法确认.*退出/.test(message)) {
+        showToast('客户端未能关闭', 'warning', undefined, {
+          description: message,
+          timeout: 8_000
+        });
+      } else {
+        showErrorToast('重置失败', error);
+      }
     }
   }, [bridge.api, bridge.runtime, busyReset, confirmChecked]);
 
@@ -248,7 +293,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       if (result.removedCachePaths === 0) {
         showToast('本地缓存已经是干净的，无需清理', 'info');
       } else {
-        const size = formatCacheBytes(result.removedBytes);
+        const size = `${Math.round(result.removedBytes / 1024)} KB`;
         const models = result.refreshedModels ? `，已重新拉取 ${result.refreshedModels} 个模型` : '';
         showToast(`已清理 ${result.removedCachePaths} 项本地缓存${size ? `（${size}）` : ''}${models}`, 'success');
       }
@@ -276,8 +321,20 @@ export function SettingsPage({ active }: Props): React.ReactElement {
 
         {/* Trace */}
         <div className="group">
-          <div className="group-label"><span className="eyebrow">Trace</span></div>
-          <div className="trace-list">
+          <div className="group-label">
+            <button
+              type="button"
+              className="trace-section-trigger"
+              aria-expanded={traceOpen}
+              aria-controls="trace-settings-content"
+              onClick={() => setTraceOpen(open => !open)}
+            >
+              <span className="eyebrow">Trace</span>
+              <ChevronDown size={15} className="trace-section-chevron" aria-hidden="true" />
+            </button>
+          </div>
+          <div className="trace-list" id="trace-settings-content" hidden={!traceOpen}>
+            <p className="text-muted-foreground text-sm">Trace 记录保存在本地，不自动清理。需要时可手动删除。</p>
             <div className="trace-row">
               <button
                 type="button"
@@ -296,15 +353,8 @@ export function SettingsPage({ active }: Props): React.ReactElement {
                 className="trace-row-action"
                 id="changeDataFolder"
                 aria-label="修改 Trace 数据目录"
-                aria-disabled={tracing || undefined}
-                title={tracing ? '停止 Trace 后可修改' : '修改 Trace 数据目录'}
-                onClick={() => {
-                  if (tracing) {
-                    showToast('请先停止 Trace，再修改数据目录', 'info');
-                    return;
-                  }
-                  void changeDir('trace');
-                }}
+                title="修改 Trace 数据目录"
+                onClick={() => void changeDir('trace')}
               >
                 <Pencil className="ic" size={18} />
               </button>
@@ -360,15 +410,18 @@ export function SettingsPage({ active }: Props): React.ReactElement {
           <div className="field-row">
             <span className="fr-label">开机启动</span>
             <div className="fr-value">
+              {runtime?.startup?.warning && <button type="button" className="version-check"
+                disabled={busyStartup} title={runtime.startup.warning}
+                onClick={() => void saveStartup(startupEnabled)}>待同步 · 重试</button>}
               <Toggle
                 id="startupToggle"
                 checked={startupEnabled}
                 disabled={!startupSupported}
                 busy={busyStartup}
                 ariaLabel="开机启动"
-                title={startupSupported
+                title={runtime?.startup?.warning ?? (startupSupported
                   ? (startupEnabled ? '已开启开机启动' : '登录系统后自动启动')
-                  : '当前运行方式不支持开机启动'}
+                  : '当前运行方式不支持开机启动')}
                 onToggle={handleStartup}
               />
             </div>
@@ -415,15 +468,20 @@ export function SettingsPage({ active }: Props): React.ReactElement {
                   <ArrowDownToLine className="ic" aria-hidden="true" />
                 )}
               </button>
+              {updateState?.status === 'ready' || updateState?.status === 'downloading' ? (
+                <button
+                  type="button"
+                  className="version-cancel-update"
+                  onClick={handleCancelUpdate}
+                >
+                  {updateState.status === 'downloading' ? '取消下载' : '取消更新'}
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
 
-        <RepairCenterSheet
-          quickRepairBusy={busyRepair}
-          onQuickRepair={() => void handleQuickRepair()}
-          onOpenReset={() => void handleReset()}
-        />
+        <RepairCenterSheet quickRepairBusy={busyRepair} onQuickRepair={() => void handleQuickRepair()} onOpenReset={() => void handleReset()} />
       </div>
     </section>
   );

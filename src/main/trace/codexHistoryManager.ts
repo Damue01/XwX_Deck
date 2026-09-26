@@ -1,3 +1,16 @@
+
+
+interface ProviderDiscoveryStatus {
+  incomplete: boolean;
+}
+
+
+export interface CodexHistoryProviderAudit {
+  /** Providers that were actually observed in rollout metadata or SQLite. */
+  readonly providers: ReadonlySet<string>;
+  /** False when any history source could not be inspected completely. */
+  readonly complete: boolean;
+}
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -59,6 +72,8 @@ interface OriginalProviderLedger {
   readonly sessionProviders: ReadonlyMap<string, string>;
   readonly threadProviders: ReadonlyMap<string, string>;
   readonly unifiedProviders: ReadonlySet<string>;
+  readonly sessionWrittenProviders: ReadonlyMap<string, string>;
+  readonly threadWrittenProviders: ReadonlyMap<string, string>;
 }
 
 interface HistoryUnifyState {
@@ -270,11 +285,11 @@ export class CodexHistoryManager {
         const originalProvider = ledger.sessionProviders.get(id);
         return originalProvider
           && originalProvider !== provider
-          && ledger.unifiedProviders.has(provider)
+          && ledger.sessionWrittenProviders.get(id) === provider
           ? originalProvider
           : undefined;
       },
-      protectedSessionPaths
+      new Set()
     );
     const restoredJsonlFiles = sessions.changedFiles;
     let restoredStateRows = 0;
@@ -285,7 +300,7 @@ export class CodexHistoryManager {
           dbPath,
           codexHome,
           ledger.threadProviders,
-          ledger.unifiedProviders,
+          ledger.threadWrittenProviders,
           generation
         );
       } catch (error) {
@@ -335,6 +350,26 @@ export class CodexHistoryManager {
     const next = this.operation.then(action, action);
     this.operation = next.then(() => undefined, () => undefined);
     return next;
+  }
+
+
+  /**
+   * Read-only UI audit. Unlike referencedProviders(), this never fabricates
+   * compatibility aliases when part of the scan is unavailable, so an
+   * incomplete history source cannot produce a false missing-config warning.
+   */
+  async auditReferencedProviders(): Promise<CodexHistoryProviderAudit> {
+    return this.serialized(async () => {
+      const codexHome = await currentCodexHome();
+      const configText = await readTextOrUndefined(path.join(codexHome, 'config.toml')) ?? '';
+      const status: ProviderDiscoveryStatus = { incomplete: false };
+      const providers = await discoverHistoryProviders(
+        codexHome,
+        stateDbPaths(codexHome, configText),
+        status
+      );
+      return { providers, complete: !status.incomplete };
+    });
   }
 }
 
@@ -420,11 +455,15 @@ async function readGenerationMeta(generation: string): Promise<GenerationMeta | 
   }
 }
 
-async function discoverHistoryProviders(codexHome: string, dbPaths: readonly string[]): Promise<Set<string>> {
+async function discoverHistoryProviders(
+  codexHome: string,
+  dbPaths: readonly string[],
+  status?: ProviderDiscoveryStatus
+): Promise<Set<string>> {
   const providers = new Set<string>();
   const files = [
-    ...await collectFiles(path.join(codexHome, 'sessions'), '.jsonl', 8),
-    ...await collectFiles(path.join(codexHome, 'archived_sessions'), '.jsonl', 4)
+    ...await collectFiles(path.join(codexHome, 'sessions'), '.jsonl', 8, 0, status),
+    ...await collectFiles(path.join(codexHome, 'archived_sessions'), '.jsonl', 4, 0, status)
   ];
   let nextIndex = 0;
   const workerCount = Math.min(PROVIDER_SCAN_CONCURRENCY, files.length);
@@ -436,11 +475,14 @@ async function discoverHistoryProviders(codexHome: string, dbPaths: readonly str
       try {
         const stat = await fs.promises.stat(files[index]);
         const head = await readFileHead(files[index], Math.min(stat.size, SESSION_META_SCAN_BYTES));
-        const provider = readSessionMetaPrefix(head)?.provider.trim();
+        const meta = readSessionMetaPrefix(head);
+        if (!meta) status && (status.incomplete = true);
+        const provider = meta?.provider.trim();
         if (provider) providers.add(provider);
       } catch {
         // A live rollout may be locked while Codex writes it. SQLite normally
         // supplies the same provider; otherwise a later merge retries it.
+        if (status) status.incomplete = true;
       }
     }
   }));
@@ -460,6 +502,7 @@ async function discoverHistoryProviders(codexHome: string, dbPaths: readonly str
     } catch {
       // Keep history classification best-effort; locked databases are retried
       // by the next startup/provider switch.
+      if (status) status.incomplete = true;
     } finally {
       db?.close();
     }
@@ -507,6 +550,10 @@ async function collectOriginalProviderLedger(
 ): Promise<OriginalProviderLedger> {
   const sessionProviders = new Map<string, string>();
   const threadProviders = new Map<string, string>();
+  const sessionWrittenProviders = new Map<string, string>();
+  const threadWrittenProviders = new Map<string, string>();
+  const journalSessions = new Set<string>();
+  const journalThreads = new Set<string>();
   const unifiedProviders = new Set<string>([
     OFFICIAL_PROVIDER,
     COMPATIBLE_SERVICE_PROVIDER,
@@ -516,35 +563,57 @@ async function collectOriginalProviderLedger(
   const remember = async (
     generations: readonly string[],
     storedProvider: string,
-    restoreProvider: string
+    restoreProvider: string,
+    targetProvider: string
   ): Promise<void> => {
     const ids = await collectProviderLedger(generations, storedProvider);
     for (const id of ids.sessionIds) if (!sessionProviders.has(id)) sessionProviders.set(id, restoreProvider);
     for (const id of ids.threadIds) if (!threadProviders.has(id)) threadProviders.set(id, restoreProvider);
+    for (const id of ids.sessionIds) sessionWrittenProviders.set(id, targetProvider);
+    for (const id of ids.threadIds) threadWrittenProviders.set(id, targetProvider);
   };
 
   // v1 moved official -> compatible; v2 moved genuine compatible -> openai.
   // Seed those known original sources before considering v3 switch generations.
-  await remember(await matchingGenerations(parents.legacy, codexHome), OFFICIAL_PROVIDER, OFFICIAL_PROVIDER);
-  await remember(await matchingGenerations(parents.officialFirst, codexHome), COMPATIBLE_SERVICE_PROVIDER, COMPATIBLE_SERVICE_PROVIDER);
+  await remember(await matchingGenerations(parents.legacy, codexHome), OFFICIAL_PROVIDER, OFFICIAL_PROVIDER, COMPATIBLE_SERVICE_PROVIDER);
+  await remember(await matchingGenerations(parents.officialFirst, codexHome), COMPATIBLE_SERVICE_PROVIDER, COMPATIBLE_SERVICE_PROVIDER, OFFICIAL_PROVIDER);
 
   for (const parent of parents.active) {
     for (const generation of await matchingGenerations(parent, codexHome)) {
       const meta = await readGenerationMeta(generation);
       const source = typeof meta?.sourceProvider === 'string' ? meta.sourceProvider : '';
       const target = typeof meta?.targetProvider === 'string' ? meta.targetProvider : '';
-      const logicalSource = typeof meta?.logicalSourceProvider === 'string'
-        ? meta.logicalSourceProvider
-        : legacyLogicalProvider(source);
       if (!source || !target) continue;
       unifiedProviders.add(source);
       unifiedProviders.add(target);
-      const restoreProvider = meta?.version === 5 ? source : legacyLogicalProvider(logicalSource);
-      await remember([generation], source, restoreProvider);
+      // The backup contains the exact pre-write source even in v3/v4; do not
+      // collapse unrelated providers into the former compatible/openai buckets.
+      await remember([generation], source, source, target);
+      const journal = await readTextOrUndefined(path.join(generation, 'provider-writes.jsonl'));
+      for (const line of (journal ?? '').split('\n').filter(Boolean)) {
+        let row: { kind: string; id: string; source: string; target: string };
+        try { row = JSON.parse(line); } catch { throw new Error('会话归属备份记录损坏，未覆盖历史。'); }
+        if (!row.id || !row.source || !row.target) throw new Error('会话归属备份记录不完整。');
+        const originals = row.kind === 'session' ? sessionProviders : threadProviders;
+        const written = row.kind === 'session' ? sessionWrittenProviders : threadWrittenProviders;
+        (row.kind === 'session' ? journalSessions : journalThreads).add(row.id);
+        if (!originals.has(row.id)) originals.set(row.id, row.source);
+        written.set(row.id, row.target);
+      }
     }
   }
 
-  return { sessionProviders, threadProviders, unifiedProviders };
+  // Older completed migrations reused the original full-file backup and did
+  // not record each subsequent write. Their scoped completion state is the
+  // only trustworthy last target; newer per-record journals take precedence.
+  for (const parent of parents.active) {
+    const completed = await readHistoryUnifyState(historyUnifyStatePath(parent, codexHome), codexHome);
+    if (!completed) continue;
+    for (const id of sessionProviders.keys()) if (!journalSessions.has(id)) sessionWrittenProviders.set(id, completed.targetProvider);
+    for (const id of threadProviders.keys()) if (!journalThreads.has(id)) threadWrittenProviders.set(id, completed.targetProvider);
+  }
+
+  return { sessionProviders, threadProviders, unifiedProviders, sessionWrittenProviders, threadWrittenProviders };
 }
 
 async function rewriteSessionTrees(
@@ -580,13 +649,28 @@ async function rewriteSessionTrees(
   return { changedFiles: changed, lockedFiles };
 }
 
-async function collectFiles(root: string, extension: string, maxDepth: number, depth = 0): Promise<string[]> {
-  if (depth > maxDepth) return [];
+async function collectFiles(
+  root: string,
+  extension: string,
+  maxDepth: number,
+  depth = 0,
+  status?: ProviderDiscoveryStatus
+): Promise<string[]> {
+  if (depth > maxDepth) {
+    if (status) status.incomplete = true;
+    return [];
+  }
   let entries: fs.Dirent[];
-  try { entries = await fs.promises.readdir(root, { withFileTypes: true }); } catch { return []; }
+  try {
+    entries = await fs.promises.readdir(root, { withFileTypes: true });
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+    if (status && code !== 'ENOENT') status.incomplete = true;
+    return [];
+  }
   const nested = await Promise.all(entries.map(entry => {
     const target = path.join(root, entry.name);
-    if (entry.isDirectory()) return collectFiles(target, extension, maxDepth, depth + 1);
+    if (entry.isDirectory()) return collectFiles(target, extension, maxDepth, depth + 1, status);
     return Promise.resolve(entry.isFile() && path.extname(entry.name).toLowerCase() === extension ? [target] : []);
   }));
   return nested.flat();
@@ -817,7 +901,20 @@ async function prepareSessionRewrite(
     await fs.promises.copyFile(file, backup, fs.constants.COPYFILE_EXCL);
     protectedSessionPaths.add(key);
   }
+  const head = await readFileHead(file, Math.min(before.size, SESSION_META_LINE_LIMIT));
+  const meta = readSessionMetaPrefix(head);
+  if (!meta) throw new Error(`会话归属无法备份：${file}`);
+  await appendProviderWrite(generation, 'session', [{ id: meta.id, model_provider: meta.provider }]);
   await assertFingerprint(file, before);
+}
+
+async function appendProviderWrite(generation: GenerationContext, kind: 'session' | 'thread', rows: readonly { id: string; model_provider: string }[]): Promise<void> {
+  await ensureGeneration(generation);
+  const handle = await fs.promises.open(path.join(generation.root, 'provider-writes.jsonl'), 'a');
+  try {
+    await handle.writeFile(rows.map(row => JSON.stringify({ kind, id: row.id, source: row.model_provider, target: generation.targetProvider })).join('\n') + '\n');
+    await handle.sync();
+  } finally { await handle.close(); }
 }
 
 async function writeBufferAt(
@@ -928,6 +1025,7 @@ async function rewriteStateDb(
     const count = Number((db.prepare('SELECT COUNT(*) AS count FROM threads WHERE model_provider = ?').get(sourceProvider) as { count: number }).count);
     if (!count) return 0;
     await backupDatabase(db, dbPath, codexHome, generation);
+    await appendProviderWrite(generation, 'thread', db.prepare('SELECT id, model_provider FROM threads WHERE model_provider = ?').all(sourceProvider) as { id: string; model_provider: string }[]);
     return db.transaction(() => db.prepare('UPDATE threads SET model_provider = ? WHERE model_provider = ?').run(targetProvider, sourceProvider).changes)();
   } finally {
     db.close();
@@ -938,7 +1036,7 @@ async function restoreStateDbProviders(
   dbPath: string,
   codexHome: string,
   originalProviders: ReadonlyMap<string, string>,
-  unifiedProviders: ReadonlySet<string>,
+  writtenProviders: ReadonlyMap<string, string>,
   generation: GenerationContext
 ): Promise<number> {
   if (!fs.existsSync(dbPath) || originalProviders.size === 0) return 0;
@@ -947,14 +1045,17 @@ async function restoreStateDbProviders(
     if (!hasThreadsProviderColumn(db)) return 0;
     const idsByTarget = new Map<string, string[]>();
     for (const [id, provider] of originalProviders) {
-      const ids = idsByTarget.get(provider) ?? [];
+      const written = writtenProviders.get(id);
+      if (!written || written === provider) continue;
+      const group = JSON.stringify([provider, written]);
+      const ids = idsByTarget.get(group) ?? [];
       ids.push(id);
-      idsByTarget.set(provider, ids);
+      idsByTarget.set(group, ids);
     }
-    const sources = [...unifiedProviders];
     let matching = 0;
-    for (const [target, ids] of idsByTarget) {
-      for (const source of sources) {
+    for (const [group, ids] of idsByTarget) {
+      const [target, source] = JSON.parse(group) as string[];
+      {
         if (source === target) continue;
         for (const chunk of chunks(ids, SQLITE_ID_CHUNK)) {
           const sql = `SELECT COUNT(*) AS count FROM threads WHERE model_provider = ? AND id IN (${placeholders(chunk.length)})`;
@@ -966,8 +1067,9 @@ async function restoreStateDbProviders(
     await backupDatabase(db, dbPath, codexHome, generation);
     return db.transaction(() => {
       let changed = 0;
-      for (const [target, ids] of idsByTarget) {
-        for (const source of sources) {
+      for (const [group, ids] of idsByTarget) {
+        const [target, source] = JSON.parse(group) as string[];
+        {
           if (source === target) continue;
           for (const chunk of chunks(ids, SQLITE_ID_CHUNK)) {
             const sql = `UPDATE threads SET model_provider = ? WHERE model_provider = ? AND id IN (${placeholders(chunk.length)})`;

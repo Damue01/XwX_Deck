@@ -93,6 +93,8 @@ export interface TraceAppearanceSnapshot {
 
 export interface StartupSettingsSnapshot {
   readonly enabled: boolean;
+  readonly desiredEnabled?: boolean;
+  readonly warning?: string;
   readonly supported: boolean;
   readonly launchHidden: boolean;
   readonly executableWillLaunchAtLogin?: boolean;
@@ -129,6 +131,10 @@ export interface TraceRuntimeReadiness {
 }
 
 export interface XwXDeckRuntimeState {
+  readonly missingCodexHistoryProviders?: readonly string[];
+  readonly connectionNotice?: import('../../shared/lifecycleNotice').LifecycleNotice;
+  readonly traceTransition?: 'starting' | 'stopping';
+  readonly lifecycleNotice?: import('../../shared/lifecycleNotice').LifecycleNotice;
   readonly tracingEnabled: boolean;
   readonly readiness: TraceRuntimeReadiness;
   readonly role?: 'owner' | 'follower';
@@ -145,6 +151,10 @@ export interface XwXDeckRuntimeState {
   readonly sessions: number;
   readonly traces: number;
   readonly storageText: string;
+  readonly traceStorageBytes: number;
+  readonly traceWarningGB: number;
+  readonly traceAutoCleanup: boolean;
+  readonly traceStorageNotice?: string;
   readonly clients: readonly ClientStateRow[];
   readonly lastError?: string;
   readonly theme: AppTheme;
@@ -153,10 +163,7 @@ export interface XwXDeckRuntimeState {
   readonly update?: XwXDeckUpdateState;
 }
 
-export interface AppNotice {
-  readonly message: string;
-  readonly type?: 'success' | 'error' | 'info';
-}
+export type AppNotice = import('../../shared/lifecycleNotice').LifecycleNotice;
 
 // ---- Trace stats -----------------------------------------------------------
 
@@ -196,13 +203,29 @@ export interface ModelServiceSnapshot {
   };
 }
 
+export interface ClaudeEnvironmentOverride {
+  readonly name: string;
+  readonly scopes: readonly ('process' | 'user' | 'machine')[];
+  readonly canRemoveAutomatically: boolean;
+}
+
+export interface ClaudeEnvironmentOverrideSnapshot {
+  readonly platform: 'windows' | 'other';
+  readonly overrides: readonly ClaudeEnvironmentOverride[];
+  readonly canRemoveAutomatically: boolean;
+}
+
+export interface ClaudeEnvironmentCleanupResult extends ClaudeEnvironmentOverrideSnapshot {
+  readonly backupPath?: string;
+}
+
 // ---- Codex config ----------------------------------------------------------
 
 export type CodexConfigMode = 'official' | 'compatible';
 export type CodexAuthMode = 'chatgpt' | 'api-key' | 'unknown';
 
 export interface CodexConfigSnapshot {
-  readonly modelCatalogSource?: 'none' | 'managed' | 'external';
+  readonly warning?: string;
   readonly configPath: string;
   readonly authPath: string;
   readonly exists: boolean;
@@ -211,6 +234,9 @@ export interface CodexConfigSnapshot {
   readonly activeProvider: string;
   readonly activeBaseUrl: string;
   readonly officialModel: string;
+  readonly modelCatalogSource: 'none' | 'xwx' | 'external';
+  /** Authoritative verdict from the main process; absent means "not evaluated". */
+  readonly configOwnership?: 'deck' | 'external';
   readonly modelContextWindow?: number;
   readonly compatible: {
     readonly provider: string;
@@ -256,6 +282,15 @@ export interface ClaudeModelSettings {
   readonly haiku: string;
 }
 
+export interface ClaudeDesktopSyncSnapshot {
+  readonly enabled: boolean;
+  readonly supported: boolean;
+  readonly active: boolean;
+  readonly modelCount: number;
+  readonly configPath?: string;
+  readonly detail?: string;
+}
+
 // ---- Model catalog ---------------------------------------------------------
 
 export type ModelProtocol =
@@ -276,6 +311,8 @@ export interface ModelCatalogEntry {
   readonly id: string;
   readonly vendor: string;
   readonly protocols: readonly ModelProtocol[];
+  readonly protocolsDeclared?: boolean;
+  readonly catalogEndpoints?: readonly ('openai' | 'anthropic' | 'gemini')[];
   readonly vision?: boolean;
   readonly clients: readonly ModelClient[];
   readonly reasoningLevels?: readonly string[];
@@ -299,9 +336,38 @@ export interface WindowState {
   readonly nativeFrame: boolean;
 }
 
-// ---- XwX Deck API surface -------------------------------------------------
+export interface TraceRetentionRepairResult {
+  readonly legacyLimitsFound: boolean;
+  readonly persistedSettingsChanged: boolean;
+  readonly settings: {
+    readonly maxSessions: 0;
+    readonly maxStorageMB: 0;
+  };
+  readonly helper:
+    | {
+        readonly state: 'verified';
+        readonly maxSessions: 0;
+        readonly maxStorageBytes: number;
+      }
+    | { readonly state: 'not-running' }
+    | { readonly state: 'unverified'; readonly reason: string };
+}
+
+
+// ---- XwXDeck API surface -------------------------------------------------
 
 export interface XwXDeckApi {
+  getProviders(): Promise<ProviderSnapshot>;
+  saveProvider(input: ProviderInput): Promise<ProviderSnapshot>;
+  deleteProvider(id: string): Promise<ProviderSnapshot>;
+  switchClientProvider(input: {
+    client: ProviderClient;
+    providerId: string | null;
+    takeOverExternalConfig?: boolean;
+  }): Promise<ProviderSnapshot>;
+  fetchProviderModels(input: { providerId: string; refresh?: boolean }): Promise<readonly ModelCatalogEntry[]>;
+  getClaudeEnvironmentOverrides(): Promise<ClaudeEnvironmentOverrideSnapshot>;
+  clearClaudeEnvironmentOverrides(input: { names: readonly string[] }): Promise<ClaudeEnvironmentCleanupResult>;
   // State
   getState(): Promise<XwXDeckRuntimeState>;
   getTraceStats(): Promise<ManagerTraceStats>;
@@ -309,14 +375,28 @@ export interface XwXDeckApi {
   checkForUpdates(): Promise<XwXDeckUpdateState>;
   downloadUpdate(): Promise<XwXDeckUpdateState>;
   restartAndInstall(): Promise<XwXDeckUpdateState>;
+  cancelUpdate(): Promise<XwXDeckUpdateState>;
   setStartupEnabled(enabled: boolean): Promise<XwXDeckRuntimeState>;
   setTheme(theme: AppTheme): Promise<XwXDeckRuntimeState>;
   setTraceAppearance(payload: Partial<Omit<TraceAppearanceSnapshot, 'customImageUrl'>>): Promise<XwXDeckRuntimeState>;
   chooseTraceBackground(): Promise<XwXDeckRuntimeState | undefined>;
   clearTraceBackground(): Promise<XwXDeckRuntimeState>;
-  repairApplication(): Promise<{ removedCachePaths: number; removedBytes: number; refreshedModels?: number }>;
+  repairApplication(): Promise<{
+    removedCachePaths: number;
+    removedBytes: number;
+    chromiumCacheCleared: boolean;
+    refreshedModels?: number;
+    traceRetention: TraceRetentionRepairResult;
+  }>;
+  repairUnreadableSettings(): Promise<{ backupPath: string; lostProviderSettings: boolean }>;
+  repairInvalidCodexConfiguration(): Promise<{
+    backupPath: string;
+    mode: 'official' | 'compatible';
+    conflicts: readonly string[];
+  }>;
+  repairClientProviderSwitch(input: { client: 'claude' | 'codex'; providerId: string | null }): Promise<ProviderSnapshot>;
   resetApplication(payload: { resetClientConfigs: boolean }): Promise<void>;
-  toggleTracing(): Promise<XwXDeckRuntimeState>;
+  toggleTracing(enabled?: boolean, force?: boolean): Promise<XwXDeckRuntimeState>;
   toggleClient(client: ClientId): Promise<XwXDeckRuntimeState>;
 
   // Codex / ChatGPT
@@ -348,9 +428,12 @@ export interface XwXDeckApi {
   setModelService(payload: { client: 'claude' | 'codex'; enabled: boolean }): Promise<ModelServiceSnapshot>;
   getClaudeModels(): Promise<ClaudeModelSettings>;
   updateClaudeModels(payload: Partial<ClaudeModelSettings> & { expectedProviderId?: string | null }): Promise<ClaudeModelSettings>;
+  getClaudeDesktopSync(): Promise<ClaudeDesktopSyncSnapshot>;
+  updateClaudeDesktopSync(enabled: boolean): Promise<ClaudeDesktopSyncSnapshot>;
   fetchModels(payload?: {
     source?: 'compatible' | 'active';
     refresh?: boolean;
+    expectedProviderId?: string | null;
   }): Promise<readonly ModelCatalogEntry[]>;
 
   chooseDirectory(payload?: { kind?: 'trace' | 'logs' | 'claude' }): Promise<string | undefined>;

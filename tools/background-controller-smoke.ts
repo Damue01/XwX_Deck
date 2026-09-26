@@ -196,16 +196,9 @@ try {
   );
 
   failModelPreflight = true;
-  await assert.rejects(
-    first.enable('official-preflight-failure-smoke'),
-    /无法连接 ChatGPT 目标服务（HTTP 502）.*已保留原服务配置.*检查网络、代理或服务状态后重试/,
-    'a 5xx route preflight must stop before publishing localhost into ChatGPT config'
-  );
-  assert.doesNotMatch(
-    await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8'),
-    /base_url = "http:\/\/127\.0\.0\.1:\d+/,
-    'a failed real forwarding probe must preserve the original ChatGPT endpoint'
-  );
+  await first.enable('official-preflight-failure-smoke');
+  assert.equal((await first.runtimeState()).tracingEnabled, true,
+    'upstream catalog health must not block local Trace configuration');
   failModelPreflight = false;
 
   await first.enable('official-reattach-smoke');
@@ -405,6 +398,7 @@ try {
     compatibleBaseUrl: upstreamBaseUrl,
     compatibleBearerToken: 'isolated-compatible-key'
   });
+  await first.enable('compatible-gateway-smoke');
   state = await first.runtimeState();
   assert.equal(state.readiness.codexGatewayEnabled, true);
   assert.equal(state.readiness.proxyListening, true);
@@ -418,7 +412,7 @@ try {
   const compatibleServiceConfigBeforeTraceRootAttempt = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
   await assert.rejects(
     first.updateTraceDirectories({ traceRoot: path.join(root, 'blocked-compatible-trace-root') }),
-    /关闭代理/,
+    /停止 Trace|关闭代理/,
     'changing the Trace root must not tear down an active 兼容服务 data plane'
   );
   assert.equal(
@@ -470,7 +464,7 @@ try {
   assert.equal(state.backgroundGatewayActive, false, 'a manually closed proxy must stay closed across manager restart');
   assert.equal(state.backgroundGatewayAction, 'open', 'paused 兼容服务 must expose the restore action');
   await second.setBackgroundGatewayPaused(false, 'smoke reopen 兼容服务');
-  await second.start();
+  await second.startBackgroundGateway();
   state = await second.runtimeState();
   assert.equal(state.backgroundGatewayActive, true, 'opening the proxy must restore the saved 兼容服务 intent');
   assert.equal(state.backgroundGatewayAction, 'close');
@@ -540,8 +534,8 @@ try {
   // A reinstall/reset can remove XwX Deck's 兼容服务 credential while Codex's
   // xwx_deck provider still points at the old localhost endpoint. Starting an
   // empty helper and then stopping it would leave a deterministic 502. A
-  // clearly XwX-owned dead endpoint must instead recover field-by-field to the
-  // configured official service.
+  // missing connection cannot be reconstructed safely. Keep its bytes and
+  // surface a repair action rather than silently selecting official service.
   const staleUserData = path.join(root, 'stale-compatible-user-data');
   const staleGatewayPort = await reserveFreePort();
   const staleCatalogPath = path.join(codexHome, 'xwx-compatible-catalog.json');
@@ -569,10 +563,10 @@ try {
   assert.equal(recoveredState.backgroundGatewayActive, false,
     'missing 兼容服务 credentials must not leave an empty helper behind');
   const recoveredConfig = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
-  assert.doesNotMatch(recoveredConfig, /127\.0\.0\.1:\d+/,
-    'a stale self-owned 兼容服务 loopback must recover away from localhost');
-  assert.match(recoveredConfig, new RegExp(escapeRegExp(officialBaseUrl)),
-    'stale 兼容服务 recovery must use the configured official endpoint');
+  assert.match(recoveredConfig, new RegExp(`127\\.0\\.0\\.1:${staleGatewayPort}`),
+    'missing credentials must preserve the selected connection for explicit repair');
+  assert.match(recoveredState.lastError ?? '', /不完整|补全|恢复/);
+  await recovered.updateCodexConfig({ mode: 'official', takeOverExternalConfig: true });
   await recovered.shutdown();
 
   const foreignLoopback = http.createServer((_req, res) => {

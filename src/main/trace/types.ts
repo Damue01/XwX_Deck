@@ -60,11 +60,13 @@ export interface TapClientRoute {
   readonly upstreamBaseUrl: string;
   /** Route-specific system proxy resolved by the Electron manager. */
   readonly upstreamProxyUrl?: string;
-  readonly stripPathPrefix?: '/v1' | '/anthropic' | '/backend-api' | '/backend-api/codex';
+  readonly stripPathPrefix?: '/v1' | '/anthropic' | '/claude-desktop' | '/backend-api' | '/backend-api/codex';
   /** Codex always speaks Responses; non-Responses upstreams are bridged locally. */
   readonly transform?: 'responses-to-chat' | 'responses-to-chat-auto' | 'responses-to-anthropic' | 'responses-compact-auto';
   /** Optional authoritative per-model wire protocol discovered from the service. */
   readonly modelProtocols?: Readonly<Record<string, 'responses' | 'chat-completions' | 'anthropic-messages'>>;
+  /** Claude Desktop-safe picker ID mapped back to the provider's real model ID. */
+  readonly modelAliases?: Readonly<Record<string, string>>;
   /** Provider-wide fallback used only when per-model metadata is unavailable. */
   readonly defaultProtocol?: 'responses' | 'chat-completions' | 'anthropic-messages';
   /** Per-model max output used to supply Anthropic's required max_tokens field. */
@@ -543,4 +545,10 @@ export interface TapSessionSummary {
 export interface TapHistoryIndex {
   readonly version: 1;
   readonly sessions: TapSessionSummary[];
+  readonly usageOnly?: {
+    readonly totalTokens: number;
+    readonly usageByModel?: Record<string, TapModelUsage>;
+    readonly dailyUsage?: Record<string, TapDailyUsage>;
+    readonly recentRatePoints?: readonly TapRatePoint[];
+  };
 }

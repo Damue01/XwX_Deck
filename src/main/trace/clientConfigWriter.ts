@@ -30,6 +30,7 @@ import {
   FieldSafeClientBackupRecord
 } from './clientBackupStore';
 import { writeFileAtomic } from '../shared/fsx';
+import { withConfigFileLock } from './configFileLock';
 import { isRecord } from '../shared/obj';
 
 const unlink = promisify(fs.unlink);
@@ -71,6 +72,13 @@ export class ClientConfigWriter {
   constructor(private readonly options: ClientWriterOptions) {}
 
   async applyClaude(input: ApplyClaudeInput): Promise<void> {
+    return withConfigFileLock(
+      input.detection.configPath,
+      () => this.applyClaudeUnlocked(input)
+    );
+  }
+
+  private async applyClaudeUnlocked(input: ApplyClaudeInput): Promise<void> {
     const { detection, localProxyUrl } = input;
     const original = await readConfigText(detection.configPath);
     if (original === undefined) {
@@ -101,6 +109,13 @@ export class ClientConfigWriter {
   }
 
   async applyCodex(input: ApplyCodexInput): Promise<void> {
+    return withConfigFileLock(
+      input.detection.configPath,
+      () => this.applyCodexUnlocked(input)
+    );
+  }
+
+  private async applyCodexUnlocked(input: ApplyCodexInput): Promise<void> {
     const { detection, localProxyUrl } = input;
     const original = await readConfigText(detection.configPath);
     const localProxyValue = codexProxyValue(detection, localProxyUrl);
@@ -130,6 +145,10 @@ export class ClientConfigWriter {
 
   /** 字段级三方合并：只还原当前值仍等于 XwX 写入值的字段。 */
   async restore(record: ClientBackupRecord): Promise<ClientRestoreResult> {
+    return withConfigFileLock(record.configPath, () => this.restoreUnlocked(record));
+  }
+
+  private async restoreUnlocked(record: ClientBackupRecord): Promise<ClientRestoreResult> {
     const details = record.version === 2
       ? await restoreFieldSafeRecord(record)
       : await restoreLegacyRecord(record);

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Gauge, Box, Wrench, Settings, LayoutDashboard, PanelLeft, ArrowDownToLine, Check, LoaderCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getApi } from '@/bridge/api';
+import { showErrorToast } from '@/lib/toast';
 import type { XwXDeckUpdateState } from '@/bridge/types';
 
 export type PageId = 'signal' | 'models' | 'tools' | 'settings';
@@ -88,7 +89,7 @@ export function Rail({ activePage, onNavigate, updateState }: Props): React.Reac
         id="dashBtn"
         data-tip="仪表盘"
         aria-label="仪表盘"
-        onClick={() => void api.openDashboard()}
+        onClick={() => void api.openDashboard().catch(error => showErrorToast('打开仪表盘失败', error))}
       >
         <LayoutDashboard size={20} />
         <span className="rail-label">仪表盘</span>

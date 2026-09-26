@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import {
   STARTUP_HIDDEN_ARG,
+  startupLoginItemPath,
   startupRegistrationMatches,
   waitForStartupRegistration
 } from './startupRegistration';
@@ -13,6 +14,8 @@ export {
 
 export interface StartupSettingsSnapshot {
   readonly enabled: boolean;
+  readonly desiredEnabled?: boolean;
+  readonly warning?: string;
   readonly supported: boolean;
   readonly launchHidden: boolean;
   readonly executableWillLaunchAtLogin?: boolean;
@@ -42,8 +45,9 @@ export function readStartupSettings(): StartupSettingsSnapshot {
         ? { executableWillLaunchAtLogin: settings.executableWillLaunchAtLogin }
         : {})
     };
-  } catch {
-    return unsupportedStartup();
+  } catch (error) {
+    return { ...unsupportedStartup(), supported: true,
+      warning: `无法读取系统登录项：${(error as Error).message}` };
   }
 }
 
@@ -64,8 +68,8 @@ export async function setStartupEnabled(enabled: boolean): Promise<StartupSettin
   const actual = await waitForStartupRegistration(readStartupSettings, enabled);
   if (!startupRegistrationMatches(actual, enabled)) {
     throw new Error(enabled
-      ? '开机启动注册未生效，请检查系统登录项权限。'
-      : '开机启动注册未能移除，请检查系统登录项权限。');
+      ? '系统暂未确认开机启动项；选择已保存，可重试注册。'
+      : '系统暂未确认启动项已移除；选择已保存，可重试。');
   }
   return actual;
 }
@@ -81,7 +85,7 @@ function unsupportedStartup(): StartupSettingsSnapshot {
 function loginItemOptions(): Electron.LoginItemSettingsOptions {
   if (process.platform === 'darwin') return { type: 'mainAppService' };
   return {
-    path: startupExecutablePath(),
+    path: startupLoginItemPath(startupExecutablePath()),
     args: [STARTUP_HIDDEN_ARG]
   };
 }

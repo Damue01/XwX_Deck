@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { readTextOrUndefined, writeFileAtomic } from '../shared/fsx';
+import { withConfigFileLock } from './configFileLock';
 import {
   CODEX_CHATGPT_OAUTH_PROVIDER_TARGET,
   CODEX_DEFAULT_TARGET,
@@ -54,6 +55,16 @@ export class CodexLocalProxyCoordinator {
   }
 
   async prepare(
+    snapshot: CodexConfigSnapshot,
+    restoreOriginal: boolean
+  ): Promise<CodexLocalProxyPrepareResult> {
+    return withConfigFileLock(
+      snapshot.configPath,
+      () => this.prepareUnlocked(snapshot, restoreOriginal)
+    );
+  }
+
+  private async prepareUnlocked(
     snapshot: CodexConfigSnapshot,
     restoreOriginal: boolean
   ): Promise<CodexLocalProxyPrepareResult> {
@@ -114,6 +125,12 @@ export class CodexLocalProxyCoordinator {
   async restore(): Promise<CodexLocalProxyRestoreResult> {
     const record = await this.readRecord();
     if (!record) return { restored: false };
+    return withConfigFileLock(record.configPath, () => this.restoreUnlocked(record));
+  }
+
+  private async restoreUnlocked(
+    record: CodexLocalProxySuspensionRecord
+  ): Promise<CodexLocalProxyRestoreResult> {
     const current = await readTextOrUndefined(record.configPath);
     if (current === undefined) {
       await this.removeRecord();

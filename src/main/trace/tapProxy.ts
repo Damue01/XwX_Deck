@@ -1,3 +1,4 @@
+import { providerBaseHasVersionRoot } from '../../shared/providerProfiles';
 import * as http from 'http';
 import * as https from 'https';
 import { HttpProxyAgent } from 'http-proxy-agent';
@@ -44,8 +45,6 @@ import {
 } from './codexConversationPortability';
 import { ResponsesContinuationStore } from './responsesContinuationStore';
 import type { GatewayCapturedClient } from './gatewayProtocol';
-import { resolveCompatibleServiceCodexProtocol } from '../app/codexProtocolPolicy';
-import { providerBaseHasVersionRoot } from '../../shared/providerProfiles';
 import { clientRouteMatchesIdentity, detectClientFromUserAgent, detectStrongVscodeSource, identifyClient, refineClaudeSource, refineCodexSource, resolveTraceSource } from './clientAdapters';
 import { TapApiType, TapCaptureMode, TapClientIdentity, TapClientRoute, TapProtocol, TapRoute, TapSessionTracePage, TapTimingSnapshot, TapTraceRecord, TapTraceSource } from './types';
 
@@ -65,6 +64,7 @@ export interface ViewerHandler {
  * 匹配规则：path === prefix 或 path 以 prefix + '/' 开头；扫描器打 /etc/passwd 等仍 404。
  */
 const ALLOWED_PATH_PREFIXES: ReadonlyArray<{ prefix: string; apiType: TapApiType }> = [
+  { prefix: '/claude-desktop/v1/messages', apiType: 'messages' },
   { prefix: '/anthropic/v1/messages', apiType: 'messages' },
   { prefix: '/v1/messages', apiType: 'messages' },
   { prefix: '/v1/chat/completions', apiType: 'chat-completions' },
@@ -131,6 +131,7 @@ export class TapProxy {
   private readonly conversationPortability: CodexConversationPortability;
   private readonly responsesContinuations: ResponsesContinuationStore;
   private activeForwardRequests = 0;
+  private activeUserResponses = 0;
   private readonly pendingConversationContinuations = new Map<string, number>();
   private lastForwardActivityAt = 0;
   private shutdownGate = false;
@@ -591,6 +592,7 @@ export class TapProxy {
           providerTransitionActive: portableRequest.providerTransitionActive === true,
           providerTransition: portableRequest.providerTransition,
           providerTransitionConsumer: isProviderTransitionConsumer(requestProbe),
+          userVisibleResponse: generate && isUserVisibleResponseRequest(requestProbe),
           upstreamUrl,
           upstreamHeaders,
           responseFrames: [],
@@ -599,6 +601,7 @@ export class TapProxy {
           firstByteMs: undefined
         };
         this.activeForwardRequests += 1;
+        if (active.userVisibleResponse) this.activeUserResponses += 1;
         this.lastForwardActivityAt = Date.now();
         this.notifyActivity();
         upstream.send(JSON.stringify(portableRequest.body));
@@ -743,6 +746,9 @@ export class TapProxy {
       await this.traceStore.appendTrace(trace);
     } finally {
       this.activeForwardRequests = Math.max(0, this.activeForwardRequests - 1);
+      if (exchange.userVisibleResponse) {
+        this.activeUserResponses = Math.max(0, this.activeUserResponses - 1);
+      }
       this.lastForwardActivityAt = Date.now();
       this.notifyActivity();
     }
@@ -811,6 +817,10 @@ export class TapProxy {
 
   activeRequestCount(): number {
     return this.activeForwardRequests;
+  }
+
+  activeUserResponseCount(): number {
+    return this.activeUserResponses;
   }
 
   pendingContinuationCount(): number {
@@ -963,6 +973,7 @@ export class TapProxy {
     }
     const apiType = allowed.apiType;
     this.activeForwardRequests += 1;
+    let userVisibleResponse = false;
     this.lastForwardActivityAt = Date.now();
     this.notifyActivity();
 
@@ -971,9 +982,10 @@ export class TapProxy {
       // so an upstream switch cannot move a request that is still uploading its body.
       const clientRoutes = this.clientRoutes;
       const requestRawBody = await readRequestBody(req);
-      const requestBodyText = requestRawBody.toString('utf8');
-      const requestBody = safeJsonParse(requestBodyText);
-      const model = extractModelId(requestBody);
+      let requestBodyText = requestRawBody.toString('utf8');
+      const originalRequestBody = safeJsonParse(requestBodyText);
+      let requestBody = originalRequestBody;
+      let model = extractModelId(requestBody);
       const clientIdentity = identifyClient(req.headers, requestBody);
       const conversationKey = codexConversationKey(req.headers, requestBody, clientIdentity);
       if (conversationKey) this.pendingConversationContinuations.delete(conversationKey);
@@ -1004,6 +1016,11 @@ export class TapProxy {
         ...resolved,
         source: resolveTraceSource(clientIdentity, resolved.source)
       };
+      if (route.upstreamModelId && route.upstreamModelId !== model) {
+        requestBody = replaceRequestModel(requestBody, route.upstreamModelId);
+        requestBodyText = JSON.stringify(requestBody);
+        model = route.upstreamModelId;
+      }
       const targetUpstream = routeUpstreamIdentity(route, req.headers);
       const continuation = apiType === 'responses'
         ? await this.responsesContinuations.prepareRequest(
@@ -1045,6 +1062,11 @@ export class TapProxy {
     const requestProbe = synthesizeInflightProbe({
       startedAt, req, requestBody, requestBodyText, model, route, clientIdentity, localUrl
     });
+    userVisibleResponse = isUserVisibleResponseRequest(requestProbe);
+    if (userVisibleResponse) {
+      this.activeUserResponses += 1;
+      this.notifyActivity();
+    }
     const providerTransitionConsumer = isProviderTransitionConsumer(requestProbe);
     // Pre-attribute this request to a session and broadcast `touch` so dashboard
     // can mark it LIVE during long-running streams. Without this, the 30s LIVE
@@ -1065,7 +1087,7 @@ export class TapProxy {
     if (route.excludedToolNamespaces?.length) {
       conversionSource = excludeToolNamespaces(conversionSource, route.excludedToolNamespaces);
     }
-    let upstreamRequestRawBody = conversionSource === requestBody
+    let upstreamRequestRawBody = conversionSource === originalRequestBody
       ? requestRawBody
       : Buffer.from(JSON.stringify(conversionSource), 'utf8');
     let anthropicToolContext: ReturnType<typeof buildCodexToolContext> | undefined;
@@ -1158,6 +1180,9 @@ export class TapProxy {
       });
     } finally {
       this.activeForwardRequests = Math.max(0, this.activeForwardRequests - 1);
+      if (userVisibleResponse) {
+        this.activeUserResponses = Math.max(0, this.activeUserResponses - 1);
+      }
       this.lastForwardActivityAt = Date.now();
       this.notifyActivity();
     }
@@ -1804,6 +1829,7 @@ interface ResolvedRoute {
   readonly blockedBearerToken?: string;
   readonly replacementBearerToken?: string;
   readonly upstreamProxyUrl?: string;
+  readonly upstreamModelId?: string;
 }
 
 interface WebSocketTraceExchange {
@@ -1821,6 +1847,7 @@ interface WebSocketTraceExchange {
   readonly providerTransitionActive: boolean;
   readonly providerTransition?: TapTraceRecord['providerTransition'];
   readonly providerTransitionConsumer: boolean;
+  readonly userVisibleResponse: boolean;
   readonly upstreamUrl: URL;
   readonly upstreamHeaders: http.IncomingHttpHeaders;
   readonly responseFrames: string[];
@@ -1830,11 +1857,13 @@ interface WebSocketTraceExchange {
 }
 
 function resolveClientRoute(route: TapClientRoute, model: string | undefined): ResolvedRoute {
-  const declaredProtocol = model ? route.modelProtocols?.[model] : undefined;
+  const upstreamModelId = model ? route.modelAliases?.[model] ?? model : undefined;
+  const declaredProtocol = upstreamModelId ? route.modelProtocols?.[upstreamModelId] : undefined;
   const wireProtocol = declaredProtocol
     ?? route.defaultProtocol
-    ?? (model ? resolveCompatibleServiceCodexProtocol(model) : 'responses');
-  const nativeCompact = model ? route.modelSupportsCompact?.[model] === true : false;
+    ?? (route.transform === 'responses-to-chat' || route.apiType === 'chat-completions' ? 'chat-completions'
+      : route.transform === 'responses-to-anthropic' || route.apiType === 'messages' ? 'anthropic-messages' : 'responses');
+  const nativeCompact = upstreamModelId ? route.modelSupportsCompact?.[upstreamModelId] === true : false;
   const transform = route.transform === 'responses-to-chat-auto'
     ? (wireProtocol === 'chat-completions'
       ? 'responses-to-chat'
@@ -1852,7 +1881,7 @@ function resolveClientRoute(route: TapClientRoute, model: string | undefined): R
     stripPathPrefix: route.stripPathPrefix,
     transform,
     wireProtocol,
-    defaultMaxOutputTokens: model ? route.modelMaxOutputTokens?.[model] : undefined,
+    defaultMaxOutputTokens: upstreamModelId ? route.modelMaxOutputTokens?.[upstreamModelId] : undefined,
     nativeCompact,
     webSocket: route.webSocket,
     providerId: route.providerId,
@@ -1864,8 +1893,14 @@ function resolveClientRoute(route: TapClientRoute, model: string | undefined): R
     upstreamBearerToken: route.upstreamBearerToken,
     blockedBearerToken: route.blockedBearerToken,
     replacementBearerToken: route.replacementBearerToken,
-    upstreamProxyUrl: route.upstreamProxyUrl
+    upstreamProxyUrl: route.upstreamProxyUrl,
+    upstreamModelId
   };
+}
+
+function replaceRequestModel(value: unknown, model: string): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  return { ...(value as Record<string, unknown>), model };
 }
 
 function excludeToolNamespaces(value: unknown, names: readonly string[]): unknown {
@@ -2265,6 +2300,17 @@ function isProviderTransitionConsumer(trace: TapTraceRecord): boolean {
   return true;
 }
 
+/**
+ * Exit prompts should describe work the user can actually see being generated.
+ * The transport counter remains broader so shutdown still drains model-list,
+ * token-count, compaction, title, memory and other helper traffic safely.
+ */
+function isUserVisibleResponseRequest(trace: TapTraceRecord): boolean {
+  const pathname = trace.request.path.replace(/\/+$/, '');
+  if (pathname.endsWith('/models') || pathname.endsWith('/count_tokens')) return false;
+  return isProviderTransitionConsumer(trace);
+}
+
 function redact(value: string): string {
   void value;
   return '<redacted>';
@@ -2362,7 +2408,8 @@ export const __test = {
   protocolForResolvedRoute,
   captureModeFromSource,
   shouldSkipTraceCapture,
-  isProviderTransitionConsumer
+  isProviderTransitionConsumer,
+  isUserVisibleResponseRequest
 };
 
 function traceProvider(route: ResolvedRoute): TapTraceRecord['provider'] {

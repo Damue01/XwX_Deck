@@ -1,28 +1,25 @@
 import { selectedProvider, XwXDeckSettingsStore } from './settings';
-import { CodexConfigManager } from '../trace/codexConfigManager';
-import { CodexOfficialAuthManager } from '../trace/codexOfficialAuthManager';
-import { CodexModelCatalogManager } from '../trace/codexModelCatalogManager';
+import { providerCodexId, providerDirectConnections } from '../../shared/providers';
+import { restoreCodexPreferredDirectConfiguration as restorePreferred } from '../trace/codexPreferredDirect';
 
-/** Standalone registry semantics only. Protocol bridges need the Gateway;
- * restore official direct for those, retaining the selection for next launch. */
+/** Restore the saved connection without replacing the user's service choice. */
 export async function restoreCodexPreferredDirectConfiguration(userDataDir: string): Promise<{ restoredFields: number; conflicts: string[] }> {
   const store = new XwXDeckSettingsStore(userDataDir);
   const settings = await store.read();
-  if (store.readProblem()) throw store.readProblem();
-  const manager = new CodexConfigManager(userDataDir);
-  const current = await manager.read();
+  if (store.readProblem()) throw new Error(store.readProblem()!.message);
   const provider = selectedProvider(settings, 'codex');
-  const useDirect = settings.codexPreferredMode !== 'official' && current.mode === 'compatible'
-    && provider && (provider.adapter === 'responses' || provider.adapter === 'auto' && provider.codexApiFormat === 'responses');
-  // The direct custom provider carries its own scoped key. auth.json remains
-  // the user's official login, including when preservation was disabled in UI.
-  await new CodexOfficialAuthManager(userDataDir).restoreOfficialLogin();
-  return manager.restoreDirectConfiguration({
-    officialBaseUrl: await manager.readOfficialBaseUrl(),
+  const result = await restorePreferred(userDataDir, {
+    preferredMode: settings.codexPreferredMode,
     officialModel: settings.codexModels.official,
-    officialContextWindow: settings.codexModels.officialContextWindow,
-    ...(useDirect ? { direct: { baseUrl: provider.baseUrl, bearerToken: provider.bearerToken, model: provider.codexModel,
-      contextWindow: provider.codexContextWindow, displayName: provider.displayName,
-      modelCatalogPath: new CodexModelCatalogManager().catalogPath() } } : {})
+    compatibleModel: provider?.codexModel ?? '',
+    compatibleContextWindow: provider?.codexContextWindow ?? 0,
+    compatibleBaseUrl: provider?.baseUrl ?? '',
+    compatibleBearerToken: provider?.bearerToken ?? '',
+    providerAdapter: provider?.adapter,
+    providerId: provider && providerCodexId(provider, settings.codexEnhancements.unifySessionHistory),
+    providerName: provider?.displayName,
+    unifySessionHistory: settings.codexEnhancements.unifySessionHistory,
+    directProviders: providerDirectConnections(settings.providers?.connections)
   });
+  return { restoredFields: result.restoredFields, conflicts: [...result.conflicts] };
 }

@@ -47,7 +47,13 @@ import {
 } from './sessionRouter';
 
 const INDEX_FILE = 'index.json';
-const DEFAULT_STORAGE_CLEANUP_RECENT_MS = 30 * 60 * 1000;
+const CLEANUP_INTERVAL_MS = 30_000;
+const ACTIVE_SESSION_GRACE_MS = 5 * 60_000;
+
+function isRecentlyWritten(session: TapSessionSummary): boolean {
+  const updatedAt = Date.parse(session.updatedAt || session.startedAt);
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt < ACTIVE_SESSION_GRACE_MS;
+}
 // A single captured Codex request can be 10-15 MB when it repeats a very large
 // conversation. Count-only pagination therefore allowed a 160-item page to
 // exceed 1 GB and made the live viewer appear to hang. Keep ordinary traces at
@@ -64,6 +70,7 @@ export interface TraceStorageStats {
 
 export class TraceStore {
   private currentSessionId: string | undefined;
+  private lastCleanupAt = 0;
   private readonly events = new EventEmitter();
   private readonly legacyTitleRepairChecks = new Set<string>();
   private readonly legacyClaudeTitleRouteChecks = new Set<string>();
@@ -106,7 +113,8 @@ export class TraceStore {
     private readonly maxStorageBytes: () => number | undefined = () => undefined,
     private readonly sessionTitleOverlay: (
       sessions: readonly TapSessionSummary[]
-    ) => Promise<ReadonlyMap<string, string>> = async () => new Map()
+    ) => Promise<ReadonlyMap<string, string>> = async () => new Map(),
+    private readonly usageOnly: () => boolean = () => false
   ) {}
 
   rootPath(): string {
@@ -174,7 +182,7 @@ export class TraceStore {
     index.sessions.push(session);
     this.currentSessionId = id;
     await this.writeIndex(index);
-    await this._cleanupLocked();
+    await this._cleanupLocked(false);
     return session;
   }
 
@@ -201,6 +209,7 @@ export class TraceStore {
   }
 
   private async _appendTraceLocked(trace: TapTraceRecord): Promise<TapTraceRecord> {
+    if (this.usageOnly()) return this.appendUsageOnlyLocked(trace);
     let index = await this.readIndex();
     const fp = extractFingerprint(trace);
     const classifiedAuxiliary = classifyAuxiliaryTrace(trace);
@@ -724,11 +733,29 @@ export class TraceStore {
     if (idx >= 0) index.sessions[idx] = nextSession;
     else index.sessions.push(nextSession);
     await this.writeIndex(index);
-    if (turn % 10 === 0) {
-      await this._cleanupLocked();
-    }
     this.events.emit('append', record);
     return record;
+  }
+
+  private async appendUsageOnlyLocked(trace: TapTraceRecord): Promise<TapTraceRecord> {
+    const index = await this.readIndex();
+    const previous = index.usageOnly;
+    await this.writeIndex({
+      ...index,
+      usageOnly: {
+        totalTokens: (previous?.totalTokens ?? 0) + totalTokensOfTrace(trace),
+        usageByModel: accumulateUsageByModel(previous?.usageByModel, trace),
+        dailyUsage: accumulateDailyUsage(previous?.dailyUsage, trace),
+        recentRatePoints: appendRatePoint(previous?.recentRatePoints, trace)
+      }
+    });
+    // No request, response, headers, paths, or conversation identifiers are persisted.
+    // Do not broadcast the full trace to the live viewer in usage-only mode.
+    return trace;
+  }
+
+  async usageOnlySummary(): Promise<TapHistoryIndex['usageOnly']> {
+    return this.withIndexLock(async () => (await this.readIndex()).usageOnly);
   }
 
   async listSessions(): Promise<TapSessionSummary[]> {
@@ -743,6 +770,16 @@ export class TraceStore {
     } catch {
       return sorted;
     }
+  }
+
+  async summaryCounts(): Promise<{ sessions: number; traces: number }> {
+    // Status badges only need counts; resolving titles for every conversation
+    // on every UI refresh is unrelated and can be much slower.
+    const index = await this.withIndexLock(() => this.readIndexWithLegacyRepairLocked());
+    return {
+      sessions: index.sessions.length,
+      traces: index.sessions.reduce((sum, session) => sum + (session.traceCount || 0), 0)
+    };
   }
 
   /** Reuse one hidden unknown-utility bucket per source and day. */
@@ -1052,22 +1089,38 @@ export class TraceStore {
   }
 
   async clearAll(): Promise<void> {
-    return this.withIndexLock(() => this._clearAllLocked());
+    return this.withIndexLock(() => this._clearAllLocked(false));
   }
 
-  private async _clearAllLocked(): Promise<void> {
+  /** Switching to usage-only removes only Trace details, not Gateway locks or unrelated files. */
+  async clearDetailedHistory(): Promise<void> {
+    return this.withIndexLock(() => this._clearAllLocked(true));
+  }
+
+  private async _clearAllLocked(detailsOnly: boolean): Promise<void> {
     // 不能 rm -rf rootDir：tap.lock（owner/follower 协调文件）也住在这里。
     // 运行中清历史若把 lock 一起删掉，follower 窗口会被 onDidDelete 误判
     // 「owner 退出」而同步关闭，owner 也要靠自保护重写才能恢复。
     let names: string[] = [];
-    try { names = await fs.promises.readdir(this.rootDir); } catch { /* dir missing */ }
+    try { names = await fs.promises.readdir(this.rootDir); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const index = detailsOnly ? await this.readIndex() : undefined;
+    const files = new Set(index?.sessions.map(session => path.resolve(session.jsonlPath)) ?? []);
+    const root = path.resolve(this.rootDir);
     for (const name of names) {
       if (name === TAP_LOCK_FILE || name === TRACE_WRITER_LEASE_FILE) continue;
-      await fs.promises.rm(path.join(this.rootDir, name), { recursive: true, force: true }).catch(() => undefined);
+      if (detailsOnly && name !== INDEX_FILE) {
+        const isTraceFile = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T.+\.jsonl(?:\.deleting-.+)?$/.test(name);
+        if (!isTraceFile && !files.has(path.join(root, name))) continue;
+      }
+      await fs.promises.rm(path.join(this.rootDir, name), { recursive: true, force: true });
     }
     this.currentSessionId = undefined;
     await ensureDir(this.rootDir);
-    await this.writeIndex({ version: 1, sessions: [] });
+    await this.writeIndex({ version: 1, sessions: [],
+      ...(detailsOnly && index?.usageOnly ? { usageOnly: index.usageOnly } : {}) });
   }
 
   async deleteSession(sessionId: string): Promise<boolean> {
@@ -1096,14 +1149,18 @@ export class TraceStore {
   }
 
   async cleanup(): Promise<void> {
-    return this.withIndexLock(() => this._cleanupLocked());
+    return this.withIndexLock(() => this._cleanupLocked(true));
   }
 
-  private async _cleanupLocked(): Promise<void> {
+  private async _cleanupLocked(force: boolean): Promise<void> {
     const configuredMaxSessions = this.maxSessions();
     const max = typeof configuredMaxSessions === 'number' && Number.isFinite(configuredMaxSessions)
       ? Math.max(0, Math.floor(configuredMaxSessions))
       : 0;
+    const maxBytes = this.configuredMaxStorageBytes();
+    if (max === 0 && !maxBytes) return;
+    if (!force && Date.now() - this.lastCleanupAt < CLEANUP_INTERVAL_MS) return;
+    this.lastCleanupAt = Date.now();
     let index = await this.readIndex();
     if (max > 0 && index.sessions.length > max) {
       const sorted = [...index.sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
@@ -1115,23 +1172,28 @@ export class TraceStore {
       }
     }
 
-    const maxBytes = this.configuredMaxStorageBytes();
     if (!maxBytes) return;
     let totalBytes = await directorySize(this.rootDir);
     if (totalBytes <= maxBytes) return;
-    const now = Date.now();
     const removable = [...index.sessions]
-      .filter(s => s.id !== this.currentSessionId)
-      .filter(s => {
-        const ts = Date.parse(s.updatedAt || s.startedAt);
-        return Number.isFinite(ts) ? now - ts > DEFAULT_STORAGE_CLEANUP_RECENT_MS : true;
-      })
+      .filter(s => s.id !== this.currentSessionId && !isRecentlyWritten(s))
       .sort((a, b) => (a.updatedAt || a.startedAt).localeCompare(b.updatedAt || b.startedAt));
     const remove: TapSessionSummary[] = [];
+    const selectedIds = new Set<string>();
     for (const session of removable) {
       if (totalBytes <= maxBytes) break;
-      remove.push(session);
-      totalBytes -= await sessionFileSize(session);
+      if (selectedIds.has(session.id)) continue;
+      const group = session.clientConversationKey && session.source
+        ? index.sessions.filter(candidate => candidate.source === session.source
+          && candidate.clientConversationKey === session.clientConversationKey)
+        : [session];
+      if (group.some(candidate => candidate.id === this.currentSessionId || isRecentlyWritten(candidate))) continue;
+      for (const candidate of group) {
+        if (selectedIds.has(candidate.id)) continue;
+        selectedIds.add(candidate.id);
+        remove.push(candidate);
+        totalBytes -= await sessionFileSize(candidate);
+      }
     }
     if (remove.length === 0) return;
     try {
@@ -1150,7 +1212,7 @@ export class TraceStore {
       if (this.currentSessionId === session.id) this.currentSessionId = undefined;
     }
     const next: TapHistoryIndex = {
-      version: 1,
+      ...index,
       sessions: index.sessions.filter(s => !removeIds.has(s.id))
     };
     const staged = await stageSessionFilesForRemoval(remove);
@@ -1226,7 +1288,7 @@ export class TraceStore {
     }
 
     if (!changed) return index;
-    const repaired: TapHistoryIndex = { version: 1, sessions };
+    const repaired: TapHistoryIndex = { ...index, sessions };
     await this.writeIndex(repaired);
     return repaired;
   }
@@ -1307,6 +1369,7 @@ export class TraceStore {
     }
     return {
       version: 1,
+      usageOnly: parseUsageOnly(index.usageOnly),
       sessions: index.sessions
         .filter(s => s && typeof s.id === 'string' && typeof s.jsonlPath === 'string')
         .map(s => ({
@@ -1963,6 +2026,17 @@ function localDateKey(value: string | undefined): string | undefined {
   if (!Number.isFinite(date.getTime())) return undefined;
   const pad = (part: number) => String(part).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function parseUsageOnly(value: unknown): TapHistoryIndex['usageOnly'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  return {
+    totalTokens: numOrZero(record.totalTokens),
+    usageByModel: parseUsageByModel(record.usageByModel),
+    dailyUsage: parseDailyUsage(record.dailyUsage),
+    recentRatePoints: parseRatePoints(record.recentRatePoints)
+  };
 }
 
 function parseUsageByModel(v: unknown): Record<string, TapModelUsage> | undefined {

@@ -1,24 +1,21 @@
 import * as React from 'react';
-import type { ClientStateRow, ManagerTraceStats, XwXDeckRuntimeState } from '@/bridge/types';
+import type { ClientStateRow, ManagerTraceStats } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
-import { showErrorToast, showToast } from '@/lib/toast';
-import { useConfirm } from '@/components/ui/confirm-dialog';
+import { clearLifecycleNotice, showLifecycleNotice, showToast } from '@/lib/toast';
+import { lifecycleFailure, traceStoppedNotice } from '../../../shared/lifecycleNotice';
 import { tokenCostPresentation, readoutRange } from '@/lib/format';
 import { Tabs, TabsList, TabsTab } from '@/components/ui/tabs';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ParticleField } from './ParticleField';
 import { ThroughputChart } from './ThroughputChart';
 import { AppearanceButton, AppearanceDrawer, customBackgroundStyle } from './AppearanceDrawer';
 
 type PeriodKey = 'total' | 'today' | 'week';
 
-const CHATGPT_CONNECTION_TOAST_ID = 'chatgpt-connection';
 const CHATGPT_RESTART_TOAST_ID = 'chatgpt-restart-recommended';
 const TRACE_WAITING_TOAST_ID = 'trace-waiting-client';
-const ENVIRONMENT_OVERRIDE_TOAST_ID = 'environment-override';
-const CHATGPT_CONNECTION_FAILED_TEXT = 'ChatGPT 接入失败，Trace 未接管其配置。请检查 ChatGPT 配置后重新开启 Trace。';
-const CHATGPT_CONNECTION_UNSUPPORTED_TEXT = 'ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。';
 const CHATGPT_RESTART_DESCRIPTION = '当前对话通常可继续使用；若连接未切换、模型未更新或对话无法继续，再完全退出并重新打开 ChatGPT。';
-const TRACE_RESTART_DESCRIPTION = '当前对话通常可继续使用；若新请求未出现在 Trace 中或对话无法继续，再完全退出并重新打开 ChatGPT。';
+const TRACE_RESTART_DESCRIPTION = '客户端可能仍在使用旧连接。先发送一条新消息；若未出现在 Trace 中或对话无法继续，再完全退出并重新打开相应客户端。';
 export const TRACE_TOGGLE_REQUEST_EVENT = 'xwxdeck:toggle-trace-request';
 
 interface TokenReadoutProps {
@@ -77,9 +74,10 @@ interface ClientToggleProps {
   readonly client: ClientStateRow;
   readonly onToggle: (id: string) => void;
   readonly variant: 'idle' | 'live';
+  readonly busy: boolean;
 }
 
-function ClientToggle({ client, onToggle, variant }: ClientToggleProps): React.ReactElement {
+function ClientToggle({ client, onToggle, variant, busy }: ClientToggleProps): React.ReactElement {
   const uiId = client.id === 'claude-cli' ? 'claude' : 'codex';
   const label = client.id === 'claude-cli' ? 'Claude' : 'ChatGPT';
   return (
@@ -91,6 +89,8 @@ function ClientToggle({ client, onToggle, variant }: ClientToggleProps): React.R
       aria-pressed={client.enabled}
       aria-label={`${label}：${client.statusText}，${client.detail}`}
       title={client.detail || client.statusText || ''}
+      disabled={busy}
+      aria-busy={busy || undefined}
       onClick={() => onToggle(client.id)}
     >
       {label}
@@ -110,11 +110,11 @@ export function SignalPage({ active }: Props): React.ReactElement {
     typeof location !== 'undefined' && new URLSearchParams(location.search).get('appearance') === '1'
   ));
   const [toggling, setToggling] = React.useState(false);
+  const [busyClients, setBusyClients] = React.useState<ReadonlySet<string>>(() => new Set());
   const togglingRef = React.useRef(false);
+  const busyClientRef = React.useRef(new Set<string>());
   const statsTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
-  const shownChatGptIssueRef = React.useRef<string | undefined>(undefined);
   const initialRestartNoticeCheckedRef = React.useRef(false);
-  const shownEnvironmentIssueRef = React.useRef<string | undefined>(undefined);
 
   const capturing = bridge.runtime?.tracingEnabled === true;
   const clients = bridge.runtime?.clients ?? [];
@@ -122,8 +122,6 @@ export function SignalPage({ active }: Props): React.ReactElement {
   const appearance = bridge.runtime?.traceAppearance;
   const skin = appearance?.skin ?? 'classic';
   const showThroughput = appearance?.showThroughput !== false;
-  const chatGptIssue = chatGptSkippedIssue(bridge.runtime);
-  const environmentIssue = environmentOverrideIssue(bridge.runtime);
 
   // The idle/live layout belongs to the Trace page, not to the classic
   // particle skin. Keep this global CSS state updated even when clean or
@@ -133,7 +131,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
   }, [capturing]);
 
   React.useEffect(() => {
-    if (!bridge.booted || initialRestartNoticeCheckedRef.current) return;
+    if (!bridge.booted || !bridge.runtime || initialRestartNoticeCheckedRef.current) return;
     initialRestartNoticeCheckedRef.current = true;
     if (!bridge.runtime?.chatGptRestartRecommended) return;
     showToast('ChatGPT 连接已更新', 'info', CHATGPT_RESTART_TOAST_ID, {
@@ -141,26 +139,6 @@ export function SignalPage({ active }: Props): React.ReactElement {
       timeout: 12_000
     });
   }, [bridge.booted, bridge.runtime?.chatGptRestartRecommended]);
-
-  React.useEffect(() => {
-    if (!environmentIssue) {
-      shownEnvironmentIssueRef.current = undefined;
-      return;
-    }
-    if (shownEnvironmentIssueRef.current === environmentIssue) return;
-    shownEnvironmentIssueRef.current = environmentIssue;
-    showToast(environmentIssue, 'error', ENVIRONMENT_OVERRIDE_TOAST_ID);
-  }, [environmentIssue]);
-
-  React.useEffect(() => {
-    if (!chatGptIssue) {
-      shownChatGptIssueRef.current = undefined;
-      return;
-    }
-    if (shownChatGptIssueRef.current === chatGptIssue) return;
-    shownChatGptIssueRef.current = chatGptIssue;
-    showToast(chatGptIssue, 'error', CHATGPT_CONNECTION_TOAST_ID);
-  }, [chatGptIssue]);
 
   const syncTimers = React.useCallback(() => {
     const shouldRun = capturing && !document.hidden && active;
@@ -189,61 +167,55 @@ export function SignalPage({ active }: Props): React.ReactElement {
   }, [syncTimers]);
 
   const handleToggle = React.useCallback(async () => {
-    if (togglingRef.current) return;
+    // Two surfaces can start this operation (this page and the connection
+    // notice), and the tray can start it from outside the renderer entirely.
+    // A transition reported by runtime means one is already in flight.
+    if (togglingRef.current || bridge.runtime?.traceTransition) return;
     togglingRef.current = true;
     setToggling(true);
     try {
-      // Use the helper's live request/continuation counters. Merely having the
-      // ChatGPT process open is not evidence that stopping Trace interrupts a
-      // conversation.
-      if (capturing) {
-        let hasLiveConversation = false;
-        try {
-          hasLiveConversation = await bridge.api.disableBreaksCodex();
-        } catch (error) {
-          showErrorToast('无法确认当前请求状态，Trace 未停止', error);
-          return;
-        }
-        if (hasLiveConversation) {
-          const ok = await confirm({
-            title: '停止 Trace',
-            body: '当前仍有对话正在进行。停止后，未完成的回复或工具调用结果可能丢失。',
-            confirmText: '确认停止',
-            cancelText: '取消',
-            tone: 'danger',
-          });
-          if (!ok) return;
-        }
-      }
-      const next = await bridge.api.toggleTracing();
+      const next = await bridge.api.toggleTracing(!capturing);
       bridge.patch({ runtime: next });
-      const envIssue = environmentOverrideIssue(next);
-      const issue = chatGptSkippedIssue(next);
-      if (envIssue && shownEnvironmentIssueRef.current !== envIssue) {
-        shownEnvironmentIssueRef.current = envIssue;
-        showToast(envIssue, 'error', ENVIRONMENT_OVERRIDE_TOAST_ID);
-      } else if (issue && shownChatGptIssueRef.current !== issue) {
-        shownChatGptIssueRef.current = issue;
-        showToast(issue, 'error', CHATGPT_CONNECTION_TOAST_ID);
+      if (next.lastError) {
+        showLifecycleNotice(lifecycleFailure(next.lastError, next.tracingEnabled ? '接入 Trace' : '恢复客户端配置'));
+      } else if (next.tracingEnabled && next.clients.some(client => client.enabled && client.status === 'skipped')) {
+        // The persistent connection notice explains which client did not join.
+        clearLifecycleNotice();
       } else if (next.tracingEnabled) {
-        showToast('Trace 已开启', 'success', TRACE_WAITING_TOAST_ID, next.chatGptRestartRecommended
-          ? { description: TRACE_RESTART_DESCRIPTION, timeout: 12_000 }
-          : {});
+        showLifecycleNotice({ message: 'Trace 已开启', type: 'success', description: TRACE_RESTART_DESCRIPTION }, TRACE_WAITING_TOAST_ID);
+      } else {
+        showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close'));
       }
     } catch (e) {
-      const connectingChatGpt = !capturing
-        && clients.some(client => client.id === 'codex-cli' && client.enabled);
-      showErrorToast(
-        connectingChatGpt ? 'ChatGPT 接入失败' : '无法切换 Trace',
-        e,
-        connectingChatGpt ? CHATGPT_CONNECTION_TOAST_ID : undefined,
-        { description: connectingChatGpt ? '已保留原客户端配置，请检查连接后重试。' : '请稍后重试。' }
-      );
+      void bridge.api.getState().then(runtime => bridge.patch({ runtime })).catch(() => undefined);
+      if (capturing && /仍有.*AI 请求|等待工具调用/.test(e instanceof Error ? e.message : String(e))) {
+        const reason = e instanceof Error ? e.message : String(e);
+        const force = await confirm({
+          title: '强制停止 Trace？',
+          body: `正常停止未完成：${reason}\n\n继续后会中断仍在传输的请求，并尽力恢复客户端直连配置。`,
+          cancelText: '继续等待',
+          confirmText: '强制停止',
+          tone: 'danger',
+          size: 'wide'
+        });
+        if (force) {
+          try {
+            const next = await bridge.api.toggleTracing(false, true);
+            bridge.patch({ runtime: next });
+            showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close'));
+            return;
+          } catch (forceError) {
+            showLifecycleNotice(lifecycleFailure(forceError, '强制停止 Trace'));
+            return;
+          }
+        }
+      }
+      showLifecycleNotice(lifecycleFailure(e, capturing ? '停止 Trace' : '开启 Trace'));
     } finally {
       togglingRef.current = false;
       setToggling(false);
     }
-  }, [capturing, clients, bridge.api, bridge.patch, confirm]);
+  }, [capturing, bridge.api, bridge.patch, bridge.runtime?.traceTransition, confirm]);
 
   React.useEffect(() => {
     const requestToggle = () => { void handleToggle(); };
@@ -252,12 +224,14 @@ export function SignalPage({ active }: Props): React.ReactElement {
   }, [handleToggle]);
 
   const handleClientToggle = React.useCallback(async (id: string) => {
+    if (busyClientRef.current.has(id)) return;
+    busyClientRef.current.add(id);
+    setBusyClients(current => new Set(current).add(id));
     try {
       const next = await bridge.api.toggleClient(id as 'claude-cli' | 'codex-cli');
       bridge.patch({ runtime: next });
-      const issue = environmentOverrideIssue(next, id);
-      if (issue) showToast(issue, 'error', ENVIRONMENT_OVERRIDE_TOAST_ID);
-      else if (id === 'codex-cli'
+      clearLifecycleNotice();
+      if (id === 'codex-cli'
         && next.chatGptRestartRecommended
         && next.clients.some(client => client.id === 'codex-cli' && client.enabled)) {
         showToast('ChatGPT 连接已更新', 'info', CHATGPT_RESTART_TOAST_ID, {
@@ -266,8 +240,14 @@ export function SignalPage({ active }: Props): React.ReactElement {
         });
       }
     } catch (e) {
-      const clientName = id === 'codex-cli' ? 'ChatGPT' : 'Claude';
-      showErrorToast(`${clientName} 接入设置失败`, e);
+      showLifecycleNotice(lifecycleFailure(e, id === 'codex-cli' ? 'ChatGPT 接入' : 'Claude 接入'));
+    } finally {
+      busyClientRef.current.delete(id);
+      setBusyClients(current => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
     }
   }, [bridge.api, bridge.patch]);
 
@@ -300,14 +280,14 @@ export function SignalPage({ active }: Props): React.ReactElement {
         </div>
 
         {/* Idle state */}
-        <div className="idle-state">
+        <div className="idle-state" inert={capturing}>
           <button
             type="button"
             className="capture-dial"
             id="captureBtn"
             aria-pressed={capturing}
-            aria-label="开始捕获"
-            disabled={toggling}
+            aria-label="开启 Trace"
+            disabled={toggling || !!bridge.runtime?.traceTransition}
             onClick={handleToggle}
           >
             <svg viewBox="0 0 30 30" aria-hidden="true">
@@ -317,18 +297,21 @@ export function SignalPage({ active }: Props): React.ReactElement {
           <div className="idle-sources">
             <div className="srcs" role="group" aria-label="捕获来源">
               {clients.map(c => (
-                <ClientToggle key={c.id} client={c} onToggle={handleClientToggle} variant="idle" />
+                <ClientToggle key={c.id} client={c} onToggle={handleClientToggle} variant="idle" busy={busyClients.has(c.id)} />
               ))}
             </div>
           </div>
+          {bridge.runtime?.backgroundGatewayAction === 'close' ? (
+            <p className="idle-connection-note">关闭未完成 · 后台仍在运行</p>
+          ) : null}
         </div>
 
         {/* Live board */}
-        <div className="live-layout" id="liveBoard" aria-hidden={!capturing}>
+        <div className="live-layout" id="liveBoard" inert={!capturing}>
           <div className="signal-top">
             <div className="srcs" role="group" aria-label="捕获来源">
               {clients.map(c => (
-                <ClientToggle key={c.id} client={c} onToggle={handleClientToggle} variant="live" />
+                <ClientToggle key={c.id} client={c} onToggle={handleClientToggle} variant="live" busy={busyClients.has(c.id)} />
               ))}
             </div>
             <div className="signal-top-right">
@@ -346,8 +329,8 @@ export function SignalPage({ active }: Props): React.ReactElement {
                 type="button"
                 className="stop-dial"
                 id="stopCaptureBtn"
-                aria-label="停止捕获"
-                disabled={toggling}
+                aria-label="关闭 Trace"
+                disabled={toggling || !!bridge.runtime?.traceTransition}
                 onClick={handleToggle}
               />
             </div>
@@ -362,31 +345,4 @@ export function SignalPage({ active }: Props): React.ReactElement {
       </div>
     </section>
   );
-}
-
-function chatGptSkippedIssue(runtime: XwXDeckRuntimeState | null): string | undefined {
-  if (!runtime?.tracingEnabled) return undefined;
-  const chatGpt = runtime.clients.find(client => client.id === 'codex-cli');
-  if (!chatGpt?.enabled || chatGpt.status !== 'skipped') return undefined;
-  const detail = chatGpt.detail?.trim() || '';
-  if (detail === CHATGPT_CONNECTION_FAILED_TEXT || detail === CHATGPT_CONNECTION_UNSUPPORTED_TEXT) return detail;
-  if (detail.includes('XwX Deck') || detail.includes('XwX Client') || detail.includes('本地代理') || detail.includes('同时接入')) {
-    return CHATGPT_CONNECTION_UNSUPPORTED_TEXT;
-  }
-  if (detail.includes('写入失败') || detail.includes('路由未就绪') || detail.includes('未指向当前')) {
-    return CHATGPT_CONNECTION_FAILED_TEXT;
-  }
-  if (detail.includes('未找到') || detail.includes('尚未')) return 'ChatGPT 暂未接入，未找到客户端配置。';
-  return detail ? `ChatGPT 暂未接入，${detail}。` : 'ChatGPT 暂未接入。';
-}
-
-function environmentOverrideIssue(runtime: XwXDeckRuntimeState | null, clientId?: string): string | undefined {
-  if (!runtime?.tracingEnabled) return undefined;
-  const client = runtime.clients.find(item => (
-    item.enabled
-    && item.status === 'skipped'
-    && (!clientId || item.id === clientId)
-    && item.detail.includes('检测到环境变量')
-  ));
-  return client?.detail;
 }

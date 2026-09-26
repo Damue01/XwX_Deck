@@ -44,7 +44,8 @@
     "build:win": "npm run clean && npm run generate:icons:win && npm run test && electron-builder --win portable --publish never",
     "build:mac:arm64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg zip --arm64 --publish never",
     "build:mac:x64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg zip --x64 --publish never",
-    "repair:trace-index": "node tools/run-trace-index-repair.mjs"
+    "repair:trace-index": "node tools/run-trace-index-repair.mjs",
+    "test:upstream": "node tools/run-provider-selection-regressions.mjs && node tools/run-claude-desktop-effort-regressions.mjs && node tools/test-application-reset-worker.mjs"
   },
   "build": {
     "appId": "app.xwxdeck.desktop",
@@ -119,8 +120,8 @@
           "x": 340,
           "y": 315,
           "type": "file",
-          "path": "assets/macos/\u9996\u6b21\u6253\u5f00\u8bf4\u660e.txt",
-          "name": "\u9996\u6b21\u6253\u5f00\u8bf4\u660e.txt"
+          "path": "assets/macos/首次打开说明.txt",
+          "name": "首次打开说明.txt"
         }
       ]
     },
@@ -154,6 +155,7 @@
     "yaml": "^2.9.0"
   },
   "dependencies": {
+    "class-variance-authority": "^0.7.1",
     "electron-updater": "^6.8.9",
     "http-proxy-agent": "7.0.2",
     "https-proxy-agent": "7.0.6",

@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { resolveClientPaths } from '../trace/clientConfig';
 import { STARTUP_HIDDEN_ARG } from './startupRegistration';
+import { childProcessEnvironment } from '../shared/processEnvironment';
 
 export interface ApplicationResetRequest {
   readonly resetClientConfigs: boolean;
@@ -12,8 +13,8 @@ export interface ApplicationResetResult {
   readonly removedClientFiles: readonly string[];
   /** Client config files that could not be removed (symlinks, locked, EPERM). */
   readonly skippedClientFiles: readonly string[];
-  /** Custom Trace/log roots that were kept because they live inside userData. */
-  readonly preservedPaths: readonly string[];
+  /** Custom Trace/log entries that could not be cleared. */
+  readonly skippedDataPaths: readonly string[];
 }
 
 export const APPLICATION_RESET_ARG = '--xwxdeck-reset';
@@ -36,17 +37,27 @@ export function parseApplicationResetRequest(argv: readonly string[]): Applicati
 }
 
 export function applicationResetRelaunchArgs(
-  argv: readonly string[],
-  request: ApplicationResetRequest
+  argv: readonly string[]
 ): string[] {
-  const args = argv
+  return argv
     .slice(1)
     .filter(value => value !== APPLICATION_RESET_ARG && !value.startsWith(`${APPLICATION_RESET_ARG}=`))
     // A reset triggered from a login-item launch would otherwise relaunch hidden
     // and the user would never see the onboarding tour they were promised.
-    .filter(value => value !== STARTUP_HIDDEN_ARG);
-  args.push(`${APPLICATION_RESET_ARG}=${request.resetClientConfigs ? 'clients' : 'app'}`);
-  return args;
+    .filter(value => value !== STARTUP_HIDDEN_ARG)
+    .filter(value => !/^--xwxdeck-(?:apply-portable-update|portable-update-complete|portable-update-failed)=/.test(value));
+}
+
+export function applicationRelaunchExecutable(env = process.env, executable = process.execPath): string {
+  return env.PORTABLE_EXECUTABLE_FILE || executable;
+}
+
+export function applicationRelaunchEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const next = childProcessEnvironment(env);
+  for (const key of ['ELECTRON_RUN_AS_NODE', 'XWX_APPLICATION_RESET_JOB', 'PORTABLE_EXECUTABLE_FILE', 'PORTABLE_EXECUTABLE_DIR']) {
+    delete next[key];
+  }
+  return next;
 }
 
 export function performApplicationResetAtStartup(
@@ -65,15 +76,10 @@ export function performApplicationResetAtStartup(
     options.homeDir,
     { claudeConfigDir }
   );
-  const clientFiles = request.resetClientConfigs
-    ? removeClientCoreConfigFiles(clientPaths)
-    : { removed: [], skipped: [] };
 
-  // The confirmation promises custom Trace and log directories survive. They
-  // usually sit outside userData, but "打开数据目录" leads users straight into
-  // it, so a directory chosen there has to be walked around instead of wiped
-  // with everything else.
-  const preserved = preservedRootsInside(userDataDir);
+  const customRoots = resetCustomRoots(userDataDir, readSettingsForReset(userDataDir));
+  const safeCustomRoots = customRoots.filter(root => isSafeCustomRoot(root));
+  const unsafeCustomRoots = customRoots.filter(root => !isSafeCustomRoot(root));
   // Deleting userData wholesale fails on Windows: the reset now runs after
   // requestSingleInstanceLock (so a losing second instance cannot wipe a live
   // one), which means Chromium already holds its singleton lock file and
@@ -84,18 +90,24 @@ export function performApplicationResetAtStartup(
   for (const entry of fs.readdirSync(userDataDir)) {
     const target = path.resolve(userDataDir, entry);
     if (ELECTRON_RUNTIME_LOCKS.has(entry)) continue;
-    if (preserved.some(root => root === target || isInside(target, root) || isInside(root, target))) continue;
     try {
       fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 80 });
     } catch {
       skippedPaths.push(target);
     }
   }
+  const skippedDataPaths = [
+    ...unsafeCustomRoots,
+    ...safeCustomRoots.flatMap(root => clearCustomRoot(root))
+  ];
+  const clientFiles = request.resetClientConfigs
+    ? removeClientCoreConfigFiles(clientPaths)
+    : { removed: [], skipped: [] };
   fs.mkdirSync(userDataDir, { recursive: true });
   return {
     removedClientFiles: clientFiles.removed,
     skippedClientFiles: [...clientFiles.skipped, ...skippedPaths],
-    preservedPaths: preserved
+    skippedDataPaths
   };
 }
 
@@ -110,13 +122,53 @@ const ELECTRON_RUNTIME_LOCKS = new Set([
   'SingletonSocket'
 ]);
 
-/** Configured Trace/log roots that live inside userData and must be kept. */
-function preservedRootsInside(userDataDir: string): string[] {
-  const settings = readSettingsForReset(userDataDir);
+/** Clear configured data roots outside the app directory; keep the root folder itself. */
+function resetCustomRoots(userDataDir: string, settings: { traceRoot?: string; logRoot?: string }): string[] {
   const roots = [settings.traceRoot, settings.logRoot]
     .map(value => (value && path.isAbsolute(value) ? path.resolve(value) : undefined))
     .filter((value): value is string => !!value);
-  return [...new Set(roots.filter(root => isInside(root, path.resolve(userDataDir))))];
+  const appRoot = path.resolve(userDataDir);
+  return [...new Set(roots.filter(root => root !== appRoot
+    && !isInside(root, appRoot) && !isInside(appRoot, root)))];
+}
+
+function isSafeCustomRoot(root: string): boolean {
+  const target = path.resolve(root);
+  try {
+    const stat = fs.lstatSync(target);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+    const physicalTarget = fs.realpathSync.native(target);
+    const physicalHome = fs.realpathSync.native(path.resolve(os.homedir()));
+    if (physicalTarget === path.parse(physicalTarget).root
+      || physicalTarget === physicalHome || isInside(physicalHome, physicalTarget)) return false;
+    let parent = path.dirname(physicalTarget);
+    while (parent !== path.parse(parent).root) {
+      if (fs.lstatSync(parent).isSymbolicLink()) return false;
+      parent = path.dirname(parent);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearCustomRoot(root: string): string[] {
+  const target = path.resolve(root);
+  try {
+    const skipped: string[] = [];
+    for (const entry of fs.readdirSync(target)) {
+      const child = path.join(target, entry);
+      try {
+        fs.rmSync(child, { recursive: true, force: true, maxRetries: 5, retryDelay: 80 });
+      } catch {
+        skipped.push(child);
+      }
+    }
+    return skipped;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    return [target];
+  }
 }
 
 function isInside(target: string, parent: string): boolean {
@@ -140,7 +192,7 @@ function readSettingsForReset(userDataDir: string): { traceRoot?: string; logRoo
 
 export function performApplicationRepair(
   userDataDir: string,
-  options: { readonly allowedParentDir: string }
+  options: { readonly allowedParentDir: string; readonly preserveUpdates?: boolean }
 ): ApplicationRepairResult {
   assertSafeResetDirectory(userDataDir, options.allowedParentDir);
   const relativeTargets = [
@@ -152,6 +204,7 @@ export function performApplicationRepair(
   const removedCachePaths: string[] = [];
   let removedBytes = 0;
   for (const relativeTarget of relativeTargets) {
+    if (relativeTarget === 'updates' && options.preserveUpdates) continue;
     const target = path.resolve(userDataDir, relativeTarget);
     assertPathInside(userDataDir, target);
     if (!fs.existsSync(target)) continue;

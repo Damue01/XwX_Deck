@@ -1,6 +1,24 @@
 # 技术吸收记录
 
-来源冻结于本地已验证的 `origin/main`：`e46c8dbd50c586969dead9979d23502fb7e9d155`。移植以能力域为单位，没有合并上游分支；本仓库从 `c0f6c24` 基线继续维护独立历史。
+本轮来源：2026-09-26 拉取并核对的远端 `origin/main`，提交 `6ad85c55127c20d1e87f13b6a8276ef05eef3324`。上一轮基线为 `e46c8dbd50c586969dead9979d23502fb7e9d155`。另吸收本地未推送提交 `c673f4d9e8f8e781b5492ee358fada5a267a45af` 中的 macOS 临时目录与 Windows 注册表跨平台修复。
+
+本仓库按能力吸收源码，不引入上游 Git 历史。配置同步与 Excel 转换继续排除，内部品牌、默认连接、额度展示、内部发布脚本和对应专用测试不纳入公开版。
+
+本轮合入：持久服务意图与 Provider 身份、缓存优先目录和后台刷新、统一协议规则、2 秒前台等待、Claude Desktop 模型接入与推理参数透传、启动/退出故障恢复、单文件配置锁、独立重置 worker、便携更新重启失败处理、生命周期通知及共享 UI 组件。新规范保存在 [交互与设计约定](ux-product-requirements.md)。
+
+公开版适配保留：Ark 版本路径与目录候选、通用连接验证、按服务控制 image_gen、字段级旧恢复账本升级、外部配置保护、无限 Trace 保留、元数据诊断和公开发布契约。退出遇到未解除的本地依赖时保持 Gateway 运行。
+
+## 2026-09-26 验收结果
+
+- `npm run compile`、`npm run test:built`、`npm run test:upstream` 全部通过。核心 smoke 为 47 组；其余覆盖 helper 协议 14、旧版本升级与原端口接回、后台实际请求、WebSocket 服务切换与续接、2 秒目录等待、Claude Desktop 推理参数、升级迁移失败、重置 worker 和便携更新重启失败。
+- `check:docs`、`check:public-boundary`、`check:workflows`、`docs:build` 和 `git diff --check` 通过。远端 main 在验收收尾时仍为上述来源提交。
+- macOS arm64 `.app` 的 `test:packaged` 与 `test:packaged-gateway` 通过，使用临时客户端目录和本地模拟服务。验证了真实 IPC、明确接管外部配置、服务切换、Trace 请求落盘、126 条对话分页/搜索/详情、主题、窗口崩溃后重建、退出字段恢复，以及管理器退出后不记录的后台转发。
+- 浏览器真实交互检查覆盖 1280×900 与 1040×560、明暗主题、名称校验、密钥显隐、切页保留草稿、保存连接、修复入口和三列对话诊断；无前端运行错误。Browser plugin not available，采用本机 Chrome 与 Playwright。Electron 截图位于本地 `test-results/packaged-ui/`。
+- 合并回归额外修复了编辑连接覆盖外部配置、启动错误报告变量不一致、管理器重开时误关缓存转发路由，以及未接管的外部连接阻止退出。保留手动清空记录、索引检查/修复和缓存清理入口。
+
+验证应用位于本地 `release/upstream-verified/mac-arm64/XwX Deck.app`，仅用于本轮验收。使用 ad-hoc 签名；未做 Developer ID 签名、公证、安装、推送或发布。Windows 分支通过隔离模拟回归，未在原生 Windows 上执行本轮安装包验收；本地模拟请求也不代表所有真实服务商账户均已测试。
+
+下表同时记录此前已吸收并继续回归的能力。
 
 | 能力域 | 本次结果 | 验证 |
 |---|---|---|
@@ -38,9 +56,9 @@
 
 ## 退出恢复的独立裁剪
 
-恢复账本只记录根级模型设置、临时能力字段，以及本产品的 `model_providers.xwx_deck` 字段。未记录字段不参与恢复，外部变化保留并提示。对已存在的本产品活跃 helper，只在按原值重新发布受验证的端点时登记该 `base_url`。
+恢复账本只记录实际写入的根级模型设置、临时能力字段，以及本产品拥有的 Provider 字段。未记录字段不参与恢复，外部变化保留并提示。对已存在的本产品活跃 helper，只在按原值重新发布受验证的端点时登记该 `base_url`。
 
-Responses 连接退出后可直接使用远端和 Provider 专属凭据。Chat Completions / Messages 转换依赖 Gateway，完整退出会恢复官方直连并保留连接选择；下次启动继续使用保存的选择。官方 auth.json 使用现有字段级安全恢复。
+Responses 连接退出后可直接使用远端和 Provider 专属凭据。Chat Completions / Messages 转换依赖 Gateway；退出保留所选 Provider 身份与远端配置，不自动切回官方。离线直连是否能处理客户端协议由服务本身决定；需要转换的选择会提示开启 Trace。官方 auth.json 使用现有字段级安全恢复。
 
 没有沿用整文件强制回写或任意 localhost 字符串替换。恢复后仍依赖本地端口时取消关闭，保留 Gateway 和恢复证据。关闭窗口继续隐藏管理器；Dock、Cmd+Q、菜单和托盘退出执行配置恢复与停服。
 
@@ -49,6 +67,7 @@ Responses 连接退出后可直接使用远端和 Provider 专属凭据。Chat C
 ```sh
 npm run compile
 npm run test:built
+npm run test:upstream
 npm run check:public-boundary
 npm run check:workflows
 npm run docs:build

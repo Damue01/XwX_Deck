@@ -39,6 +39,7 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
   const bridge = useBridge();
   const appearance = bridge.runtime?.traceAppearance;
   const [busy, setBusy] = React.useState(false);
+  const [pendingSaves, setPendingSaves] = React.useState(0);
   const [overlayDraft, setOverlayDraft] = React.useState(appearance?.customImageOverlay ?? 42);
 
   React.useEffect(() => {
@@ -55,6 +56,7 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
   }, [open, onOpenChange]);
 
   const commit = React.useCallback(async (patch: Partial<TraceAppearanceSnapshot>) => {
+    setPendingSaves(value => value + 1);
     try {
       const next = await bridge.api.setTraceAppearance(patch);
       bridge.patch({ runtime: next });
@@ -118,6 +120,7 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
       >
         <div className="appearance-head">
           <h2>外观</h2>
+          {pendingSaves > 0 && <span role="status" className="appearance-saving">保存中…</span>}
           <button type="button" className="appearance-close" aria-label="关闭外观设置" onClick={() => onOpenChange(false)}>
             <X aria-hidden="true" />
           </button>

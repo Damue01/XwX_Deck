@@ -17,7 +17,8 @@ const docs = [
   'docs/architecture.md',
   'docs/public-release-boundary.md',
   'docs/roadmap.md',
-  'docs/upstream-port.md'
+  'docs/upstream-port.md',
+  'docs/ux-product-requirements.md'
 ];
 const errors = [];
 for (const relative of docs) {

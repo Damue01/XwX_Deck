@@ -9,6 +9,7 @@ import { buildProviderModelUrlCandidates } from './providerDiscovery';
 
 export type ModelProtocol = 'anthropic-messages' | 'openai-responses' | 'chat-completions' | 'gemini';
 export type ModelClient = 'claude' | 'codex';
+export type ModelCatalogEndpointKind = 'openai' | 'anthropic' | 'gemini';
 export type ModelCapabilitySource = 'compatible' | 'official' | 'probed' | 'models.dev' | 'litellm' | 'builtin' | 'fallback';
 export type ModelCapabilityField =
   | 'contextWindow'
@@ -25,6 +26,10 @@ export interface ModelCatalogEntry {
   readonly vendor: string;
   /** Empty means the service did not publish protocol metadata. */
   readonly protocols: readonly ModelProtocol[];
+  /** The service explicitly published these protocols, rather than directory defaults. */
+  readonly protocolsDeclared?: boolean;
+  /** CompatibleService directories that actually listed this model; [] means no endpoint evidence. */
+  readonly catalogEndpoints?: readonly ModelCatalogEndpointKind[];
   /** Undefined means the service did not publish modality metadata. */
   readonly vision?: boolean;
   /** True only when the service explicitly advertises POST /responses/compact. */
@@ -50,7 +55,7 @@ export interface ModelCatalogEntry {
 type ModelCatalogFetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 interface ModelCatalogEndpoint {
-  readonly kind: 'openai' | 'anthropic' | 'gemini';
+  readonly kind: ModelCatalogEndpointKind;
   readonly path: string;
   readonly collectionKey: 'data' | 'models';
   readonly protocols: readonly ModelProtocol[];
@@ -220,7 +225,10 @@ function cachedEntriesForEndpoint(
   catalog: readonly ModelCatalogEntry[],
   endpoint: ModelCatalogEndpoint
 ): ModelCatalogEntry[] {
-  return catalog.filter(entry => endpoint.protocols.some(protocol => entry.protocols.includes(protocol)));
+  return catalog.filter(entry => entry.catalogEndpoints
+    ? entry.catalogEndpoints.includes(endpoint.kind)
+    : endpoint.protocols.some(protocol => entry.protocols.includes(protocol))
+  ).map(entry => ({ ...entry, catalogEndpoints: [endpoint.kind] }));
 }
 
 /** Restore the last complete 兼容服务 directory for the exact URL/token pair. */
@@ -228,7 +236,8 @@ export async function readCompatibleServiceModelCatalogCache(
   file: string,
   baseUrl: string,
   bearerToken: string,
-  providerPreset: ProviderPresetId = 'compatible'
+  providerPreset: ProviderPresetId = 'compatible',
+  readOnly = false
 ): Promise<ModelCatalogEntry[]> {
   const text = await readTextOrUndefined(file);
   if (!text) return [];
@@ -249,6 +258,7 @@ export async function readCompatibleServiceModelCatalogCache(
       // last-known-good cache plus the release seed. This also repairs the
       // Codex catalog when 兼容服务 is temporarily unreachable during upgrade.
       const discovered = normalizeModelCatalog(parsed.models).map(stripUntrustedCompatibleServiceCapabilities);
+      if (readOnly) return discovered;
       const migrated = await enrichModelCatalogCacheFirst(
         discovered,
         fetch,
@@ -349,9 +359,11 @@ function normalizeModelEntry(value: unknown): ModelCatalogEntry | undefined {
     value.api_types,
     value.apis,
     value.endpoints,
+    value.supported_endpoints,
     capabilities?.protocols,
     capabilities?.api_types,
-    capabilities?.endpoints
+    capabilities?.endpoints,
+    capabilities?.supported_endpoints
   ]);
   const clients = normalizeClients([
     value.clients,
@@ -420,8 +432,13 @@ function normalizeModelEntry(value: unknown): ModelCatalogEntry | undefined {
   )?.toLowerCase();
   const capabilitySources = normalizeCapabilitySources(value._xwx_capability_sources);
   const missingCapabilities = normalizeMissingCapabilities(value._xwx_missing_capabilities);
+  const catalogEndpoints = value._xwx_catalog_endpoints ?? value.catalogEndpoints;
   return {
     id, vendor, protocols, vision,
+    ...(value._xwx_protocols_declared === true || value.protocolsDeclared === true ? { protocolsDeclared: true } : {}),
+    ...(Array.isArray(catalogEndpoints) ? { catalogEndpoints: unique(catalogEndpoints.filter(
+      (kind): kind is ModelCatalogEndpointKind => kind === 'openai' || kind === 'anthropic' || kind === 'gemini'
+    )) } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     ...(inputModalities.length ? { inputModalities } : {}),
@@ -449,35 +466,29 @@ function entriesFromEndpoint(payload: unknown, endpoint: ModelCatalogEndpoint): 
   for (const item of items) {
     if (typeof item === 'string') {
       const id = normalizeEndpointId(item, endpoint.kind);
-      if (id) out.push({ id, protocols: endpoint.protocols, clients: endpoint.clients });
+      if (id) out.push({ id, protocols: endpointDefaultProtocols(endpoint), clients: endpoint.clients, catalogEndpoints: [endpoint.kind] });
       continue;
     }
     if (!isRecord(item)) continue;
     const id = normalizeEndpointId(firstString(item.id, item.name, item.model), endpoint.kind);
     if (!id) continue;
-    const explicitProtocols = normalizeProtocols([
-      item.protocol,
-      item.protocols,
-      item.api_type,
-      item.api,
-      item.supported_protocols,
-      item.api_types,
-      item.apis,
-      item.endpoints
-    ]);
-    const explicitClients = normalizeClients([
-      item.clients,
-      item.compatible_clients,
-      item.entrypoints
-    ]);
+    const declared = normalizeModelEntry(item)?.protocols ?? [];
     out.push({
       ...item,
       id,
-      protocols: explicitProtocols.length ? explicitProtocols : endpoint.protocols,
-      clients: explicitClients.length ? explicitClients : endpoint.clients
+      protocols: declared.length ? declared : endpointDefaultProtocols(endpoint),
+      _xwx_protocols_declared: declared.length > 0,
+      _xwx_catalog_endpoints: [endpoint.kind],
+      clients: endpoint.clients
     });
   }
   return out;
+}
+
+function endpointDefaultProtocols(endpoint: ModelCatalogEndpoint): readonly ModelProtocol[] {
+  if (endpoint.kind !== 'openai') return endpoint.protocols;
+  // /models lists model IDs; it does not declare a generation protocol.
+  return [];
 }
 
 function normalizeEndpointId(value: string, kind: ModelCatalogEndpoint['kind']): string {
@@ -510,6 +521,8 @@ function serializeCachedModel(entry: ModelCatalogEntry): Record<string, unknown>
     id: entry.id,
     vendor: entry.vendor,
     protocols: entry.protocols,
+    ...(entry.protocolsDeclared ? { _xwx_protocols_declared: true } : {}),
+    ...(entry.catalogEndpoints ? { _xwx_catalog_endpoints: entry.catalogEndpoints } : {}),
     clients: entry.clients,
     ...(entry.vision !== undefined && !isFallback('vision') ? { vision: entry.vision } : {}),
     ...(entry.responsesCompact !== undefined ? { responses_compact: entry.responsesCompact } : {}),
@@ -540,6 +553,8 @@ function stripUntrustedCompatibleServiceCapabilities(entry: ModelCatalogEntry): 
     id: entry.id,
     vendor: entry.vendor,
     protocols: entry.protocols,
+    ...(entry.protocolsDeclared ? { protocolsDeclared: true } : {}),
+    ...(entry.catalogEndpoints ? { catalogEndpoints: entry.catalogEndpoints } : {}),
     clients: entry.clients
   };
 }
@@ -548,7 +563,12 @@ function mergeEntries(a: ModelCatalogEntry, b: ModelCatalogEntry): ModelCatalogE
   return {
     id: a.id,
     vendor: a.vendor !== '其他' ? a.vendor : b.vendor,
-    protocols: unique([...a.protocols, ...b.protocols]),
+    protocols: a.protocolsDeclared && !b.protocolsDeclared ? a.protocols
+      : b.protocolsDeclared && !a.protocolsDeclared ? b.protocols
+        : unique([...a.protocols, ...b.protocols]),
+    ...(a.protocolsDeclared || b.protocolsDeclared ? { protocolsDeclared: true } : {}),
+    ...(a.catalogEndpoints || b.catalogEndpoints
+      ? { catalogEndpoints: unique([...(a.catalogEndpoints ?? []), ...(b.catalogEndpoints ?? [])]) } : {}),
     vision: a.vision ?? b.vision,
     contextWindow: a.contextWindow ?? b.contextWindow,
     maxOutputTokens: a.maxOutputTokens ?? b.maxOutputTokens,

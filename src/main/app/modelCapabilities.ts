@@ -96,9 +96,8 @@ export async function enrichModelCatalog(
 }
 
 /**
- * Startup/UI path: use the last successful capability snapshot immediately and
- * refresh models.dev/LiteLLM in the background. Model discovery must not wait
- * up to two remote-catalog timeouts before names become selectable.
+ * UI discovery uses local capabilities only. The controller owns full refresh
+ * and publication; remote capability services must not delay model names.
  */
 export async function enrichModelCatalogCacheFirst(
   entries: readonly ModelCatalogEntry[],
@@ -110,12 +109,7 @@ export async function enrichModelCatalogCacheFirst(
   if (cached && hasRemoteCapabilities(cached)) {
     return entries.map(entry => enrichEntry(entry, cached));
   }
-  // A clean install has no last-known-good capability snapshot. Wait for the
-  // bounded remote load instead of publishing a fallback directory and
-  // launching an orphan background task that cannot republish downstream
-  // 兼容服务/Codex catalogs when it later succeeds.
-  const loaded = await loadRemoteCapabilities(fetcher, cachePath, true);
-  return entries.map(entry => enrichEntry(entry, loaded));
+  return entries.map(entry => enrichEntry(entry, emptyRemoteCapabilities()));
 }
 
 function enrichEntry(entry: ModelCatalogEntry, remote: RemoteCapabilities): ModelCatalogEntry {

@@ -3,6 +3,7 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
+import { applicationRelaunchEnvironment } from '../app/applicationReset';
 
 const APPLY_ARG = '--xwxdeck-apply-portable-update=';
 const COMPLETE_ARG = '--xwxdeck-portable-update-complete=';
@@ -11,6 +12,7 @@ const PROCESS_WAIT_TIMEOUT_MS = 120_000;
 const FILE_RETRY_TIMEOUT_MS = 30_000;
 const READY_WAIT_TIMEOUT_MS = 120_000;
 const READY_FILE_PREFIX = 'xwx-portable-update-ready-';
+const STARTED_FILE_PREFIX = 'xwx-portable-update-started-';
 
 export interface PortableUpdateRequest {
   readonly sourcePath: string;
@@ -19,12 +21,21 @@ export interface PortableUpdateRequest {
   readonly waitPids: readonly number[];
 }
 
+export class PortableUpdateRestartError extends Error {
+  constructor(request: PortableUpdateRequest, cause: unknown) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    super(`XwX Deck ${request.version} 已安装在原路径，未退回旧版本。\n\n自动启动未完成，请手动打开：\n${request.targetPath}\n\n原因：${reason}`);
+    this.name = 'PortableUpdateRestartError';
+  }
+}
+
 export type PortableUpdateLaunchResult =
   | {
       readonly kind: 'complete';
       readonly version: string;
       readonly cleanupPaths: readonly string[];
       readonly readyPath?: string;
+      readonly startedPath?: string;
       readonly attemptId?: string;
     }
   | { readonly kind: 'failed'; readonly message: string };
@@ -74,7 +85,8 @@ export function readPortableUpdateLaunchResult(argv: readonly string[] = process
       cleanupPaths: Array.isArray(value.cleanupPaths)
         ? value.cleanupPaths.filter((item): item is string => typeof item === 'string').map(item => path.resolve(item))
         : [],
-      readyPath: portableReadyPath(value.readyPath),
+      readyPath: portableAttemptMarkerPath(value.readyPath, READY_FILE_PREFIX),
+      startedPath: portableAttemptMarkerPath(value.startedPath, STARTED_FILE_PREFIX),
       attemptId: typeof value.attemptId === 'string' && /^[0-9a-f-]{36}$/i.test(value.attemptId)
         ? value.attemptId
         : undefined
@@ -109,31 +121,41 @@ export async function launchPortableUpdate(request: PortableUpdateRequest): Prom
 }
 
 export async function runPortableUpdateMode(request: PortableUpdateRequest): Promise<void> {
+  let backupPath: string | undefined;
+  let readyPath: string | undefined;
+  let startedPath: string | undefined;
   try {
     await waitForProcessesExit(request.waitPids, PROCESS_WAIT_TIMEOUT_MS);
     const result = await replacePortableExecutable(request.sourcePath, request.targetPath);
+    backupPath = result.backupPath;
     const attemptId = randomUUID();
-    const readyPath = path.join(tmpdir(), `${READY_FILE_PREFIX}${attemptId}.json`);
-    await removeWithRetry(readyPath, 2_000);
-    try {
-      await spawnDetached(request.targetPath, [
-        `${COMPLETE_ARG}${encodeArgument({
-          version: request.version,
-          cleanupPaths: [request.sourcePath, result.backupPath, result.pendingPath],
-          readyPath,
-          attemptId
-        })}`
-      ], { windowsHide: false });
-      await waitForPortableUpdateReady(readyPath, attemptId, READY_WAIT_TIMEOUT_MS);
-    } catch (error) {
-      await restorePortableExecutable(result.backupPath, request.targetPath);
-      throw error;
-    } finally {
-      await removeWithRetry(readyPath, 2_000).catch(() => undefined);
-    }
+    readyPath = path.join(tmpdir(), `${READY_FILE_PREFIX}${attemptId}.json`);
+    startedPath = path.join(tmpdir(), `${STARTED_FILE_PREFIX}${attemptId}.json`);
+    await Promise.all([
+      removeWithRetry(readyPath, 2_000),
+      removeWithRetry(startedPath, 2_000)
+    ]);
+    const launchPid = await spawnDetached(request.targetPath, [
+      `${COMPLETE_ARG}${encodeArgument({
+        version: request.version,
+        cleanupPaths: [request.sourcePath, result.backupPath, result.pendingPath],
+        readyPath,
+        startedPath,
+        attemptId
+      })}`
+    ], { windowsHide: false });
+    await waitForPortableUpdateReady(readyPath, attemptId, READY_WAIT_TIMEOUT_MS, startedPath, launchPid);
   } catch (error) {
+    // Installation has finished. A missing startup acknowledgement must not
+    // replace the new EXE or terminate an application that may still be loading.
+    if (backupPath) throw new PortableUpdateRestartError(request, error);
     await relaunchAfterFailure(request, error).catch(() => undefined);
     throw error;
+  } finally {
+    await Promise.all([
+      readyPath ? removeWithRetry(readyPath, 2_000).catch(() => undefined) : Promise.resolve(),
+      startedPath ? removeWithRetry(startedPath, 2_000).catch(() => undefined) : Promise.resolve()
+    ]);
   }
 }
 
@@ -176,12 +198,26 @@ export async function replacePortableExecutable(
 
 export async function acknowledgePortableUpdateReady(result: PortableUpdateLaunchResult | undefined): Promise<void> {
   if (result?.kind !== 'complete' || !result.readyPath || !result.attemptId) return;
-  const readyPath = portableReadyPath(result.readyPath);
+  const readyPath = portableAttemptMarkerPath(result.readyPath, READY_FILE_PREFIX);
   if (!readyPath) throw new Error('更新启动确认路径无效。');
   await fs.promises.writeFile(readyPath, `${JSON.stringify({
     attemptId: result.attemptId,
     version: result.version,
     readyAt: new Date().toISOString()
+  })}\n`, { encoding: 'utf8', flag: 'wx' });
+}
+
+export async function acknowledgePortableUpdateStarted(
+  result: PortableUpdateLaunchResult | undefined,
+  pid = process.pid
+): Promise<void> {
+  if (result?.kind !== 'complete' || !result.startedPath || !result.attemptId) return;
+  const startedPath = portableAttemptMarkerPath(result.startedPath, STARTED_FILE_PREFIX);
+  if (!startedPath) throw new Error('便携版更新进程确认路径无效。');
+  await fs.promises.writeFile(startedPath, `${JSON.stringify({
+    attemptId: result.attemptId,
+    pid,
+    startedAt: new Date().toISOString()
   })}\n`, { encoding: 'utf8', flag: 'wx' });
 }
 
@@ -233,18 +269,33 @@ export function safePortableCleanupPaths(paths: readonly string[], currentExecut
     });
 }
 
-async function relaunchAfterFailure(request: PortableUpdateRequest, error: unknown): Promise<void> {
+async function relaunchAfterFailure(
+  request: PortableUpdateRequest,
+  error: unknown
+): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
-  try {
-    await assertWindowsExecutable(request.targetPath);
-  } catch {
-    const backupPath = `${request.targetPath}.previous`;
-    await restorePortableExecutable(backupPath, request.targetPath);
-  }
+  await assertWindowsExecutable(request.targetPath);
   await spawnDetached(request.targetPath, [`${FAILED_ARG}${encodeArgument({ message })}`]);
 }
 
-async function waitForPortableUpdateReady(readyPath: string, attemptId: string, timeoutMs: number): Promise<void> {
+async function readPortableUpdateStartedPid(startedPath: string): Promise<number | undefined> {
+  const value = JSON.parse(await fs.promises.readFile(startedPath, 'utf8')) as {
+    attemptId?: unknown;
+    pid?: unknown;
+  };
+  const expectedAttempt = path.basename(startedPath)
+    .slice(STARTED_FILE_PREFIX.length, -'.json'.length)
+    .toLowerCase();
+  if (typeof value.attemptId !== 'string'
+    || value.attemptId.toLowerCase() !== expectedAttempt
+    || !Number.isSafeInteger(value.pid)
+    || Number(value.pid) <= 0) return undefined;
+  return Number(value.pid);
+}
+
+export async function waitForPortableUpdateReady(
+  readyPath: string, attemptId: string, timeoutMs: number, startedPath?: string, launchPid?: number
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -254,9 +305,14 @@ async function waitForPortableUpdateReady(readyPath: string, attemptId: string, 
       const code = (error as NodeJS.ErrnoException).code;
       if (code && code !== 'ENOENT') throw error;
     }
+    const startedPid = startedPath
+      ? await readPortableUpdateStartedPid(startedPath).catch(() => undefined) : undefined;
+    if (startedPid ? !isProcessRunning(startedPid) : launchPid && !isProcessRunning(launchPid)) {
+      throw new Error('新版 XwX Deck 在完成启动前退出。');
+    }
     await delay(250);
   }
-  throw new Error('新版 XwX Deck 启动超时，已恢复旧版本。');
+  throw new Error('等待新版 XwX Deck 启动确认超时；若窗口已经打开，可继续使用。');
 }
 
 async function waitForProcessesExit(pids: readonly number[], timeoutMs: number): Promise<void> {
@@ -294,15 +350,13 @@ async function spawnDetached(
   executable: string,
   args: readonly string[],
   options: { readonly isolatedEnvironment?: boolean; readonly windowsHide?: boolean } = {}
-): Promise<void> {
-  const env = { ...process.env };
-  delete env.PORTABLE_EXECUTABLE_FILE;
-  delete env.PORTABLE_EXECUTABLE_DIR;
+): Promise<number | undefined> {
+  const env = applicationRelaunchEnvironment();
   if (options.isolatedEnvironment) {
     delete env.XWX_DECK_UPDATE_PREVIEW;
     delete env.XWX_DECK_PREVIEW_USER_DATA;
   }
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<number | undefined>((resolve, reject) => {
     const child = spawn(executable, [...args], {
       detached: true,
       env,
@@ -312,7 +366,7 @@ async function spawnDetached(
     child.once('error', reject);
     child.once('spawn', () => {
       child.unref();
-      resolve();
+      resolve(child.pid);
     });
   });
 }
@@ -357,13 +411,13 @@ function validatePortableBackupPath(file: string): void {
   }
 }
 
-function portableReadyPath(value: unknown): string | undefined {
+function portableAttemptMarkerPath(value: unknown, prefix: string): string | undefined {
   if (typeof value !== 'string' || !value) return undefined;
   const resolved = path.resolve(value);
   if (path.dirname(resolved).localeCompare(path.resolve(tmpdir()), undefined, { sensitivity: 'accent' }) !== 0) {
     return undefined;
   }
-  return new RegExp(`^${READY_FILE_PREFIX}[0-9a-f-]{36}\\.json$`, 'i').test(path.basename(resolved))
+  return new RegExp(`^${prefix}[0-9a-f-]{36}\\.json$`, 'i').test(path.basename(resolved))
     ? resolved
     : undefined;
 }

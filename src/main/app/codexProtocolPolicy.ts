@@ -1,63 +1,50 @@
-/**
- * 兼容服务's `/v1/models` response is the standard OpenAI list shape and does
- * not publish per-model protocol capabilities.  The provider policy confirmed
- * for this connection is therefore authoritative: only the GPT family
- * implements Responses natively; every other model needs the local bridge.
- *
- * Grok was previously treated as Responses-native, but xAI's Responses
- * implementation rejects Codex's `type: "custom"` tool variant with
- * "unknown variant `custom`", breaking the stream.  Routing Grok through the
- * local Chat Completions bridge lets `buildCodexToolContext` flatten custom
- * tools to plain functions before they reach xAI.
- */
 import type { ModelCatalogEntry } from './modelCatalog';
-import { findOfficialModelRecord } from './officialModelRegistry';
+import type { ProviderConnection } from '../../shared/providers';
 
 export type CodexProtocol = 'responses' | 'chat-completions' | 'anthropic-messages';
+type ProtocolConnection = Pick<ProviderConnection, 'codexApiFormat'> & Partial<Pick<ProviderConnection, 'adapter'>>;
 
-export function resolveCompatibleServiceCodexProtocol(modelId: string): CodexProtocol {
-  const normalized = modelId.trim().toLowerCase();
-  if (/^(?:claude-|anthropic\/claude-)/.test(normalized)) return 'anthropic-messages';
-  // 兼容服务's private review route was verified on 2026-07-28 against a
-  // Responses request containing Codex's `type: "custom"` tool variant.
-  if (normalized === 'codex-auto-review') return 'responses';
-  return /^gpt-/.test(normalized) ? 'responses' : 'chat-completions';
+/** Use the same precedence as the Gateway's model route, including automatic providers. */
+export function providerRequiresTrace(
+  provider: ProtocolConnection | undefined,
+  modelId: string,
+  catalog: readonly ModelCatalogEntry[] = []
+): boolean {
+  return resolveProviderCodexProtocol(provider, modelId, catalog) !== 'responses';
+}
+
+export function resolveProviderCodexProtocol(
+  provider: ProtocolConnection | undefined,
+  modelId: string,
+  catalog: readonly ModelCatalogEntry[] = []
+): CodexProtocol {
+  const entry = catalog.find(model => model.id === modelId);
+  const fallback = provider?.codexApiFormat ?? 'responses';
+  if (!entry) return fallback;
+  if (entry.protocolsDeclared) return resolveCatalogCodexProtocol(entry, fallback);
+  // An Anthropic-only directory publishes a Messages route. A generic OpenAI
+  // directory does not distinguish Responses from Chat: keep its connection default.
+  if (entry.catalogEndpoints) {
+    return entry.catalogEndpoints.includes('anthropic') && !entry.catalogEndpoints.includes('openai')
+      ? 'anthropic-messages' : fallback;
+  }
+  // Older caches retained Anthropic endpoint membership in Claude-only protocol entries.
+  // Preserve that evidence without trusting model-name protocol guesses.
+  const legacyCompatibleService = !provider?.adapter || provider.adapter === 'auto';
+  return legacyCompatibleService && entry.clients.includes('claude') && entry.protocols.length === 1
+    && entry.protocols.includes('anthropic-messages') ? 'anthropic-messages' : fallback;
 }
 
 /**
- * Prefer the protocol native to a model family when 兼容服务 exposes the same
- * model through several directories. A single explicit server protocol remains
- * authoritative; name inference is only the final fallback.
+ * Codex speaks Responses. Use it whenever published, regardless of model name;
+ * otherwise select an existing bridge. Missing metadata uses the connection.
  */
-export function resolveCatalogCodexProtocol(entry: ModelCatalogEntry): CodexProtocol {
+export function resolveCatalogCodexProtocol(entry: ModelCatalogEntry, fallback: CodexProtocol = 'responses'): CodexProtocol {
   const protocols = new Set(entry.protocols);
-  const normalized = entry.id.trim().toLowerCase();
-  const isClaude = entry.vendor.trim().toLowerCase() === 'anthropic'
-    || /^(?:claude-|anthropic\/claude-)/.test(normalized);
-  if (isClaude && protocols.has('anthropic-messages')) return 'anthropic-messages';
-
-  const codexProtocols = [
-    protocols.has('openai-responses') ? 'responses' as const : undefined,
-    protocols.has('chat-completions') ? 'chat-completions' as const : undefined,
-    protocols.has('anthropic-messages') ? 'anthropic-messages' as const : undefined
-  ].filter((value): value is CodexProtocol => !!value);
-  if (codexProtocols.length === 1) return codexProtocols[0];
-
-  const officialRoute = findOfficialModelRecord(entry.id)?.codexRecommendedProtocol;
-  const officialRoutePublished = officialRoute === 'responses'
-    ? protocols.has('openai-responses')
-    : officialRoute ? protocols.has(officialRoute) : false;
-  if (officialRoute && (!entry.protocols.length || officialRoutePublished)) return officialRoute;
-
-  if (normalized === 'codex-auto-review' && protocols.has('openai-responses')) return 'responses';
-  if (/^gpt-/.test(normalized) && protocols.has('openai-responses')) return 'responses';
+  if (protocols.has('openai-responses')) return 'responses';
   if (protocols.has('chat-completions')) return 'chat-completions';
   if (protocols.has('anthropic-messages')) return 'anthropic-messages';
-  if (protocols.has('openai-responses')) return 'responses';
-  // 兼容服务's generic /v1/models list historically tags both OpenAI
-  // endpoints without per-model truth. Keep the temporary family fallback for
-  // that ambiguous shape until the service publishes authoritative metadata.
-  return resolveCompatibleServiceCodexProtocol(entry.id);
+  return fallback;
 }
 
 /** Models whose published purpose is not a conversational coding-agent turn. */

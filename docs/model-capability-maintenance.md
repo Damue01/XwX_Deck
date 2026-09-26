@@ -67,14 +67,11 @@ Desktop 的模型选择器是否立即重载仍由客户端决定，必要时只
 
 能力缺口不会禁用用户选择，模型选择器也不展示逐行能力诊断。已知非对话用途的 embedding、图片生成和 OCR 模型从对话模型目录过滤；用途不明确但可通过对话端点调用的模型继续允许选择和实际尝试。
 
-## 端点与协议实测边界（2026-07-28）
+## 端点与协议边界
 
-- 当前 兼容服务 `/anthropic/v1/models` 返回 31 个模型；逐一使用最小 Anthropic Messages 请求验证，31/31 成功。
-- 旧名称规则额外纳入的 29 个模型逐一验证，0/29 成功，均返回无可用 Anthropic 上游通道。因此 Claude 自动列表以 Anthropic 端点成员关系为准，手工自定义 ID 仍保留。
-- GPT 与 兼容服务 私有 `codex-auto-review` 使用 Responses；两者均通过 Codex `type: "custom"` 工具请求。
-- Grok 普通 Responses 请求可成功，但 `type: "custom"` 返回 422，因此固定走 Chat Completions bridge。
-- DeepSeek、GLM、Kimi、MiniMax、Qwen、Doubao 与 `gui-plus` 的代表模型实测走 Chat Completions 成功，Responses 没有对应上游通道。
-- `codex-auto-review`、`gui-plus`、`doubao-seed-1-6-vision`、`doubao-seed-2-1-pro`、`doubao-seed-2-1-turbo`、`doubao-seed-character` 的强制函数调用均返回真实 `tool_calls`；该验证只证明工具协议，不推断上下文和输出上限。
+路由不按模型名称或厂商推断。服务明确声明 Responses 时优先直通；否则使用声明的 Chat Completions 或 Anthropic Messages，缺失声明时使用连接的协议设置。模型出现在标准 OpenAI `/models` 中只证明目录成员关系，不等于支持两种协议。Anthropic 专用目录可作为 Messages 端点证据。
+
+历史探针只能描述当时的连接，不应用为其他服务的全局协议规则。协议转换必须保留工具、推理强度和历史上下文，并用真实 Gateway 请求验证。
 
 ## 聚合目录可靠性
 
@@ -177,14 +174,14 @@ Chat Completions 路线上有两个互不替代的字段，混为一谈就会得
 
 ## 3. 当前官方覆盖
 
-核验日期均为 2026-07-28。数字单位为 token；`—` 表示官方页面未建立该字段，不能猜测。
+核验日期逐项记录在代码中；本轮跟进了 2026-09-24 的 DeepSeek Responses 能力更新。数字单位为 token；`—` 表示官方页面未建立该字段，不能猜测。
 
 | 模型 | 上下文 | 最大输出 | 官方协议 | 工具 | Claude `[1m]` | Codex 推荐路径 |
 |---|---:|---:|---|---|---|---|
 | `deepseek-v4-flash-260425` | — | — | Responses | 是 | 不添加 | 原生 Responses |
 | `doubao-seed-2-1-turbo-260628` | — | — | Chat Completions | — | 不添加 | Chat Completions bridge |
-| `deepseek-v4-pro` | 1,000,000 | 393,216 (384K) | Chat Completions、Anthropic Messages | 是 | Opus、Sonnet | Chat Completions bridge |
-| `deepseek-v4-flash` | 1,000,000 | 393,216 (384K) | Chat Completions、Anthropic Messages | 是 | 不添加 | Chat Completions bridge |
+| `deepseek-v4-pro` | 1,000,000 | 393,216 (384K) | Responses、Chat Completions、Anthropic Messages | 是 | Opus、Sonnet | 服务声明后优先 Responses |
+| `deepseek-v4-flash` | 1,000,000 | 393,216 (384K) | Responses、Chat Completions、Anthropic Messages | 是 | 不添加 | 服务声明后优先 Responses |
 | `glm-5.2` | 1,000,000 | 131,072 | Chat Completions、Anthropic Messages | 是 | Opus、Sonnet | Chat Completions bridge |
 | `kimi-k3` | 1,048,576 | — | Chat Completions、Anthropic Messages | 是 | Fable、Opus、Sonnet、Haiku | Chat Completions bridge |
 | `kimi-k2.7-code` | 262,144 | — | Chat Completions | 是 | 不添加 | Chat Completions bridge |
@@ -192,6 +189,8 @@ Chat Completions 路线上有两个互不替代的字段，混为一谈就会得
 | `kimi-k2.5` | 262,144 | — | Chat Completions | 是 | 不添加 | Chat Completions bridge |
 
 ### DeepSeek
+
+- [Responses API](https://api-docs.deepseek.com/guides/responses_api/)
 
 - [Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing)
 - [Claude Code integration](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code)

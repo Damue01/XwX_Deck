@@ -1,15 +1,22 @@
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
+import type { Socket } from 'net';
 import { writeFileAtomic } from '../shared/fsx';
 import { log } from '../shared/logger';
+import { childProcessEnvironment } from '../shared/processEnvironment';
 import { ViewerHandler } from './tapProxy';
 import { GATEWAY_HELPER_BUILD_ID, GATEWAY_HELPER_PROTOCOL_VERSION } from './gatewayProtocol';
 import type { GatewayCapturedClient, GatewayTraceRetention } from './gatewayProtocol';
 import { probeLocalTcpPort, probeTapPort } from './tapPortLock';
 import { TraceProxy } from './traceProxy';
+import {
+  clearGatewayStartupError,
+  readGatewayStartupError,
+  sanitizeGatewayStartupError
+} from './gatewayStartupError';
 import { TapClientRoute, TapRoute, TapTraceRecord } from './types';
 
 interface GatewayRuntimeRecord {
@@ -28,6 +35,7 @@ interface GatewayStatus {
   readonly helperBuildId?: string;
   readonly gatewayPort: number;
   readonly activeRequests: number;
+  readonly activeUserResponses?: number;
   readonly pendingContinuations: number;
   readonly recording: boolean;
   readonly generation: number;
@@ -38,6 +46,7 @@ interface GatewayStatus {
 const START_TIMEOUT_MS = 15_000;
 const UPGRADE_RETRY_MS = 1_000;
 const UPGRADE_QUIET_PERIOD_MS = 1_000;
+const UPGRADE_FORCE_DRAIN_TIMEOUT_MS = 1_500;
 const CONTROL_STATUS_RETRY_MS = 75;
 const CONTROL_STATUS_TIMEOUT_MS = 1_000;
 type GatewayAttachmentState = 'attached' | 'missing' | 'uncertain';
@@ -72,6 +81,7 @@ export class GatewayProcessClient implements TraceProxy {
   private syncedGeneration = -1;
   private syncChain: Promise<void> = Promise.resolve();
   private lifecycleChain: Promise<void> = Promise.resolve();
+  private forceStopOperation: Promise<void> | undefined;
   private desiredRunning = false;
   private status: GatewayStatus | undefined;
   private helperUpgradePending = false;
@@ -83,13 +93,17 @@ export class GatewayProcessClient implements TraceProxy {
   private helperUpgradePort: number | undefined;
   private helperUpgradeTimer: ReturnType<typeof setTimeout> | undefined;
   private deferredCodexProviderAdoption: 'official' | 'compatible' | `provider:${string}` | undefined;
+  private deferredCodexProviderTransition: {
+    readonly source: 'official' | 'compatible' | `provider:${string}`;
+    readonly target: 'official' | 'compatible' | `provider:${string}`;
+  } | undefined;
   private controlUncertainKey: string | undefined;
 
   constructor(
     private readonly userDataDir: string,
     private readonly traceRoot: string,
     private readonly listenPorts?: readonly number[],
-    private readonly canAbandonStaleContinuations: () => Promise<boolean> = async () => false,
+    private readonly canInterruptStaleUpgradeActivity: () => Promise<boolean> = async () => false,
     private readonly lifecycleHooks: {
       readonly beforeUpgradeReplacement?: () => Promise<void>;
       readonly traceRetention?: () => GatewayTraceRetention;
@@ -126,6 +140,14 @@ export class GatewayProcessClient implements TraceProxy {
     return this.serializeLifecycle(() => this.startUnlocked());
   }
 
+  async attachExisting(): Promise<boolean> {
+    return this.serializeLifecycle(async () => {
+      const state = await this.attach();
+      if (state === 'uncertain') throw new GatewayControlUnavailableError();
+      return state === 'attached';
+    });
+  }
+
   private async startUnlocked(): Promise<string> {
     if (!this.desiredRunning) throw new Error('XwX Gateway 启动已被关闭请求取消。');
     const attachment = await this.attach();
@@ -154,7 +176,11 @@ export class GatewayProcessClient implements TraceProxy {
   async forceStop(): Promise<void> {
     this.desiredRunning = false;
     this.clearHelperUpgradeTimer();
-    await this.serializeLifecycle(() => this.forceStopUnlocked());
+    if (this.forceStopOperation) return this.forceStopOperation;
+    this.forceStopOperation = this.forceStopUnlocked().finally(() => {
+      this.forceStopOperation = undefined;
+    });
+    return this.forceStopOperation;
   }
 
   private async forceStopUnlocked(): Promise<void> {
@@ -189,6 +215,7 @@ export class GatewayProcessClient implements TraceProxy {
     this.helperUpgradePending = false;
     this.helperUpgradePort = undefined;
     this.deferredCodexProviderAdoption = undefined;
+    this.deferredCodexProviderTransition = undefined;
   }
 
   private async stopUnlocked(): Promise<void> {
@@ -205,6 +232,7 @@ export class GatewayProcessClient implements TraceProxy {
     this.helperUpgradePending = false;
     this.helperUpgradePort = undefined;
     this.deferredCodexProviderAdoption = undefined;
+    this.deferredCodexProviderTransition = undefined;
   }
 
   localBaseUrl(): string | undefined {
@@ -219,6 +247,12 @@ export class GatewayProcessClient implements TraceProxy {
     return this.status?.activeRequests ?? 0;
   }
 
+  activeUserResponseCount(): number {
+    // An older helper can remain attached until its current request drains.
+    // Treat its total as visible rather than silently suppressing a warning.
+    return this.status?.activeUserResponses ?? this.status?.activeRequests ?? 0;
+  }
+
   pendingContinuationCount(): number {
     return this.status?.pendingContinuations ?? 0;
   }
@@ -229,7 +263,6 @@ export class GatewayProcessClient implements TraceProxy {
   }
 
   async refreshShutdownActivity(): Promise<void> {
-    if (!this.runtime) return;
     const probe = await this.probeAttachment();
     if (probe.state === 'attached') {
       this.runtime = probe.runtime;
@@ -276,16 +309,25 @@ export class GatewayProcessClient implements TraceProxy {
     }
   }
 
-  cancelPreparedShutdown(): void {
-    void this.request('/control/cancel-shutdown', {}).catch(error => {
-      log.warn(`[gateway] cancel shutdown failed: ${(error as Error).message}`);
-    });
+  async cancelPreparedShutdown(): Promise<void> {
+    await this.request('/control/cancel-shutdown', {});
   }
 
   async markCodexProviderTransition(source: 'official' | 'compatible' | `provider:${string}`, target: 'official' | 'compatible' | `provider:${string}`): Promise<void> {
     if ((source.startsWith('provider:') || target.startsWith('provider:')) && (this.runtime?.helperProtocolVersion ?? 0) < 13) {
-      await this.synchronize();
-      if ((this.runtime?.helperProtocolVersion ?? 0) < 13) throw new Error('Gateway 正在等待当前请求完成后升级，请稍后重试服务切换。');
+      // A request keeps the route snapshot captured when it started. Record a
+      // legacy-compatible boundary for the old helper, publish the new route
+      // immediately, and replay the exact provider identities after the helper
+      // upgrades. Never make an unrelated in-flight response block switching.
+      this.deferredCodexProviderTransition = { source, target };
+      const legacyTransition = legacyCodexProviderTransition(source, target);
+      try {
+        await this.request('/control/portability/mark-transition', legacyTransition);
+      } catch (error) {
+        if (!isUnsupportedControlEndpoint(error)) throw error;
+        log('[gateway] legacy helper has no provider-transition endpoint; deferred exact transition until upgrade');
+      }
+      return;
     }
     await this.request('/control/portability/mark-transition', { source, target });
   }
@@ -359,8 +401,15 @@ export class GatewayProcessClient implements TraceProxy {
     if (!this.desiredRunning) return;
     await this.syncChain;
     await this.flushSync();
-    await this.upgradeHelperIfIdleUnlocked();
-    if (!this.helperUpgradePending) await this.flushDeferredCodexProviderAdoption();
+    // Publishing a new route must not wait for an idle helper replacement.
+    // The replacement retains the same endpoint and republishes this latest
+    // generation in the deferred lifecycle task below.
+    if (this.helperUpgradePending) {
+      this.scheduleHelperUpgradeRetry();
+      return;
+    }
+    await this.flushDeferredCodexProviderTransition();
+    await this.flushDeferredCodexProviderAdoption();
   }
 
   private async flushSync(): Promise<void> {
@@ -521,7 +570,11 @@ export class GatewayProcessClient implements TraceProxy {
     const maxStorageBytes = typeof configured?.maxStorageBytes === 'number' && Number.isFinite(configured.maxStorageBytes)
       ? Math.max(0, Math.floor(configured.maxStorageBytes))
       : 0;
-    return { maxSessions, maxStorageBytes };
+    return {
+      maxSessions,
+      maxStorageBytes,
+      ...(configured?.usageOnly === true ? { usageOnly: true } : {})
+    };
   }
 
   /**
@@ -555,28 +608,56 @@ export class GatewayProcessClient implements TraceProxy {
       this.clearHelperUpgradeTimer();
       return;
     }
-    if (latest.activeRequests === 0 && latest.pendingContinuations > 0) {
-      let canAbandon = false;
-      try { canAbandon = await this.canAbandonStaleContinuations(); }
+    if (latest.activeRequests > 0 || latest.pendingContinuations > 0) {
+      let canInterrupt = false;
+      try { canInterrupt = await this.canInterruptStaleUpgradeActivity(); }
       catch (error) {
-        log.warn(`[gateway] could not verify whether stale continuations are safe to clear: ${(error as Error).message}`);
+        log.warn(`[gateway] could not verify whether stale upgrade activity is safe to interrupt: ${(error as Error).message}`);
       }
-      if (canAbandon) {
+      if (canInterrupt && latest.activeRequests === 0 && latest.pendingContinuations > 0) {
         try {
           latest = await this.request<GatewayStatus>('/control/abandon-continuations', {});
           this.status = latest;
           log('[gateway] cleared stale continuations after confirming ChatGPT exited');
         } catch (error) {
-          // Some protocol-less helpers predate this endpoint. Do not fail
-          // manager startup and do not kill an ungated data plane: keep it
-          // serving until an explicit full stop or OS restart clears the
-          // in-memory continuation safely.
+          // Some legacy helpers predate this endpoint but still support the
+          // force shutdown gate. Fall through to that gate rather than
+          // leaving a stale continuation blocking provider switches forever.
           if (isUnsupportedControlEndpoint(error)) {
-            log.warn('[gateway] legacy helper cannot clear stale continuations; keeping its data plane alive until a safe full stop');
+            log.warn('[gateway] legacy helper cannot clear stale continuations directly; trying the force shutdown gate');
+          } else {
+            this.scheduleHelperUpgradeRetry();
+            log.warn(`[gateway] could not clear stale continuations: ${(error as Error).message}`);
+            return;
+          }
+        }
+      }
+      if (canInterrupt && (latest.activeRequests > 0 || latest.pendingContinuations > 0)) {
+        try {
+          const result = await this.request<{ status: GatewayStatus }>('/control/force-prepare-shutdown', {});
+          latest = result.status;
+          this.status = latest;
+          const deadline = Date.now() + UPGRADE_FORCE_DRAIN_TIMEOUT_MS;
+          while ((latest.activeRequests > 0 || latest.pendingContinuations > 0) && Date.now() < deadline) {
+            await delay(50);
+            latest = await this.request<GatewayStatus>('/control/status', undefined, 'GET');
+            this.status = latest;
+          }
+          if (latest.activeRequests === 0 && latest.pendingContinuations === 0) {
+            log('[gateway] interrupted stale helper activity after confirming ChatGPT and Claude exited');
+          } else {
+            await this.request('/control/cancel-shutdown', {}).catch(() => undefined);
+          }
+        } catch (error) {
+          // v7+ helpers provide the force gate. Older unknown helpers remain
+          // untouched even after process checks because another unsupported
+          // client may still own their data plane.
+          if (isUnsupportedControlEndpoint(error)) {
+            log.warn('[gateway] legacy helper cannot interrupt stale activity; keeping its data plane alive');
             return;
           }
           this.scheduleHelperUpgradeRetry();
-          log.warn(`[gateway] could not clear stale continuations: ${(error as Error).message}`);
+          log.warn(`[gateway] could not interrupt stale helper activity: ${(error as Error).message}`);
           return;
         }
       }
@@ -620,6 +701,7 @@ export class GatewayProcessClient implements TraceProxy {
       this.helperUpgradePort ??= oldRuntime.gatewayPort;
       await this.spawnAndAttach([this.helperUpgradePort]);
       await this.flushSync();
+      await this.flushDeferredCodexProviderTransition();
       await this.flushDeferredCodexProviderAdoption();
       this.helperUpgradePending = false;
       this.clearHelperUpgradeTimer();
@@ -632,8 +714,12 @@ export class GatewayProcessClient implements TraceProxy {
       // adopts its current helper. Never overwrite a live helper token here.
       this.runtime = undefined;
       this.status = undefined;
-      this.scheduleHelperUpgradeRetry();
-      log.error(`[gateway] helper upgrade failed: ${(error as Error).message}`);
+      if (this.desiredRunning) {
+        this.scheduleHelperUpgradeRetry();
+        log.error(`[gateway] helper upgrade failed: ${(error as Error).message}`);
+      } else {
+        log('[gateway] helper replacement cancelled by stop');
+      }
     }
   }
 
@@ -644,6 +730,7 @@ export class GatewayProcessClient implements TraceProxy {
       void this.serializeLifecycle(async () => {
         if (!this.desiredRunning) return;
         await this.startUnlocked();
+        await this.upgradeHelperIfIdleUnlocked();
         await this.synchronizeUnlocked();
       })
         .catch(error => {
@@ -671,6 +758,14 @@ export class GatewayProcessClient implements TraceProxy {
     if (result.adopted) log(`[gateway] completed deferred Codex provider adoption (${target})`);
   }
 
+  private async flushDeferredCodexProviderTransition(): Promise<void> {
+    const transition = this.deferredCodexProviderTransition;
+    if (!transition || !this.runtime) return;
+    await this.request('/control/portability/mark-transition', transition);
+    this.deferredCodexProviderTransition = undefined;
+    log(`[gateway] completed deferred Codex provider transition (${transition.source} -> ${transition.target})`);
+  }
+
   private serializeLifecycle<T>(action: () => Promise<T>): Promise<T> {
     const result = this.lifecycleChain.then(action, action);
     this.lifecycleChain = result.then(() => undefined, () => undefined);
@@ -694,6 +789,8 @@ export class GatewayProcessClient implements TraceProxy {
 
   private async spawnAndAttach(listenPorts = this.listenPorts): Promise<void> {
     await fs.promises.mkdir(this.controlDir(), { recursive: true, mode: 0o700 });
+    const startupAttemptId = randomUUID();
+    await clearGatewayStartupError(this.userDataDir);
     await writeFileAtomic(this.bootstrapFile(), `${JSON.stringify({
       generation: this.generation,
       routes: this.routes,
@@ -711,39 +808,62 @@ export class GatewayProcessClient implements TraceProxy {
     const helperPath = path.join(__dirname, 'gateway-helper.js');
     const child = spawn(process.execPath, [helperPath], {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
       env: {
-        ...process.env,
+        ...childProcessEnvironment(),
         ELECTRON_RUN_AS_NODE: '1',
         XwX_GATEWAY_USER_DATA: this.userDataDir,
         XwX_GATEWAY_TRACE_ROOT: this.traceRoot,
-        XwX_GATEWAY_LISTEN_PORTS: listenPorts?.join(',') ?? ''
+        XwX_GATEWAY_LISTEN_PORTS: listenPorts?.join(',') ?? '',
+        XWX_GATEWAY_START_ATTEMPT: startupAttemptId
       }
     });
     child.unref();
-    let childExit: Error | undefined;
+    let startupStderr = '';
     let childAttached = false;
+    child.stderr?.on('data', chunk => {
+      if (!childAttached) startupStderr = (startupStderr + String(chunk)).slice(-4096);
+    });
+    (child.stderr as Socket | null)?.unref();
+    let childExit: Error | undefined;
     child.once('error', error => { childExit = error; });
     child.once('exit', (code, signal) => {
       if (!childAttached) {
         childExit = new Error(`XwX Gateway 后台进程提前退出（code=${code ?? 'null'}, signal=${signal ?? 'none'}）。`);
       }
     });
-    const deadline = Date.now() + START_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      const attachment = await this.attach();
-      if (attachment === 'attached') {
-        childAttached = true;
-        // This helper has no prior live route generation. Force the first
-        // synchronize call to publish the manager's prepared state.
-        this.syncedGeneration = -1;
-        return;
+    try {
+      const deadline = Date.now() + START_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        if (!this.desiredRunning) {
+          throw new Error('XwX Gateway 启动已被关闭请求取消。');
+        }
+        const attachment = await this.attach();
+        if (attachment === 'attached') {
+          childAttached = true;
+          await clearGatewayStartupError(this.userDataDir);
+          // This helper has no prior live route generation. Force the first
+          // synchronize call to publish the manager's prepared state.
+          this.syncedGeneration = -1;
+          return;
+        }
+        if (childExit) {
+          const detail = await readGatewayStartupError(this.userDataDir, startupAttemptId, child.pid)
+            ?? (startupStderr.trim() ? sanitizeGatewayStartupError(startupStderr) : undefined);
+          throw detail ? new Error(`${childExit.message}\n原因：${detail}`) : childExit;
+        }
+        await delay(100);
       }
-      if (childExit) throw childExit;
-      await delay(100);
+      throw new Error('XwX Gateway 后台进程启动超时；配置未切换到本地代理。');
+    } finally {
+      // A timed-out launch must not appear later and hold a writer lease while
+      // the user retries. Only this attempt's child is ours to terminate.
+      if (!childAttached) {
+        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        child.stderr?.destroy();
+      }
     }
-    throw new Error('XwX Gateway 后台进程启动超时；配置未切换到本地代理。');
   }
 
   private async request<T = unknown>(pathname: string, body?: unknown, method = 'POST'): Promise<T> {
@@ -852,6 +972,19 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<void>
 
 function isUnsupportedControlEndpoint(error: unknown): boolean {
   return error instanceof GatewayControlError && (error.statusCode === 404 || error.statusCode === 405);
+}
+
+function legacyCodexProviderTransition(
+  source: 'official' | 'compatible' | `provider:${string}`,
+  target: 'official' | 'compatible' | `provider:${string}`
+): { source: 'official' | 'compatible'; target: 'official' | 'compatible' } {
+  if (target === 'official') return { source: 'compatible', target: 'official' };
+  if (source === 'official') return { source: 'official', target: 'compatible' };
+  // Protocols before v13 cannot distinguish two custom providers. Opening a
+  // conservative official -> CompatibleService transition window still makes the old
+  // helper sanitize unknown provider-owned continuation data on the first
+  // request routed to the newly selected service.
+  return { source: 'official', target: 'compatible' };
 }
 
 function delay(ms: number): Promise<void> {

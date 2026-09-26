@@ -31,10 +31,7 @@ export interface ManagerWindowOptions {
   readonly onRendererRecoveryExhausted?: (details: Electron.RenderProcessGoneDetails) => void;
 }
 
-export interface ManagerNotice {
-  readonly message: string;
-  readonly type?: 'success' | 'error' | 'info';
-}
+export type ManagerNotice = import('../../shared/lifecycleNotice').LifecycleNotice;
 
 interface WindowRecoveryState {
   readonly bounds: Electron.Rectangle;
@@ -155,7 +152,6 @@ export class ManagerWindow {
       throw error;
     }
     this.sendWindowState();
-    this.sendState(await this.options.state());
     if (recoveryState?.maximized) win.maximize();
     if (recoveryState?.fullscreen) win.setFullScreen(true);
     if (this.showRequested && !win.isDestroyed()) {
@@ -163,6 +159,9 @@ export class ManagerWindow {
       win.show();
       win.focus();
     }
+    void this.options.state()
+      .then(state => this.sendState(state))
+      .catch(error => log.warn(`[xwx-deck] manager initial state refresh failed: ${(error as Error).message}`));
   }
 
   sendState(state: XwXDeckRuntimeState): void {

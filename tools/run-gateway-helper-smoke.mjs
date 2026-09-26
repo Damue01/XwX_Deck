@@ -73,7 +73,7 @@ try {
   await exited(launcher);
 
   runtime = await waitForRuntime(path.join(controlDir, 'runtime.json'));
-  assert.equal(runtime.helperProtocolVersion, 13);
+  assert.equal(runtime.helperProtocolVersion, 14);
   assert.ok(runtime.pid > 0);
   assert.ok(runtime.gatewayPort > 0);
   assert.ok(runtime.controlPort > 0);
@@ -149,7 +149,7 @@ try {
   // Simulate a freshly opened manager attaching and reading status. It must not
   // overwrite the helper's live generation with empty constructor defaults.
   const attached = await control(runtime.controlPort, token, '/control/status', undefined, 'GET');
-  assert.equal(attached.helperProtocolVersion, 13);
+  assert.equal(attached.helperProtocolVersion, 14);
   assert.equal(attached.generation, 1);
   const afterAttach = await gateway(runtime.gatewayPort, { model: 'gpt-xwx-after-attach', input: [] });
   assert.equal(afterAttach.status, 200);

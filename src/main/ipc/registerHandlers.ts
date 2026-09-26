@@ -1,3 +1,4 @@
+import type { TraceRetentionRepairResult } from '../app/xwxDeckController';
 import type { ProviderInput, ProviderClient } from '../../shared/providers';
 import {
   BrowserWindow,
@@ -31,11 +32,25 @@ export interface IpcHandlerDependencies {
   readonly refreshUi: () => Promise<XwXDeckRuntimeState | undefined>;
   readonly setStartupEnabled: (enabled: boolean) => Promise<XwXDeckRuntimeState | undefined>;
   readonly restartAndInstall: () => Promise<unknown>;
-  readonly toggleTracing: () => Promise<XwXDeckRuntimeState | undefined>;
+  readonly cancelUpdate: () => Promise<unknown>;
+  readonly toggleTracing: (enabled?: boolean, force?: boolean) => Promise<XwXDeckRuntimeState | undefined>;
   readonly toggleClient: (client: ClientId) => Promise<XwXDeckRuntimeState | undefined>;
   readonly openDashboard: () => Promise<void>;
   readonly clearHistory: () => Promise<XwXDeckRuntimeState | undefined>;
-  readonly repairApplication: () => Promise<{ removedCachePaths: number; removedBytes: number; refreshedModels?: number }>;
+  readonly repairApplication: () => Promise<{
+    removedCachePaths: number;
+    removedBytes: number;
+    chromiumCacheCleared: boolean;
+    refreshedModels?: number;
+    traceRetention: TraceRetentionRepairResult;
+  }>;
+  readonly repairUnreadableSettings: () => Promise<{ backupPath: string; lostProviderSettings: boolean }>;
+  readonly repairInvalidCodexConfiguration: () => Promise<{
+    backupPath: string;
+    mode: 'official' | 'compatible';
+    conflicts: readonly string[];
+  }>;
+  readonly repairClientProviderSwitch: (client: ProviderClient, providerId: string | null) => Promise<unknown>;
   readonly resetApplication: (input: { resetClientConfigs: boolean }) => Promise<void>;
 }
 
@@ -57,6 +72,7 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     'xwxdeck:check-for-updates': () => requireUpdater().checkForUpdates(false),
     'xwxdeck:download-update': () => requireUpdater().downloadUpdate(),
     'xwxdeck:restart-and-install': () => deps.restartAndInstall(),
+    'xwxdeck:cancel-update': () => deps.cancelUpdate(),
     'xwxdeck:set-startup-enabled': (_event, enabled) => {
       if (typeof enabled !== 'boolean') throw new Error('无效的开机启动设置。');
       return deps.setStartupEnabled(enabled);
@@ -84,15 +100,27 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     },
     'xwxdeck:clear-trace-background': () => requireController().clearTraceBackgroundImage(),
     'xwxdeck:repair-application': () => deps.repairApplication(),
+    'xwxdeck:repair-unreadable-settings': () => deps.repairUnreadableSettings(),
+    'xwxdeck:repair-invalid-codex-configuration': () => deps.repairInvalidCodexConfiguration(),
+    'xwxdeck:repair-client-provider-switch': (_event, raw) => {
+      const input = raw as { client: ProviderClient; providerId: string | null } | undefined;
+      if (!input || !['claude', 'codex'].includes(input.client)
+        || !(input.providerId === null || typeof input.providerId === 'string')) throw new Error('无效的修复目标。');
+      return deps.repairClientProviderSwitch(input.client, input.providerId);
+    },
     'xwxdeck:reset-application': (_event, input) => {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('无效的重置选项。');
       const value = input as { resetClientConfigs?: unknown };
       if (typeof value.resetClientConfigs !== 'boolean') throw new Error('无效的客户端配置重置选项。');
       return deps.resetApplication({ resetClientConfigs: value.resetClientConfigs });
     },
-    'xwxdeck:toggle-tracing': () => deps.toggleTracing(),
+    'xwxdeck:toggle-tracing': (_event, enabled, force) => {
+      if (enabled !== undefined && typeof enabled !== 'boolean') throw new Error('Trace 操作参数无效，请重新操作。');
+      if (force !== undefined && typeof force !== 'boolean') throw new Error('Trace 强制操作参数无效，请重新操作。');
+      return deps.toggleTracing(enabled, force);
+    },
     'xwxdeck:toggle-client': (_event, client) => {
-      if (!isClientId(client)) throw new Error('不支持的客户端。');
+      if (!isClientId(client)) throw new Error('Unsupported XwX Deck client.');
       return deps.toggleClient(client);
     },
     'xwxdeck:get-codex-config': () => requireController().readCodexConfig(),
@@ -102,9 +130,42 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('无效的 ChatGPT 增强设置。');
       return requireController().updateCodexEnhancements(input);
     },
+    'xwxdeck:get-providers': () => requireController().readProviders(),
+    'xwxdeck:save-provider': (_event, input) => requireController().saveProvider(input as ProviderInput),
+    'xwxdeck:delete-provider': (_event, id) => {
+      if (typeof id !== 'string') throw new Error('无效的连接 ID。');
+      return requireController().deleteProvider(id);
+    },
+    'xwxdeck:switch-client-provider': (_event, raw) => {
+      const input = raw as { client: ProviderClient; providerId: string | null; takeOverExternalConfig?: boolean } | undefined;
+      if (!input || !['claude', 'codex'].includes(input.client)
+        || !(input.providerId === null || typeof input.providerId === 'string')
+        || !(input.takeOverExternalConfig === undefined || typeof input.takeOverExternalConfig === 'boolean')) {
+        throw new Error('无效的服务选择。');
+      }
+      if (input.takeOverExternalConfig && input.client !== 'codex') throw new Error('只有 ChatGPT 支持接管外部配置。');
+      return requireController().switchClientProvider(input.client, input.providerId, {
+        takeOverExternalConfig: input.takeOverExternalConfig === true
+      });
+    },
+    'xwxdeck:fetch-provider-models': (_event, raw) => {
+      const input = raw as { providerId: string; refresh?: boolean } | undefined;
+      if (!input || typeof input.providerId !== 'string') throw new Error('无效的连接 ID。');
+      return requireController().fetchProviderModels(input.providerId, input.refresh === true);
+    },
+    'xwxdeck:get-claude-environment-overrides': () => (
+      requireController().readClaudeEnvironmentOverrides()
+    ),
+    'xwxdeck:clear-claude-environment-overrides': (_event, raw) => {
+      const input = raw as { names?: unknown } | undefined;
+      if (!input || !Array.isArray(input.names) || input.names.some(name => typeof name !== 'string')) {
+        throw new Error('无效的 Claude 环境变量清理请求。');
+      }
+      return requireController().clearClaudeEnvironmentOverrides(input.names);
+    },
     'xwxdeck:get-compatible-config': () => requireController().readCompatibleServiceConfig(),
     'xwxdeck:update-compatible-config': (_event, input) => {
-      if (!input || typeof input !== 'object') throw new Error('无效的兼容服务配置。');
+      if (!input || typeof input !== 'object') throw new Error('Invalid CompatibleService config payload.');
       return requireController().updateCompatibleServiceConfig(input);
     },
     'xwxdeck:get-model-services': () => requireController().readModelServices(),
@@ -120,8 +181,13 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
       if (!input || typeof input !== 'object') throw new Error('无效的 Claude 模型设置。');
       return requireController().updateClaudeModels(input as Record<string, string>);
     },
+    'xwxdeck:get-claude-desktop-sync': () => requireController().readClaudeDesktopSync(),
+    'xwxdeck:update-claude-desktop-sync': (_event, enabled) => {
+      if (typeof enabled !== 'boolean') throw new Error('Invalid Claude Desktop sync state.');
+      return requireController().updateClaudeDesktopSync(enabled);
+    },
     'xwxdeck:update-codex-config': (_event, input) => {
-      if (!input || typeof input !== 'object') throw new Error('无效的 ChatGPT 配置。');
+      if (!input || typeof input !== 'object') throw new Error('Invalid ChatGPT config payload.');
       return requireController().updateCodexConfig(input);
     },
     'xwxdeck:diagnose-codex-conversations': () => requireController().diagnoseCodexConversations(),
@@ -148,22 +214,6 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
       shell.showItemInFolder(path.resolve(input));
       return true;
     },
-    'xwxdeck:get-providers': () => requireController().readProviders(),
-    'xwxdeck:save-provider': (_event, input) => requireController().saveProvider(input as ProviderInput),
-    'xwxdeck:delete-provider': (_event, id) => {
-      if (typeof id !== 'string') throw new Error('无效的连接 ID。');
-      return requireController().deleteProvider(id);
-    },
-    'xwxdeck:switch-client-provider': (_event, input) => {
-      const value = input as { client?: unknown; providerId?: unknown } | undefined;
-      if (!value || !['codex', 'claude'].includes(String(value.client)) || value.providerId !== null && typeof value.providerId !== 'string') throw new Error('无效的连接选择。');
-      return requireController().switchClientProvider(value.client as ProviderClient, value.providerId as string | null);
-    },
-    'xwxdeck:fetch-provider-models': (_event, input) => {
-      const value = input as { providerId?: unknown; refresh?: unknown } | undefined;
-      if (!value || typeof value.providerId !== 'string') throw new Error('无效的连接 ID。');
-      return requireController().fetchProviderModels(value.providerId, value.refresh === true);
-    },
     'xwxdeck:validate-provider': (_event, input) => {
       const value = input as { providerId?: unknown } | undefined;
       if (!value || typeof value.providerId !== 'string') throw new Error('无效的连接 ID。');
@@ -174,7 +224,9 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
         ? 'compatible'
         : 'active';
       const refresh = !!(input && typeof input === 'object' && (input as { refresh?: unknown }).refresh === true);
-      return requireController().fetchModels(source, refresh);
+      const expected = input && typeof input === 'object' ? (input as { expectedProviderId?: unknown }).expectedProviderId : undefined;
+      return requireController().fetchModels(source, refresh, false,
+        typeof expected === 'string' || expected === null ? expected : undefined);
     },
     'xwxdeck:choose-directory': async (event, input) => {
       const owner = BrowserWindow.fromWebContents(event.sender);

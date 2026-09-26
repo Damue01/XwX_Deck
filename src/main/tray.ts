@@ -4,16 +4,14 @@ import { assetPath } from './shared/assets';
 
 export interface TrayActions {
   readonly openManager: () => void;
-  readonly toggleTracing: () => void;
+  readonly toggleTracing: (enabled: boolean) => void;
   readonly showUpdateDetails: () => void;
   readonly quit: () => void;
-  readonly toggleGateway: (expectedAction: 'close' | 'open') => void;
 }
 
 export class XwXDeckTray {
   private tray: Tray | undefined;
   private lastState: XwXDeckRuntimeState | undefined;
-  private pendingGatewayAction: 'close' | 'open' | undefined;
 
   constructor(private readonly actions: TrayActions) {}
 
@@ -33,20 +31,10 @@ export class XwXDeckTray {
     }
   }
 
-  setGatewayActionPending(action: 'close' | 'open' | undefined): void {
-    this.pendingGatewayAction = action;
-    if (!this.tray || !this.lastState) return;
-    this.tray.setContextMenu(this.buildMenu(this.lastState));
-    if (process.platform === 'darwin' && app.dock) {
-      app.dock.setMenu(this.buildDockMenu(this.lastState));
-    }
-  }
-
   dispose(): void {
     this.tray?.destroy();
     this.tray = undefined;
     this.lastState = undefined;
-    this.pendingGatewayAction = undefined;
     if (process.platform === 'darwin' && app.dock) {
       app.dock.setMenu(Menu.buildFromTemplate([]));
     }
@@ -61,38 +49,34 @@ export class XwXDeckTray {
     return Menu.buildFromTemplate([
       { label: `XwX Deck · ${status}`, enabled: false },
       { type: 'separator' },
-      { label: state.tracingEnabled ? '停止追踪' : '开始追踪', click: this.actions.toggleTracing },
+      ...this.traceMenuItems(state),
       ...(state.update?.updateAvailable && state.update.targetVersion ? [{ type: 'separator' as const }, {
         label: `更新到 XwX Deck ${state.update.targetVersion}…`,
         click: this.actions.showUpdateDetails
       }] : []),
       { type: 'separator' },
-      ...this.gatewayMenuItems(state),
       { label: '退出', click: this.actions.quit }
     ]);
   }
 
   private buildDockMenu(state: XwXDeckRuntimeState): Menu {
     return Menu.buildFromTemplate([
-      ...this.gatewayMenuItems(state)
+      ...this.traceMenuItems(state)
       // macOS appends its native “退出” item to the Dock menu.
     ]);
   }
 
-  private gatewayMenuItems(state: XwXDeckRuntimeState): Electron.MenuItemConstructorOptions[] {
-    if (this.pendingGatewayAction) {
-      return [{
-        label: this.pendingGatewayAction === 'close' ? '正在关闭代理…' : '正在开启代理…',
-        enabled: false
-      }];
-    }
-    if (!state.backgroundGatewayAction) return [];
-    const action = state.backgroundGatewayAction;
+  private traceMenuItems(state: XwXDeckRuntimeState): Electron.MenuItemConstructorOptions[] {
+    const closing = state.tracingEnabled || state.backgroundGatewayAction === 'close';
     return [{
-      label: action === 'close' ? '关闭代理' : '开启代理',
-      click: () => this.actions.toggleGateway(action)
+      label: state.traceTransition === 'starting' ? '正在开启 Trace…'
+        : state.traceTransition === 'stopping' ? '正在关闭 Trace…'
+        : closing ? '关闭 Trace' : '开启 Trace',
+      enabled: !state.traceTransition,
+      click: () => this.actions.toggleTracing(!closing)
     }];
   }
+
 }
 
 function createTrayIcon(active: boolean): Electron.NativeImage {

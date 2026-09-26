@@ -1,10 +1,45 @@
 import * as React from 'react';
 import { useBridge } from '@/bridge/store';
-import { closeToast, showErrorToast, showToast } from '@/lib/toast';
-import { userErrorMessage } from '@/lib/errors';
+import type { XwXDeckUpdateState } from '@/bridge/types';
+import { closeToast, showToast } from '@/lib/toast';
+import { updateFailureDescription } from '../../../shared/updateFeedback';
 
 const MAX_RELEASE_NOTE_LINES = 5;
 const MAX_RELEASE_NOTE_LENGTH = 280;
+
+export function announceAvailableUpdate(
+  update: XwXDeckUpdateState,
+  download: () => Promise<XwXDeckUpdateState>,
+  onDownloaded: (next: XwXDeckUpdateState) => void
+): void {
+  const version = update.targetVersion;
+  if (!version || !update.updateAvailable || update.status !== 'available') return;
+  const id = `xwxdeck-update-${version}`;
+  showToast(`XwX Deck ${version} 可更新`, 'info', id, {
+    description: conciseReleaseNotes(update.releaseNotes),
+    timeout: 5_000,
+    actionProps: {
+      type: 'button',
+      children: '立即下载',
+      'aria-label': `下载 XwX Deck ${version}`,
+      onClick: () => {
+        closeToast(id);
+        void download()
+          .then(next => {
+            onDownloaded(next);
+            if (next.status === 'error') showToast('更新下载失败', 'error', undefined, {
+              description: updateFailureDescription(next.error),
+              timeout: 12_000
+            });
+          })
+          .catch(error => showToast('更新下载失败', 'error', undefined, {
+            description: updateFailureDescription(error),
+            timeout: 12_000
+          }));
+      }
+    }
+  });
+}
 
 export function UpdateNotification(): null {
   const bridge = useBridge();
@@ -20,28 +55,7 @@ export function UpdateNotification(): null {
     if (notifiedSignature.current === signature) return;
     notifiedSignature.current = signature;
 
-    const id = `xwx-deck-update-${version}`;
-    showToast(`XwX Deck ${version} 可更新`, 'info', id, {
-      description,
-      timeout: 5_000,
-      actionProps: {
-        type: 'button',
-        children: '立即下载',
-        'aria-label': `下载 XwX Deck ${version}`,
-        onClick: () => {
-          closeToast(id);
-          void bridge.api.downloadUpdate()
-            .then(next => {
-              bridge.patch({ updateState: next });
-              if (next.status === 'error') showToast('更新下载失败', 'error', undefined, {
-                description: userErrorMessage(next.error, '请检查网络后重试。'),
-                timeout: 8_000
-              });
-            })
-            .catch(error => showErrorToast('更新下载失败', error, undefined, { description: '请检查网络后重试。' }));
-        }
-      }
-    });
+    announceAvailableUpdate(update, () => bridge.api.downloadUpdate(), next => bridge.patch({ updateState: next }));
   }, [bridge.api, bridge.patch, update?.releaseNotes, update?.status, update?.targetVersion, update?.updateAvailable]);
 
   React.useEffect(() => {

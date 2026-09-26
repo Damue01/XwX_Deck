@@ -3,8 +3,8 @@ import type {
   ProviderConnection,
   ProviderValidationResult
 } from '../../shared/providers';
-import { resolveCompatibleServiceCodexProtocol } from './codexProtocolPolicy';
-import { findOfficialModelRecord } from './officialModelRegistry';
+
+
 
 type WireProtocol = Exclude<ProviderAdapter, 'auto'>;
 type ProbeKind =
@@ -107,10 +107,7 @@ export function buildProviderValidationPlan(provider: ProviderConnection): Provi
 
 function resolveProtocol(provider: ProviderConnection): WireProtocol {
   if (provider.adapter !== 'auto') return provider.adapter;
-  const official = findOfficialModelRecord(provider.codexModel)?.codexRecommendedProtocol;
-  if (official) return official;
-  if (provider.providerPreset === 'volcengine-ark') return provider.codexApiFormat;
-  return resolveCompatibleServiceCodexProtocol(provider.codexModel || 'unknown-model');
+  return provider.codexApiFormat;
 }
 
 function protocolFromEndpoint(value: string): WireProtocol {

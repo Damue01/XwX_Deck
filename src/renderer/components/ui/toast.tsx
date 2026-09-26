@@ -1,6 +1,7 @@
 "use client";
 
 import { Toast } from "@base-ui/react/toast";
+import { X } from "lucide-react";
 import type React from "react";
 import { cn } from "@/lib/utils";
 
@@ -17,7 +18,7 @@ function replayClassName(toast: { type?: string; updateKey?: number }): string |
   const updateKey = toast.updateKey ?? 0;
   if (updateKey <= 0) return undefined;
   const isEven = updateKey % 2 === 0;
-  if (toast.type === "error") {
+  if (toast.type === "error" || toast.type === "warning") {
     return isEven ? "animate-toast-error-even" : "animate-toast-error-odd";
   }
   return isEven ? "animate-toast-success-even" : "animate-toast-success-odd";
@@ -68,17 +69,30 @@ function Toasts({
               swipeDirection={swipeDirection}
               toast={toast}
             >
-              <Toast.Content className="pointer-events-auto flex items-center justify-between gap-3 overflow-hidden px-3.5 py-3 text-sm transition-opacity duration-250 data-behind:not-data-expanded:pointer-events-none data-behind:opacity-0 data-expanded:opacity-100">
-                <div className="flex min-w-0 flex-col gap-0.5">
-                  <Toast.Title className="font-medium" data-slot="toast-title" />
-                  <Toast.Description className="whitespace-pre-line break-words text-muted-foreground" data-slot="toast-description" />
+              <Toast.Content className="pointer-events-auto relative flex flex-col gap-1.5 overflow-hidden px-3.5 py-3 text-sm transition-opacity duration-250 data-behind:not-data-expanded:pointer-events-none data-behind:opacity-0 data-expanded:opacity-100">
+                <div className="flex min-w-0 flex-col gap-1 pr-7">
+                  <Toast.Title className="font-semibold leading-5" data-slot="toast-title" />
+                  <Toast.Description className="whitespace-pre-line break-words leading-5 text-muted-foreground" data-slot="toast-description" />
                 </div>
                 {toast.actionProps && (
-                  <Toast.Action
-                    className="inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64"
-                    data-slot="toast-action"
-                  />
+                  <div className="flex min-w-0 justify-end gap-2 pt-1">
+                    <Toast.Action
+                      className="inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64"
+                      data-slot="toast-action"
+                    />
+                  </div>
                 )}
+                <div className="absolute right-2 top-2 flex shrink-0 items-center">
+                  <Toast.Close
+                    type="button"
+                    aria-label="关闭通知"
+                    title="关闭"
+                    className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    data-slot="toast-close"
+                  >
+                    <X className="size-3.5" aria-hidden="true" />
+                  </Toast.Close>
+                </div>
               </Toast.Content>
             </Toast.Root>
           );

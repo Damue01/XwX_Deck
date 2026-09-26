@@ -92,13 +92,13 @@ export class CodexModelCatalogManager {
   private async readNativeTemplates(): Promise<NativeCatalogTemplates> {
     const codexHome = path.dirname(resolveClientPaths().codexConfigPath);
     const candidates = [
-      path.join(codexHome, 'models_cache.json'),
-      this.catalogPath()
+      { path: path.join(codexHome, 'models_cache.json'), official: true },
+      { path: this.catalogPath(), official: false }
     ];
     let fallback: CatalogRow | undefined;
     const bySlug = new Map<string, CatalogRow>();
     for (const candidate of candidates) {
-      const text = await readTextOrUndefined(candidate);
+      const text = await readTextOrUndefined(candidate.path);
       if (!text) continue;
       try {
         const parsed = JSON.parse(text) as { models?: unknown };
@@ -106,7 +106,7 @@ export class CodexModelCatalogManager {
         for (const value of parsed.models) {
           if (!isRecord(value)) continue;
           if (!fallback && typeof value.base_instructions === 'string') fallback = value;
-          if (typeof value.slug === 'string' && value.slug.trim()) {
+          if (candidate.official && typeof value.slug === 'string' && value.slug.trim()) {
             const slug = normalizeSlug(value.slug);
             if (!bySlug.has(slug)) bySlug.set(slug, value);
           }
@@ -182,7 +182,12 @@ function routedCatalogRow(
   // 256K operational fallback here for damaged or hand-built catalogs.
   const maxContextWindow = entry.contextWindow ?? 262_144;
   const contextWindow = codexDefaultContextWindow(entry) ?? maxContextWindow;
-  const row: CatalogRow = structuredClone(template);
+  // Exact official model ids keep their own Codex metadata. The generated
+  // catalog filters the provider's model list; it should not strip model
+  // capabilities that Codex already knows, nor leak an unrelated template's
+  // capabilities into third-party-only models.
+  const row: CatalogRow = minimalCatalogRow(template);
+  if (nativeModel) Object.assign(row, structuredClone(nativeModel));
   row.slug = entry.id;
   row.display_name = entry.id;
   row.description = entry.vendor && entry.vendor !== '其他'
@@ -196,12 +201,15 @@ function routedCatalogRow(
       ? nativeModel.supported_reasoning_levels
       : undefined
   );
-  const shouldUseNativeLevels = compatibleServiceProfile && nativeLevels.length > 0
-    && entry.capabilitySources?.reasoning !== 'compatible';
+  // An exact Codex model match is more reliable than a generic gateway
+  // profile. Keep its picker levels even when CompatibleService also lists a Chat route.
+  const shouldUseNativeLevels = compatibleServiceProfile && nativeLevels.length > 0;
   const levels = shouldUseNativeLevels
     ? nativeLevels
     : clampReasoningEfforts(entry.reasoningLevels);
-  const verifiedReasoning = compatibleServiceProfile ? verifiedCatalogReasoning(entry, levels) : undefined;
+  const verifiedReasoning = compatibleServiceProfile && !shouldUseNativeLevels
+    ? verifiedCatalogReasoning(entry, levels)
+    : undefined;
   const displayedLevels = verifiedReasoning?.levels ?? levels;
   // `supported_reasoning_levels` is a required Codex field. Always emit it
   // (even empty) instead of deleting it or inheriting the template's value.
@@ -257,19 +265,16 @@ function routedCatalogRow(
   // hash for routed 兼容服务 models.
   delete row.comp_hash;
 
-  // Never inherit OpenAI-only capabilities from the strict native template.
-  // `max_output_tokens` and a model-level `supports_websockets` are not part of
-  // the Codex model schema (websockets is a provider field); emitting them only
-  // implies a contract Codex never reads.
+  // Remove only fields that are invalid in the model schema or depend on an
+  // official backend feature this route does not provide. Fast/service-tier
+  // metadata is deliberately left alone for exact official model matches.
+  // Third-party-only models start from the minimal template and never receive
+  // those fields in the first place.
   for (const key of [
-    'additional_speed_tiers',
     'availability_nux',
-    'default_service_tier',
     'max_output_tokens',
     'model_messages',
     'multi_agent_version',
-    'service_tier',
-    'service_tiers',
     'supports_reasoning_summaries',
     'supports_websockets',
     'tool_mode',
@@ -277,6 +282,14 @@ function routedCatalogRow(
     'use_responses_lite',
     'web_search_tool_type'
   ]) delete row[key];
+  return row;
+}
+
+function minimalCatalogRow(template: CatalogRow): CatalogRow {
+  const row = fallbackTemplate();
+  if (typeof template.base_instructions === 'string') {
+    row.base_instructions = template.base_instructions;
+  }
   return row;
 }
 
@@ -353,7 +366,8 @@ function verifiedCatalogReasoning(
   // parameter in the probe while never emitting a reasoning token. Models
   // measured as reasoning but missing the directories' flag belong in
   // `builtInModelCapabilityRegistry.ts` instead.
-  if (!entry.protocols.includes('chat-completions')) return undefined;
+  if (!entry.protocolsDeclared || entry.protocols.includes('openai-responses')
+    || !entry.protocols.includes('chat-completions')) return undefined;
   if (entry.reasoning !== true) return undefined;
   const profile = resolveCompatibleServiceReasoningProfile(entry.id);
   if (profile.levels) return { levels: [...profile.levels], defaultLevel: profile.defaultLevel };
