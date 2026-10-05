@@ -21,7 +21,7 @@ export function MeterTrack({ className, ...props }: MeterPrimitive.Track.Props):
 }
 
 export function MeterIndicator({ className, ...props }: MeterPrimitive.Indicator.Props): React.ReactElement {
-  return <MeterPrimitive.Indicator className={cn("bg-primary transition-all duration-500", className)} data-slot="meter-indicator" {...props} />;
+  return <MeterPrimitive.Indicator className={cn("bg-primary transition-all duration-240", className)} data-slot="meter-indicator" {...props} />;
 }
 
 export function MeterValue({ className, ...props }: MeterPrimitive.Value.Props): React.ReactElement {

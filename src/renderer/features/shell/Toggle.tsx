@@ -8,6 +8,8 @@ interface Props {
   readonly busy?: boolean;
   readonly ariaLabel?: string;
   readonly title?: string;
+  /** Optional glyph rendered inside the thumb (theme switch only). */
+  readonly thumb?: React.ReactNode;
   readonly onToggle: () => void;
 }
 
@@ -16,7 +18,7 @@ interface Props {
  * mirror aria-pressed (the packaged smoke test reads aria-pressed) and expose
  * the id/label/title the rest of the app relies on.
  */
-export function Toggle({ id, checked, disabled, busy, ariaLabel, title, onToggle }: Props): React.ReactElement {
+export function Toggle({ id, checked, disabled, busy, ariaLabel, title, thumb, onToggle }: Props): React.ReactElement {
   return (
     <Switch
       id={id}
@@ -28,6 +30,7 @@ export function Toggle({ id, checked, disabled, busy, ariaLabel, title, onToggle
       aria-busy={busy || undefined}
       aria-label={ariaLabel}
       title={title}
+      thumb={thumb}
       onCheckedChange={() => onToggle()}
     />
   );

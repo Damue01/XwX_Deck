@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "repositoryMode": "standalone",
   "historyStrategy": "new-root-history",
-  "sourceCommit": "6ad85c55127c20d1e87f13b6a8276ef05eef3324",
+  "sourceCommit": "9b2f522d272681651cc1175eb5bcfd46ae4465db",
   "removedFeatures": [
     "configuration-sync",
     "excel-to-markdown"
@@ -20,6 +20,7 @@
     "\\bx3[_-]"
   ],
   "supplementalFixes": [
-    "c673f4d9e8f8e781b5492ee358fada5a267a45af"
+    "c673f4d9e8f8e781b5492ee358fada5a267a45af",
+    "57b8ee19859b9cea6e54b4cbc8e22b3e572a4169"
   ]
 }

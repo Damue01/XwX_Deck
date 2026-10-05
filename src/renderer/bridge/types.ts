@@ -58,6 +58,7 @@ export type UpdateStatus =
   | 'downloading' | 'ready' | 'installing' | 'error' | 'portable';
 
 export interface XwXDeckUpdateState {
+  readonly background?: boolean;
   readonly status: UpdateStatus;
   readonly currentVersion: string;
   readonly targetVersion?: string;
@@ -147,6 +148,8 @@ export interface XwXDeckRuntimeState {
   readonly backgroundGatewayActive: boolean;
   readonly backgroundGatewayAction?: 'close' | 'open';
   readonly chatGptRestartRecommended: boolean;
+  /** Claude Desktop must restart to use (`local`) or leave (`direct`) Deck's Gateway. */
+  readonly claudeDesktopRestart?: 'local' | 'direct';
   readonly externalTracePort?: number;
   readonly sessions: number;
   readonly traces: number;
@@ -313,6 +316,7 @@ export interface ModelCatalogEntry {
   readonly protocols: readonly ModelProtocol[];
   readonly protocolsDeclared?: boolean;
   readonly catalogEndpoints?: readonly ('openai' | 'anthropic' | 'gemini')[];
+  readonly officialProtocols?: readonly ModelProtocol[];
   readonly vision?: boolean;
   readonly clients: readonly ModelClient[];
   readonly reasoningLevels?: readonly string[];

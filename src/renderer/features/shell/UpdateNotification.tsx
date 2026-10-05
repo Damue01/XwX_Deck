@@ -13,10 +13,10 @@ export function announceAvailableUpdate(
   onDownloaded: (next: XwXDeckUpdateState) => void
 ): void {
   const version = update.targetVersion;
-  if (!version || !update.updateAvailable || update.status !== 'available') return;
+  if (update?.background || !version || !update.updateAvailable || update.status !== 'available') return;
   const id = `xwxdeck-update-${version}`;
   showToast(`XwX Deck ${version} 可更新`, 'info', id, {
-    description: conciseReleaseNotes(update.releaseNotes),
+    description: conciseReleaseNotes(update.releaseNotes, update.installMode),
     timeout: 5_000,
     actionProps: {
       type: 'button',
@@ -48,27 +48,27 @@ export function UpdateNotification(): null {
 
   React.useEffect(() => {
     const version = update?.targetVersion;
-    if (!version || !update.updateAvailable || update.status !== 'available') return;
+    if (update?.background || !version || !update.updateAvailable || update.status !== 'available') return;
 
-    const description = conciseReleaseNotes(update.releaseNotes);
+    const description = conciseReleaseNotes(update.releaseNotes, update.installMode);
     const signature = `${version}\u0000${description}`;
     if (notifiedSignature.current === signature) return;
     notifiedSignature.current = signature;
 
     announceAvailableUpdate(update, () => bridge.api.downloadUpdate(), next => bridge.patch({ updateState: next }));
-  }, [bridge.api, bridge.patch, update?.releaseNotes, update?.status, update?.targetVersion, update?.updateAvailable]);
+  }, [bridge.api, bridge.patch, update?.background, update?.releaseNotes, update?.status, update?.targetVersion, update?.updateAvailable]);
 
   React.useEffect(() => {
     const version = update?.targetVersion;
     if (!version || update.status === 'available') return;
-    closeToast(`xwx-deck-update-${version}`);
+    closeToast(`xwxdeck-update-${version}`);
   }, [update?.status, update?.targetVersion]);
 
   return null;
 }
 
-function conciseReleaseNotes(value: string | undefined): string {
-  const fallback = '新版本已准备好；详细内容将在有更新说明时显示。';
+function conciseReleaseNotes(value: string | undefined, installMode?: string): string {
+  const fallback = installMode === 'manual-dmg' ? '下载并校验后，打开 DMG 完成安装。' : '下载完成后重启即可更新。';
   if (!value?.trim()) return fallback;
   const lines = value
     .split(/\r?\n/)

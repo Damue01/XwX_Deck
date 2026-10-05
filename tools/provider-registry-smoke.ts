@@ -77,7 +77,7 @@ export async function testProviderRegistry(root: string): Promise<void> {
     const direct = await controller.readCodexConfig();
     assert.equal(direct.activeBaseUrl, a.baseUrl, 'Responses full shutdown preserves the exact API prefix');
     const directToml = await fs.readFile(path.join(codexHome, 'config.toml'), 'utf8');
-    assert.match(directToml, /requires_openai_auth = false/);
+    assert.match(directToml, /requires_openai_auth = true/, 'preserved ChatGPT account remains visible with a provider-scoped API key');
     assert.match(directToml, /experimental_bearer_token = "key-a"/);
     assert.equal(await fs.readFile(path.join(codexHome, 'auth.json'), 'utf8'), auth);
     await controller.start();
@@ -112,7 +112,9 @@ export async function testProviderRegistry(root: string): Promise<void> {
     assert.equal(claudeConfig.env.ANTHROPIC_BASE_URL, `${upstream}/claude`);
     assert.equal(claudeConfig.env.ANTHROPIC_API_KEY, 'claude-key');
     assert.equal(claudeConfig.env.ANTHROPIC_AUTH_TOKEN, undefined);
-    await assert.rejects(controller.saveProvider({ ...claude, adapter: 'responses' }), /正在被客户端使用/);
+    await controller.saveProvider({ ...claude, adapter: 'responses' });
+    assert.equal((await controller.readProviders()).active.claude, claude.id, 'Claude can retain a bridge-capable Responses connection');
+    await controller.saveProvider({ ...claude, adapter: 'anthropic-messages' });
     await assert.rejects(controller.updateClaudeModels({ expectedProviderId: a.id, sonnet: 'stale' }), /(?:连接|服务)已变化/);
     await controller.switchClientProvider('claude', null);
     assert.deepEqual(JSON.parse(await fs.readFile(path.join(claudeHome, 'settings.json'), 'utf8')), {});

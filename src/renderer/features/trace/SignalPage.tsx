@@ -2,13 +2,15 @@ import * as React from 'react';
 import type { ClientStateRow, ManagerTraceStats } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
 import { clearLifecycleNotice, showLifecycleNotice, showToast } from '@/lib/toast';
-import { lifecycleFailure, traceStoppedNotice } from '../../../shared/lifecycleNotice';
+import { claudeDesktopRestartNote, isTraceStopBusyError, lifecycleFailure, traceStoppedNotice } from '../../../shared/lifecycleNotice';
+import { normalizeErrorMessage } from '../../../shared/errors';
 import { tokenCostPresentation, readoutRange } from '@/lib/format';
 import { Tabs, TabsList, TabsTab } from '@/components/ui/tabs';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { ParticleField } from './ParticleField';
+import { ParticleField, emitFieldRipple } from './ParticleField';
 import { ThroughputChart } from './ThroughputChart';
 import { AppearanceButton, AppearanceDrawer, customBackgroundStyle } from './AppearanceDrawer';
+import { ReadoutDigits } from './ReadoutDigits';
 
 type PeriodKey = 'total' | 'today' | 'week';
 
@@ -17,6 +19,9 @@ const TRACE_WAITING_TOAST_ID = 'trace-waiting-client';
 const CHATGPT_RESTART_DESCRIPTION = '当前对话通常可继续使用；若连接未切换、模型未更新或对话无法继续，再完全退出并重新打开 ChatGPT。';
 const TRACE_RESTART_DESCRIPTION = '客户端可能仍在使用旧连接。先发送一条新消息；若未出现在 Trace 中或对话无法继续，再完全退出并重新打开相应客户端。';
 export const TRACE_TOGGLE_REQUEST_EVENT = 'xwxdeck:toggle-trace-request';
+// The page being left needs this long to fade out before the next one may
+// appear, even when the backend answers faster.
+const SWITCH_MIN_HIDDEN_MS = 260;
 
 interface TokenReadoutProps {
   readonly stats: ManagerTraceStats | null;
@@ -58,11 +63,14 @@ function TokenReadout({ stats, period }: TokenReadoutProps): React.ReactElement 
           <span className="readout-label" id="readoutLabel">{pres.label}{partialCost ? '（部分）' : nothingPriced ? '（无可信价格）' : ''}</span>
         </div>
         <div className="readout-value" id="readoutValue" data-range={range}>
-          {nothingPriced
-            ? '—'
-            : pres.unit && pres.unit !== '' && pres.unit !== '$'
-              ? `${pres.value}${pres.unit}`
-              : pres.unit === '$' ? `$${pres.value}` : pres.value}
+          <ReadoutDigits
+            mode={showCost ? 'cost' : 'tokens'}
+            text={nothingPriced
+              ? '—'
+              : pres.unit && pres.unit !== '' && pres.unit !== '$'
+                ? `${pres.value}${pres.unit}`
+                : pres.unit === '$' ? `$${pres.value}` : String(pres.value)}
+          />
           {partialCost ? <span className="readout-partial" aria-hidden="true">+</span> : null}
         </div>
       </div>
@@ -109,7 +117,10 @@ export function SignalPage({ active }: Props): React.ReactElement {
   const [appearanceOpen, setAppearanceOpen] = React.useState(() => (
     typeof location !== 'undefined' && new URLSearchParams(location.search).get('appearance') === '1'
   ));
-  const [toggling, setToggling] = React.useState(false);
+  // True while a switch this page started is still running. Both layouts
+  // stay hidden until then: the click ripple is the immediate answer, and the
+  // next page appears as a whole only once its controls really work.
+  const [pending, setPending] = React.useState(false);
   const [busyClients, setBusyClients] = React.useState<ReadonlySet<string>>(() => new Set());
   const togglingRef = React.useRef(false);
   const busyClientRef = React.useRef(new Set<string>());
@@ -117,6 +128,10 @@ export function SignalPage({ active }: Props): React.ReactElement {
   const initialRestartNoticeCheckedRef = React.useRef(false);
 
   const capturing = bridge.runtime?.tracingEnabled === true;
+  // Tray and connection-notice switches report through traceTransition and
+  // get the same hidden-until-ready treatment.
+  const transition = bridge.runtime?.traceTransition;
+  const hidden = pending || !!transition;
   const clients = bridge.runtime?.clients ?? [];
   const series = bridge.traceStats?.series ?? [];
   const appearance = bridge.runtime?.traceAppearance;
@@ -129,6 +144,12 @@ export function SignalPage({ active }: Props): React.ReactElement {
   React.useEffect(() => {
     document.body.dataset.capturing = String(capturing);
   }, [capturing]);
+
+  React.useEffect(() => {
+    if (hidden) document.body.dataset.traceSwitching = 'true';
+    else delete document.body.dataset.traceSwitching;
+    return () => { delete document.body.dataset.traceSwitching; };
+  }, [hidden]);
 
   React.useEffect(() => {
     if (!bridge.booted || !bridge.runtime || initialRestartNoticeCheckedRef.current) return;
@@ -172,7 +193,8 @@ export function SignalPage({ active }: Props): React.ReactElement {
     // A transition reported by runtime means one is already in flight.
     if (togglingRef.current || bridge.runtime?.traceTransition) return;
     togglingRef.current = true;
-    setToggling(true);
+    setPending(true);
+    const startedAt = performance.now();
     try {
       const next = await bridge.api.toggleTracing(!capturing);
       bridge.patch({ runtime: next });
@@ -182,40 +204,56 @@ export function SignalPage({ active }: Props): React.ReactElement {
         // The persistent connection notice explains which client did not join.
         clearLifecycleNotice();
       } else if (next.tracingEnabled) {
-        showLifecycleNotice({ message: 'Trace 已开启', type: 'success', description: TRACE_RESTART_DESCRIPTION }, TRACE_WAITING_TOAST_ID);
+        showLifecycleNotice({
+          message: 'Trace 已开启',
+          type: next.claudeDesktopRestart === 'local' ? 'info' : 'success',
+          description: next.claudeDesktopRestart === 'local' ? claudeDesktopRestartNote('local') : TRACE_RESTART_DESCRIPTION
+        }, TRACE_WAITING_TOAST_ID);
       } else {
-        showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close'));
+        showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart));
       }
     } catch (e) {
       void bridge.api.getState().then(runtime => bridge.patch({ runtime })).catch(() => undefined);
-      if (capturing && /仍有.*AI 请求|等待工具调用/.test(e instanceof Error ? e.message : String(e))) {
-        const reason = e instanceof Error ? e.message : String(e);
+      if (capturing && isTraceStopBusyError(e)) {
+        // One choice only: waiting keeps Trace on and leaves no notice behind.
+        // Trace is still on while the user decides, so the page shows it on.
+        setPending(false);
         const force = await confirm({
-          title: '强制停止 Trace？',
-          body: `正常停止未完成：${reason}\n\n继续后会中断仍在传输的请求，并尽力恢复客户端直连配置。`,
+          title: '关闭 Trace？',
+          body: `${normalizeErrorMessage(e)}现在关闭会中断它们；继续等待则保持 Trace 开启。`,
           cancelText: '继续等待',
           confirmText: '强制停止',
-          tone: 'danger',
-          size: 'wide'
+          tone: 'danger'
         });
-        if (force) {
-          try {
-            const next = await bridge.api.toggleTracing(false, true);
-            bridge.patch({ runtime: next });
-            showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close'));
-            return;
-          } catch (forceError) {
-            showLifecycleNotice(lifecycleFailure(forceError, '强制停止 Trace'));
-            return;
-          }
+        if (!force) return;
+        setPending(true);
+        try {
+          const next = await bridge.api.toggleTracing(false, true);
+          bridge.patch({ runtime: next });
+          showLifecycleNotice(next.lastError
+            ? lifecycleFailure(next.lastError, '恢复客户端配置')
+            : traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart));
+        } catch (forceError) {
+          showLifecycleNotice(lifecycleFailure(forceError, '强制停止 Trace'));
         }
+        return;
       }
       showLifecycleNotice(lifecycleFailure(e, capturing ? '停止 Trace' : '开启 Trace'));
     } finally {
+      const left = SWITCH_MIN_HIDDEN_MS - (performance.now() - startedAt);
+      if (left > 0) await new Promise(resolve => setTimeout(resolve, left));
       togglingRef.current = false;
-      setToggling(false);
+      setPending(false);
     }
   }, [capturing, bridge.api, bridge.patch, bridge.runtime?.traceTransition, confirm]);
+
+  // Immediate response to the dial: a ripple leaves the button on this frame
+  // while the page fades out.
+  const handleDialClick = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    emitFieldRipple(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    void handleToggle();
+  }, [handleToggle]);
 
   React.useEffect(() => {
     const requestToggle = () => { void handleToggle(); };
@@ -280,15 +318,14 @@ export function SignalPage({ active }: Props): React.ReactElement {
         </div>
 
         {/* Idle state */}
-        <div className="idle-state" inert={capturing}>
+        <div className="idle-state" inert={capturing || hidden}>
           <button
             type="button"
             className="capture-dial"
             id="captureBtn"
             aria-pressed={capturing}
             aria-label="开启 Trace"
-            disabled={toggling || !!bridge.runtime?.traceTransition}
-            onClick={handleToggle}
+            onClick={handleDialClick}
           >
             <svg viewBox="0 0 30 30" aria-hidden="true">
               <path d="M11.6 8.6 11.6 21.4 22.4 15 Z" fill="currentColor" stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round" />
@@ -301,13 +338,10 @@ export function SignalPage({ active }: Props): React.ReactElement {
               ))}
             </div>
           </div>
-          {bridge.runtime?.backgroundGatewayAction === 'close' ? (
-            <p className="idle-connection-note">关闭未完成 · 后台仍在运行</p>
-          ) : null}
         </div>
 
         {/* Live board */}
-        <div className="live-layout" id="liveBoard" inert={!capturing}>
+        <div className="live-layout" id="liveBoard" inert={!capturing || hidden}>
           <div className="signal-top">
             <div className="srcs" role="group" aria-label="捕获来源">
               {clients.map(c => (
@@ -330,8 +364,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
                 className="stop-dial"
                 id="stopCaptureBtn"
                 aria-label="关闭 Trace"
-                disabled={toggling || !!bridge.runtime?.traceTransition}
-                onClick={handleToggle}
+                onClick={handleDialClick}
               />
             </div>
           </div>

@@ -16,9 +16,9 @@ export function ProviderPicker({ registry, client, disabled, value, onChange }: 
     ...(registry?.connections ?? []).filter(p => supportsProviderClient(p, client)).map(p => ({ id: p.id, label: p.displayName }))
   ], [registry, client, external]);
   const clientLabel = client === 'codex' ? 'ChatGPT' : 'Claude';
-  const selectedItem = items.find(item => item.id === selectedId)
-    ?? { id: selectedId, label: '所选服务已移除' };
-  return <div className="xwx-combobox">
+  const knownItem = items.find(item => item.id === selectedId);
+  const selectedItem = knownItem ?? { id: selectedId, label: '所选服务已移除' };
+  return <div className="xwx-combobox" data-missing={registry && !knownItem ? '' : undefined}>
     <Combobox items={items} value={selectedItem}
       itemToStringLabel={p => p.label} isItemEqualToValue={(a, b) => a.id === b.id}
       onValueChange={p => { if (p && p.id !== '__external__') onChange(p.id || null); }} disabled={disabled || !registry}>

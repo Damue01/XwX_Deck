@@ -152,9 +152,9 @@ export function ComboboxList({
   ...props
 }: ComboboxPrimitive.List.Props): React.ReactElement {
   return (
-    <ScrollArea scrollbarGutter scrollFade>
+    <ScrollArea scrollFade>
       <ComboboxPrimitive.List
-        className={cn("not-empty:scroll-py-1 not-empty:px-1 not-empty:py-1 in-data-has-overflow-y:pe-3", className)}
+        className={cn("not-empty:scroll-py-1 not-empty:px-1 not-empty:py-1", className)}
         data-slot="combobox-list"
         {...props}
       />

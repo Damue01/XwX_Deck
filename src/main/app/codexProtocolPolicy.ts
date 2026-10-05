@@ -22,8 +22,7 @@ export function resolveProviderCodexProtocol(
   const fallback = provider?.codexApiFormat ?? 'responses';
   if (!entry) return fallback;
   if (entry.protocolsDeclared) return resolveCatalogCodexProtocol(entry, fallback);
-  // An Anthropic-only directory publishes a Messages route. A generic OpenAI
-  // directory does not distinguish Responses from Chat: keep its connection default.
+  // Directory membership is evidence; vendor/name-based routing is not.
   if (entry.catalogEndpoints) {
     return entry.catalogEndpoints.includes('anthropic') && !entry.catalogEndpoints.includes('openai')
       ? 'anthropic-messages' : fallback;
@@ -45,6 +44,33 @@ export function resolveCatalogCodexProtocol(entry: ModelCatalogEntry, fallback: 
   if (protocols.has('chat-completions')) return 'chat-completions';
   if (protocols.has('anthropic-messages')) return 'anthropic-messages';
   return fallback;
+}
+
+export type ClaudeModelProtocol = 'anthropic-messages' | 'responses' | 'chat-completions';
+
+/**
+ * How a Claude client reaches this model. Messages is native; Responses and
+ * Chat Completions go through the local Gateway's Messages bridge (needs Trace).
+ * Undefined: the model cannot serve a Claude conversation.
+ */
+export function resolveClaudeModelProtocol(
+  provider: Partial<Pick<ProviderConnection, 'adapter' | 'codexApiFormat'>> | undefined,
+  entry: ModelCatalogEntry
+): ClaudeModelProtocol | undefined {
+  if (isKnownNonConversationalModel(entry.id)) return undefined;
+  const protocols = new Set(entry.protocols);
+  if (protocols.has('anthropic-messages')) return 'anthropic-messages';
+  // A Messages-only connection has no OpenAI endpoint to bridge to.
+  if (provider?.adapter === 'anthropic-messages') return undefined;
+  if (protocols.has('openai-responses')) return 'responses';
+  if (protocols.has('chat-completions')) return 'chat-completions';
+  if (entry.protocolsDeclared || protocols.size) return undefined;
+  // Missing protocol metadata keeps the current connection default.
+  if (entry.catalogEndpoints?.includes('openai')) {
+    const preferred = provider?.codexApiFormat === 'chat-completions' ? 'chat-completions' : 'responses';
+    return preferred;
+  }
+  return undefined;
 }
 
 /** Models whose published purpose is not a conversational coding-agent turn. */

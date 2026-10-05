@@ -73,8 +73,7 @@ function formatBytes(value: number | undefined): string {
 }
 
 function formatTime(value: string | undefined): string {
-  const formatted = formatTableTime(value);
-  return [formatted.primary, formatted.secondary].filter(Boolean).join(' ');
+  return formatTableTime(value).full;
 }
 
 function formatScanTimestamp(value: string): string {
@@ -91,23 +90,23 @@ function formatScanTimestamp(value: string): string {
 }
 
 function formatTableTime(value: string | undefined): {
-  readonly primary: string;
-  readonly secondary: string;
+  readonly short: string;
   readonly full: string;
 } {
-  if (!value) return { primary: '—', secondary: '', full: '无更新时间' };
+  if (!value) return { short: '—', full: '无更新时间' };
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return { primary: value, secondary: '', full: value };
+  if (Number.isNaN(date.getTime())) return { short: value, full: value };
+  const now = new Date();
   const twoDigits = (part: number): string => String(part).padStart(2, '0');
   const month = twoDigits(date.getMonth() + 1);
   const day = twoDigits(date.getDate());
-  const hour = twoDigits(date.getHours());
-  const minute = twoDigits(date.getMinutes());
+  const clock = `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
   const year = String(date.getFullYear());
+  const sameYear = date.getFullYear() === now.getFullYear();
+  const today = sameYear && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
   return {
-    primary: `${month}月${day}日`,
-    secondary: `${hour}:${minute} · ${year}`,
-    full: `${year}年${month}月${day}日 ${hour}:${minute}`
+    short: today ? `今天 ${clock}` : sameYear ? `${month}月${day}日` : `${year}年${month}月`,
+    full: `${year}年${month}月${day}日 ${clock}`
   };
 }
 
@@ -234,74 +233,52 @@ function ConversationFieldList({
               <dd title={field.value}>{field.value}</dd>
             </div>
           ))
-        : <div><dt>记录</dt><dd>{empty}</dd></div>}
+        : <div><dt>记录</dt><dd className="conversation-fallback">{empty}</dd></div>}
     </dl>
   );
 }
 
-function ConversationPathChain({
-  row,
-  onCopy
-}: {
-  readonly row: CodexConversationHealthRow;
-  readonly onCopy: (label: string, value: string) => void;
-}): React.ReactElement {
-  const actualPath = row.resolvedPath
-    || (row.candidatePaths.length > 1 ? '找到多个同 ID 文件，未唯一确定' : '未找到文件');
-  const chain = [
-    ['SQLite 数据库', row.databasePaths.join(' · ') || '未进入索引', row.databasePaths.join('\n'), 'SQLite 数据库路径'],
-    ['threads.id', row.indexed ? row.threadId : '未进入索引', row.indexed ? row.threadId : '', 'Thread ID'],
-    ['threads.rollout_path', row.rolloutPath || '空', row.rolloutPath || '', 'rollout_path'],
-    ['实际找到的 JSONL', actualPath, row.resolvedPath || '', 'JSONL 文件路径'],
-    ['session_meta.id', row.sessionId || '无法读取', row.sessionId || '', 'Session ID']
-  ] as const;
+function ConversationFileTable({ row }: { readonly row: CodexConversationHealthRow }): React.ReactElement {
+  // [label, shown value, whether the value is real data (selectable code) or a fallback]
+  const rows: ReadonlyArray<readonly [string, string, boolean]> = [
+    ['SQLite 数据库', row.databasePaths.join('\n') || '未找到', row.databasePaths.length > 0],
+    ['threads.id', row.indexed ? row.threadId : '未进入索引', row.indexed && !!row.threadId],
+    ['threads.rollout_path', row.rolloutPath || '空', !!row.rolloutPath],
+    ['实际找到的 JSONL', row.resolvedPath || (row.candidatePaths.length > 1 ? '未唯一确定，见上方结论' : '未找到文件'), !!row.resolvedPath],
+    ['session_meta.id', row.sessionId || '无法读取', !!row.sessionId]
+  ];
+  const facts: ReadonlyArray<readonly [string, string]> = [
+    ['目录', locationLabel(row.location)],
+    ['大小', formatBytes(row.fileSize)],
+    ['修改时间', formatTime(row.fileModifiedAt)]
+  ];
 
   return (
-    <div className="conversation-path-chain" aria-label="SQLite 到 JSONL 的路径链路">
-      {chain.map(([label, value, copyValue, copyLabel], index) => (
-        <React.Fragment key={label}>
-          <div>
-            <b>{label}</b>
-            {copyValue ? (
-              <button
-                type="button"
-                className="conversation-copy-value"
-                aria-label={`复制${copyLabel}`}
-                title={`点击复制${copyLabel}`}
-                onClick={() => onCopy(copyLabel, copyValue)}
-              >
-                <code>{value}</code>
-              </button>
-            ) : <code title={value}>{value}</code>}
-          </div>
-          {index < chain.length - 1 && <span aria-hidden="true">→</span>}
-        </React.Fragment>
+    <dl className="conversation-file-table" aria-label="会话文件">
+      {rows.map(([label, value, real]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>
+            {real
+              ? <code>{value}</code>
+              : <span className="conversation-fallback">{value}</span>}
+          </dd>
+        </div>
       ))}
-    </div>
+      {facts.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
-function ConversationPathList({
-  paths,
-  onCopy
-}: {
-  readonly paths: readonly string[];
-  readonly onCopy: (label: string, value: string) => void;
-}): React.ReactElement {
+function ConversationPathList({ paths }: { readonly paths: readonly string[] }): React.ReactElement {
   return (
     <div className="conversation-path-list">
-      {paths.map(candidate => (
-        <button
-          type="button"
-          className="conversation-copy-value"
-          aria-label={`复制 JSONL 文件路径：${fileName(candidate)}`}
-          title="点击复制 JSONL 文件路径"
-          onClick={() => onCopy('JSONL 文件路径', candidate)}
-          key={candidate}
-        >
-          <code>{candidate}</code>
-        </button>
-      ))}
+      {paths.map(candidate => <code key={candidate}>{candidate}</code>)}
     </div>
   );
 }
@@ -327,14 +304,6 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
   const requestSequenceRef = React.useRef(0);
   const snapshotIdRef = React.useRef('');
   const deferredQuery = React.useDeferredValue(query);
-
-  const copyValue = React.useCallback((label: string, value: string): void => {
-    void bridge.api.copyText(value).then(() => {
-      showToast(`已复制 ${label}`, 'success');
-    }).catch(() => {
-      showToast('复制失败', 'error');
-    });
-  }, [bridge.api]);
 
   const loadPage = React.useCallback(async (refresh = false) => {
     if (!activeRef.current) return;
@@ -376,7 +345,6 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
       const message = diagnosticError(scanError);
       if (message.includes('扫描已取消')) return;
       setError(message);
-      showToast(message, 'error');
     } finally {
       if (mountedRef.current && activeRequestRef.current === requestId) {
         activeRequestRef.current = '';
@@ -448,7 +416,7 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
       {loading && !report && (
         <div className="conversation-loading" aria-live="polite">
           <LoaderCircle className="conversation-spin" aria-hidden="true" />
-          <span>正在读取会话索引和 Session 元数据</span>
+          <span>正在读取会话…</span>
         </div>
       )}
 
@@ -482,11 +450,9 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
               aria-live="polite"
               title={`生成于 ${formatTime(report.generatedAt)}；扫描 ${report.performance.durationMs} ms；复用 ${report.performance.reusedRollouts} 个 Session 文件`}
             >
-              {loading
-                ? '扫描中'
-                : report.scanComplete
-                  ? `上次扫描 ${formatScanTimestamp(report.generatedAt)}`
-                  : `扫描不完整 · ${formatScanTimestamp(report.generatedAt)}`}
+              {report.scanComplete
+                ? `上次扫描 ${formatScanTimestamp(report.generatedAt)}`
+                : `扫描不完整，${formatScanTimestamp(report.generatedAt)}`}
             </span>
             <button
               type="button"
@@ -505,14 +471,14 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
               {report.scanIssues.map((issue, index) => (
                 <span data-severity={issue.severity} key={`${issue.code}:${index}`} title={issue.detail}>
                   <b>{issue.title}</b>
-                  <code>{issue.detail}</code>
+                  <span>{issue.detail}</span>
                 </span>
               ))}
             </div>
           )}
           {error && (
             <div className="conversation-scan-issues" role="status">
-              <span data-severity="error"><b>刷新失败</b><code>{error}</code></span>
+              <span data-severity="error"><b>刷新失败</b><span>{error}</span></span>
             </div>
           )}
 
@@ -576,7 +542,7 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                   const resultSummary = [
                     row.primaryIssueTitle,
                     row.issueCount > 1 ? `另 ${row.issueCount - 1} 项` : ''
-                  ].filter(Boolean).join(' · ');
+                  ].filter(Boolean).join('，');
                   const updatedValue = row.updatedAt || row.fileModifiedAt;
                   const updatedTime = formatTableTime(updatedValue);
                   const toggleExpanded = (): void => {
@@ -608,6 +574,7 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                       >
                         <td>
                           <span className="conversation-name">
+                            <ChevronRight className="disclosure-chevron" aria-hidden="true" />
                             <strong title={row.title || '未命名任务'}>{row.title || '未命名任务'}</strong>
                           </span>
                         </td>
@@ -627,8 +594,7 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                             title={updatedTime.full}
                             aria-label={updatedTime.full}
                           >
-                            <span>{updatedTime.primary}</span>
-                            {updatedTime.secondary && <small>{updatedTime.secondary}</small>}
+                            {updatedTime.short}
                           </time>
                         </td>
                       </tr>
@@ -639,7 +605,7 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                               {!detail && detailLoadingId === row.threadId && (
                                 <div className="conversation-detail-loading" aria-live="polite">
                                   <LoaderCircle className="conversation-spin" aria-hidden="true" />
-                                  <span>正在读取 SQLite 与 Session 详情</span>
+                                  <span>正在读取详情…</span>
                                 </div>
                               )}
                               {!detail && detailLoadingId !== row.threadId && (
@@ -649,41 +615,39 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
                               )}
                               {detail && (
                                 <>
-                                  {detail.issues.length > 0 && (
+                                  <h4 className="conversation-detail-title">结论</h4>
+                                  {detail.issues.length > 0 ? (
                                     <ul>
                                       {detail.issues.map((issue, issueIndex) => (
                                         <li data-severity={issue.severity} key={`${issue.code}:${issueIndex}`}>
                                           <strong>{issue.title}</strong>
                                           {issue.code === 'multiple_rollout_candidates'
-                                            ? <ConversationPathList paths={detail.candidatePaths} onCopy={copyValue} />
+                                            ? <ConversationPathList paths={detail.candidatePaths} />
                                             : <span>{issue.detail}</span>}
                                         </li>
                                       ))}
                                     </ul>
-                                  )}
-                                  <ConversationPathChain row={detail} onCopy={copyValue} />
-                                  <div className="conversation-file-facts">
-                                    <span><b>目录</b>{locationLabel(detail.location)}</span>
-                                    <span><b>大小</b>{formatBytes(detail.fileSize)}</span>
-                                    <span><b>修改时间</b>{formatTime(detail.fileModifiedAt)}</span>
-                                    <span><b>{hasSegments ? '会话片段' : '同 ID 文件'}</b>{detail.candidatePaths.length}</span>
-                                  </div>
+                                  ) : <p className="conversation-detail-ok">没有发现问题。</p>}
+                                  <h4 className="conversation-detail-title">文件</h4>
+                                  <ConversationFileTable row={detail} />
                                   {hasSegments && (
                                     <div className="conversation-candidates">
-                                      <b>续写片段</b>
-                                      <ConversationPathList paths={detail.candidatePaths} onCopy={copyValue} />
+                                      <ConversationPathList paths={detail.candidatePaths} />
                                     </div>
                                   )}
-                                  <div className="conversation-field-groups">
-                                    <section>
-                                      <h4>SQLite · threads</h4>
-                                      <ConversationFieldList fields={detail.sqliteFields} empty="未进入索引" />
-                                    </section>
-                                    <section>
-                                      <h4>JSONL · session_meta</h4>
-                                      <ConversationFieldList fields={detail.sessionFields} empty="无法读取" />
-                                    </section>
-                                  </div>
+                                  <details className="conversation-raw">
+                                    <summary><ChevronRight className="disclosure-chevron" aria-hidden="true" />原始字段</summary>
+                                    <div className="conversation-field-groups">
+                                      <section>
+                                        <h4>SQLite threads</h4>
+                                        <ConversationFieldList fields={detail.sqliteFields} empty="无记录" />
+                                      </section>
+                                      <section>
+                                        <h4>JSONL session_meta</h4>
+                                        <ConversationFieldList fields={detail.sessionFields} empty="无记录" />
+                                      </section>
+                                    </div>
+                                  </details>
                                   {isDesktop() && detail.resolvedPath && (
                                     <div className="conversation-open-actions">
                                       <button
@@ -710,10 +674,27 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
               </tbody>
             </table>
             {!pageRows.length && (
-              <div className="conversation-empty">
-                <strong>没有符合条件的对话</strong>
-                <span>调整搜索词或状态筛选。</span>
-              </div>
+              query.trim() || filter !== 'all' ? (
+                <div className="conversation-empty">
+                  <strong>没有符合筛选的会话</strong>
+                  <button
+                    type="button"
+                    className="txt-action"
+                    onClick={() => {
+                      setQuery('');
+                      setFilter('all');
+                      setSelectedId('');
+                      setPage(0);
+                    }}
+                  >
+                    清除筛选
+                  </button>
+                </div>
+              ) : (
+                <div className="conversation-empty">
+                  <strong>还没有会话记录</strong>
+                </div>
+              )
             )}
           </div>
 
@@ -751,7 +732,7 @@ function ConversationHealthTool({ active }: { active: boolean }): React.ReactEle
             </nav>
           )}
 
-          {report.truncated && <p className="conversation-scope-note">结果数量已达到显示上限。</p>}
+          {report.truncated && <p className="conversation-scope-note">仅显示前 5,000 条（异常优先）</p>}
         </>
       )}
     </div>
@@ -770,7 +751,6 @@ export function ToolsPage({ active }: Props): React.ReactElement {
         <div className="page-head tool-head">
           <div>
             <h1>工具</h1>
-            <p>检查 ChatGPT 本地对话索引、Session 文件与 Provider 元数据是否一致。</p>
           </div>
         </div>
         <ConversationHealthTool active={active} />

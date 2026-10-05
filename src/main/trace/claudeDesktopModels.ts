@@ -1,6 +1,10 @@
 import { createHash } from 'crypto';
 import type { ModelCatalogEntry } from '../app/modelCatalog';
 import type { ClaudeModelSettings } from '../app/settings';
+import { resolveClaudeModelProtocol } from '../app/codexProtocolPolicy';
+import { isClaudeDesktopCompatibleModelId } from '../../shared/claudeDesktopModelId';
+
+export { isClaudeDesktopCompatibleModelId };
 
 export interface ClaudeDesktopModel {
   readonly id: string;
@@ -16,10 +20,11 @@ export function buildClaudeDesktopModels(
   catalog: readonly ModelCatalogEntry[],
   defaults: ClaudeModelSettings
 ): ClaudeDesktopModel[] {
+  // Callers pass the provider-filtered catalog; bridged Responses/Chat models
+  // are listed too and reach their service through the local Gateway.
   const conversational = catalog.filter(entry => (
-    entry.protocols.includes('anthropic-messages')
-    && entry.clients.includes('claude')
-    && entry.id.trim().length > 0
+    entry.id.trim().length > 0
+    && resolveClaudeModelProtocol(undefined, entry) !== undefined
   ));
   const roles = new Map<string, keyof ClaudeModelSettings>();
   for (const role of ['fable', 'opus', 'sonnet', 'haiku'] as const) {
@@ -91,17 +96,6 @@ function claudeDesktopModelName(
   while (usedNames.has(name)) name = `${base}${legacy ? '-' : ':'}${suffix++}`;
   usedNames.add(name);
   return name;
-}
-
-function isClaudeDesktopCompatibleModelId(modelId: string): boolean {
-  const value = modelId.trim().toLowerCase();
-  // Desktop 2.2553.1.0 rejects these vendor tokens even inside a name that
-  // starts with "claude-". This is a client-side heuristic, not an API contract.
-  if (/ark-code|astron|command-r|deepseek|doubao|gemini|gemma|glm|gpt|grok|hermes|hy3|kimi|lfm|\bling\b|llama|longcat|mimo|minimax|mistral|mixtral|moonshot|nemotron|openai|phi-|qianfan|qwen|tc-code|\bunic\b|yi-|stepfun|step-3|seed-|bytedance|hunyuan|granite|amazon\.nova|nova-|devstral|ministral|ernie|codex|arcee|trinity|abab|phi\d|\bk2\.|\bm2\.|jamba|arctic|solar|mercury|zamba|kat-coder|\bds-|dpsk/.test(value)) {
-    return false;
-  }
-  return /^claude-(?:haiku|sonnet|opus|fable|mythos)(?:[-.@:]|$)/.test(value)
-    || /(?:^|[./])anthropic\.claude-(?:haiku|sonnet|opus|fable|mythos)(?:[-.@:]|$)/.test(value);
 }
 
 function inferTier(modelId: string): keyof ClaudeModelSettings {

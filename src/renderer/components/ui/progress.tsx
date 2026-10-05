@@ -21,7 +21,7 @@ export function ProgressTrack({ className, ...props }: ProgressPrimitive.Track.P
 }
 
 export function ProgressIndicator({ className, ...props }: ProgressPrimitive.Indicator.Props): React.ReactElement {
-  return <ProgressPrimitive.Indicator className={cn("bg-primary transition-all duration-500", className)} data-slot="progress-indicator" {...props} />;
+  return <ProgressPrimitive.Indicator className={cn("bg-primary transition-all duration-240", className)} data-slot="progress-indicator" {...props} />;
 }
 
 export function ProgressValue({ className, ...props }: ProgressPrimitive.Value.Props): React.ReactElement {

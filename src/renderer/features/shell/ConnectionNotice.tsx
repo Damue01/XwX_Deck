@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { X } from 'lucide-react';
 import { useBridge } from '@/bridge/store';
-import { isPersistentLifecycleNotice, lifecycleFailure, traceStoppedNotice, type LifecycleNotice } from '../../../shared/lifecycleNotice';
+import { claudeDesktopRestartNote, isPersistentLifecycleNotice, lifecycleFailure, traceStoppedNotice, type LifecycleNotice } from '../../../shared/lifecycleNotice';
 import { LIFECYCLE_NOTICE_EVENT, TRACE_ACTION_EVENT, noticeActionLabel, runNoticeAction, showLifecycleNotice, showToast } from '@/lib/toast';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 
@@ -52,11 +52,11 @@ export function ConnectionNotice(): React.ReactElement | null {
           // The persistent connection notice explains the incomplete takeover.
           setNotice(null);
         } else if (next.tracingEnabled) {
-          // The model page resumes a selection that was waiting for Trace, so this
-          // must not ask for a re-selection the user may not owe.
-          showLifecycleNotice({ message: 'Trace 已开启', description: '本地转发与协议转换已开启。刚才因缺少 Trace 未完成的模型选择会自动继续；若客户端连接失败，请完全退出并重新打开。', type: 'success' });
+          showLifecycleNotice(next.claudeDesktopRestart === 'local'
+            ? { message: 'Trace 已开启', description: claudeDesktopRestartNote('local'), type: 'info' }
+            : { message: 'Trace 已开启', description: '没有新记录时，重开客户端。', type: 'success' });
         } else {
-          showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close'));
+          showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart));
         }
       } catch (error) {
         void api.getState().then(state => patch({ runtime: state })).catch(() => undefined);

@@ -66,6 +66,22 @@ check(workflows.includes('--draft'), 'release workflow must create a draft befor
 for (const [label, content] of Object.entries({ app, rail, preload, handlers })) {
   check(!/SyncPage|config-sync|excel-progress|convert-excel|choose-excel|open-excel|read-excel/.test(content), `${label} still exposes a removed feature`);
 }
+check(contract.platforms.windows.installMode === 'automatic', 'Windows update mode must remain automatic');
+check(contract.platforms.macosArm64.installMode === 'manual-dmg' && contract.platforms.macosArm64.automaticInstall === false,
+  'unsigned macOS must use manual DMG installation');
+check(!updater.includes('MacUpdater'), 'unsigned macOS must not instantiate MacUpdater');
+check(packageJson.build.mac.target.length === 1 && packageJson.build.mac.target[0] === 'dmg'
+  && !packageJson.scripts['build:mac:arm64'].includes('dmg zip'), 'public macOS build must ship DMG only');
+check(!workflows.includes('latest-mac.yml') && !workflows.includes('mac-arm64.zip'), 'public workflow cannot publish a Mac auto-update feed');
+check(esbuild.includes("'portable-update-worker': 'src/main/portableUpdateWorker.ts'"), 'portable update worker must be bundled');
+check(workflows.includes('npm run test:upstream'), 'CI/release must run update and interaction regressions');
+const nightly = await readText('src/main/update/nightlyUpdate.ts');
+check(JSON.stringify(contract.updates.nightly.windowLocalHours) === JSON.stringify([2, 5])
+  && nightly.includes('NIGHTLY_WINDOW_START_HOUR = 2') && nightly.includes('NIGHTLY_WINDOW_END_HOUR = 5')
+  && contract.updates.nightly.idleThresholdSeconds === 900 && nightly.includes('NIGHTLY_IDLE_THRESHOLD_SECONDS = 15 * 60'),
+  'nightly update schedule must match the release contract');
+check(updater.includes('saveDeclinedVersion(cancelledVersion)') && updater.includes('confirmReleaseSelection'),
+  'update cancellation must persist and installation must revalidate the release');
 if (failures.length) {
   console.error('Release contract check failed:');
   for (const failure of failures) console.error(`- ${failure}`);

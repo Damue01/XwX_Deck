@@ -6,6 +6,7 @@ import { applyTraceIndexRepair, inspectTraceIndexRepair, type AppliedTraceIndexR
 import { providerProfile, normalizeProviderPreset, detectProviderPreset } from '../../shared/providerProfiles';
 import { randomUUID, createHash } from 'crypto';
 import type { ProviderConnection, ProviderClient, ProviderInput, ProviderSnapshot } from '../../shared/providers';
+import type { ClaudeDesktopRestartHint } from '../../shared/lifecycleNotice';
 import {
   providerNameError,
   providerCodexId,
@@ -40,7 +41,7 @@ import {
 import {
   buildClaudeDesktopModelAliases,
   buildClaudeDesktopModels,
-  claudeDesktopNeedsLocalGateway
+  isClaudeDesktopCompatibleModelId
 } from '../trace/claudeDesktopModels';
 import {
   CodexConfigManager,
@@ -99,6 +100,7 @@ import {
   fetchCompatibleServiceModelCatalog,
   ModelCatalogEntry,
   readCompatibleServiceModelCatalogCache,
+  sameCachedModelCatalog,
   writeCompatibleServiceModelCatalogCache
 } from './modelCatalog';
 import { findBuiltInModelCapability } from './builtInModelCapabilityRegistry';
@@ -107,6 +109,7 @@ import {
   CodexProtocol,
   isKnownNonConversationalModel,
   isOfficialCodexModelId,
+  resolveClaudeModelProtocol,
   resolveProviderCodexProtocol,
   providerRequiresTrace
 } from './codexProtocolPolicy';
@@ -119,7 +122,7 @@ import {
   TraceAppearanceSettings
 } from './settings';
 import type { StartupSettingsSnapshot } from './startup';
-import { isChatGptRunning, isClaudeRunning } from './chatGptLifecycle';
+import { isChatGptRunning, isClaudeDesktopRunning, isClaudeRunning } from './chatGptLifecycle';
 
 type Role = 'owner' | 'follower';
 export type ClientId = 'claude-cli' | 'codex-cli';
@@ -148,6 +151,9 @@ export interface XwXDeckRuntimeState {
   readonly backgroundGatewayActive: boolean;
   readonly backgroundGatewayAction?: 'close' | 'open';
   readonly chatGptRestartRecommended: boolean;
+  /** Claude Desktop was running when its profile moved to (`local`) or away
+   * from (`direct`) Deck's Gateway; it reads the new address after a restart. */
+  readonly claudeDesktopRestart?: ClaudeDesktopRestartHint;
   /** XwX-managed provider sections referenced by history but absent from config.toml. */
   readonly missingCodexHistoryProviders: readonly string[];
   readonly externalTracePort?: number;
@@ -235,6 +241,8 @@ export interface XwXDeckControllerOptions {
   readonly codexHistoryMutationAllowed?: () => Promise<boolean>;
   /** Test hook for deciding whether a newly published Gateway needs a client restart notice. */
   readonly chatGptRunning?: () => Promise<boolean>;
+  /** Test hook for the Claude Desktop restart notice after a profile switch. */
+  readonly claudeRunning?: () => Promise<boolean>;
   /** Resolve the OS proxy for each upstream before publishing a client route. */
   readonly resolveUpstreamProxyUrl?: (url: string) => Promise<string | undefined>;
 }
@@ -257,15 +265,17 @@ export interface XwXDeckForceExitResult {
   readonly dependentClients: readonly ClientId[];
 }
 
+/** A normal stop would interrupt replies the user is waiting for. The
+ * message is shown as-is in the single wait / force-stop choice. */
 export class ShutdownDrainTimeoutError extends Error {
   constructor(
-    readonly activeRequests: number,
+    readonly activeResponses: number,
     readonly pendingContinuations: number
   ) {
-    const activity = activeRequests > 0
-      ? `仍有 ${activeRequests} 个 AI 请求通过 XwX Deck 传输。`
-      : 'AI 对话仍在等待工具调用继续。';
-    super(`${activity}Trace 关闭未完成，后台继续运行。请等待回复和工具调用结束后重试关闭。`);
+    const parts: string[] = [];
+    if (activeResponses > 0) parts.push(`${activeResponses} 个回复正在生成`);
+    if (pendingContinuations > 0) parts.push(`${pendingContinuations} 个会话正在等待工具调用继续`);
+    super(`${parts.join('，') || '有回复正在生成'}。`);
     this.name = 'ShutdownDrainTimeoutError';
   }
 
@@ -383,6 +393,9 @@ export class XwXDeckController {
   private compatibleServiceCatalog: readonly ModelCatalogEntry[] = [];
   private claudeDesktopCatalog: readonly ModelCatalogEntry[] = [];
   private claudeDesktopGatewayEnabled = false;
+  /** With Trace off, the selected service has no model Desktop can use directly. */
+  private claudeDesktopRequiresTrace = false;
+  private claudeDesktopRestart: ClaudeDesktopRestartHint | undefined;
   private compatibleServiceCatalogRefresh: {
     readonly connection: string;
     readonly forceCapabilityRefresh: boolean;
@@ -747,9 +760,12 @@ export class XwXDeckController {
       lastError: this.lastError
     };
     this.traceTransition = 'starting';
+    this.claudeDesktopRestart = undefined;
     this.fireChange();
+    const startedAt = Date.now();
     try {
       await this.enableTransactionUnlocked(reason);
+      log(`[xwx-deck] Trace enable took ${Date.now() - startedAt}ms (${reason})`);
     } catch (error) {
       await this.rollbackFailedEnable(snapshot, error);
       this.lastError = (error as Error).message;
@@ -867,6 +883,9 @@ export class XwXDeckController {
       await this.refreshProxyRoutesBestEffort('Trace enable rollback');
       throw error;
     }
+    // Report Trace as on only after Desktop points at the recording Gateway
+    // (or is known to need a restart for it).
+    await this.syncClaudeDesktopRouteNow();
     this.fireChange();
     this.scheduleCodexHistoryWork(`trace enabled:${reason}`);
     this.scheduleClaudeDesktopSync();
@@ -950,7 +969,7 @@ export class XwXDeckController {
   async disableBreaksCodex(): Promise<boolean> {
     if (!this.active) return false;
     const activity = await this.shutdownActivity();
-    return activity.activeRequests > 0 || activity.pendingContinuations > 0;
+    return activity.activeUserResponses > 0 || activity.pendingContinuations > 0;
   }
 
   async disable(): Promise<void> {
@@ -959,7 +978,10 @@ export class XwXDeckController {
 
   private async disableUnlocked(force = false): Promise<void> {
     this.traceTransition = 'stopping';
+    this.claudeDesktopRestart = undefined;
+    const previousError = this.lastError;
     this.fireChange();
+    const startedAt = Date.now();
     try {
       if (!this.proxy.isListening()) {
         try {
@@ -970,9 +992,11 @@ export class XwXDeckController {
         }
       }
       if (!force) {
+        // Only replies the user is waiting for block a normal stop. Model
+        // lists, token counts and other auxiliary calls end with the Gateway.
         const activity = await this.shutdownActivity();
-        if (activity.activeRequests || activity.pendingContinuations) {
-          throw new ShutdownDrainTimeoutError(activity.activeRequests, activity.pendingContinuations);
+        if (activity.activeUserResponses || activity.pendingContinuations) {
+          throw new ShutdownDrainTimeoutError(activity.activeUserResponses, activity.pendingContinuations);
         }
       }
       if (this.codexHistoryTimer) clearTimeout(this.codexHistoryTimer);
@@ -1049,7 +1073,14 @@ export class XwXDeckController {
       this.setStartupPhase('ready');
       this.fireChange();
       this.scheduleClaudeDesktopSync();
+      log(`[xwx-deck] Trace disable took ${Date.now() - startedAt}ms${force ? ' (force)' : ''}`);
     } catch (error) {
+      if (error instanceof ShutdownDrainTimeoutError) {
+        // Waiting is the user's choice, not a failed stop: Trace stays on and
+        // no "关闭未完成" banner is left behind.
+        this.lastError = previousError;
+        throw error;
+      }
       this.lastError = `Trace 关闭未完成：${(error as Error).message}`;
       throw new Error(this.lastError);
     } finally {
@@ -1348,10 +1379,16 @@ export class XwXDeckController {
         });
       }
       if (!proxyPreparedForShutdown) {
-        throw new ShutdownDrainTimeoutError(
-          this.proxy.activeRequestCount(),
-          this.proxy.pendingContinuationCount()
-        );
+        await this.proxy.refreshShutdownActivity();
+        const activeUserResponses = this.proxy.activeUserResponseCount();
+        const pendingContinuations = this.proxy.pendingContinuationCount();
+        if (activeUserResponses || pendingContinuations) {
+          throw new ShutdownDrainTimeoutError(activeUserResponses, pendingContinuations);
+        }
+        // Only auxiliary requests remain; they are not conversations.
+        log(`[xwx-deck] closing ${this.proxy.activeRequestCount()} auxiliary request(s) with the Gateway`);
+        await this.proxy.forcePrepareForShutdown();
+        proxyPreparedForShutdown = true;
       }
     }
     try {
@@ -1360,7 +1397,7 @@ export class XwXDeckController {
         this.lastError = restoreBlockingNotice(restored);
         const connection = await this.codexLocalProxy.restore();
         logPreservedDirectChanges(connection.conflict);
-        await this.claudeDesktopConfig.restoreLocal();
+        await this.restoreClaudeDesktopFromLocalGateway();
       }
       if (this.codexGatewayEnabled && this.settings && this.localBaseUrl() && !options.skipCodexHistoryRepair) {
         // Complete shutdown returns Codex to the selected provider's direct
@@ -1499,7 +1536,7 @@ export class XwXDeckController {
       failures.push(`ChatGPT 直连配置恢复失败：${(error as Error).message}`);
     }
     try {
-      await this.claudeDesktopConfig.restoreLocal();
+      await this.restoreClaudeDesktopFromLocalGateway();
     } catch (error) {
       failures.push(`Claude Desktop 配置恢复失败：${(error as Error).message}`);
     }
@@ -1547,6 +1584,7 @@ export class XwXDeckController {
     const restored = await restorePreferredCodexDirect(this.userDataDir, {
       providerAdapter: provider?.adapter,
       ...codexProviderToml(provider, settings.codexEnhancements.unifySessionHistory),
+      preserveOfficialLogin: settings.codexEnhancements.preserveOfficialLogin,
       unifySessionHistory: settings.codexEnhancements.unifySessionHistory,
       directProviders: providerDirectConnections(settings.providers?.connections),
       requiresGateway: providerRequiresTrace(provider ?? settings.compatible, settings.codexModels.compatible, this.compatibleServiceCatalog),
@@ -2235,6 +2273,12 @@ export class XwXDeckController {
       : await fetchProviderCatalog(provider, path.join(this.userDataDir, 'model-capabilities-cache.json'), false, cached);
     if (catalog !== cached) {
       await writeCompatibleServiceModelCatalogCache(file, provider.baseUrl, provider.bearerToken, catalog, provider.providerPreset);
+      // Claude routes read which models need the Messages bridge from this cache.
+      if (settings.providers?.selected?.claude === id && this.active && this.role === 'owner') {
+        void this.refreshProxyRoutes('claude-cli').catch(error => {
+          log.warn(`[xwx-deck] Claude route refresh after catalog update failed: ${(error as Error).message}`);
+        });
+      }
     }
     // Catalog discovery is a read. Desktop synchronization is an optional
     // side effect and must not hold up the catalog result or the config queue.
@@ -2617,6 +2661,9 @@ export class XwXDeckController {
       throw error;
     }
     this.fireChange();
+    if (this.active && this.role === 'owner') await this.refreshProxyRoutes('claude-cli').catch(error => {
+      log.warn(`[xwx-deck] Claude route refresh after model change failed: ${(error as Error).message}`);
+    });
     this.scheduleClaudeDesktopSync(undefined, previous.providers?.selected.claude ?? undefined);
     return this.settings.claudeModels;
   }
@@ -2867,18 +2914,68 @@ export class XwXDeckController {
   /** Refresh data-only model metadata without changing the selected provider. */
   async refreshModelMetadata(): Promise<number> {
     const settings = this.settings ?? await this.settingsStore.read();
-    const provider = selectedProvider(settings, 'codex');
+    const claude = this.claudeCatalogTarget(settings);
+    // Snapshot first: when Claude and Codex share a connection file, the Codex
+    // refresh below rewrites it and the change would otherwise go unnoticed.
+    const claudeBefore = claude
+      ? await readCompatibleServiceModelCatalogCache(claude.file, claude.provider.baseUrl, claude.provider.bearerToken, claude.provider.providerPreset, true).catch(() => [])
+      : [];
     const connection = await this.readCompatibleServiceConfig();
     const baseUrl = connection.baseUrl.trim().replace(/\/+$/, '');
     const token = connection.bearerToken.trim();
-    if (!baseUrl || !token) return 0;
-    const catalog = await this.refreshCompatibleServiceModelCatalog(baseUrl, token, true);
-    await this.serializeMutation(
-      () => this.syncCodexCatalogIfCompatibleServiceActive(catalog)
-    );
+    let count = 0;
+    let codexRefreshed = false;
+    if (baseUrl && token) {
+      const catalog = await this.refreshCompatibleServiceModelCatalog(baseUrl, token, true);
+      await this.serializeMutation(
+        () => this.syncCodexCatalogIfCompatibleServiceActive(catalog)
+      );
+      count = catalog.length;
+      codexRefreshed = true;
+    }
+    const claudeCatalog = claude ? await this.refreshClaudeCatalogFile(claude, claudeBefore, codexRefreshed) : undefined;
+    if (!codexRefreshed && !claude) return 0;
     await this.refreshProxyRoutes();
+    if (claude && claudeCatalog) this.scheduleClaudeDesktopSync(claudeCatalog, claude.provider.id);
     this.fireChange();
-    return catalog.length;
+    return count;
+  }
+
+  /** Claude routes and Desktop read the selected Claude connection's own directory cache. */
+  private claudeCatalogTarget(settings: XwXDeckSettings): { readonly provider: ProviderConnection; readonly file: string } | undefined {
+    const provider = selectedProvider(settings, 'claude');
+    // Only a Claude client that is in use (CLI routed, or Desktop synced) needs the refresh.
+    if (!settings.clientEnabled.claude && !settings.claudeDesktop.syncEnabled) return undefined;
+    if (!provider?.baseUrl.trim() || !provider.bearerToken.trim()) return undefined;
+    return { provider, file: path.join(this.userDataDir, `provider-${provider.id}-${provider.adapter}-models.json`) };
+  }
+
+  /**
+   * Background metadata refresh for Claude's connection. Returns the new
+   * catalog only when it differs from `before`, so Desktop is resynchronized
+   * for real changes (new models, capabilities or protocols) alone.
+   */
+  private async refreshClaudeCatalogFile(
+    target: { readonly provider: ProviderConnection; readonly file: string },
+    before: readonly ModelCatalogEntry[],
+    codexRefreshed: boolean
+  ): Promise<readonly ModelCatalogEntry[] | undefined> {
+    const { provider, file } = target;
+    try {
+      let after: readonly ModelCatalogEntry[];
+      if (codexRefreshed && file === this.compatibleServiceModelCatalogCachePath()) {
+        after = await readCompatibleServiceModelCatalogCache(file, provider.baseUrl, provider.bearerToken, provider.providerPreset, true);
+      } else {
+        // The Codex refresh already reloaded models.dev/LiteLLM in memory;
+        // without it this is the only strong refresh of the cycle.
+        after = await fetchProviderCatalog(provider, path.join(this.userDataDir, 'model-capabilities-cache.json'), !codexRefreshed, before);
+        await writeCompatibleServiceModelCatalogCache(file, provider.baseUrl, provider.bearerToken, after, provider.providerPreset);
+      }
+      return sameCachedModelCatalog(after, before) ? undefined : after;
+    } catch (error) {
+      log.warn(`[xwx-deck] Claude 模型目录后台刷新失败：${(error as Error).message}`);
+      return undefined;
+    }
   }
 
   async xwxDeckFolder(): Promise<void> {
@@ -3289,6 +3386,8 @@ export class XwXDeckController {
       tracingEnabled: this.active,
       connectionNotice: this.desktopSyncError
         ? { message: 'Claude Desktop 同步未完成', description: `${this.desktopSyncError}。Trace 状态不受影响；可稍后在模型配置中重试同步。`, type: 'info' }
+        : !this.active && this.claudeDesktopRequiresTrace && this.settings?.claudeDesktop.syncEnabled
+        ? { message: 'Claude Desktop 需要开启 Trace', description: '当前服务的模型需要 XwX Deck 转换名称，关闭 Trace 时 Desktop 已恢复原来的连接。', type: 'info', action: 'start-trace', secondaryAction: 'models' }
         : !this.active && this.settings?.codexPreferredMode === 'compatible'
         && providerRequiresTrace(selectedProvider(this.settings, 'codex') ?? this.settings.compatible, this.settings.codexModels.compatible, this.compatibleServiceCatalog)
         ? { message: '所选模型需要开启 Trace', description: '服务和模型选择已保存。调用此模型需要开启 Trace 进行协议转换。', type: 'info', action: 'start-trace', secondaryAction: 'models' }
@@ -3301,6 +3400,7 @@ export class XwXDeckController {
       backgroundGatewayActive: this.backgroundGatewayActive(),
       backgroundGatewayAction,
       chatGptRestartRecommended: this.chatGptRestartRecommended,
+      ...(this.claudeDesktopRestart ? { claudeDesktopRestart: this.claudeDesktopRestart } : {}),
       missingCodexHistoryProviders: this.missingCodexHistoryProviders,
       traceRoot: this.traceStore.rootPath(),
       logRoot: this.logRootPath(),
@@ -4340,7 +4440,7 @@ export class XwXDeckController {
         ...codexProviderToml(provider, settings.codexEnhancements.unifySessionHistory),
         directProviders: providerDirectConnections(settings.providers?.connections),
         gatewayBaseUrl: undefined,
-        preserveOfficialLogin: true
+        preserveOfficialLogin: input.preserveOfficialLogin
       }, repairInvalid);
       this.codexGatewayEnabled = false;
       this.codexGatewayMode = undefined;
@@ -4438,7 +4538,7 @@ export class XwXDeckController {
         }
         const next = await this.codexConfig.update({
           ...managedInput, gatewayBaseUrl: undefined, modelCatalogPath,
-          preserveOfficialLogin: true, requiresOpenAiAuth: false
+          preserveOfficialLogin
         }, options.repairInvalid);
         if (chatGptWasRunningBeforeUpdate && codexConfigRouteChanged(previousConfig, next)) {
           this.markChatGptRestartRecommended(
@@ -4787,7 +4887,10 @@ export class XwXDeckController {
     generation?: number
   ): Promise<ClaudeDesktopSyncSnapshot> {
     const settings = this.settings ?? await this.settingsStore.read();
-    if (!settings.claudeDesktop.syncEnabled) return this.claudeDesktopConfig.restore();
+    if (!settings.claudeDesktop.syncEnabled) {
+      this.claudeDesktopRequiresTrace = false;
+      return this.trackClaudeDesktopRoute(() => this.claudeDesktopConfig.restore());
+    }
     // A saved connection can survive from older releases even after Claude
     // returned to its official service. The live Claude selection wins.
     const service = settings.claudePreferredMode === 'auto'
@@ -4798,9 +4901,10 @@ export class XwXDeckController {
     }
     const provider = selectedProvider(settings, 'claude');
     if (!provider || !service.enabled) {
-      const result = await this.claudeDesktopConfig.restoreOfficial();
+      const result = await this.trackClaudeDesktopRoute(() => this.claudeDesktopConfig.restoreOfficial());
       this.claudeDesktopCatalog = [];
       this.claudeDesktopGatewayEnabled = false;
+      this.claudeDesktopRequiresTrace = false;
       if (this.role === 'owner') await this.refreshProxyRoutes();
       await this.stopClaudeDesktopGatewayIfUnused();
       return result;
@@ -4809,35 +4913,42 @@ export class XwXDeckController {
     if (generation !== undefined && (generation !== this.desktopSyncGeneration || this.shutdownRequested)) {
       return this.claudeDesktopConfig.read();
     }
-    const available = source.filter(entry => (
-      entry.protocols.includes('anthropic-messages')
-      && entry.clients.includes('claude')
-      && !isKnownNonConversationalModel(entry.id)
-    ));
+    // Models without Messages reach Desktop through the Gateway's bridge.
+    const available = source.filter(entry => resolveClaudeModelProtocol(provider, entry) !== undefined);
     if (!available.length) throw new Error('当前 Claude 服务没有可同步到 Desktop 的对话模型。');
     this.claudeDesktopCatalog = available;
-    const desktopModels = buildClaudeDesktopModels(available, settings.claudeModels);
-    const direct = claudeDesktopNeedsLocalGateway(desktopModels)
-      ? undefined
-      : claudeDesktopDirectGateway(provider);
-    if (direct) {
+    // Native Claude IDs connect to the service directly. Deck's Gateway is
+    // used only while Trace records; aliased models are listed only then.
+    const direct = claudeDesktopDirectGateway(provider);
+    const nativeCatalog = available.filter(entry => (
+      resolveClaudeModelProtocol(provider, entry) === 'anthropic-messages'
+      && isClaudeDesktopCompatibleModelId(entry.id)
+    ));
+    const directFallback = direct && nativeCatalog.length
+      ? { gatewayBaseUrl: direct.baseUrl, gatewayApiKey: provider.bearerToken, gatewayAuthScheme: direct.authScheme }
+      : undefined;
+    if (!this.active) {
       if (generation !== undefined && (generation !== this.desktopSyncGeneration || this.shutdownRequested)) {
         return this.claudeDesktopConfig.read();
       }
       this.claudeDesktopGatewayEnabled = false;
-      const result = await this.claudeDesktopConfig.apply({
-        gatewayBaseUrl: direct.baseUrl,
-        gatewayApiKey: provider.bearerToken,
-        gatewayAuthScheme: direct.authScheme,
-        mode: 'direct',
-        catalog: available,
-        models: settings.claudeModels
-      });
+      this.claudeDesktopRequiresTrace = !directFallback;
+      // Without a usable remote profile, return Desktop to its own previous
+      // configuration rather than leaving it on a Deck port.
+      const result = directFallback
+        ? await this.trackClaudeDesktopRoute(() => this.claudeDesktopConfig.apply({
+          ...directFallback,
+          mode: 'direct',
+          catalog: nativeCatalog,
+          models: settings.claudeModels
+        }))
+        : await this.trackClaudeDesktopRoute(() => this.claudeDesktopConfig.restore());
       if (this.role === 'owner') await this.refreshProxyRoutes();
       await this.stopClaudeDesktopGatewayIfUnused();
       return result;
     }
 
+    this.claudeDesktopRequiresTrace = false;
     this.claudeDesktopGatewayEnabled = true;
     if (!this.localBaseUrl()) await this.startProxyUnlocked('Claude Desktop model routing');
     const localBaseUrl = this.localBaseUrl();
@@ -4852,14 +4963,75 @@ export class XwXDeckController {
     if (generation !== undefined && (generation !== this.desktopSyncGeneration || this.shutdownRequested)) {
       return this.claudeDesktopConfig.read();
     }
-    return this.claudeDesktopConfig.apply({
+    return this.trackClaudeDesktopRoute(() => this.claudeDesktopConfig.apply({
       gatewayBaseUrl: `${localBaseUrl}/claude-desktop`,
       gatewayApiKey: 'xwx-deck-local',
       gatewayAuthScheme: 'bearer',
       mode: 'local',
       catalog: available,
-      models: settings.claudeModels
-    });
+      models: settings.claudeModels,
+      // Stop and exit switch to this remote profile without network access.
+      ...(directFallback ? { directFallback } : {})
+    }));
+  }
+
+  /** Trace on/off: switch the Desktop profile before reporting the result,
+   * using the catalog already known offline. The scheduled sync refreshes it. */
+  private async syncClaudeDesktopRouteNow(): Promise<void> {
+    const settings = this.settings;
+    if (!settings?.claudeDesktop.syncEnabled || this.shutdownRequested) return;
+    try {
+      const catalog = this.claudeDesktopCatalog.length
+        ? this.claudeDesktopCatalog
+        : await this.cachedClaudeCompatibleServiceCatalog(settings);
+      if (!catalog.length) return;
+      await this.syncClaudeDesktopIfEnabled(catalog);
+    } catch (error) {
+      log.warn(`[xwx-deck] Claude Desktop route switch deferred to background sync: ${(error as Error).message}`);
+    }
+  }
+
+  /** Stop/exit: detach Desktop from the local Gateway. A local profile with a
+   * remote fallback keeps the selected service; otherwise Desktop returns to
+   * its pre-sync configuration. */
+  private restoreClaudeDesktopFromLocalGateway(): Promise<ClaudeDesktopSyncSnapshot> {
+    return this.trackClaudeDesktopRoute(() => this.claudeDesktopConfig.restoreLocal());
+  }
+
+  private async trackClaudeDesktopRoute(
+    change: () => Promise<ClaudeDesktopSyncSnapshot>
+  ): Promise<ClaudeDesktopSyncSnapshot> {
+    const before = await this.claudeDesktopConfig.read().catch(() => undefined);
+    const result = await change();
+    const wasLocal = before?.active === true && (before.mode ?? 'local') === 'local';
+    const isLocal = result.active && (result.mode ?? 'local') === 'local';
+    if (wasLocal !== isLocal && await this.claudeRunningForRestartNotice()) {
+      this.claudeDesktopRestart = isLocal ? 'local' : 'direct';
+      log(`[xwx-deck] Claude Desktop restart recommended: profile ${isLocal ? 'moved to' : 'left'} the local Gateway`);
+    }
+    return result;
+  }
+
+  private async claudeRunningForRestartNotice(): Promise<boolean> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      // Advisory only; never hold a Trace transition behind process listing.
+      // A restart notice requires positive evidence that Claude is running.
+      return await Promise.race([
+        (this.options.claudeRunning ?? isClaudeDesktopRunning)(),
+        new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 250); })
+      ]);
+    } catch (error) {
+      log.warn(`[xwx-deck] could not determine whether Claude Desktop is running: ${(error as Error).message}`);
+      return false;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /** Set when Desktop was running while its profile left or joined the Gateway. */
+  claudeDesktopRestartHint(): ClaudeDesktopRestartHint | undefined {
+    return this.claudeDesktopRestart;
   }
 
   private scheduleClaudeDesktopSync(
@@ -4926,13 +5098,18 @@ export class XwXDeckController {
     const claudeProvider = settings && selectedProvider(settings, 'claude');
     const hasClaudeRoute = [...transient, ...fallbacks].some(route => route.source === 'claude-cli');
     if (claudeProvider && hasClaudeRoute) {
+      const bridge = claudeMessagesBridgeFields(
+        claudeProvider,
+        await this.cachedClaudeCompatibleServiceCatalog(settings).catch(() => [])
+      );
       for (const routes of [transient, fallbacks]) for (let index = 0; index < routes.length; index += 1) {
         const route = routes[index];
         if (route.source !== 'claude-cli') continue;
         routes[index] = { ...route, providerId: providerIdentityId(claudeProvider), providerName: claudeProvider.displayName,
           providerAdapter: claudeProvider.adapter, upstreamBearerToken: claudeProvider.bearerToken,
           defaultProtocol: 'anthropic-messages',
-          ...(claudeProvider.adapter === 'anthropic-messages' ? { upstreamBaseUrl: claudeProvider.baseUrl } : {}) };
+          ...(claudeProvider.adapter === 'anthropic-messages' ? { upstreamBaseUrl: claudeProvider.baseUrl } : {}),
+          ...bridge };
       }
     }
     const gateway = this.codexGatewayEnabled && this.settings
@@ -5515,8 +5692,38 @@ function buildClaudeDesktopRoutes(
     defaultProtocol: 'anthropic-messages',
     modelAliases: buildClaudeDesktopModelAliases(buildClaudeDesktopModels(catalog, settings.claudeModels)),
     capture: settings.clientEnabled.claude !== false,
-    upstreamBearerToken: provider.bearerToken
+    upstreamBearerToken: provider.bearerToken,
+    ...claudeMessagesBridgeFields(provider, catalog)
   }];
+}
+
+/** OpenAI-compatible base for Claude models the service publishes without Messages. */
+function claudeOpenAiBaseUrl(provider: ProviderConnection): string | undefined {
+  if (provider.providerPreset === 'compatible') {
+    const anthropic = claudeCompatibleServiceBaseUrl(provider.baseUrl);
+    return anthropic ? anthropic.replace(/\/anthropic$/i, '/v1') : undefined;
+  }
+  if (provider.adapter !== 'anthropic-messages') return provider.baseUrl.trim().replace(/\/+$/, '') || undefined;
+  return undefined;
+}
+
+/** Per-model Messages → Responses / Chat bridge for a Claude route. */
+function claudeMessagesBridgeFields(
+  provider: ProviderConnection,
+  catalog: readonly ModelCatalogEntry[]
+): Pick<TapClientRoute, 'transform' | 'openAiBaseUrl' | 'modelProtocols' | 'modelMaxOutputTokens'> {
+  const openAiBaseUrl = claudeOpenAiBaseUrl(provider);
+  if (!openAiBaseUrl) return {};
+  const modelProtocols: Record<string, 'responses' | 'chat-completions'> = {};
+  const modelMaxOutputTokens: Record<string, number> = {};
+  for (const entry of catalog) {
+    const protocol = resolveClaudeModelProtocol(provider, entry);
+    if (protocol !== 'responses' && protocol !== 'chat-completions') continue;
+    modelProtocols[entry.id] = protocol;
+    if (entry.maxOutputTokens) modelMaxOutputTokens[entry.id] = entry.maxOutputTokens;
+  }
+  if (!Object.keys(modelProtocols).length) return {};
+  return { transform: 'messages-auto', openAiBaseUrl, modelProtocols, modelMaxOutputTokens };
 }
 
 function claudeDesktopDirectGateway(
@@ -5912,14 +6119,12 @@ function codexProviderToml(
 ): {
   providerId?: string;
   providerName?: string;
-  requiresOpenAiAuth?: boolean;
   publishModelCatalog?: boolean;
 } {
   if (!provider) return {};
   return {
     providerId: providerCodexId(provider, unified),
     providerName: provider.displayName,
-    requiresOpenAiAuth: false,
     publishModelCatalog: true
   };
 }

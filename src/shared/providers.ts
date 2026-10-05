@@ -48,8 +48,7 @@ export type ProviderInput = Pick<ProviderConnection, 'displayName' | 'baseUrl' |
   readonly codexModel?: string;
 };
 export function supportsProviderClient(provider: ProviderConnection, client: ProviderClient): boolean {
-  return client === 'codex' || provider.adapter === 'anthropic-messages'
-    || provider.adapter === 'auto';
+  return client === 'codex' || ['auto', 'anthropic-messages', 'responses', 'chat-completions'].includes(provider.adapter);
 }
 
 export function providerNameError(name: string, previousName?: string): string | undefined {

@@ -155,8 +155,11 @@ export async function fetchCompatibleServiceModelCatalog(
     }
   }));
 
-  if (!results.some(result => result.ok) && results.some(result => !result.missing)) {
-    throw new Error(`模型列表请求失败：${results.map(result => result.error).filter(Boolean).join(' · ')}`);
+  if (!results.some(result => result.ok)) {
+    const failures = results.filter(result => !result.missing);
+    if (failures.length) {
+      throw new Error(`模型列表请求失败：${failures.map(result => result.error).filter(Boolean).join('；')}`);
+    }
   }
   const discovered = normalizeModelCatalog(results.flatMap((result, index) => (
     result.ok
@@ -511,6 +514,18 @@ function compatibleServiceConnectionId(
   return createHash('sha256')
     .update(`${providerPreset}\0${normalizedBaseUrl}\0${bearerToken.trim()}`)
     .digest('hex');
+}
+
+/** True when both catalogs persist to the same cache content. */
+export function sameCachedModelCatalog(a: readonly ModelCatalogEntry[], b: readonly ModelCatalogEntry[]): boolean {
+  return canonicalJson(a.map(serializeCachedModel)) === canonicalJson(b.map(serializeCachedModel));
+}
+
+/** Key order is not meaningful (e.g. capability sources are rebuilt in a different order). */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) => (item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item as Record<string, unknown>).sort(([x], [y]) => x.localeCompare(y)))
+    : item));
 }
 
 function serializeCachedModel(entry: ModelCatalogEntry): Record<string, unknown> {

@@ -235,7 +235,7 @@ function isOpenAiOSeries(model: string): boolean {
   return model.length > 1 && model[0] === 'o' && model[1] >= '0' && model[1] <= '9';
 }
 
-function supportsReasoningEffort(model: string): boolean {
+export function supportsReasoningEffort(model: string): boolean {
   const n = model.toLowerCase();
   const gpt5Plus = n.startsWith('gpt-') && n[4] >= '5' && n[4] <= '9';
   return isOpenAiOSeries(n) || gpt5Plus || n === 'grok-4.5' || n.startsWith('grok-4.5-') || n.startsWith('grok-build-');

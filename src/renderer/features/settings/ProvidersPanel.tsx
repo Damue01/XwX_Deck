@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Menu } from '@base-ui/react/menu';
 import { Ellipsis, Eye, EyeOff, Pencil, Plus } from 'lucide-react';
 import { useBridge } from '@/bridge/store';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { OPEN_PROVIDER_SETTINGS_EVENT, showErrorToast, showToast } from '@/lib/toast';
 import { modelCatalogFailureMessage } from '../../../shared/modelCatalogError';
 import {
@@ -57,6 +58,7 @@ function showValidationResult(result: ProviderValidationResult): void {
 
 export function ProvidersPanel(): React.ReactElement {
   const bridge = useBridge();
+  const confirm = useConfirm();
   const [draft, setDraft] = React.useState<ProviderInput | null>(null);
   const [showBearerToken, setShowBearerToken] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
@@ -180,14 +182,23 @@ export function ProvidersPanel(): React.ReactElement {
                   });
                 }
               })()}>检查模型目录</Menu.Item>
-              <Menu.Item className="conversation-header-menu-item" closeOnClick onClick={() => void run('删除模型服务失败', async () => {
+              <Menu.Item className="conversation-header-menu-item" closeOnClick onClick={() => void (async () => {
+                const ok = await confirm({
+                  title: `删除模型服务「${p.displayName}」？`,
+                  body: '使用它的客户端需要重新选择模型服务。',
+                  confirmText: '删除',
+                  tone: 'danger'
+                });
+                if (!ok) return;
+                await run('删除模型服务失败', async () => {
                 const providers = await bridge.api.deleteProvider(p.id);
                 bridge.patch({ providers });
                 if (draft?.id === p.id) setDraft(null);
                 refresh();
                 showToast('模型服务已删除');
                 requestAnimationFrame(() => addButton.current?.focus());
-              })}>删除连接</Menu.Item>
+                });
+              })()}>删除</Menu.Item>
             </Menu.Popup>
           </Menu.Positioner></Menu.Portal>
         </Menu.Root>

@@ -42,10 +42,10 @@
     "preview:web": "node tools/serve-manager-preview.mjs",
     "update:pricing": "node tools/update-model-pricing.mjs",
     "build:win": "npm run clean && npm run generate:icons:win && npm run test && electron-builder --win portable --publish never",
-    "build:mac:arm64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg zip --arm64 --publish never",
-    "build:mac:x64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg zip --x64 --publish never",
+    "build:mac:arm64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg --arm64 --publish never",
+    "build:mac:x64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg --x64 --publish never",
     "repair:trace-index": "node tools/run-trace-index-repair.mjs",
-    "test:upstream": "node tools/run-provider-selection-regressions.mjs && node tools/run-claude-desktop-effort-regressions.mjs && node tools/test-application-reset-worker.mjs"
+    "test:upstream": "node tools/run-provider-selection-regressions.mjs && node tools/run-claude-desktop-effort-regressions.mjs && node tools/test-application-reset-worker.mjs && node tools/run-theme-regressions.mjs && node tools/run-history-confirm-regressions.mjs && node tools/run-macos-installer-cleanup-smoke.mjs && node tools/run-public-update-regressions.mjs"
   },
   "build": {
     "appId": "app.xwxdeck.desktop",

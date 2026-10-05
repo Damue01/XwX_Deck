@@ -5,6 +5,50 @@ interface Props {
   readonly scale?: number;
 }
 
+const RIPPLE_EVENT = 'xwx:field-ripple';
+const RIPPLE_LIFE_MS = 1800;
+const MAX_RIPPLES = 4;
+
+interface Ripple {
+  readonly x: number;
+  readonly y: number;
+  readonly start: number;
+}
+
+/**
+ * Sends a water ripple through the dot field from a viewport point. Used as
+ * the immediate response to the Trace dial: the wave starts on the same frame
+ * as the click, long before the backend finishes switching.
+ */
+export function emitFieldRipple(clientX: number, clientY: number): void {
+  document.dispatchEvent(new CustomEvent<{ x: number; y: number }>(RIPPLE_EVENT, { detail: { x: clientX, y: clientY } }));
+}
+
+/** Collects ripples in canvas-local CSS pixels and drops them once spent. */
+function trackRipples(canvas: HTMLCanvasElement): { readonly list: () => readonly Ripple[]; readonly stop: () => void } {
+  let ripples: Ripple[] = [];
+  const onRipple = (event: Event) => {
+    const detail = (event as CustomEvent<{ x: number; y: number }>).detail;
+    if (!detail) return;
+    const rect = canvas.getBoundingClientRect();
+    ripples = [...ripples, { x: detail.x - rect.left, y: detail.y - rect.top, start: performance.now() }].slice(-MAX_RIPPLES);
+  };
+  document.addEventListener(RIPPLE_EVENT, onRipple);
+  return {
+    list: () => {
+      const now = performance.now();
+      if (ripples.length && now - ripples[0].start > RIPPLE_LIFE_MS) ripples = ripples.filter(r => now - r.start <= RIPPLE_LIFE_MS);
+      return ripples;
+    },
+    stop: () => document.removeEventListener(RIPPLE_EVENT, onRipple)
+  };
+}
+
+/** Target for the field's live blend (the page already shows the requested state). */
+function liveTarget(): number {
+  return document.body.dataset.capturing === 'true' ? 1 : 0;
+}
+
 function isDay(): boolean {
   return document.documentElement.dataset.theme === 'day';
 }
@@ -16,16 +60,17 @@ function pageIsActive(canvas: HTMLCanvasElement): boolean {
 function animate(
   canvas: HTMLCanvasElement,
   render: (time: number) => void,
-  fps: number
+  fps: () => number
 ): () => void {
   let frame = 0;
   let lastPaint = -Infinity;
-  const interval = 1000 / fps;
 
   function tick(time: number): void {
     frame = 0;
     if (!pageIsActive(canvas)) return;
-    if (time - lastPaint >= interval) {
+    // Small tolerance so a 30fps target is not rounded down to 20fps by
+    // 60Hz frame timing jitter.
+    if (time - lastPaint >= 1000 / fps() - 4) {
       lastPaint = time;
       render(time);
     }
@@ -74,13 +119,19 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     'uniform float u_theme;',
     'uniform float u_scale;',
     'uniform float u_live;',
+    'uniform vec4 u_rip[4];',
+    'uniform float u_ripScale;',
     'float hash(vec2 p){float n=dot(p,vec2(127.1,311.7));return fract(sin(n)*43758.5453);}',
     'float noise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);vec2 u=f*f*(3.0-2.0*f);',
     'return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);}',
     'float fbm(vec2 p){float v=0.0,w=0.5,t=0.0;for(int i=0;i<4;i++){v+=noise(p)*w;t+=w;p=p*2.03+vec2(17.1,9.2);w*=0.5;}return v/t;}',
     'float ss(float e0,float e1,float v){float x=clamp((v-e0)/(e1-e0),0.0,1.0);return x*x*(3.0-2.0*x);}',
+    'float wave(float d,float age,float amp){float k=(d-age*0.55*u_ripScale)/(0.045*u_ripScale);return amp*exp(-k*k*0.6)*cos(k*2.4);}',
     'void main(){',
-    '  vec2 uv=gl_FragCoord.xy/u_resolution;',
+    '  vec2 frag=gl_FragCoord.xy;',
+    '  float ripple=0.0;',
+    '  for(int i=0;i<4;i++){vec4 rp=u_rip[i];if(rp.w>0.0){vec2 dv=frag-rp.xy;float d=length(dv);float w=wave(d,rp.z,rp.w);ripple+=w;frag-=d>0.5?dv/d*w*u_scale*0.4:vec2(0.0);}}',
+    '  vec2 uv=frag/u_resolution;',
     '  float aspect=u_resolution.x/u_resolution.y;',
     '  vec2 grid=vec2(uv.x*aspect,uv.y)*u_resolution.y/u_scale;',
     '  float t=u_time*0.40;',
@@ -91,7 +142,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     '  float main_v=clamp(((n1*0.76+n2*0.18-0.008)-0.5)*1.04+0.5,0.0,1.0);',
     '  float speckles=ss(0.50,0.82,fine)*0.12*(1.0-ss(0.42,0.82,main_v));',
     '  float growth=pow(ss(0.31,0.81,min(1.0,main_v+speckles)),1.08);',
-    '  float r=1.0/(u_resolution.y/u_scale)*(0.028+growth*0.338)*(1.0+u_live*0.10);',
+    '  float r=1.0/(u_resolution.y/u_scale)*((0.028+growth*0.338)*(1.0+u_live*0.10)*(1.0+max(ripple,-0.7)*0.6)+max(ripple,0.0)*0.07);',
     '  vec2 cell=fract(grid)-0.5;',
     '  float dist=length(cell);',
     '  float dotAlpha=1.0-smoothstep(0.0,r*u_resolution.y/u_scale,dist*u_resolution.y/u_scale);',
@@ -131,6 +182,10 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
   const uTheme = gl.getUniformLocation(p, 'u_theme');
   const uScale = gl.getUniformLocation(p, 'u_scale');
   const uLive = gl.getUniformLocation(p, 'u_live');
+  const uRip = gl.getUniformLocation(p, 'u_rip');
+  const uRipScale = gl.getUniformLocation(p, 'u_ripScale');
+  const ripples = trackRipples(canvas);
+  const ripData = new Float32Array(MAX_RIPPLES * 4);
 
   let live = 0, simTime = 0, lastT: number | null = null, needsResize = true;
   const motionFactor = reduce ? 0.35 : 1;
@@ -147,8 +202,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
 
   function render(time: number): void {
     resize();
-    const target = document.body.dataset.capturing === 'true' ? 1 : 0;
-    live += (target - live) * 0.03;
+    live += (liveTarget() - live) * 0.03;
     const dt = lastT === null ? 16 : Math.min(64, time - lastT);
     lastT = time;
     simTime += dt * 0.001 * (1 + live * 0.35) * motionFactor;
@@ -160,14 +214,27 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     gl.uniform1f(uTheme, isDay() ? 1 : 0);
     gl.uniform1f(uScale, scale);
     gl.uniform1f(uLive, live);
+    // Ripple centres in device pixels (GL origin is bottom-left); age in
+    // seconds, travel speed scales with the canvas diagonal.
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / Math.max(1, rect.width), sy = canvas.height / Math.max(1, rect.height);
+    ripData.fill(0);
+    ripples.list().forEach((rp, i) => {
+      const age = (performance.now() - rp.start) / 1000;
+      const fade = Math.max(0, 1 - age * 1000 / RIPPLE_LIFE_MS);
+      ripData.set([rp.x * sx, canvas.height - rp.y * sy, age, fade * fade * (reduce ? 0.6 : 1)], i * 4);
+    });
+    gl.uniform4fv(uRip, ripData);
+    gl.uniform1f(uRipScale, Math.hypot(canvas.width, canvas.height));
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
   const stopObserving = observeCanvasResize(canvas, () => { needsResize = true; });
-  const stopAnimating = animate(canvas, render, reduce ? 12 : 30);
+  const stopAnimating = animate(canvas, render, () => (reduce && ripples.list().length === 0 ? 12 : 30));
   return () => {
     stopAnimating();
     stopObserving();
+    ripples.stop();
     if (buf) gl.deleteBuffer(buf);
     gl.deleteShader(vertexShader);
     gl.deleteShader(fragmentShader);
@@ -225,14 +292,22 @@ function init2D(canvas: HTMLCanvasElement, density: number): (() => void) | unde
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = isDay() ? '#0b0c0b' : '#f4f4f4';
-    const target = document.body.dataset.capturing === 'true' ? 1 : 0;
-    live += (target - live) * 0.09;
+    live += (liveTarget() - live) * 0.09;
     const dt = lastT === null ? 16 : Math.min(80, time - lastT);
     lastT = time;
     simTime += dt * 0.001 * (1 + live * 0.35) * speed;
     const t = simTime * 0.40;
     const step = Math.max(6, h / density);
     const strength = 0.78 * (1 + live * 0.18);
+    // A ripple is a travelling ring with a crest and a softer trough behind
+    // it; dots on the crest swell and are pushed outward, like floats on water.
+    const now = performance.now();
+    const diag = Math.hypot(w, h);
+    const waves = ripples.list().map(rp => {
+      const age = (now - rp.start) / 1000;
+      const fade = Math.max(0, 1 - age * 1000 / RIPPLE_LIFE_MS);
+      return { x: rp.x, y: rp.y, front: age * diag * 0.55, width: diag * 0.045, amp: fade * fade * (reduce ? 0.6 : 1) };
+    });
     for (let y = -step; y < h + step; y += step) {
       for (let x = -step; x < w + step; x += step) {
         const gx = x / step, gy = y / step;
@@ -244,18 +319,33 @@ function init2D(canvas: HTMLCanvasElement, density: number): (() => void) | unde
         const mainV = Math.max(0, Math.min(1, ((n1 * 0.76 + n2 * 0.18 - 0.008) - 0.5) * 1.04 + 0.5));
         const speckles = ss(0.50, 0.82, fine) * 0.12 * (1 - ss(0.42, 0.82, mainV));
         const growth = Math.pow(ss(0.31, 0.81, Math.min(1, mainV + speckles)), 1.08);
-        const radius = step * (0.028 + growth * 0.338) * (1 + live * 0.10);
+        let px = x, py = y, ripple = 0;
+        for (const wv of waves) {
+          const dx = x - wv.x, dy = y - wv.y;
+          const d = Math.hypot(dx, dy);
+          const k = (d - wv.front) / wv.width;
+          if (k < -4 || k > 4) continue;
+          const lift = wv.amp * Math.exp(-k * k * 0.6) * Math.cos(k * 2.4);
+          ripple += lift;
+          if (d > 0.5) { px += dx / d * lift * step * 0.4; py += dy / d * lift * step * 0.4; }
+        }
+        const radius = step * ((0.028 + growth * 0.338) * (1 + live * 0.10) * (1 + Math.max(ripple, -0.7) * 0.6) + Math.max(ripple, 0) * 0.07);
+        if (radius <= 0.05) continue;
         ctx.globalAlpha = strength;
-        ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI * 2); ctx.fill();
       }
     }
     ctx.globalAlpha = 1;
   }
+  const ripples = trackRipples(canvas);
   const stopObserving = observeCanvasResize(canvas, () => { needsResize = true; });
-  const stopAnimating = animate(canvas, render, fps);
+  // The idle field only needs 15fps; a ripple moves fast, so it gets 30fps
+  // for its short lifetime.
+  const stopAnimating = animate(canvas, render, () => (ripples.list().length > 0 ? 30 : fps));
   return () => {
     stopAnimating();
     stopObserving();
+    ripples.stop();
   };
 }
 

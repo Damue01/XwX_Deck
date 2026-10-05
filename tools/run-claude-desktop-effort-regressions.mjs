@@ -12,6 +12,8 @@ try {
   const output = join(temp, 'run.mjs');
   await build({
     stdin: { contents: `
+      import { testNightlyUpdates } from './tools/nightly-update-regressions';
+      import { testClaudeMessagesBridgeRegressions } from './tools/claude-messages-bridge-regressions';
       import { testUpgradeSettings } from './tools/upgrade-settings-regressions';
       import { testSettingsActions } from './tools/settings-action-regressions';
       import { testPortableRestartFailures } from './tools/portable-restart-regressions';
@@ -20,7 +22,7 @@ try {
       import { tmpdir } from 'node:os';
       import { join, dirname, resolve } from 'node:path';
       const fixtures = await mkdtemp(join(tmpdir(), 'xwx-desktop-effort-'));
-      try { await testClaudeDesktopEffortRegressions(fixtures); await testSettingsActions(fixtures); await testUpgradeSettings(fixtures); await testPortableRestartFailures(fixtures); }
+      try { await testNightlyUpdates(fixtures); await testClaudeMessagesBridgeRegressions(); await testClaudeDesktopEffortRegressions(fixtures); await testSettingsActions(fixtures); await testUpgradeSettings(fixtures); await testPortableRestartFailures(fixtures); }
       finally {
         if (dirname(resolve(fixtures)) !== resolve(tmpdir())) throw new Error('Invalid fixture directory');
         await rm(fixtures, { recursive: true, force: true });

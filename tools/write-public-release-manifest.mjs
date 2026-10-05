@@ -11,8 +11,7 @@ if (tag !== `v${version}`) throw new Error(`Release tag ${tag} does not match ve
 
 const artifactDefinitions = [
   { name: 'XwX-Deck-windows-x64.exe', platform: 'windows', arch: 'x64', required: true },
-  { name: 'XwX-Deck-mac-arm64.dmg', platform: 'darwin', arch: 'arm64', required: true },
-  { name: 'XwX-Deck-mac-arm64.zip', platform: 'darwin', arch: 'arm64', required: true }
+  { name: 'XwX-Deck-mac-arm64.dmg', platform: 'darwin', arch: 'arm64', required: true }
 ];
 
 const names = new Set(await readdir(directory));
@@ -42,10 +41,10 @@ for (const definition of artifactDefinitions) {
     await writeFile(path.join(directory, 'latest.yml'), [
       `version: ${version}`,
       'files:',
-      `  - url: ${encodeURIComponent(definition.name)}`,
+      `  - url: ${url}`,
       `    sha512: ${sha512}`,
       `    size: ${details.size}`,
-      `path: ${encodeURIComponent(definition.name)}`,
+      `path: ${url}`,
       `sha512: ${sha512}`,
       `releaseDate: ${new Date().toISOString()}`,
       ''

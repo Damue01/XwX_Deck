@@ -95,7 +95,7 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
         <AlertDialog.Portal>
           <AlertDialog.Backdrop
             className={cn(
-              "fixed inset-0 z-80 bg-black/32 backdrop-blur-[2px] transition-opacity duration-200",
+              "fixed inset-0 z-80 bg-black/32 backdrop-blur-[2px] transition-opacity duration-180",
               "data-starting-style:opacity-0 data-ending-style:opacity-0 dark:bg-black/55",
             )}
           />
@@ -105,7 +105,7 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
               "fixed top-1/2 left-1/2 z-80 w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2",
               state.size === "wide" ? "max-w-[440px]" : "max-w-90",
               "rounded-xl border border-border bg-popover p-5 text-popover-foreground shadow-lg/10",
-              "transition-[opacity,transform] duration-200 [transition-timing-function:cubic-bezier(.22,1,.36,1)]",
+              "transition-[opacity,transform] duration-180 [transition-timing-function:cubic-bezier(.22,1,.36,1)]",
               "data-starting-style:scale-[.97] data-starting-style:opacity-0",
               "data-ending-style:scale-[.97] data-ending-style:opacity-0",
             )}

@@ -28,19 +28,36 @@
     "provider": "github-releases",
     "defaultServer": "https://github.com/Damue01/XwX_Deck/releases/latest/download",
     "serverEnvironmentVariable": "XWX_DECK_UPDATE_SERVER_URL",
-    "metadataEnvironmentVariable": "XWX_DECK_METADATA_PUSH_URL"
+    "metadataEnvironmentVariable": "XWX_DECK_METADATA_PUSH_URL",
+    "startupCheckDelayMs": 6000,
+    "nightly": {
+      "platform": "win32",
+      "windowLocalHours": [
+        2,
+        5
+      ],
+      "idleThresholdSeconds": 900,
+      "cancelledVersionPersists": true,
+      "requiresSafeShutdown": true
+    }
   },
   "platforms": {
     "windows": {
       "buildScript": "build:win",
-      "artifactName": "XwX Deck.exe"
+      "artifactName": "XwX Deck.exe",
+      "installMode": "automatic",
+      "publishedArtifactName": "XwX-Deck-windows-x64.exe",
+      "updateMetadata": "latest.yml"
     },
     "macosArm64": {
       "buildScript": "build:mac:arm64",
       "artifactName": "XwX-Deck-mac-arm64.dmg",
       "distribution": "unsigned-manual-dmg",
       "developerId": false,
-      "notarized": false
+      "notarized": false,
+      "installMode": "manual-dmg",
+      "updateMetadata": "release.json",
+      "automaticInstall": false
     }
   },
   "openSource": {

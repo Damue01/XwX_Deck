@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
 import { applicationRelaunchEnvironment } from '../app/applicationReset';
+import { STARTUP_HIDDEN_ARG } from '../app/startupRegistration';
 
 const APPLY_ARG = '--xwxdeck-apply-portable-update=';
 const COMPLETE_ARG = '--xwxdeck-portable-update-complete=';
@@ -13,18 +14,23 @@ const FILE_RETRY_TIMEOUT_MS = 30_000;
 const READY_WAIT_TIMEOUT_MS = 120_000;
 const READY_FILE_PREFIX = 'xwx-portable-update-ready-';
 const STARTED_FILE_PREFIX = 'xwx-portable-update-started-';
+const STALE_PARTIAL_AGE_MS = 10 * 60_000;
+// The previous EXE stays one day as the manual fallback for a broken release.
+const STALE_PREVIOUS_AGE_MS = 24 * 60 * 60_000;
 
 export interface PortableUpdateRequest {
   readonly sourcePath: string;
   readonly targetPath: string;
   readonly version: string;
   readonly waitPids: readonly number[];
+  /** Unattended (nightly) installs relaunch to the tray instead of opening a window. */
+  readonly launchHidden?: boolean;
 }
 
 export class PortableUpdateRestartError extends Error {
   constructor(request: PortableUpdateRequest, cause: unknown) {
     const reason = cause instanceof Error ? cause.message : String(cause);
-    super(`XwX Deck ${request.version} 已安装在原路径，未退回旧版本。\n\n自动启动未完成，请手动打开：\n${request.targetPath}\n\n原因：${reason}`);
+    super(`XwX Deck ${request.version} 已安装在原路径，未退回旧版本。\n\n自动启动未完成，请手动打开：\n${request.targetPath}\n\n如新版无法使用，旧版本备份保留在：\n${request.targetPath}.previous\n可将其复制并改名为 .exe 后打开。\n\n原因：${reason}`);
     this.name = 'PortableUpdateRestartError';
   }
 }
@@ -71,7 +77,8 @@ export function readPortableUpdateRequest(argv: readonly string[] = process.argv
     version,
     waitPids: Array.isArray(value.waitPids)
       ? value.waitPids.filter(pid => Number.isSafeInteger(pid) && pid > 0)
-      : []
+      : [],
+    launchHidden: value.launchHidden === true
   };
 }
 
@@ -108,16 +115,49 @@ export async function launchPortableUpdate(request: PortableUpdateRequest): Prom
   validateExecutablePath(request.targetPath, '当前程序');
   await assertWindowsExecutable(request.sourcePath);
   const encoded = encodeArgument(request);
-  // Reuse the already-extracted Electron executable as the hidden helper.
-  // Starting the downloaded portable wrapper here would unpack a second app
-  // while the first wrapper is still shutting down, which is unreliable on
-  // managed Windows machines with process-injection/security software.
-  const helperUserData = await fs.promises.mkdtemp(path.join(tmpdir(), 'xwx_deck-update-helper-'));
-  await spawnDetached(
-    process.execPath,
-    [`--user-data-dir=${helperUserData}`, `${APPLY_ARG}${encoded}`],
-    { isolatedEnvironment: true }
-  );
+  // The portable wrapper removes Chromium resources when the manager exits.
+  // A second Electron browser process in that extraction would lose its GPU
+  // and network subprocesses. Use a bundled Node worker, as the reset path does,
+  // and wait until its code has loaded before allowing the manager to quit.
+  const env = applicationRelaunchEnvironment();
+  delete env.XWX_DECK_UPDATE_PREVIEW;
+  delete env.XWX_DECK_PREVIEW_USER_DATA;
+  const child = spawn(process.execPath, [
+    path.join(__dirname, 'portable-update-worker.js'), `${APPLY_ARG}${encoded}`
+  ], {
+    detached: true,
+    cwd: path.dirname(request.targetPath),
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    windowsHide: true,
+    env: { ...env, ELECTRON_RUN_AS_NODE: '1' }
+  });
+  await new Promise<void>((resolve, reject) => {
+    const finish = (error?: Error) => {
+      clearTimeout(timer);
+      child.removeListener('message', onMessage);
+      child.removeListener('error', onError);
+      child.removeListener('exit', onExit);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onMessage = (message: unknown) => {
+      if ((message as { type?: string })?.type === 'ready') finish();
+      else finish(new Error('更新辅助进程返回了无效的就绪状态。'));
+    };
+    const onError = (error: Error) => finish(error);
+    const onExit = (code: number | null) => finish(new Error(`更新辅助进程启动失败（${code}）。`));
+    const timer = setTimeout(() => {
+      finish(new Error('更新辅助进程启动超时，请重新尝试安装。'));
+    }, 10_000);
+    child.once('message', onMessage);
+    child.once('error', onError);
+    child.once('exit', onExit);
+  }).catch(error => {
+    // Only this not-yet-ready worker is cancelled; the manager stays usable.
+    child.kill();
+    throw error;
+  });
+  child.unref();
 }
 
 export async function runPortableUpdateMode(request: PortableUpdateRequest): Promise<void> {
@@ -142,7 +182,8 @@ export async function runPortableUpdateMode(request: PortableUpdateRequest): Pro
         readyPath,
         startedPath,
         attemptId
-      })}`
+      })}`,
+      ...(request.launchHidden ? [STARTUP_HIDDEN_ARG] : [])
     ], { windowsHide: false });
     await waitForPortableUpdateReady(readyPath, attemptId, READY_WAIT_TIMEOUT_MS, startedPath, launchPid);
   } catch (error) {
@@ -269,13 +310,72 @@ export function safePortableCleanupPaths(paths: readonly string[], currentExecut
     });
 }
 
+/**
+ * Run before the running app shuts anything down: a portable EXE in a
+ * read-only folder (Program Files, a network share, policy-restricted paths)
+ * would otherwise be discovered only after Trace and the Gateway stopped.
+ * Windows `fs.access(W_OK)` ignores ACLs, so create and remove a real file in
+ * the same directory the final rename will use.
+ */
+export async function assertPortableUpdateInstallable(sourcePath: string, targetPath: string): Promise<void> {
+  const source = path.resolve(sourcePath);
+  const target = path.resolve(targetPath);
+  validateExecutablePath(source, 'update source');
+  validateExecutablePath(target, 'update target');
+  await assertWindowsExecutable(source);
+  await assertWindowsExecutable(target);
+  const directory = path.dirname(target);
+  const probe = path.join(directory, `.xwx-update-write-test-${process.pid}-${randomUUID()}`);
+  try {
+    await fs.promises.writeFile(probe, 'probe', { flag: 'wx' });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`无法写入 XwX Deck 所在目录，自动更新无法替换程序：\n${directory}\n\n请把 XwX Deck.exe 移到有写入权限的位置（例如桌面或 D 盘的普通文件夹）后再更新，或手动下载新版覆盖。\n\n原因：${reason}`);
+  }
+  await removeWithRetry(probe, 2_000).catch(() => undefined);
+}
+
+/**
+ * A helper killed by logoff, shutdown or security software leaves the
+ * `.updating` / `.previous` / `.rollback` copies (each the size of the whole
+ * app) next to the EXE. Partial copies are removed once they are clearly stale;
+ * `.previous` is kept for a day so a broken release still has a manual fallback.
+ */
+export async function sweepStalePortableUpdateFiles(
+  currentExecutable: string | undefined,
+  nowMs = Date.now()
+): Promise<string[]> {
+  if (!currentExecutable) return [];
+  const target = path.resolve(currentExecutable);
+  if (path.extname(target).toLowerCase() !== '.exe') return [];
+  const removed: string[] = [];
+  for (const suffix of ['.updating', '.rollback', '.previous']) {
+    const candidate = `${target}${suffix}`;
+    const minimumAge = suffix === '.previous' ? STALE_PREVIOUS_AGE_MS : STALE_PARTIAL_AGE_MS;
+    try {
+      const stat = await fs.promises.stat(candidate);
+      // copyFile keeps the source mtime on Windows; creation/change time is the copy time.
+      const touchedAt = Math.max(stat.mtimeMs, stat.ctimeMs, stat.birthtimeMs || 0);
+      if (!stat.isFile() || nowMs - touchedAt < minimumAge) continue;
+      await removeWithRetry(candidate, 5_000);
+      removed.push(candidate);
+    } catch {
+      // Missing or still locked: leave it for a later launch.
+    }
+  }
+  return removed;
+}
+
 async function relaunchAfterFailure(
   request: PortableUpdateRequest,
   error: unknown
 ): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   await assertWindowsExecutable(request.targetPath);
-  await spawnDetached(request.targetPath, [`${FAILED_ARG}${encodeArgument({ message })}`]);
+  await spawnDetached(request.targetPath, [
+    `${FAILED_ARG}${encodeArgument({ message })}`,
+    ...(request.launchHidden ? [STARTUP_HIDDEN_ARG] : [])
+  ]);
 }
 
 async function readPortableUpdateStartedPid(startedPath: string): Promise<number | undefined> {
@@ -349,16 +449,14 @@ async function assertWindowsExecutable(file: string): Promise<void> {
 async function spawnDetached(
   executable: string,
   args: readonly string[],
-  options: { readonly isolatedEnvironment?: boolean; readonly windowsHide?: boolean } = {}
+  options: { readonly windowsHide?: boolean } = {}
 ): Promise<number | undefined> {
   const env = applicationRelaunchEnvironment();
-  if (options.isolatedEnvironment) {
-    delete env.XWX_DECK_UPDATE_PREVIEW;
-    delete env.XWX_DECK_PREVIEW_USER_DATA;
-  }
   return new Promise<number | undefined>((resolve, reject) => {
     const child = spawn(executable, [...args], {
       detached: true,
+      // The old portable wrapper can remove its extraction directory on exit.
+      cwd: path.dirname(executable),
       env,
       stdio: 'ignore',
       windowsHide: options.windowsHide ?? true

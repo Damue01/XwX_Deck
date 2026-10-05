@@ -77,7 +77,9 @@ export function CodexEnhancements({ enhancements, onUpdate, onAfterUpdate }: Pro
         confirmText: '开启'
       });
       if (!accepted) return;
-    } else if (enhancements.hasHistoryBackup) {
+    } else {
+      // The cached backup flag may predate a background migration. Let the
+      // restore operation check the current ledger instead of hiding the choice.
       const result = await confirmChecked({
         title: '停止管理会话？',
         body: '停止后不再自动迁移。可同时恢复迁移前分类。',
@@ -87,13 +89,6 @@ export function CodexEnhancements({ enhancements, onUpdate, onAfterUpdate }: Pro
       });
       if (!result.confirmed) return;
       restoreExisting = result.checked;
-    } else {
-      const accepted = await confirm({
-        title: '停止管理会话？',
-        body: '停止后不再自动迁移，现有分类保持不变。',
-        confirmText: '关闭'
-      });
-      if (!accepted) return;
     }
 
     setBusyHistory(true);
@@ -114,7 +109,6 @@ export function CodexEnhancements({ enhancements, onUpdate, onAfterUpdate }: Pro
     busyHistory,
     confirm,
     confirmChecked,
-    enhancements.hasHistoryBackup,
     enhancements.unifySessionHistory,
     onAfterUpdate,
     onUpdate

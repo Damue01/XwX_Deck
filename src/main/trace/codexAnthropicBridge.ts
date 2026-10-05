@@ -760,11 +760,11 @@ function chatToolToAnthropic(value: unknown): JsonObject | undefined {
   const name = text(fn.name);
   if (!name) return undefined;
   const schema = normalizeAnthropicToolSchema(fn.parameters);
+  // Bedrock-backed Claude routes can reject the strict field on tool definitions.
   return {
     name,
     ...(text(fn.description) ? { description: text(fn.description) } : {}),
-    input_schema: schema,
-    ...(typeof fn.strict === 'boolean' ? { strict: fn.strict } : {})
+    input_schema: schema
   };
 }
 

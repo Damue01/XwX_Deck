@@ -61,8 +61,14 @@ export interface TapClientRoute {
   /** Route-specific system proxy resolved by the Electron manager. */
   readonly upstreamProxyUrl?: string;
   readonly stripPathPrefix?: '/v1' | '/anthropic' | '/claude-desktop' | '/backend-api' | '/backend-api/codex';
-  /** Codex always speaks Responses; non-Responses upstreams are bridged locally. */
-  readonly transform?: 'responses-to-chat' | 'responses-to-chat-auto' | 'responses-to-anthropic' | 'responses-compact-auto';
+  /**
+   * Codex always speaks Responses; non-Responses upstreams are bridged locally.
+   * `messages-auto`: Claude speaks Messages; models whose resolved protocol is
+   * Responses or Chat Completions are bridged to `openAiBaseUrl`.
+   */
+  readonly transform?: 'responses-to-chat' | 'responses-to-chat-auto' | 'responses-to-anthropic' | 'responses-compact-auto' | 'messages-auto';
+  /** OpenAI-compatible base (ending before `/responses`) used by `messages-auto`. */
+  readonly openAiBaseUrl?: string;
   /** Optional authoritative per-model wire protocol discovered from the service. */
   readonly modelProtocols?: Readonly<Record<string, 'responses' | 'chat-completions' | 'anthropic-messages'>>;
   /** Claude Desktop-safe picker ID mapped back to the provider's real model ID. */

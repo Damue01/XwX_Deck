@@ -7,7 +7,7 @@ import type { ModelCatalogEntry } from '../app/modelCatalog';
 import type { ClaudeModelSettings } from '../app/settings';
 import { writeFileAtomic } from '../shared/fsx';
 import { isRecord } from '../shared/obj';
-import { buildClaudeDesktopModels } from './claudeDesktopModels';
+import { buildClaudeDesktopModels, isClaudeDesktopCompatibleModelId } from './claudeDesktopModels';
 
 const PROFILE_ID = '00000000-0000-4000-8000-000000157220';
 const PROFILE_NAME = 'XwX Deck';
@@ -40,6 +40,9 @@ interface ClaudeDesktopSyncState {
   readonly profilePath: string;
   readonly previousProfileContent?: string;
   readonly writtenProfileContent: string;
+  /** Remote profile that replaces a local one when Deck stops, so Desktop
+   * keeps the selected service instead of a stopped localhost port. */
+  readonly directFallbackProfileContent?: string;
 }
 
 export interface ClaudeDesktopSyncSnapshot {
@@ -59,6 +62,12 @@ export interface ClaudeDesktopSyncApplyInput {
   readonly mode: 'direct' | 'local';
   readonly catalog: readonly ModelCatalogEntry[];
   readonly models: ClaudeModelSettings;
+  /** Local mode only: the service's remote endpoint for native Claude IDs. */
+  readonly directFallback?: {
+    readonly gatewayBaseUrl: string;
+    readonly gatewayApiKey: string;
+    readonly gatewayAuthScheme: 'bearer' | 'x-api-key';
+  };
 }
 
 export interface ClaudeDesktopPathOptions {
@@ -100,14 +109,54 @@ export class ClaudeDesktopConfigManager {
     return this.serialized(() => this.restoreOfficialUnlocked());
   }
 
-  /** Stop/exit only removes profiles that depend on XwX's local Gateway. */
+  /** Stop/exit only changes profiles that depend on XwX's local Gateway.
+   * A local profile with a remote fallback switches to it; otherwise Desktop
+   * returns to its pre-sync configuration. */
   restoreLocal(): Promise<ClaudeDesktopSyncSnapshot> {
     return this.serialized(async () => {
       const state = await this.readState();
-      return state?.mode === 'direct' || state?.mode === 'official'
-        ? this.inspect()
-        : this.restoreUnlocked();
+      if (state?.mode === 'direct' || state?.mode === 'official') return this.inspect();
+      if (state?.directFallbackProfileContent && await this.switchToDirectFallback(state)) return this.inspect();
+      return this.restoreUnlocked();
     });
+  }
+
+  private async switchToDirectFallback(state: ClaudeDesktopSyncState): Promise<boolean> {
+    const fallback = state.directFallbackProfileContent;
+    if (!fallback) return false;
+    const managedProfileId = profileIdFromPath(state.profilePath);
+    const before = await snapshotFiles([
+      ...state.configFiles.map(config => config.path),
+      state.metaPath, state.profilePath, this.statePath()
+    ]);
+    // Only replace the exact profile XwX wrote while Desktop still selects it.
+    // Any external change goes through the conflict-aware full restore.
+    if (before.get(state.profilePath) !== state.writtenProfileContent) return false;
+    const meta = parseObjectOrEmpty(before.get(state.metaPath), 'Claude Desktop configLibrary metadata');
+    if (meta.appliedId !== managedProfileId) return false;
+    const deployed = state.configFiles.every(config => (
+      parseObjectOrEmpty(before.get(config.path), 'Claude Desktop 配置').deploymentMode === '3p'
+    ));
+    if (!deployed) return false;
+    const nextState = formatJson({
+      ...state,
+      mode: 'direct',
+      writtenProfileContent: fallback,
+      directFallbackProfileContent: undefined
+    } satisfies ClaudeDesktopSyncState);
+    const written = new Map<string, string>();
+    try {
+      await writeExpected(state.profilePath, before.get(state.profilePath), fallback);
+      written.set(state.profilePath, fallback);
+      await writeExpected(this.statePath(), before.get(this.statePath()), nextState);
+      written.set(this.statePath(), nextState);
+    } catch (error) {
+      await rollbackSnapshot(before, written).catch(rollbackError => {
+        throw new AggregateError([error as Error, rollbackError as Error], 'Claude Desktop 恢复直连失败，且自动回滚未完全成功。');
+      });
+      throw error;
+    }
+    return true;
   }
 
   private async inspect(): Promise<ClaudeDesktopSyncSnapshot> {
@@ -149,17 +198,15 @@ export class ClaudeDesktopConfigManager {
   private async applyUnlocked(input: ClaudeDesktopSyncApplyInput): Promise<ClaudeDesktopSyncSnapshot> {
     const platform = this.pathOptions.platform ?? process.platform;
     if (!desktopPlatformSupported(platform)) throw new Error('当前系统不支持同步 Claude Desktop。');
-    const gatewayBaseUrl = normalizeGatewayBaseUrl(input.gatewayBaseUrl, input.mode);
-    const gatewayApiKey = input.gatewayApiKey.trim();
-    if (!gatewayApiKey) throw new Error('Claude Desktop Gateway 密钥不能为空。');
-    const inferenceModels = buildClaudeDesktopModels(input.catalog, input.models).map(model => ({
-      name: model.name,
-      labelOverride: model.label,
-      anthropicFamilyTier: model.tier,
-      ...(model.isFamilyDefault ? { isFamilyDefault: true } : {}),
-      ...(model.supports1m ? { supports1m: true } : {})
-    }));
-    if (!inferenceModels.length) throw new Error('当前 Claude 服务没有可同步到 Desktop 的对话模型。');
+    const profile = buildProfileContent(input, input.mode, input.catalog);
+    // The direct profile reaches the service's Messages endpoint without the
+    // Gateway, so bridged (non-Messages) models are excluded.
+    const nativeCatalog = input.catalog.filter(entry => (
+      entry.protocols.includes('anthropic-messages') && isClaudeDesktopCompatibleModelId(entry.id)
+    ));
+    const directFallbackProfileContent = input.mode === 'local' && input.directFallback && nativeCatalog.length
+      ? buildProfileContent({ ...input.directFallback, models: input.models }, 'direct', nativeCatalog)
+      : undefined;
 
     let existingState = await this.readState();
     const resolvedPaths = await resolveClaudeDesktopPaths(this.pathOptions);
@@ -188,18 +235,6 @@ export class ClaudeDesktopConfigManager {
       : resolvedPaths;
 
     if (!existingState) await this.migrateLegacyLocalProfile(paths);
-    const profile = formatJson({
-      chatTabEnabled: true,
-      disableDeploymentModeChooser: true,
-      inferenceProvider: 'gateway',
-      inferenceCredentialKind: 'static',
-      inferenceGatewayAuthScheme: input.gatewayAuthScheme,
-      modelDiscoveryEnabled: false,
-      modelCatalogEnabled: false,
-      inferenceGatewayBaseUrl: gatewayBaseUrl,
-      inferenceGatewayApiKey: gatewayApiKey,
-      inferenceModels
-    });
     const before = await snapshotFiles([...paths.configFiles, paths.metaPath, paths.profilePath, this.statePath()]);
     const written = new Map<string, string>();
     try {
@@ -229,7 +264,12 @@ export class ClaudeDesktopConfigManager {
       await writeExpected(paths.profilePath, before.get(paths.profilePath), profile);
       written.set(paths.profilePath, profile);
 
-      const nextState: ClaudeDesktopSyncState = { ...state, mode: input.mode, writtenProfileContent: profile };
+      const nextState: ClaudeDesktopSyncState = {
+        ...state,
+        mode: input.mode,
+        writtenProfileContent: profile,
+        directFallbackProfileContent
+      };
       const nextStateText = formatJson(nextState);
       await writeExpected(this.statePath(), before.get(this.statePath()), nextStateText);
       written.set(this.statePath(), nextStateText);
@@ -579,6 +619,24 @@ export async function forceRestoreClaudeDesktopConfiguration(userDataDir: string
   if (!state) return;
   if (state.mode === 'direct' || state.mode === 'official') return;
   const managedProfileId = profileIdFromPath(state.profilePath);
+  if (state.directFallbackProfileContent && await readText(state.profilePath) === state.writtenProfileContent) {
+    const meta = parseObjectOrEmpty(await readText(state.metaPath), 'Claude Desktop configLibrary metadata');
+    const configs = await Promise.all(state.configFiles.map(async config => (
+      parseObjectOrEmpty(await readText(config.path), 'Claude Desktop 配置').deploymentMode
+    )));
+    if (meta.appliedId === managedProfileId && configs.every(mode => mode === '3p')) {
+      // The Gateway is gone: keep the selected service through its remote
+      // endpoint instead of discarding the managed profile.
+      await writeFileAtomic(state.profilePath, state.directFallbackProfileContent);
+      await writeFileAtomic(statePath, formatJson({
+        ...state,
+        mode: 'direct',
+        writtenProfileContent: state.directFallbackProfileContent,
+        directFallbackProfileContent: undefined
+      } satisfies ClaudeDesktopSyncState));
+      return;
+    }
+  }
   const backupRoot = path.join(userDataDir, 'backups', 'claude-desktop-forced', String(Date.now()));
   const touched = [...state.configFiles.map(item => item.path), state.metaPath, state.profilePath];
   await fs.promises.mkdir(backupRoot, { recursive: true });
@@ -656,6 +714,36 @@ function samePath(left: string, right: string, platform: NodeJS.Platform): boole
     return platform === 'win32' ? resolved.toLowerCase() : resolved;
   };
   return normalize(left) === normalize(right);
+}
+
+function buildProfileContent(
+  input: Pick<ClaudeDesktopSyncApplyInput, 'gatewayBaseUrl' | 'gatewayApiKey' | 'gatewayAuthScheme' | 'models'>,
+  mode: 'direct' | 'local',
+  catalog: readonly ModelCatalogEntry[]
+): string {
+  const gatewayBaseUrl = normalizeGatewayBaseUrl(input.gatewayBaseUrl, mode);
+  const gatewayApiKey = input.gatewayApiKey.trim();
+  if (!gatewayApiKey) throw new Error('Claude Desktop Gateway 密钥不能为空。');
+  const inferenceModels = buildClaudeDesktopModels(catalog, input.models).map(model => ({
+    name: model.name,
+    labelOverride: model.label,
+    anthropicFamilyTier: model.tier,
+    ...(model.isFamilyDefault ? { isFamilyDefault: true } : {}),
+    ...(model.supports1m ? { supports1m: true } : {})
+  }));
+  if (!inferenceModels.length) throw new Error('当前 Claude 服务没有可同步到 Desktop 的对话模型。');
+  return formatJson({
+    chatTabEnabled: true,
+    disableDeploymentModeChooser: true,
+    inferenceProvider: 'gateway',
+    inferenceCredentialKind: 'static',
+    inferenceGatewayAuthScheme: input.gatewayAuthScheme,
+    modelDiscoveryEnabled: false,
+    modelCatalogEnabled: true,
+    inferenceGatewayBaseUrl: gatewayBaseUrl,
+    inferenceGatewayApiKey: gatewayApiKey,
+    inferenceModels
+  });
 }
 
 function profileIdFromPath(profilePath: string): string {

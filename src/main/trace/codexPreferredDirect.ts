@@ -5,12 +5,12 @@ import {
 import { CodexOfficialAuthManager } from './codexOfficialAuthManager';
 
 export interface CodexPreferredDirectInput {
+  readonly preserveOfficialLogin?: boolean;
   readonly providerAdapter?: import('../../shared/providers').ProviderAdapter;
   readonly unifySessionHistory?: boolean;
   readonly directProviders?: readonly import('./codexConfigManager').CodexProviderDirectInput[];
   readonly providerId?: string;
   readonly providerName?: string;
-  readonly requiresOpenAiAuth?: boolean;
   readonly publishModelCatalog?: boolean;
   readonly requiresGateway?: boolean;
   readonly preferredMode: 'auto' | CodexConfigMode;
@@ -75,11 +75,11 @@ export async function restoreCodexPreferredDirectConfiguration(
   if (hasCompatibleServiceDirect) {
     const restored = await manager.restoreCompatibleServiceDirectConfiguration({
       providerAdapter: input.providerAdapter,
+      preserveOfficialLogin: input.preserveOfficialLogin,
       unifySessionHistory: input.unifySessionHistory,
       directProviders: input.directProviders,
       providerId: input.providerId,
       providerName: input.providerName,
-      requiresOpenAiAuth: input.requiresOpenAiAuth,
       publishModelCatalog: input.publishModelCatalog,
       compatibleBaseUrl: input.compatibleBaseUrl,
       compatibleBearerToken: input.compatibleBearerToken,

@@ -9,7 +9,8 @@ export function normalizeErrorMessage(error: unknown): string {
     previous = message;
     message = message
       .replace(/^Error invoking remote method ['"][^'"]+['"]:\s*/u, '')
-      .replace(/^(?:Uncaught\s+)?(?:Error|TypeError|RangeError):\s*/u, '')
+      // Custom main-process errors keep their class name across IPC.
+      .replace(/^(?:Uncaught\s+)?(?:[A-Z][A-Za-z]*)?Error:\s*/u, '')
       .trim();
   } while (previous !== message);
   return message;

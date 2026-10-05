@@ -213,10 +213,12 @@ function Shell(): React.ReactElement {
     return (
       <div className="app">
         <Titlebar isMaximized={windowState.maximized} nativeFrame={windowState.nativeFrame} />
-        <div className="body">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--quiet)', fontSize: 12 }}>
-            加载中…
-          </div>
+        {/* Quiet skeleton of the rail so the shell doesn't jump when data arrives. */}
+        <div className="body boot-body" aria-busy="true">
+          <aside className="rail" aria-hidden="true">
+            {[0, 1, 2, 3].map(i => <span key={i} className="boot-row"><i /><b /></span>)}
+          </aside>
+          <main className="stage"><span className="sr-only">加载中…</span></main>
         </div>
       </div>
     );

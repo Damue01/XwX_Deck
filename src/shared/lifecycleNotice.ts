@@ -40,9 +40,7 @@ export function lifecycleFailure(error: unknown, operation: string): LifecycleNo
     description = '本地转发已停止，客户端可能仍连接旧端口。请重新开启 Trace，或恢复直连配置后重开客户端。';
     action = 'start-trace';
   } else if (/需要 Trace.*协议转换|开启 Trace 后/.test(reason)) {
-    // The model page remembers the rejected choice, so opening Trace from this
-    // notice completes it. Promising a manual re-selection would be wrong now.
-    description = '所选模型需要 Trace 提供协议转换。开启 Trace 后会自动继续刚才的选择；也可以改用支持 Responses 直连的模型。';
+    description = '此模型需要开启 Trace 才能调用。';
     action = 'start-trace';
   } else if (/环境变量|environment.override/i.test(reason)) {
     description = '客户端正在使用环境变量中的连接，本地设置不会优先生效。请检查并移除或修正相关环境变量，再重新打开客户端和 Deck 后重试。';
@@ -122,14 +120,30 @@ export function lifecycleFailure(error: unknown, operation: string): LifecycleNo
     secondaryActionLabel: /本地转发服务已停止/.test(reason) ? '恢复直连配置' : undefined };
 }
 
-export function traceStoppedNotice(forwarding = false): LifecycleNotice {
+export type ClaudeDesktopRestartHint = 'local' | 'direct';
+
+/** Claude Desktop reads its gateway address at launch. */
+export function claudeDesktopRestartNote(hint: ClaudeDesktopRestartHint | undefined): string {
+  return hint === 'direct' ? '请重启 Claude Desktop，重启后改用直连；在此之前它的消息会发送失败。'
+    : hint === 'local' ? '重启 Claude Desktop 后才会记录它的对话。' : '';
+}
+
+export function traceStoppedNotice(forwarding = false, claudeDesktopRestart?: ClaudeDesktopRestartHint): LifecycleNotice {
+  const restart = !forwarding && claudeDesktopRestart === 'direct';
   return {
     message: forwarding ? 'Trace 关闭未完成' : 'Trace 已关闭',
     description: forwarding
       ? '后台仍在运行。请检查恢复结果后重试关闭。'
-      : 'Trace 记录已停止，客户端配置已恢复直连或继续使用无记录模型路由。已保存的记录仍可查看。',
-    type: forwarding ? 'error' : 'success',
+      : restart
+        ? `Trace 记录已停止。${claudeDesktopRestartNote('direct')}`
+        : 'Trace 记录已停止，客户端配置已恢复直连或继续使用无记录模型路由。已保存的记录仍可查看。',
+    type: forwarding ? 'error' : restart ? 'info' : 'success',
     persistent: forwarding,
     action: forwarding ? 'stop-trace' : undefined
   };
+}
+
+/** A normal stop would interrupt replies the user is waiting for. */
+export function isTraceStopBusyError(error: unknown): boolean {
+  return /个回复正在生成|等待工具调用继续/.test(normalizeErrorMessage(error));
 }

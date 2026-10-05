@@ -35,7 +35,7 @@ export async function testProviderSelections(root: string): Promise<void> {
         const text = `model_provider = "${provider}"\n[model_providers.${provider}]\nbase_url = "http://127.0.0.1:45233/backend-api/codex"\n`
           + (auth === undefined ? '' : `requires_openai_auth = ${auth}\n`);
         const result = await manager.readFromContent(text, resolveClientPaths());
-        assert.equal(result.mode, auth === false || provider !== 'xwx_deck' && auth === undefined ? 'compatible' : 'official');
+        assert.equal(result.mode, auth === false || provider !== 'xwx_deck' ? 'compatible' : 'official');
       }
     }
     const capabilities = await enrichModelCatalogCacheFirst([

@@ -1,6 +1,5 @@
 import { app, dialog } from 'electron';
 import {
-  acknowledgePortableUpdateStarted,
   PortableUpdateRestartError,
   readPortableUpdateLaunchResult,
   readPortableUpdateRequest,
@@ -26,10 +25,9 @@ if (portableUpdateRequest) {
       }
     });
 } else {
-  const portableLaunchResult = readPortableUpdateLaunchResult();
-  void acknowledgePortableUpdateStarted(portableLaunchResult)
-    .catch(error => console.error('[updater] failed to record portable candidate pid', error))
-    .finally(loadRuntime);
+  // Select the profile and acquire its lock before yielding to async IO.
+  // Electron must not initialize the default profile during marker creation.
+  loadRuntime();
 }
 
 function loadRuntime(): void {

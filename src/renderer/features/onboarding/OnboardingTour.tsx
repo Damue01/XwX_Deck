@@ -18,32 +18,29 @@ const STEPS: readonly TourStep[] = [
     page: 'signal',
     selector: '#captureBtn',
     title: '开始一次请求追踪',
-    lead: '开启时先确认本地转发就绪；上游是否可用，要在客户端发送新消息后验证。成功接入的请求会计入本地用量。',
+    lead: '开启后，在客户端发一条新消息，就能在这里看到记录。',
     points: [
-      <>再次点击可停止记录并安全恢复 Trace 临时配置；已启用的第三方模型服务不会因此关闭。</>,
-      <>中央大数字显示累计用量，点它可在 <b>Token</b> 与 <b>费用</b> 之间切换。</>
+      <>再次点击停止记录，模型服务设置保持不变。</>,
+      <>点中间的数字，可在 <b>Token</b> 与 <b>费用</b> 之间切换。</>
     ]
   },
   {
     page: 'signal',
     selector: '#dashBtn',
     title: '仪表盘看每条详情',
-    lead: '想看具体每一次请求，点这里在浏览器打开完整仪表盘。',
+    lead: '在浏览器中打开完整仪表盘，逐条查看请求。',
     points: [
-      <>逐条查看请求的模型、Token、耗时与内容。</>,
-      <>支持按会话、客户端筛选与回溯。</>
+      <>可看模型、Token、耗时与内容，并按会话或客户端筛选。</>
     ]
   },
   {
     page: 'models',
     selector: '[data-tour="models-proxy"]',
     title: '选择客户端使用的模型服务',
-    lead: '为 Claude 或 ChatGPT 选择官方订阅，或选择你在设置页保存的模型服务。XwX Deck 只修改当前客户端对应的配置。',
+    lead: '为 Claude 或 ChatGPT 选择官方订阅，或在设置页保存的模型服务。',
     points: [
-      <>服务选择保存成功后，模型目录会单独刷新；目录失败不会撤销已经完成的服务切换。</>,
-      <>关闭时只恢复仍由 XwX Deck 管理的字段，外部并发修改会保留。</>,
       <>Claude 可为 Fable / Opus / Sonnet / Haiku 分别指定模型。</>,
-      <>ChatGPT 设一个默认模型即可，随时用 <code>/model</code> 临时切换。</>
+      <>ChatGPT 选一个默认模型即可。</>
     ]
   }
 ];
@@ -76,6 +73,13 @@ export function OnboardingTour(): React.ReactElement | null {
     try { localStorage.setItem(STORAGE_KEY, 'true'); } catch { /* ignore */ }
     setActive(false);
   }, []);
+
+  React.useEffect(() => {
+    if (!active) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') finish(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [active, finish]);
 
   React.useEffect(() => {
     if (active) document.body.dataset.tourActive = 'true';

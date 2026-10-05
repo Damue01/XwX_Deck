@@ -30,6 +30,23 @@ function previewCustomBackground(): string {
   return `data:image/svg+xml;base64,${btoa(svg)}`;
 }
 
+function expandConversationPreview(
+  rows: CodexConversationHealthReport['conversations'],
+  count: number
+): CodexConversationHealthReport['conversations'] {
+  if (count <= rows.length) return rows;
+  return Array.from({ length: count }, (_, index) => {
+    const source = rows[index % rows.length]!;
+    if (index < rows.length) return source;
+    return {
+      ...source,
+      threadId: `${source.threadId}-preview-${String(index + 1).padStart(3, '0')}`,
+      title: `${source.title || '未命名任务'} 样例 ${index + 1}`,
+      updatedAt: new Date(Date.now() - index * 60_000).toISOString()
+    };
+  });
+}
+
 export function createPreviewApi(): XwXDeckApi {
   const previewQuery = typeof location !== 'undefined' ? new URLSearchParams(location.search) : undefined;
   const hasTraceSkipped = previewQuery?.get('trace-skipped') === '1';
@@ -275,7 +292,8 @@ export function createPreviewApi(): XwXDeckApi {
   const hasMacUpdate = previewQuery?.get('mac-update') === '1';
   let update: XwXDeckUpdateState = hasUpdate
     ? {
-        status: 'available', currentVersion: '1.0.0', targetVersion: '1.0.1', channel: 'release',
+        status: previewQuery?.get('update-ready') === '1' ? 'ready' : 'available',
+        background: previewQuery?.get('update-background') === '1', currentVersion: '1.0.0', targetVersion: '1.0.1', channel: 'release',
         portable: false, installMode: hasMacUpdate ? 'manual-dmg' : 'automatic', supported: true, updateAvailable: true,
         releaseNotes: '新增右下角版本更新提醒\n展示本次更新内容并支持立即下载\n优化 Windows 原地更新体验'
       }
@@ -348,7 +366,7 @@ export function createPreviewApi(): XwXDeckApi {
     checkForUpdates: async () => update,
     downloadUpdate: async () => { update = { ...update, status: 'ready', percent: 100 }; return update; },
     restartAndInstall: async () => update,
-    cancelUpdate: async () => { update = { ...update, status: 'idle' }; return update; },
+    cancelUpdate: async () => { update = { ...update, status: 'available', percent: undefined }; return update; },
     repairApplication: async () => ({ removedCachePaths: 0, removedBytes: 0, chromiumCacheCleared: true, traceRetention: { legacyLimitsFound: false, persistedSettingsChanged: false, settings: { maxSessions: 0, maxStorageMB: 0 }, helper: { state: 'not-running' } } }),
     resetApplication: async () => undefined,
     toggleTracing: async () => {

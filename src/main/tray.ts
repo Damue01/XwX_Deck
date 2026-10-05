@@ -47,7 +47,7 @@ export class XwXDeckTray {
         ? `被外部追踪占用：:${state.externalTracePort}`
         : '追踪未开启';
     return Menu.buildFromTemplate([
-      { label: `XwX Deck · ${status}`, enabled: false },
+      { label: `XwX Deck ${status}`, enabled: false },
       { type: 'separator' },
       ...this.traceMenuItems(state),
       ...(state.update?.updateAvailable && state.update.targetVersion ? [{ type: 'separator' as const }, {

@@ -310,8 +310,12 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     diagnosisNext().click();
     await waitFor(() => diagnosisRows().length === diagnosisFixtureRowCount - 120 && diagnosisNext().disabled, 'diagnosis next page did not load from the worker');
     diagnosisRows()[0].click();
-    await waitFor(() => document.querySelector('.conversation-table-detail .conversation-path-chain'), 'diagnosis row detail did not load on demand');
+    await waitFor(() => document.querySelector('.conversation-table-detail .conversation-file-table'), 'diagnosis row detail did not load on demand');
     if (document.querySelector('.conversation-table-detail td')?.colSpan !== 3) throw new Error('diagnosis detail uses stale column span');
+    const rawMetadata = document.querySelector('.conversation-table-detail .conversation-raw');
+    if (!rawMetadata || rawMetadata.open) throw new Error('diagnosis raw fields must remain collapsed initially');
+    rawMetadata.querySelector('summary').click();
+    await waitFor(() => rawMetadata.open && rawMetadata.textContent.includes('session_meta'), 'diagnosis raw metadata disclosure did not open');
     if (document.querySelector('#conversationDoctor').textContent.includes('packaged history body')) throw new Error('diagnosis exposed conversation body');
     const searchInput = document.querySelector('input[aria-label="搜索对话"]');
     const searchDiagnosis = value => {

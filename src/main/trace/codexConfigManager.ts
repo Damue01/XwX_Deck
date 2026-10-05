@@ -79,7 +79,6 @@ export interface CodexConfigUpdate {
   readonly providerAdapter?: ProviderAdapter;
   readonly providerId?: unknown;
   readonly providerName?: unknown;
-  readonly requiresOpenAiAuth?: unknown;
   readonly publishModelCatalog?: unknown;
   /**
    * Explicit user takeover of root-level fields owned by another model
@@ -129,6 +128,7 @@ interface CompatibleServiceImageGenRecord {
 
 interface CodexDirectRestoreRecord {
   readonly ownedFieldPaths?: readonly string[];
+  readonly activeService?: CodexConfigMode;
   readonly directProviders?: readonly CodexProviderDirectInput[];
   readonly sharedProviderOriginalContent?: string;
   readonly version: 1;
@@ -160,12 +160,12 @@ export interface CodexProviderDirectInput {
 }
 
 export interface CodexCompatibleServiceDirectInput {
+  readonly preserveOfficialLogin?: boolean;
   readonly unifySessionHistory?: boolean;
   readonly directProviders?: readonly CodexProviderDirectInput[];
   readonly providerAdapter?: ProviderAdapter;
   readonly providerId?: string;
   readonly providerName?: string;
-  readonly requiresOpenAiAuth?: boolean;
   readonly publishModelCatalog?: boolean;
   readonly compatibleBaseUrl: string;
   readonly compatibleBearerToken: string;
@@ -393,14 +393,35 @@ export class CodexConfigManager {
           : `${CODEX_DEFAULT_TARGET}/v1`
       )
       : activeSection.baseUrl;
+    // Old managed providers used the same local endpoint for the official
+    // service. The restore record identifies XwX's current third-party route.
+    const directState = isXwXManagedProvider(activeProvider) && isLoopbackUrl(activeSection.baseUrl)
+      ? await this.readDirectRestoreRecord() : undefined;
+    const recordedSection = directState ? readProviderSection(directState.writtenContent, activeProvider) : undefined;
+    const recordedOfficialBase = directState ? readTomlTopLevelString(
+      rootToml(directState.writtenContent), authMode === 'chatgpt' ? 'chatgpt_base_url' : 'openai_base_url'
+    )?.trim() : undefined;
+    const managedThirdPartyGateway = directState?.configPath === paths.codexConfigPath
+      && directState.activeService === 'compatible'
+      && readTomlTopLevelString(rootToml(directState.writtenContent), 'model_provider') === activeProvider
+      && recordedSection?.baseUrl === activeSection.baseUrl
+      && recordedOfficialBase === explicitOfficialBase;
+    const localOfficialBaseMatch = isXwXManagedProvider(activeProvider) && !!explicitOfficialBase
+      && (sameEndpoint(activeSection.baseUrl, explicitOfficialBase)
+        || sameEndpoint(activeSection.baseUrl, `${explicitOfficialBase.replace(/\/+$/, '')}/codex`));
     const providerUsesOfficialAuth = activeProvider !== 'openai'
       && !activeSection.bearerToken
       && (
         (
           activeSection.requiresOpenAiAuth === true
           && (
-            stableProviderIsOfficial(activeSection.baseUrl)
-            || (!!explicitOfficialBase && sameEndpoint(activeSection.baseUrl, explicitOfficialBase))
+            (!isLoopbackUrl(activeSection.baseUrl) && (
+              stableProviderIsOfficial(activeSection.baseUrl)
+              || (!!explicitOfficialBase && sameEndpoint(activeSection.baseUrl, explicitOfficialBase))
+            ))
+            || (localOfficialBaseMatch && !managedThirdPartyGateway)
+            || (isXwXManagedProvider(activeProvider) && !managedThirdPartyGateway
+              && stableProviderIsOfficial(activeSection.baseUrl))
           )
         )
         // Older XwX releases used managed aliases for their local official
@@ -516,6 +537,7 @@ export class CodexConfigManager {
       original,
       next,
       {
+        activeService: mode,
         promoteOfficialSelection: mode === 'official' && input.persistOfficialSelection === true,
         directProviders,
         unified: input.unifySessionHistory === true,
@@ -627,6 +649,10 @@ export class CodexConfigManager {
     if (section.baseUrl === expectedGateway) {
       next = setTomlStringKey(next, 'base_url', upstreamBaseUrl, { sectionHeader }).text;
       restoredFields += 1;
+      // Without a provider key the remote service must not receive the login.
+      if (!section.bearerToken && section.requiresOpenAiAuth === true) {
+        next = setTomlBooleanKey(next, 'requires_openai_auth', false, { sectionHeader }).text;
+      }
     } else if (section.baseUrl && section.baseUrl !== upstreamBaseUrl) {
       conflicts.push('CompatibleService base_url 已被外部修改，保留当前值');
     }
@@ -689,7 +715,7 @@ export class CodexConfigManager {
     if (next !== current) await writeCodexConfigIfUnchanged(paths.codexConfigPath, current, ensureFinalEol(next));
     const conflicts = [...new Set([...(baseline?.conflicts ?? []), ...rootRestore.conflicts, ...providers.conflicts])];
     if (!conflicts.length && input.unifySessionHistory) {
-      await this.stageDirectRestoreRecord(paths.codexConfigPath, current, next, { unified: true });
+      await this.stageDirectRestoreRecord(paths.codexConfigPath, current, next, { unified: true, activeService: 'official' });
     } else if (!conflicts.length) await this.removeDirectRestoreRecord();
     if (imageGen?.consumed) await this.removeCompatibleServiceImageGenRecord();
     return { restoredFields: rootRestore.restoredFields + providers.restoredFields, conflicts };
@@ -709,7 +735,7 @@ export class CodexConfigManager {
     const state = await this.readDirectRestoreRecord();
     const provider = input.unifySessionHistory === true ? CODEX_STABLE_PROVIDER : cleanProviderId(input.providerId) || CODEX_STABLE_PROVIDER;
     let target = patchCompatibleServiceConfig(current, {
-      ...input, mode: 'compatible', requiresOpenAiAuth: false,
+      ...input, mode: 'compatible',
       providerId: provider, gatewayBaseUrl: undefined
     });
     // Root official overlays are not used by API providers, but must also be
@@ -728,7 +754,7 @@ export class CodexConfigManager {
     if (next !== current) await writeCodexConfigIfUnchanged(paths.codexConfigPath, current, ensureFinalEol(next));
     const conflicts = [...roots.conflicts, ...providers.conflicts];
     if (!conflicts.length && input.unifySessionHistory) {
-      await this.stageDirectRestoreRecord(paths.codexConfigPath, current, next, { unified: true });
+      await this.stageDirectRestoreRecord(paths.codexConfigPath, current, next, { unified: true, activeService: 'compatible' });
     } else if (!conflicts.length) await this.removeDirectRestoreRecord();
     return { restoredFields: roots.restoredFields + providers.restoredFields, conflicts };
   }
@@ -766,6 +792,7 @@ export class CodexConfigManager {
     original: string | undefined,
     writtenContent: string,
     options: {
+      readonly activeService?: CodexConfigMode;
       readonly promoteOfficialSelection?: boolean;
       readonly directProviders?: readonly CodexProviderDirectInput[];
       readonly unified?: boolean;
@@ -806,6 +833,7 @@ export class CodexConfigManager {
         ? { originalContent: rebasedOriginal ?? '' }
         : {}),
       writtenContent,
+      activeService: options.activeService ?? previous?.activeService,
       directProviders: options.directProviders ?? previous?.directProviders,
       sharedProviderOriginalContent,
       baselineWasManaged: previous?.baselineWasManaged
@@ -953,9 +981,6 @@ function patchCompatibleServiceConfig(text: string, input: CodexConfigUpdate): s
   const model = cleanString(input.compatibleModel) || DEFAULT_COMPATIBLE_SERVICE_MODEL;
   const provider = input.unifySessionHistory === true ? CODEX_STABLE_PROVIDER : cleanProviderId(input.providerId) || CODEX_STABLE_PROVIDER;
   const providerName = cleanString(input.providerName) || (provider === CODEX_STABLE_PROVIDER ? 'XwX Deck' : provider);
-  const requiresOpenAiAuth = typeof input.requiresOpenAiAuth === 'boolean'
-    ? input.requiresOpenAiAuth
-    : false;
   const publishModelCatalog = input.publishModelCatalog !== false;
   const upstreamBaseUrl = input.providerAdapter && input.providerAdapter !== 'auto' ? normalizeEndpoint(cleanString(input.compatibleBaseUrl)) : normalizeCompatibleServiceBaseUrl(cleanString(input.compatibleBaseUrl));
   const gatewayBaseUrl = cleanString(input.gatewayBaseUrl).replace(/\/+$/, '');
@@ -965,6 +990,10 @@ function patchCompatibleServiceConfig(text: string, input: CodexConfigUpdate): s
   // CompatibleService key to a Codex process: keeping its official OAuth header intact
   // lets the same live process switch back to the official route safely.
   const clientBearerToken = gatewayBaseUrl ? '' : upstreamBearerToken;
+  // Codex 0.158+ only reports the ChatGPT account when the active provider
+  // requires OpenAI auth. Direct requests use the provider-scoped key; Gateway
+  // requests have their login headers replaced before reaching the upstream.
+  const requiresOpenAiAuth = input.preserveOfficialLogin !== false;
   if (!baseUrl) throw new Error('CompatibleService base URL is required.');
   if (!upstreamBearerToken) throw new Error('CompatibleService bearer token is required.');
 

@@ -44,6 +44,19 @@ import {
   type CodexUpstreamIdentity
 } from './codexConversationPortability';
 import { ResponsesContinuationStore } from './responsesContinuationStore';
+import {
+  anthropicErrorBody,
+  anthropicMessageAsSse,
+  anthropicMessagesToUpstream,
+  ChatToAnthropicStream,
+  chatCompletionToAnthropicMessage,
+  estimateAnthropicInputTokens,
+  isEmptyAnthropicMessage,
+  ResponsesToAnthropicStream,
+  responsesSseToResponse,
+  responsesToAnthropicMessage,
+  upstreamFailureMessage
+} from './claudeMessagesBridge';
 import type { GatewayCapturedClient } from './gatewayProtocol';
 import { clientRouteMatchesIdentity, detectClientFromUserAgent, detectStrongVscodeSource, identifyClient, refineClaudeSource, refineCodexSource, resolveTraceSource } from './clientAdapters';
 import { TapApiType, TapCaptureMode, TapClientIdentity, TapClientRoute, TapProtocol, TapRoute, TapSessionTracePage, TapTimingSnapshot, TapTraceRecord, TapTraceSource } from './types';
@@ -1021,6 +1034,14 @@ export class TapProxy {
         requestBodyText = JSON.stringify(requestBody);
         model = route.upstreamModelId;
       }
+      const messagesBridge = isMessagesBridge(route);
+      if (messagesBridge && localUrl.pathname.endsWith('/count_tokens')) {
+        // OpenAI protocols have no token-count endpoint; Claude uses this only
+        // for context display, so a local estimate keeps it working.
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ input_tokens: estimateAnthropicInputTokens(requestBody) }));
+        return;
+      }
       const targetUpstream = routeUpstreamIdentity(route, req.headers);
       const continuation = apiType === 'responses'
         ? await this.responsesContinuations.prepareRequest(
@@ -1077,7 +1098,9 @@ export class TapProxy {
         if (s) this.broadcast('touch', JSON.stringify({ sessionId: s.id, ts: new Date().toISOString() }));
       }).catch(err => log.warn(`[compatible/tap] inflight probe failed: ${(err as Error).message}`));
     }
-    const upstreamUrl = route.providerAdapter && route.providerAdapter !== 'auto'
+    const upstreamUrl = messagesBridge
+      ? new URL(stripTrailingSlash(route.upstreamBaseUrl) + (route.transform === 'messages-to-chat' ? '/chat/completions' : '/responses'))
+      : route.providerAdapter && route.providerAdapter !== 'auto'
       ? new URL(route.upstreamBaseUrl.replace(/\/+$/, '') + (localUrl.pathname.endsWith('/models') ? '/models'
         : route.wireProtocol === 'anthropic-messages' ? '/messages'
         : route.wireProtocol === 'chat-completions' ? '/chat/completions'
@@ -1091,7 +1114,20 @@ export class TapProxy {
       ? requestRawBody
       : Buffer.from(JSON.stringify(conversionSource), 'utf8');
     let anthropicToolContext: ReturnType<typeof buildCodexToolContext> | undefined;
-    if (route.transform === 'responses-to-chat') {
+    if (messagesBridge) {
+      try {
+        upstreamRequestRawBody = Buffer.from(JSON.stringify(anthropicMessagesToUpstream(conversionSource, {
+          wireProtocol: route.transform === 'messages-to-chat' ? 'chat-completions' : 'responses',
+          maxOutputTokens: route.defaultMaxOutputTokens,
+          upstreamBaseUrl: route.upstreamBaseUrl,
+          compatibleServiceGateway: route.compatibleServiceGateway === true
+        })), 'utf8');
+      } catch (error) {
+        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(JSON.stringify(anthropicErrorBody(400, (error as Error).message)));
+        return;
+      }
+    } else if (route.transform === 'responses-to-chat') {
       upstreamRequestRawBody = Buffer.from(JSON.stringify(responsesToChatCompletions(conversionSource, {
         upstreamBaseUrl: route.upstreamBaseUrl,
         useVerifiedCompatibleServiceReasoningProfile: route.compatibleServiceGateway === true
@@ -1306,6 +1342,27 @@ export class TapProxy {
       delete requestHeaders.authorization;
       requestHeaders['x-api-key'] = route.upstreamBearerToken;
     }
+    // A model service must never receive the ChatGPT login that Codex sends
+    // when its provider keeps official auth visible.
+    if (route.source === 'codex-cli' && (route.providerId || route.compatibleServiceGateway) && !route.upstreamBearerToken) {
+      for (const key of Object.keys(requestHeaders)) {
+        if (['authorization', 'chatgpt-account-id', 'cookie'].includes(key.toLowerCase())) delete requestHeaders[key];
+      }
+    }
+    const messagesBridge = isMessagesBridge(route);
+    if (messagesBridge) {
+      // Anthropic client headers mean nothing to an OpenAI endpoint; betas can
+      // even be rejected. Claude sends its key as x-api-key: OpenAI wants Bearer.
+      for (const key of Object.keys(requestHeaders)) {
+        const lower = key.toLowerCase();
+        if (lower.startsWith('anthropic-') || lower.startsWith('x-stainless-')) delete requestHeaders[key];
+        if (lower === 'x-api-key') {
+          const apiKey = requestHeaders[key];
+          delete requestHeaders[key];
+          if (!requestHeaders.authorization && typeof apiKey === 'string' && apiKey) requestHeaders.authorization = `Bearer ${apiKey}`;
+        }
+      }
+    }
     const responseChunks: Buffer[] = [];
     let responseStatusCode: number | undefined;
     let responseStatusMessage: string | undefined;
@@ -1350,6 +1407,110 @@ export class TapProxy {
         // only streaming signal available in that case.
         const upstreamLooksStreamed = upstreamIsSse
           || (!upstreamContentType && requestExpectsStream && successStatus);
+        if (messagesBridge && upstreamLooksStreamed && requestExpectsStream && successStatus) {
+          const converter = route.transform === 'messages-to-chat'
+            ? new ChatToAnthropicStream(model ?? '')
+            : new ResponsesToAnthropicStream(model ?? '');
+          const headers: http.OutgoingHttpHeaders = {
+            ...forwardedHeaders,
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-store'
+          };
+          delete headers['content-length'];
+          res.writeHead(statusCode, headers);
+          reassembler = new SSEReassembler(route.apiType);
+          const emit = (value: string): void => {
+            if (!value) return;
+            const output = Buffer.from(value);
+            responseChunks.push(output);
+            reassembler?.feed(output, elapsedMs(startedNs));
+            if (!res.destroyed && !res.write(output)) {
+              upstreamRes.pause();
+              res.once('drain', () => upstreamRes.resume());
+            }
+          };
+          const finishBridgeStream = (error?: Error): void => {
+            if (responseSettled) return;
+            responseSettled = true;
+            if (error) upstreamError = error;
+            emit(converter.finish());
+            upstreamUsageRaw = converter.rawUsage();
+            reassembler?.finish(elapsedMs(startedNs));
+            if (!res.destroyed) res.end();
+            resolve();
+          };
+          upstreamRes.on('data', (chunk: Buffer) => emit(converter.feed(chunk)));
+          upstreamRes.on('end', () => finishBridgeStream());
+          upstreamRes.on('aborted', () => finishBridgeStream(
+            downstreamCloseError ?? new Error('upstream response aborted')
+          ));
+          upstreamRes.on('error', error => finishBridgeStream(downstreamCloseError ?? error));
+          upstreamRes.on('close', () => finishBridgeStream(
+            downstreamCloseError ?? new Error('upstream response closed before completion')
+          ));
+          return;
+        }
+        if (messagesBridge) {
+          upstreamRes.on('data', (chunk: Buffer) => responseChunks.push(chunk));
+          const reply = (status: number, body: Record<string, unknown>, asStream: boolean): void => {
+            responseSettled = true;
+            responseStatusCode = status;
+            const outputText = asStream ? anthropicMessageAsSse(body) : JSON.stringify(body);
+            const headers: http.OutgoingHttpHeaders = {
+              ...(res.headersSent ? {} : forwardedHeaders),
+              'content-type': asStream ? 'text/event-stream; charset=utf-8' : 'application/json; charset=utf-8',
+              'cache-control': 'no-store'
+            };
+            delete headers['content-length'];
+            if (!res.headersSent) res.writeHead(status, headers);
+            if (asStream) {
+              reassembler = new SSEReassembler(route.apiType);
+              reassembler.feed(Buffer.from(outputText), elapsedMs(startedNs));
+              reassembler.finish(elapsedMs(startedNs));
+            }
+            responseChunks.length = 0;
+            responseChunks.push(Buffer.from(outputText));
+            res.end(outputText);
+            resolve();
+          };
+          upstreamRes.on('end', () => {
+            if (responseSettled) return;
+            const upstreamText = Buffer.concat(responseChunks).toString('utf8');
+            const parsed = upstreamLooksStreamed ? undefined : safeJsonParse(upstreamText);
+            if (!successStatus) {
+              // Anthropic reports request errors as JSON with the HTTP status, streamed or not.
+              reply(statusCode, anthropicErrorBody(statusCode, parsed ?? upstreamText), false);
+              return;
+            }
+            const upstreamBody = route.transform === 'messages-to-chat'
+              ? (upstreamLooksStreamed ? chatSseToCompletion(upstreamText, model ?? '') : parsed)
+              : (upstreamLooksStreamed ? responsesSseToResponse(upstreamText) : parsed);
+            upstreamUsageRaw = usageFromEnvelope(upstreamBody);
+            const failure = upstreamBody === undefined ? undefined : upstreamFailureMessage(upstreamBody);
+            const message = upstreamBody === undefined || failure
+              || (route.transform === 'messages-to-chat' && isHollowChatCompletion(upstreamBody))
+              ? undefined
+              : route.transform === 'messages-to-chat'
+                ? chatCompletionToAnthropicMessage(upstreamBody, model ?? '')
+                : responsesToAnthropicMessage(upstreamBody, model ?? '');
+            if (!message || isEmptyAnthropicMessage(message)) {
+              reply(502, anthropicErrorBody(502, failure ?? '上游返回了空响应或无法解析的流。'), false);
+              return;
+            }
+            reply(statusCode, message, requestExpectsStream === true);
+          });
+          const failBridge = (error: Error): void => {
+            if (responseSettled) return;
+            upstreamError = error;
+            reply(502, anthropicErrorBody(502, error.message), false);
+          };
+          upstreamRes.on('aborted', () => failBridge(downstreamCloseError ?? new Error('upstream response aborted')));
+          upstreamRes.on('error', error => failBridge(downstreamCloseError ?? error));
+          upstreamRes.on('close', () => failBridge(
+            downstreamCloseError ?? new Error('upstream response closed before completion')
+          ));
+          return;
+        }
         if (
           route.transform === 'responses-to-anthropic'
           && upstreamLooksStreamed
@@ -1814,7 +1975,7 @@ interface ResolvedRoute {
   readonly connectionId?: string;
   readonly modelId?: string;
   readonly stripPathPrefix?: string;
-  readonly transform?: 'responses-to-chat' | 'responses-to-anthropic' | 'responses-compact-synthetic';
+  readonly transform?: 'responses-to-chat' | 'responses-to-anthropic' | 'responses-compact-synthetic' | 'messages-to-chat' | 'messages-to-responses';
   readonly wireProtocol?: 'responses' | 'chat-completions' | 'anthropic-messages';
   readonly defaultMaxOutputTokens?: number;
   readonly nativeCompact?: boolean;
@@ -1872,11 +2033,17 @@ function resolveClientRoute(route: TapClientRoute, model: string | undefined): R
         : undefined)
     : route.transform === 'responses-compact-auto'
       ? (nativeCompact ? undefined : 'responses-compact-synthetic')
-      : route.transform;
+      : route.transform === 'messages-auto'
+        ? (!route.openAiBaseUrl ? undefined
+          : wireProtocol === 'chat-completions' ? 'messages-to-chat'
+            : wireProtocol === 'responses' ? 'messages-to-responses'
+              : undefined)
+        : route.transform;
+  const bridged = transform === 'messages-to-chat' || transform === 'messages-to-responses';
   return {
     path: route.path,
     apiType: route.apiType,
-    upstreamBaseUrl: route.upstreamBaseUrl,
+    upstreamBaseUrl: bridged ? route.openAiBaseUrl! : route.upstreamBaseUrl,
     source: route.source,
     stripPathPrefix: route.stripPathPrefix,
     transform,
@@ -1966,7 +2133,7 @@ function buildUpstreamUrl(
   upstreamBaseUrl: string,
   localUrl: URL,
   stripPrefix?: string,
-  transform?: 'responses-to-chat' | 'responses-to-anthropic' | 'responses-compact-synthetic',
+  transform?: ResolvedRoute['transform'],
   wireProtocol: 'responses' | 'chat-completions' | 'anthropic-messages' = 'responses'
 ): URL {
   let pathname = localUrl.pathname;
@@ -2127,6 +2294,10 @@ function webSocketConnectionKey(
     route.upstreamProxyUrl ?? '',
     buildWebSocketForwardHeaders(request.headers, route.blockedBearerToken, route.replacementBearerToken)
   ]);
+}
+
+function isMessagesBridge(route: Pick<ResolvedRoute, 'transform'>): boolean {
+  return route.transform === 'messages-to-chat' || route.transform === 'messages-to-responses';
 }
 
 function isOfficialResponsesWebSocketRoute(route: ResolvedRoute): boolean {

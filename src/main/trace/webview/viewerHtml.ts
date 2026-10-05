@@ -48,7 +48,7 @@ export function renderTapViewerHtml(input: {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Trace · 模型请求追踪</title>
+<title>Trace 模型请求追踪</title>
 <link rel="icon" href="${favicon}">
 <style>
 ${WEBVIEW_TOKEN_CSS}
@@ -59,6 +59,9 @@ ${VIEWER_TOKEN_ALIASES}
    语义色调（thinking 琥珀 / diff 增绿删红）是唯一的"换色"层。
    保留的线：.metrics 列竖线、.sbs-diff 的 OLD|NEW 分列竖线——它们承载表格语义，非嵌套装饰。 */
 *{box-sizing:border-box} html,body{height:100%;margin:0}
+/* Keep Trace content scrollable while hiding scrollbar chrome. */
+html,html *{scrollbar-width:none}
+html::-webkit-scrollbar,html *::-webkit-scrollbar{display:none}
 body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:13px;line-height:1.58;-webkit-font-smoothing:antialiased}
 button,input{font:inherit} button{cursor:pointer}.tnum{font-variant-numeric:tabular-nums}
 .top{height:48px;display:flex;align-items:center;gap:9px;padding:0 16px;border-bottom:1px solid var(--line2);background:var(--panel)}
@@ -80,8 +83,7 @@ button,input{font:inherit} button{cursor:pointer}.tnum{font-variant-numeric:tabu
 .rail-resizer:hover::after,.app.is-resizing .rail-resizer::after{background:color-mix(in srgb,var(--blue) 40%,transparent)}
 .app[data-view="dashboard"] .rail-resizer{display:none}
 .progress{display:flex;align-items:center;gap:14px;padding:9px 14px;color:var(--faint);font-size:12px;border-bottom:1px solid var(--rail-line2)}.progress .lbl{flex:0 0 auto;white-space:nowrap}.progress .cur{color:var(--text);font-weight:600}
-.list{flex:1;overflow:auto;padding:2px 7px 16px;scrollbar-width:thin}
-.list::-webkit-scrollbar{width:7px}.list::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--faint) 45%,transparent);border-radius:999px;background-clip:padding-box;border:2px solid transparent}.list::-webkit-scrollbar-thumb:hover{background:var(--faint);background-clip:padding-box}
+.list{flex:1;overflow:auto;padding:2px 7px 16px}
 .fold-toggle{margin-left:auto;font-size:11.5px;color:var(--faint);cursor:pointer;border:0;background:transparent;padding:0;font-family:inherit}
 .fold-toggle:hover{color:var(--text);text-decoration:underline;text-underline-offset:2px}
 .rail-more{padding:10px 14px;text-align:center;color:var(--faint);font-size:11.5px;font-variant-numeric:tabular-nums;cursor:pointer;user-select:none}
@@ -244,7 +246,7 @@ button,input{font:inherit} button{cursor:pointer}.tnum{font-variant-numeric:tabu
 .tool-kind{font-size:10px;font-family:var(--mono);color:var(--faint)}.tool-note{color:var(--faint);font-size:12px;padding:5px 0}
 /* 声明里改变工具行为的非 schema 字段：max_uses / external_web_access / defer_loading… */
 .tool-flags{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 9px}
-.tool-flag{font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:1px 0}.tool-flag+.tool-flag::before{content:'·';color:var(--faint);margin:0 7px 0 1px}
+.tool-flag{font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:1px 0}.tool-flag+.tool-flag{margin-left:12px}
 .tool-flag-k{color:var(--faint);margin-right:5px}
 .tool-subtools{margin-top:10px}.tool-child{margin:7px 0;border:1px solid var(--line2);border-radius:7px;background:var(--panel);overflow:hidden}.tool-child-head{display:flex;align-items:baseline;gap:8px;padding:9px 10px;cursor:pointer;list-style:none}.tool-child-head::-webkit-details-marker{display:none}.tool-child-head::before{content:'▶';font-size:8px;color:var(--faint);transition:transform .14s}.tool-child[open]>.tool-child-head::before{transform:rotate(90deg)}.tool-child-head:hover{background:color-mix(in srgb,var(--panel) 70%,var(--hover))}.tool-child-body{padding:10px 12px 12px;border-top:1px solid var(--line-faint)}.tool-child-name{font-family:var(--mono);font-weight:700;color:var(--cyan)}.tool-child-desc{color:var(--faint);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .schema-list{display:flex;flex-direction:column;gap:10px;padding:3px 0 5px}.schema-row{min-width:0;padding-left:calc(var(--schema-depth,0)*18px)}.schema-row.schema-depth-0+.schema-row.schema-depth-0{margin-top:2px}.schema-head{display:flex;align-items:baseline;gap:9px;min-width:0;flex-wrap:wrap}.schema-field{font-family:var(--mono);font-weight:650;color:var(--text);overflow-wrap:anywhere}.schema-type{font-family:var(--mono);font-size:10.5px;color:var(--faint);white-space:nowrap}.schema-required{font-family:var(--sans);font-size:10px;color:var(--muted)}.schema-help{max-width:760px;margin-top:3px;font-size:12px;color:var(--muted);line-height:1.48;overflow-wrap:anywhere}.schema-help-empty{display:none}
@@ -480,7 +482,7 @@ summary.diff-section-header::-webkit-details-marker{display:none}
 @media (max-width:960px){
   .pricing-table th:nth-child(8),.pricing-table td:nth-child(8){display:none}
 }
-.pricing-note{margin-top:10px;font-size:11px;color:var(--faint);line-height:1.6;font-family:var(--sans)}
+.pricing-note{margin-top:10px;font-size:11px;color:var(--faint);line-height:1.6;font-family:var(--sans)}.pricing-note p{margin:0 0 6px}
 .dash-table-wrap{overflow-x:auto;border:1px solid var(--line2);border-radius:var(--radius);background:var(--panel);scrollbar-gutter:auto}
 .dash-table{width:100%;min-width:0;border-collapse:separate;border-spacing:0;table-layout:fixed}
 .dash-table thead th{position:relative;text-align:left;font-size:11px;color:var(--faint);font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:10px 12px;background:var(--bg);border-bottom:1px solid var(--line2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -828,7 +830,7 @@ function logNativeItemSummary(value){
   if(role && role !== type) parts.push(role);
   if(name) parts.push(name);
   if(callId) parts.push(short(callId,36));
-  return parts.join(' · ');
+  return parts.join(', ');
 }
 function logItemPresentation(value){
   if(!value || typeof value !== 'object' || Array.isArray(value)) return { itemClass:'', linkRole:'' };
@@ -1639,8 +1641,8 @@ function bodyOf(t){ return (t && t.request && t.request.body && typeof t.request
 function generatedLabel(value){ if(!value) return ''; const d=new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString(); }
 function renderConnectionStatus(){
   const liveTag = state.active
-    ? (liveConnected ? ' · <span class="live-on">LIVE</span>' : ' · <span class="live-off">'+L('重连中','Reconnecting')+'</span>')
-    : (state.sessions && state.sessions.length ? ' · <span class="live-off">'+L('离线','Offline')+'</span>' : '');
+    ? (liveConnected ? '&emsp;<span class="live-on">LIVE</span>' : '&emsp;<span class="live-off">'+L('重连中','Reconnecting')+'</span>')
+    : (state.sessions && state.sessions.length ? '&emsp;<span class="live-off">'+L('离线','Offline')+'</span>' : '');
   el('generatedAt').innerHTML = (state.generatedAt ? L('生成 ', 'Generated ') + esc(generatedLabel(state.generatedAt)) : '') + liveTag;
 }
 function render(){
@@ -2180,7 +2182,7 @@ function priceRuleSummary(price){
           : L('缓存写价格未核验','cache write price unverified'));
   }
   if(price.protocol === 'anthropic') parts.push(L('缓存写 1h $','Cache write 1h $')+(price.cacheWrite1h != null ? price.cacheWrite1h : price.input*2)+'/M');
-  if(price.cacheStoragePerHour != null) parts.push(L('缓存存储 $','Cache storage $')+price.cacheStoragePerHour+L('/M·token·小时','/M-token-hour'));
+  if(price.cacheStoragePerHour != null) parts.push(L('缓存存储 $','Cache storage $')+price.cacheStoragePerHour+L('/M token/小时','/M-token-hour'));
   if(price.cacheWritePolicySource === 'official') parts.push(L('缓存语义来自官方','Cache semantics from vendor'));
   if(price.protocol === 'anthropic' && price.cacheWrite1h == null) parts.push(L('1h 档按官方 2× 输入价推导','1h tier derived as 2x input per vendor rule'));
   // One band per line. Packed onto one line this ran past ten clauses and became
@@ -2235,7 +2237,7 @@ function priceSourceSummary(price){
   // 1h tier are both already legible in the cache-write cells, and with 80 rows
   // the extra words pushed the 1280px table back into horizontal overflow. They
   // stay in the row tooltip.
-  return additions.length ? base+' · '+additions.join(' · ') : base;
+  return additions.length ? base+L('，',', ')+additions.join(L('，',', ')) : base;
 }
 /** Band count and thresholds, for the rate cells and the row tooltip. */
 function priceTierNote(price){
@@ -2305,7 +2307,7 @@ function pricingStatus(price){
   // calling it unverified is both redundant and contradictory.
   if(write === '—' && price.cacheStoragePerHour == null) missing.push(L('缓存写','cache write'));
   if(price.cacheStoragePerHour != null){
-    notes.push(L('另计存储 $'+Number(price.cacheStoragePerHour.toPrecision(2))+'/M·h',
+    notes.push(L('另计存储 $'+Number(price.cacheStoragePerHour.toPrecision(2))+'/M/h',
       'storage $'+Number(price.cacheStoragePerHour.toPrecision(2))+'/M-h'));
   }else if(write === L('另计存储','Storage')){
     notes.push(L('缓存存储费未纳入','Cache storage excluded'));
@@ -2337,7 +2339,7 @@ function openPricing(){
     (ids.length
       ? '<table class="pricing-table"><thead><tr><th>'+L('模型 ID','Model ID')+'</th><th>'+L('协议','Protocol')+'</th><th>'+L('来源','Source')+'</th><th>'+L('输入','Input')+'</th><th>'+L('输出','Output')+'</th><th>'+L('缓存读','Cache Read')+'</th><th>'+L('缓存写 5m/默认','Cache Write 5m/default')+'</th><th>'+L('缓存写 1h','Cache Write 1h')+'</th><th>'+L('状态','Status')+'</th></tr></thead><tbody>'+rows+'</tbody></table>'
       : '<div class="dash-matrix-note">'+L('当前没有可见或已使用的模型，价目表不会展示全局兜底规则。','No visible or used models. Global fallback rules are intentionally hidden.')+'</div>')+
-    '<div class="pricing-note">'+L('· 这里只列出当前服务可见或 Trace 已使用的精确模型 ID；静态子串兜底规则不作为模型展示。<br>· 取价优先级：厂商官方牌价 &gt; 多源交叉一致 &gt; 单源。来源列会标出该行属于哪一档 —— 「单源未交叉」表示只有一个目录收录、未被第二个源确认，可信度最低。<br>· 海外模型优先采用厂商官方页，并用 Azure / AWS 的公开价目表交叉核对；国内模型优先采用厂商官方定价页。转售平台的报价只用于补齐官方未公布的缓存字段，且必须先与已知牌价对齐验证，其自身的折扣档与区域加价一律不采用。<br>· 标「起」的费率只是第一档。按输入长度分档的模型（阿里、火山、以及 OpenAI/Anthropic/Gemini 的长上下文加价），档位由单次请求的输入长度决定并同时作用于输出，费用按每次请求落入的档位分别累计，不会拍平成最低档。<br>· 标「分时段」的模型（如 DeepSeek）忙时闲时价格不同，按请求发生的时间分别累计。<br>· — 表示该字段未从可信来源核验，不会静默按输入价猜算。官方明确不单列写入费时显示「按输入价」；按存储时长计费的缓存显示「另计存储」，这部分无法从 Token 数推导，因此不计入费用。<br>· Anthropic 分开显示 5 分钟与 1 小时写入价。费用按实际捕获的 usage 口径计算；任何已使用但缺价的桶都会使该模型费用显示 —，并从合计中排除。<br>· 鼠标悬停任意一行可看到完整规则：命中的规则名、来源、各档费率、忙闲时段与缓存存储费。<br>· 兼容服务 实际结算价可能不同。','· Only exact model IDs visible from the current service or observed in Trace are listed. Static substring fallbacks are never presented as models.<br>· Rate priority: vendor list price &gt; agreement across independent catalogues &gt; single source. The source column says which applies; "single source" means one catalogue listed it and nothing confirmed it.<br>· Non-Chinese models prefer the vendor page cross-checked against the public Azure and AWS rate cards; Chinese models prefer the vendor pricing page. Resale platforms are read only to fill cache fields the vendor does not publish, only after their base rates match a known list price, and never for their own discount tiers or regional premiums.<br>· A rate marked "+" is only the first band. For length-banded models (Alibaba, Volcengine, and the long-context premiums OpenAI/Anthropic/Gemini charge) the band is chosen by the prompt length of each request and applies to output too, so cost accumulates per band instead of being flattened to the cheapest one.<br>· Models marked "Time-of-day" (DeepSeek) bill differently inside and outside peak hours, accumulated by request time.<br>· — means the field is not verified from a trusted source and is never silently guessed from input price. Providers that explicitly do not itemize cache writes show "Input rate"; duration-based cache storage shows "Storage" and is excluded because it cannot be derived from token counts.<br>· Anthropic 5-minute and 1-hour writes are shown separately. Cost follows captured usage semantics; any used bucket with an unknown price makes that model cost unavailable and excludes it from the total.<br>· Hover any row for the full rule: matched rule, source, per-band rates, peak windows and cache storage fee.<br>· Internal 兼容服务 billing may differ.')+'</div>';
+    '<div class="pricing-note">'+L('<p>这里只列出当前服务可见或 Trace 已使用的精确模型 ID；静态子串兜底规则不作为模型展示。</p><p>取价优先级：厂商官方牌价 &gt; 多源交叉一致 &gt; 单源。来源列会标出该行属于哪一档 —— 「单源未交叉」表示只有一个目录收录、未被第二个源确认，可信度最低。</p><p>海外模型优先采用厂商官方页，并用 Azure / AWS 的公开价目表交叉核对；国内模型优先采用厂商官方定价页。转售平台的报价只用于补齐官方未公布的缓存字段，且必须先与已知牌价对齐验证，其自身的折扣档与区域加价一律不采用。</p><p>标「起」的费率只是第一档。按输入长度分档的模型（阿里、火山、以及 OpenAI/Anthropic/Gemini 的长上下文加价），档位由单次请求的输入长度决定并同时作用于输出，费用按每次请求落入的档位分别累计，不会拍平成最低档。</p><p>标「分时段」的模型（如 DeepSeek）忙时闲时价格不同，按请求发生的时间分别累计。</p><p>— 表示该字段未从可信来源核验，不会静默按输入价猜算。官方明确不单列写入费时显示「按输入价」；按存储时长计费的缓存显示「另计存储」，这部分无法从 Token 数推导，因此不计入费用。</p><p>Anthropic 分开显示 5 分钟与 1 小时写入价。费用按实际捕获的 usage 口径计算；任何已使用但缺价的桶都会使该模型费用显示 —，并从合计中排除。</p><p>鼠标悬停任意一行可看到完整规则：命中的规则名、来源、各档费率、忙闲时段与缓存存储费。</p><p>服务商实际结算价可能不同。</p>','<p>Only exact model IDs visible from the current service or observed in Trace are listed. Static substring fallbacks are never presented as models.</p><p>Rate priority: vendor list price &gt; agreement across independent catalogues &gt; single source. The source column says which applies; "single source" means one catalogue listed it and nothing confirmed it.</p><p>Non-Chinese models prefer the vendor page cross-checked against the public Azure and AWS rate cards; Chinese models prefer the vendor pricing page. Resale platforms are read only to fill cache fields the vendor does not publish, only after their base rates match a known list price, and never for their own discount tiers or regional premiums.</p><p>A rate marked "+" is only the first band. For length-banded models (Alibaba, Volcengine, and the long-context premiums OpenAI/Anthropic/Gemini charge) the band is chosen by the prompt length of each request and applies to output too, so cost accumulates per band instead of being flattened to the cheapest one.</p><p>Models marked "Time-of-day" (DeepSeek) bill differently inside and outside peak hours, accumulated by request time.</p><p>— means the field is not verified from a trusted source and is never silently guessed from input price. Providers that explicitly do not itemize cache writes show "Input rate"; duration-based cache storage shows "Storage" and is excluded because it cannot be derived from token counts.</p><p>Anthropic 5-minute and 1-hour writes are shown separately. Cost follows captured usage semantics; any used bucket with an unknown price makes that model cost unavailable and excludes it from the total.</p><p>Hover any row for the full rule: matched rule, source, per-band rates, peak windows and cache storage fee.</p><p>Provider billing may differ.</p>')+'</div>';
   el('pricingOv').classList.add('on');
   el('pricingClose').focus();
 }
@@ -2499,7 +2501,7 @@ function renderDashboard(){
     html += '<tr data-sid="'+esc(s.id)+'" tabindex="0" aria-label="'+esc(L('打开会话：','Open session: ')+(display || L('无 user message','no user message')))+'">'+
       '<td class="dash-time" data-col="started">'+esc(new Date(s.startedAt).toLocaleString())+'</td>'+
       '<td class="dash-first" data-col="first" title="'+esc(first || display)+'">'+esc(short(display || L('(无 user message)','(no user message)'), 80))+
-        '<div class="dash-first-meta">'+esc(model)+' · '+esc(sourceLabel(src))+'</div>'+
+        '<div class="dash-first-meta">'+esc(model)+'&emsp;'+esc(sourceLabel(src))+'</div>'+
       '</td>'+
       '<td class="col-src" data-col="source"><span class="src-tag src-'+esc(src)+'">'+esc(sourceLabel(src))+'</span></td>'+
       '<td class="dash-model col-model" data-col="model">'+esc(model)+'</td>'+
@@ -3498,7 +3500,7 @@ function renderMetrics(t, usage){
   const writeBreakdown = [];
   if(typeof usage.cacheCreation5mTokens === 'number') writeBreakdown.push('5m '+num(usage.cacheCreation5mTokens));
   if(typeof usage.cacheCreation1hTokens === 'number') writeBreakdown.push('1h '+num(usage.cacheCreation1hTokens));
-  const cacheWriteTip = writeBreakdown.length ? cacheTip+' · '+writeBreakdown.join(' · ') : cacheTip;
+  const cacheWriteTip = writeBreakdown.length ? cacheTip+L('：',': ')+writeBreakdown.join(L('，',', ')) : cacheTip;
   const tokenCol = '<div class="mdcol">'+
     '<div class="mdrow">'+tkm(L('未缓存输入','Uncached Input'), usage.inputUncachedTokens, inputTip)+tkm(L('缓存读','Cache Read'), usage.cacheReadTokens, cacheTip)+tkm(L('缓存写','Cache Write'), usage.cacheCreationTokens, cacheWriteTip)+tkm(L('输出','Output'), usage.outputTokens)+'</div>'+
   '</div>';
@@ -3909,7 +3911,7 @@ function responseStatusAlert(snap){
   const stop = snap.stopReason || '';
   if(!detail && stop !== 'incomplete' && stop !== 'failed') return '';
   const label = stop === 'failed' ? L('响应失败','Response failed') : L('响应未完整结束','Response incomplete');
-  return '<div class="resp-alert"><b>'+label+'</b>'+(detail?' · '+esc(detail):'')+'</div>';
+  return '<div class="resp-alert"><b>'+label+'</b>'+(detail?L('：',': ')+esc(detail):'')+'</div>';
 }
 function renderMessages(msgs){
   if(!msgs.length) return '<div class="empty">'+L('无 Messages','No messages')+'</div>';
@@ -3918,7 +3920,7 @@ function renderMessages(msgs){
     // System 区已经展示过的段落只留一行指引，避免同一段 system prompt 在一页里出现两遍。
     const bodyHtml = m.systemEcho
       ? '<div class="msg-echo">'+L('内容已在上方 System 区展示','Shown in the System section above')
-        + '<span class="msg-echo-meta">'+num(m.systemEchoLen || 0)+L(' 字符 · ',' chars · ')+esc(m.systemEchoOrigin || '')+'</span></div>'
+        + '<span class="msg-echo-meta">'+num(m.systemEchoLen || 0)+L(' 字符，',' chars, ')+esc(m.systemEchoOrigin || '')+'</span></div>'
       : (renderBlocks(normalizeBlocks(m.content), callNames) || '<div class="msg-empty">'+L('（空内容）','(empty)')+'</div>');
     const roleLabel = m.systemEcho ? (m.systemEchoLabel || m.role || 'message') : (m.role || 'message');
     const phase = typeof m.phase === 'string' && m.phase ? '<span class="msg-phase" title="phase">'+esc(m.phase)+'</span>' : '';
@@ -4022,14 +4024,14 @@ function renderBlocks(blocks, callNames){
         inputText = (parsed !== undefined && parsed !== null && typeof parsed === 'object') ? j(parsed) : rawInput;
       } else inputText = j(rawInput);
       const callId = b.id || b.call_id || '';
-      return blockWrap('<div class="tool-use-label"><span>'+esc(b.wireType || type)+' · '+esc(b.name || b.serverName || b.server_name || 'tool')+((b.serverName||b.server_name)&&b.name?' @'+esc(b.serverName||b.server_name):'')+'</span>'+toolIdBadge(callId)+'</div><pre class="codebox">'+esc(inputText)+'</pre>', many, rawBlock);
+      return blockWrap('<div class="tool-use-label"><span>'+esc(b.wireType || type)+'&ensp;'+esc(b.name || b.serverName || b.server_name || 'tool')+((b.serverName||b.server_name)&&b.name?' @'+esc(b.serverName||b.server_name):'')+'</span>'+toolIdBadge(callId)+'</div><pre class="codebox">'+esc(inputText)+'</pre>', many, rawBlock);
     }
     // Anthropic 的内置/MCP 工具结果（web_search_tool_result、code_execution_tool_result、
     // mcp_tool_result…）与普通 tool_result 同构，按后缀归一，避免退化成整块裸 JSON。
     if(type === 'tool_result' || type === 'function_call_output' || /(^|_)tool_result$/.test(type)){
       const callId = b.tool_use_id || b.call_id || '';
       const linked = callId && callNames && callNames[callId] ? '<span class="tool-linked-name">↳ '+esc(callNames[callId])+'</span>' : '';
-      return blockWrap('<div class="tool-use-label"><span>'+esc(b.wireType || type)+((b.isError||b.is_error)?' · error':'')+'</span>'+linked+toolIdBadge(callId)+'</div><pre class="codebox">'+esc(toolResultText(b.content !== undefined ? b.content : b.output))+'</pre>', many, rawBlock);
+      return blockWrap('<div class="tool-use-label"><span>'+esc(b.wireType || type)+((b.isError||b.is_error)?'&ensp;error':'')+'</span>'+linked+toolIdBadge(callId)+'</div><pre class="codebox">'+esc(toolResultText(b.content !== undefined ? b.content : b.output))+'</pre>', many, rawBlock);
     }
     if(type === 'image' || type === 'image_url' || type === 'input_image') return blockWrap(renderImageBlock(b), many, rawBlock);
     return blockWrap('<pre class="codebox">'+esc(j(b))+'</pre>', many, rawBlock);
@@ -4168,7 +4170,7 @@ function renderTextWithXmlFolds(text){
           const lineCount = inner.split(/\\r?\\n/).length;
           const charCount = inner.length;
           const attrHtml = attrs ? '<span class="xml-attr">'+esc(attrs)+'</span>' : '';
-          out.push('<details class="xml-fold" open><summary class="xml-fold-sum"><span class="xml-tag">&lt;'+esc(tag)+attrHtml+'&gt;</span><span class="xml-meta">'+lineCount+' \u884c \u00b7 '+charCount+' \u5b57\u7b26</span></summary><div class="xml-fold-body">'+renderTextWithXmlFolds(inner)+'</div></details>');
+          out.push('<details class="xml-fold" open><summary class="xml-fold-sum"><span class="xml-tag">&lt;'+esc(tag)+attrHtml+'&gt;</span><span class="xml-meta">'+lineCount+' \u884c\uff0c'+charCount+' \u5b57\u7b26</span></summary><div class="xml-fold-body">'+renderTextWithXmlFolds(inner)+'</div></details>');
           const closeLen = closeProbe.length;
           i = closeAt + closeLen;
           if(s.charCodeAt(i) === 13) i++;
@@ -4396,7 +4398,7 @@ function renderTextRich(text){
             const attrHtml = attrs ? '<span class="xml-attr">'+esc(attrs)+'</span>' : '';
             const structured = tag.toLowerCase() === 'environment_context' && !attrs.trim() ? renderEnvironmentContext(inner) : '';
             const summaryLabel = structured ? esc(L('环境上下文','Environment context')) : '&lt;'+esc(tag)+attrHtml+'&gt;';
-            out.push('<details class="xml-fold'+(structured?' env-context':'')+'" open><summary class="xml-fold-sum"><span class="xml-tag">'+summaryLabel+'</span><span class="xml-meta">'+lineCount+' \u884c \u00b7 '+charCount+' \u5b57\u7b26</span></summary><div class="xml-fold-body">'+(structured || renderTextRich(inner))+'</div></details>');
+            out.push('<details class="xml-fold'+(structured?' env-context':'')+'" open><summary class="xml-fold-sum"><span class="xml-tag">'+summaryLabel+'</span><span class="xml-meta">'+lineCount+' \u884c\uff0c'+charCount+' \u5b57\u7b26</span></summary><div class="xml-fold-body">'+(structured || renderTextRich(inner))+'</div></details>');
             const closeLen = closeProbe.length;
             i = closeAt + closeLen;
             if(s.charCodeAt(i) === 13) i++;
@@ -4519,7 +4521,7 @@ function embeddedToolCount(tool){
 function toolsBadge(t){
   const declared = toolsCount(t);
   const embedded = tools(t).reduce((sum, tool) => sum + embeddedToolCount(tool), 0);
-  return declared+' '+L('个直接工具','direct tools')+(embedded ? ' · '+embedded+' '+L('个嵌套工具','nested tools') : '');
+  return declared+' '+L('个直接工具','direct tools')+(embedded ? L('，',', ')+embedded+' '+L('个嵌套工具','nested tools') : '');
 }
 function toolDeclDisplayName(tool){
   if(!tool) return 'tool';
@@ -4601,7 +4603,7 @@ function renderEmbeddedTools(entries, description, parentName){
   const title = parentName
     ? L(esc(parentName)+' 提供的工具','Tools available through '+esc(parentName))
     : L('嵌套工具','Nested tools');
-  return '<div class="param-title">'+title+' · '+entries.length+'</div><div class="embedded-tools">'+rows+'</div>'+deferred;
+  return '<div class="param-title">'+title+' '+entries.length+'</div><div class="embedded-tools">'+rows+'</div>'+deferred;
 }
 // 声明里那些改变工具行为、但既不是 name/description/schema 的字段。漏掉它们会读错请求：
 // external_web_access:false 说的是「联网其实是关的」，max_uses 是调用次数上限，
@@ -4632,7 +4634,7 @@ function renderSubtools(children){
 }
 function renderParams(schema, tool){
   if(tool && tool.type === 'custom' && tool.format){
-    const fmt = tool.format && (tool.format.syntax || tool.format.type) ? ' · '+(tool.format.syntax || tool.format.type) : '';
+    const fmt = tool.format && (tool.format.syntax || tool.format.type) ? L('（',' (')+(tool.format.syntax || tool.format.type)+L('）',')') : '';
     return '<div class="tool-note">'+L('自由文本输入','Free-form input')+esc(fmt)+'</div>';
   }
   if(schema && typeof schema === 'object' && Object.keys(schema).length){
@@ -4728,12 +4730,12 @@ function schemaHelp(schema){
   const upper = schema.exclusiveMaximum !== undefined
     ? L('小于 ','Less than ')+schema.exclusiveMaximum
     : schema.maximum !== undefined ? L('最大 ','Maximum ')+schema.maximum : '';
-  if(lower || upper) parts.push([lower,upper].filter(Boolean).join(' · '));
+  if(lower || upper) parts.push([lower,upper].filter(Boolean).join(L('，',', ')));
   if(schema.minLength !== undefined) parts.push(L('至少 ','At least ')+schema.minLength+L(' 个字符',' characters'));
   if(schema.maxLength !== undefined) parts.push(L('最多 ','At most ')+schema.maxLength+L(' 个字符',' characters'));
   if(schema.minItems !== undefined) parts.push(L('至少 ','At least ')+schema.minItems+L(' 项',' items'));
   if(schema.maxItems !== undefined) parts.push(L('最多 ','At most ')+schema.maxItems+L(' 项',' items'));
-  return parts.join(' · ');
+  return parts.join(L('；','; '));
 }
 function renderSse(t){
   const events = t.sse && t.sse.events || [];
@@ -4754,7 +4756,7 @@ function renderSseGroup(group){
   const dataChars = group.items.reduce((sum, item) => sum + sseEventData(item.event).length, 0);
   const deltas = group.items.map(item => sseDeltaText(item.event, sseEventData(item.event))).filter(Boolean).join('');
   const preview = compactText(deltas, 220);
-  const headline = group.items.length+' chunks'+(preview ? ' · '+preview : '');
+  const headline = group.items.length+' chunks'+(preview ? L('：',': ')+preview : '');
   const rows = group.items.map(item => renderSseRow(item.event, item.index, true)).join('');
   return '<details class="sse-group" data-sse-group="'+esc(group.name)+'"><summary class="sse-group-sum"><span class="tm">'+ms(first.timestampMs)+'-'+ms(last.timestampMs)+'</span><span class="ev" title="'+esc(group.name)+'">'+esc(group.name)+'</span><span class="sse-peek">'+esc(headline)+'</span><span class="sse-size">'+esc(num(dataChars)+' chars')+'</span></summary><div class="sse-group-body">'+rows+'</div></details>';
 }
@@ -4819,11 +4821,11 @@ function sseEventSummary(e, data){
     if(typeof parsed.text === 'string') return compactText(parsed.text, 180);
     if(parsed.response && typeof parsed.response === 'object'){
       const r = parsed.response;
-      return ['response', r.status, r.model, Array.isArray(r.tools) ? r.tools.length+' tools' : ''].filter(Boolean).join(' · ');
+      return ['response', r.status, r.model, Array.isArray(r.tools) ? r.tools.length+' tools' : ''].filter(Boolean).join(', ');
     }
     if(parsed.item && typeof parsed.item === 'object'){
       const item = parsed.item;
-      return ['item', item.type, item.status, item.name].filter(Boolean).join(' · ');
+      return ['item', item.type, item.status, item.name].filter(Boolean).join(', ');
     }
     if(parsed.type) return String(parsed.type);
   }
@@ -5383,7 +5385,7 @@ function renderStructuralDiff(d){
       renderLineDiff(d.oldSystemText, d.newSystemText)
     );
   } else {
-    systemHtml = renderDiffSection('system', 'System <span class="ds-badge same">'+num(d.newSystemLen)+' '+L('字符','chars')+' · '+L('未变','same')+'</span>', '');
+    systemHtml = renderDiffSection('system', 'System <span class="ds-badge same">'+num(d.newSystemLen)+' '+L('字符','chars')+L('，',', ')+L('未变','same')+'</span>', '');
   }
   // ── Tools section ──
   if(d.toolsChanged){
@@ -5393,10 +5395,10 @@ function renderStructuralDiff(d){
     // 同名但定义变了的工具：以前这类改动整段报「未变」，连区块都展不开
     d.changedTools.forEach(c => { toolsBody += renderDiffToolChange(c); });
     const counts = d.oldToolCount === d.newToolCount ? String(d.newToolCount) : d.oldToolCount + ' → ' + d.newToolCount;
-    const detail = d.changedTools.length ? ' · ' + d.changedTools.length + ' ' + L('个定义已改','redefined') : '';
+    const detail = d.changedTools.length ? L('，',', ') + d.changedTools.length + ' ' + L('个定义已改','redefined') : '';
     toolsHtml = renderDiffSection('tools', 'Tools <span class="ds-badge change">'+counts+detail+'</span>', toolsBody);
   } else {
-    toolsHtml = renderDiffSection('tools', 'Tools <span class="ds-badge same">'+d.newToolCount+' '+L('个','tools')+' · '+L('未变','same')+'</span>', '');
+    toolsHtml = renderDiffSection('tools', 'Tools <span class="ds-badge same">'+d.newToolCount+' '+L('个','tools')+L('，',', ')+L('未变','same')+'</span>', '');
   }
   return toolsHtml + systemHtml + messagesHtml + paramsHtml;
 }
@@ -5727,7 +5729,7 @@ function renderGlobalSearch(){
     const parts = traceSearchParts(t);
     for(const pair of parts){
       const hay = String(pair[1] || ''); const pos = hay.toLowerCase().indexOf(q);
-      if(pos >= 0) hits.push({id:t.id, where:traceLabel(t)+' · '+pair[0], snip:hay.slice(Math.max(0,pos-70),pos+q.length+100)});
+      if(pos >= 0) hits.push({id:t.id, where:traceLabel(t)+L('，',', ')+pair[0], snip:hay.slice(Math.max(0,pos-70),pos+q.length+100)});
       if(hits.length >= SEARCH_RESULT_LIMIT) break;
     }
     if(hits.length >= SEARCH_RESULT_LIMIT) break;

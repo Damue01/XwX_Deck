@@ -89,7 +89,7 @@ export function parseModelsDevPricingCatalog(value: unknown): ModelPriceRule[] {
  * bucket unpriced and the model reports no cost, which is the honest outcome;
  * keeping it would quietly bill cache reads at a tenth of the real rate.
  *
- * The same rule runs in tools/update-model-pricing.mjs against every source, so
+ * The same rule runs in tools/dev/update-model-pricing.mjs against every source, so
  * this guard is what stops a live refresh from reintroducing what the build-time
  * validator already rejected.
  */
@@ -148,7 +148,7 @@ export async function refreshModelsDevPricingCache(
 /**
  * Fold a fresh models.dev fetch into the curated rule set instead of replacing it.
  *
- * The bundled asset is not a models.dev mirror: tools/update-model-pricing.mjs
+ * The bundled asset is not a models.dev mirror: tools/dev/update-model-pricing.mjs
  * arbitrates three catalogues, overrides them with vendor rate-card scrapes, and
  * rejects values its validators distrust. models.dev alone cannot express any of
  * the length bands, peak schedules, TTL write tiers or token-hour storage rates
@@ -201,7 +201,7 @@ function normalizeCache(value: unknown): ModelsDevPricingCache | undefined {
 
 function normalizeRule(value: unknown): ModelPriceRule | undefined {
   if (!isRecord(value) || value.match !== 'exact') return undefined;
-  // The bundled asset is built by tools/update-model-pricing.mjs, which arbitrates
+  // The bundled asset is built by tools/dev/update-model-pricing.mjs, which arbitrates
   // models.dev against LiteLLM/Vercel and overrides both with vendor rate-card
   // scrapes. Those scraped rows are tagged 'official', so restricting this to
   // 'models.dev' would silently drop every price we trust most.

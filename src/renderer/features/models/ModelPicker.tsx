@@ -106,7 +106,7 @@ export function ModelPicker({
                   <span className="model-choice-content">
                     <span className="model-option-id">{mid}</span>
                     {note ? (
-                      <Badge size="sm" variant="secondary" className="ml-auto font-sans">
+                      <Badge size="sm" variant="secondary" className="model-note-badge ml-auto font-sans">
                         {note.label}
                       </Badge>
                     ) : null}
@@ -117,7 +117,7 @@ export function ModelPicker({
             {showCustom && (
               <ComboboxItem value={query.trim()} className="xwx-combobox-item">使用 “{query.trim()}”</ComboboxItem>
             )}
-            <ComboboxEmpty>没有匹配的模型，可直接输入自定义名</ComboboxEmpty>
+            <ComboboxEmpty>没有匹配的模型</ComboboxEmpty>
           </ComboboxList>
         </ComboboxPopup>
       </Combobox>

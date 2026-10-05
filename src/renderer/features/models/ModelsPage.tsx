@@ -15,9 +15,10 @@ import { waitForModelCatalog } from '../../../shared/modelCatalogWait';
 import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ModelPicker, type ModelPickerNote } from './ModelPicker';
+import { isClaudeDesktopCompatibleModelId } from '../../../shared/claudeDesktopModelId';
 import { CodexEnhancements } from './CodexEnhancements';
 import { ClaudeEnhancements } from './ClaudeEnhancements';
-import { isKnownNonConversationalModel, isOfficialCodexModelId, providerRequiresTrace } from '../../../main/app/codexProtocolPolicy';
+import { isKnownNonConversationalModel, isOfficialCodexModelId, providerRequiresTrace, resolveClaudeModelProtocol } from '../../../main/app/codexProtocolPolicy';
 import {
   codexContextVariants,
   formatContextWindow,
@@ -25,6 +26,7 @@ import {
 } from '../../../shared/codexContextVariants';
 
 type ClientTab = 'claude' | 'codex';
+const CLAUDE_DESKTOP_TRACE_TOAST_ID = 'claude-desktop-needs-trace';
 type ClaudeRole = keyof ClaudeModelSettings;
 
 interface Props {
@@ -204,7 +206,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const timer = setTimeout(() => {
       if (!isCurrent()) return;
       lock.current = false; setBusy(false);
-      if (!written) showToast('目标服务仍在写入，选择已保留', 'info', undefined, { description: '可继续操作，写入结果会另行提示。' });
+      if (!written) showToast('仍在写入，可继续操作', 'info');
     }, 2_000);
     try {
       const providers = await bridge.api.repairClientProviderSwitch({ client, providerId });
@@ -246,7 +248,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const reportFailure = (error: unknown, background = false) => {
       if (!isCurrent() || /服务连接已变化/.test(normalizeErrorMessage(error))) return;
       if (notify && visibleClient.current === 'codex') showToast(
-        background ? '模型列表刷新失败，已保留原列表' : '模型目录加载失败，服务选择保留', 'info', undefined, {
+        background ? '模型列表刷新失败，已保留原列表' : '模型列表未加载', 'warning', undefined, {
           description: modelCatalogFailureMessage(error),
           actionProps: providerFailureAction(error, providerId, '重试列表', () => {
             if (!isCurrent()) return;
@@ -286,7 +288,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const reportFailure = (error: unknown, background = false) => {
       if (!isCurrent()) return;
       if (notify && visibleClient.current === 'claude') showToast(
-        background ? '模型列表刷新失败，已保留原列表' : '模型目录加载失败，服务选择保留', 'info', undefined, {
+        background ? '模型列表刷新失败，已保留原列表' : '模型列表未加载', 'warning', undefined, {
           description: modelCatalogFailureMessage(error),
           actionProps: providerFailureAction(error, providerId, '重试列表', () => {
             if (!isCurrent()) return;
@@ -350,9 +352,15 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   // Anthropic directory accepted Messages, while all 29 extra name-matched
   // models failed with no upstream channel. Endpoint membership is therefore
   // the automatic Claude boundary; free-text custom ids remain available.
+  // Models without Messages are listed too; the local Gateway converts them.
+  const claudeProviderAdapter = bridge.providers?.connections.find(provider => provider.id === claudeProviderId)?.adapter;
+  const claudeBridgedIds = React.useMemo(() => new Set(claudeProviderCatalog.filter(m => {
+    const protocol = resolveClaudeModelProtocol({ adapter: claudeProviderAdapter }, m);
+    return protocol === 'responses' || protocol === 'chat-completions';
+  }).map(m => m.id)), [claudeProviderCatalog, claudeProviderAdapter]);
   const claudeCatalog = React.useMemo(() => {
     const byId = new Map(claudeProviderCatalog.filter(m =>
-      !isKnownNonConversationalModel(m.id) && m.protocols.includes('anthropic-messages')
+      resolveClaudeModelProtocol({ adapter: claudeProviderAdapter }, m) !== undefined
     ).map(model => [model.id, model]));
     for (const id of Object.values(claudeModels ?? {})) {
       if (id && !isKnownNonConversationalModel(id) && !byId.has(id)) {
@@ -360,7 +368,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       }
     }
     return [...byId.values()];
-  }, [claudeProviderCatalog, claudeModels]);
+  }, [claudeProviderCatalog, claudeProviderAdapter, claudeModels]);
   const codexCatalog = mergedCatalog.filter(m =>
     !isKnownNonConversationalModel(m.id)
     && (m.clients.includes('codex') || m.vendor === '已配置'));
@@ -409,6 +417,8 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     [codexChoices]
   );
 
+  const claudeDesktopSyncEnabled = claudeDesktopSync?.enabled === true;
+  const claudeTraceEnabled = bridge.runtime?.tracingEnabled === true;
   const handleClaudeModelChange = React.useCallback(async (role: ClaudeRole, modelId: string) => {
     if (claudeOperationRef.current) return;
     const generation = ++providerSwitchGeneration.current.claude;
@@ -421,7 +431,20 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       delete unsavedClaudeModels.current[role];
       setClaudeModels({ ...updated, ...unsavedClaudeModels.current });
       bridge.patch({ claudeModels: updated });
-      showToast('Claude 模型已保存', 'success');
+      if (!claudeTraceEnabled && claudeBridgedIds.has(modelId)) {
+        showToast('Claude 模型已保存', 'info', CLAUDE_DESKTOP_TRACE_TOAST_ID, {
+          description: '此模型需要协议转换，开启 Trace 后 Claude CLI 和 Claude Desktop 才能使用。',
+          actionProps: { type: 'button', children: '开启 Trace', onClick: () => runNoticeAction('start-trace') }
+        });
+      } else if (claudeDesktopSyncEnabled && !claudeTraceEnabled && !isClaudeDesktopCompatibleModelId(modelId)) {
+        // CLI uses the saved model now; Desktop lists it only while Trace forwards.
+        showToast('Claude 模型已保存', 'info', CLAUDE_DESKTOP_TRACE_TOAST_ID, {
+          description: 'Claude CLI 立即生效；Claude Desktop 在 Trace 开启后才会显示此模型。',
+          actionProps: { type: 'button', children: '开启 Trace', onClick: () => runNoticeAction('start-trace') }
+        });
+      } else {
+        showToast('Claude 模型已保存', 'success');
+      }
     } catch (error) {
       if (generation === providerSwitchGeneration.current.claude) showErrorToast('Claude 模型未完全写入，选择已保留', error, undefined, {
         actionProps: { type: 'button', children: '重试', onClick: () => {
@@ -431,7 +454,14 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     } finally {
       if (generation === providerSwitchGeneration.current.claude) { claudeOperationRef.current = false; setBusyClaude(false); }
     }
-  }, [bridge.api, bridge.patch, claudeProviderId]);
+  }, [bridge.api, bridge.patch, claudeProviderId, claudeDesktopSyncEnabled, claudeTraceEnabled, claudeBridgedIds]);
+  const claudeModelNote = React.useCallback((modelId: string): ModelPickerNote | undefined => (
+    claudeBridgedIds.has(modelId)
+      ? { label: '需 Trace', hint: '需要协议转换：Claude CLI 和 Claude Desktop 都需要开启 Trace。' }
+      : claudeDesktopSyncEnabled && !isClaudeDesktopCompatibleModelId(modelId)
+        ? { label: '需 Trace', hint: 'Claude CLI 可直接使用；Claude Desktop 需要开启 Trace。' }
+        : undefined
+  ), [claudeDesktopSyncEnabled, claudeBridgedIds]);
 
   const handleProviderChange = async (
     client: ClientTab,
@@ -482,7 +512,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       timer = setTimeout(() => {
         if (!isCurrent()) return;
         lock.current = false; setBusy(false);
-        if (!written) showToast('目标服务仍在写入，选择已保留', 'info', undefined, { description: '可继续操作，写入结果会另行提示。' });
+        if (!written) showToast('仍在写入，可继续操作', 'info');
       }, 2_000);
       const providers = await bridge.api.switchClientProvider({ client, providerId,
         takeOverExternalConfig: client === 'codex' && takeOverExternalConfig ? true : undefined });
@@ -510,7 +540,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       showToast('模型服务已切换', providers.warning || catalogResult !== 'ready' ? 'info' : 'success', undefined, {
         description: providers.warning ?? (catalogResult === 'timeout'
           ? '列表仍在加载，服务配置已保存，可继续操作。'
-          : catalogResult === 'failed' ? '模型列表暂未加载，服务选择已保留。' : undefined),
+          : catalogResult === 'failed' ? '模型列表暂未加载，可稍后重试。' : undefined),
         actionProps: providers.warning?.includes('需要开启 Trace') ? {
           type: 'button', children: '开启 Trace', onClick: () => runNoticeAction('start-trace')
         } : undefined
@@ -606,9 +636,9 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const modelId = codexChoiceByLabel.get(label)?.modelId ?? label;
     if (!providerRequiresTrace(selectedCodexProvider ?? bridge.compatibleServiceConfig ?? undefined, modelId, activeCodexCatalog)) return undefined;
     return traceEnabled
-      ? { label: '需转换', hint: `${modelId} 需要协议转换。Trace 已开启，可直接使用。` }
+      ? { label: '需 Trace', hint: `${modelId} 需要协议转换。Trace 已开启，可直接使用。` }
       : {
-        label: '需转换',
+        label: '需 Trace',
         hint: `${modelId} 需要协议转换。选择会直接保存；调用时请开启 Trace。`
       };
   }, [codexConfig?.mode, codexChoiceByLabel, selectedCodexProvider, bridge.compatibleServiceConfig, activeCodexCatalog, traceEnabled]);
@@ -652,7 +682,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
             data-client-panel="claude"
           >
             <div className="field-row" data-tour="models-proxy">
-              <span className="fr-label">使用模型服务</span>
+              <span className="fr-label">模型服务</span>
               <div className="fr-value"><ProviderPicker registry={bridge.providers} client="claude" value={claudeProviderId} onChange={id => void handleProviderChange('claude', id)} /></div>
             </div>
             {CLAUDE_ROLES.map(({ key, label }) => (
@@ -664,6 +694,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
                     disabled={busyClaude || !claudeProviderId}
                     catalog={claudeCatalog}
                     onChange={id => handleClaudeModelChange(key, id)}
+                    noteFor={claudeModelNote}
                     allowCustomValue={id => !isKnownNonConversationalModel(id)}
                     dataAttr={{ 'data-claude-model': key }}
                   />
@@ -687,7 +718,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
             data-client-panel="codex"
           >
             <div className="field-row">
-              <span className="fr-label">使用模型服务</span>
+              <span className="fr-label">模型服务</span>
               <div className="fr-value"><ProviderPicker registry={bridge.providers} client="codex" value={codexProviderId} onChange={id => void handleProviderChange('codex', id)} /></div>
             </div>
             <div className="field-row">

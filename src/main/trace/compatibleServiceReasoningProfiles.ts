@@ -24,7 +24,7 @@ export interface CompatibleServiceReasoningProfile {
   /**
    * Effort levels this model may advertise, in picker order. Every entry must
    * produce a different outbound request and must not be rejected by the
-   * gateway — both established by `tools/probe-reasoning-contract.mjs`. `none`
+   * gateway — both established by `tools/dev/probe-reasoning-contract.mjs`. `none`
    * belongs here whenever thinking can be switched off, even for models that
    * reject the literal `reasoning_effort: "none"`: the bridge expresses off
    * through the toggle instead.
@@ -128,7 +128,7 @@ function effortOnly(levels: readonly string[], defaultLevel: string): Compatible
 /**
  * Resolve after normalizing provider prefixes, `models/`, punctuation and
  * case. Every ladder below comes from the acceptance matrix produced by
- * `tools/probe-reasoning-contract.mjs` against the live gateway on 2026-08-19:
+ * `tools/dev/probe-reasoning-contract.mjs` against the live gateway on 2026-08-19:
  * a level is listed only when the gateway did not reject it. Values the
  * gateway accepts with a 200 but silently ignores cannot be detected this way,
  * so a listed level guarantees a distinct outbound request, not that the

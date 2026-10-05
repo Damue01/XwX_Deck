@@ -1,8 +1,9 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { app, dialog, nativeImage, Notification, session, shell } from 'electron';
+import { app, dialog, nativeImage, Notification, powerMonitor, session, shell } from 'electron';
 import {
   applicationResetRelaunchArgs,
   applicationRelaunchExecutable,
@@ -13,6 +14,7 @@ import {
 import {
   forceCloseClientsForReset,
   isChatGptRunning,
+  isClaudeDesktopRunning,
   isClaudeRunning,
   listClientsForReset,
   resetClientLabels,
@@ -30,7 +32,13 @@ import {
   completeExitRecoveryAfterVerifiedStartup,
   readExitRecoveryNotice
 } from './app/exitRecoveryReport';
-import { lifecycleFailure, traceStoppedNotice, type LifecycleNotice } from '../shared/lifecycleNotice';
+import {
+  claudeDesktopRestartNote,
+  isTraceStopBusyError,
+  lifecycleFailure,
+  traceStoppedNotice,
+  type LifecycleNotice
+} from '../shared/lifecycleNotice';
 import {
   isStartupHiddenLaunch,
   readStartupSettings,
@@ -41,6 +49,7 @@ import {
 import { registerIpcHandlers } from './ipc/registerHandlers';
 import { assetPath } from './shared/assets';
 import { errorMessage } from './shared/error';
+import { normalizeErrorMessage } from '../shared/errors';
 import { childProcessEnvironment } from './shared/processEnvironment';
 import { initLogger, log } from './shared/logger';
 import { runPackagedSmokeTest } from './smoke/packagedSmoke';
@@ -48,13 +57,18 @@ import { loadModelsDevPricingCache, refreshModelsDevPricingCache } from './trace
 import { assertLoopbackSystemProxyReachable, selectSystemProxy } from './trace/systemProxy';
 import { XwXDeckTray } from './tray';
 import { XwXDeckUpdater } from './update/xwxDeckUpdater';
+import { cleanupMacInstallerAfterLaunch, ejectMacInstallerAfterFinderCopy,
+  runningMacInstallerMount } from './update/macInstallerCleanup';
 import { MetadataInvalidationSubscriber } from './update/metadataInvalidationSubscriber';
+import { NIGHTLY_IDLE_THRESHOLD_SECONDS, NightlyUpdateScheduler, type NightlyInstallOutcome } from './update/nightlyUpdate';
 import { metadataPushUrl } from './update/updateServer';
 import {
   acknowledgePortableUpdateReady,
+  acknowledgePortableUpdateStarted,
   cleanupPortableUpdateFiles,
   readPortableUpdateLaunchResult,
-  safePortableCleanupPaths
+  safePortableCleanupPaths,
+  sweepStalePortableUpdateFiles
 } from './update/portableUpdate';
 import { ManagerWindow } from './window/managerWindow';
 
@@ -63,6 +77,8 @@ let updater: XwXDeckUpdater | undefined;
 let tray: XwXDeckTray | undefined;
 let managerWindow: ManagerWindow | undefined;
 let metadataSubscriber: MetadataInvalidationSubscriber | undefined;
+let nightlyUpdates: NightlyUpdateScheduler | undefined;
+let unattendedUpdateDownload = false;
 let quitState: 'idle' | 'cleaning' | 'ready' = 'idle';
 let fullShutdownRequested = false;
 let tracingToggle: Promise<XwXDeckRuntimeState | undefined> | undefined;
@@ -86,6 +102,9 @@ const EXIT_GUARDIAN_START_TIMEOUT_MS = 3_000;
 const PORTABLE_UPDATE_SMOKE = process.env.XWX_DECK_PORTABLE_UPDATE_SMOKE === '1';
 const RESET_SMOKE = process.env.XWX_DECK_RESET_SMOKE === '1';
 const STARTUP_SMOKE = PORTABLE_UPDATE_SMOKE || RESET_SMOKE;
+// Lifecycle acceptance observes the normal visible/hidden launch decision.
+// The other startup fixtures deliberately suppress their windows.
+const PORTABLE_LIFECYCLE_SMOKE = PORTABLE_UPDATE_SMOKE && process.env.XWX_DECK_PORTABLE_LIFECYCLE_SMOKE === '1';
 startMainProcess();
 
 async function finishRestartSmoke(): Promise<void> {
@@ -94,8 +113,8 @@ async function finishRestartSmoke(): Promise<void> {
     throw new Error('Portable update smoke did not restart through a completed update.');
   }
   const win = managerWindow?.current();
-  if (!win || !controller) throw new Error('Updated manager did not initialize.');
-  await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+  if (!controller || (!win && !START_HIDDEN)) throw new Error('Updated manager did not initialize.');
+  if (win) await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
     const deadline = Date.now() + 10000;
     const check = () => {
       if (document.querySelector('button')) return resolve(true);
@@ -108,7 +127,9 @@ async function finishRestartSmoke(): Promise<void> {
   await handlePortableUpdateLaunchResult();
   await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
   await fs.promises.writeFile(resultPath, `${JSON.stringify({ ...PORTABLE_UPDATE_RESULT,
-    pid: process.pid, windowReady: true, readiness: state.readiness, lastError: state.lastError,
+    pid: process.pid, actualVersion: app.getVersion(), windowReady: Boolean(win),
+    windowVisible: win?.isVisible() ?? false, hiddenLaunch: START_HIDDEN,
+    readiness: state.readiness, lastError: state.lastError,
     tracingEnabled: state.tracingEnabled
   }, null, 2)}\n`, 'utf8');
   await controller.forceExit();
@@ -162,6 +183,8 @@ function startMainProcess(): void {
 
   app.setName('XwX Deck');
   app.setPath('userData', standaloneUserDataDir);
+  void acknowledgePortableUpdateStarted(PORTABLE_UPDATE_RESULT)
+    .catch(error => log.warn(`[updater] failed to record portable candidate pid: ${errorMessage(error)}`));
   if (process.platform === 'win32') app.setAppUserModelId('app.xwxdeck.desktop');
   app.on('child-process-gone', (_event, details) => {
     const service = details.serviceName || details.name || 'unknown';
@@ -174,6 +197,20 @@ function startMainProcess(): void {
     .then(async () => {
       const userDataDir = app.getPath('userData');
       initLogger(userDataDir);
+      if (process.platform === 'darwin' && app.isPackaged && !PACKAGED_SMOKE_TEST && !STARTUP_SMOKE) {
+        const mount = await runningMacInstallerMount().catch(error => {
+          log.warn(`[mac-install] could not inspect running location: ${errorMessage(error)}`);
+          return undefined;
+        });
+        if (mount) {
+          ejectMacInstallerAfterFinderCopy(mount);
+          log.info(`[mac-install] exiting installer copy on ${mount}`);
+          // No controller or Gateway has started yet. A prompt here kept the
+          // DMG busy and made Finder's Replace/Eject sequence fail.
+          app.exit(0);
+          return;
+        }
+      }
       const startupStartedAt = Date.now();
       let startupPhaseAt = startupStartedAt;
       const reportStartupPhase = (phase: string) => {
@@ -214,7 +251,7 @@ function startMainProcess(): void {
         state: currentState,
         preloadPath: path.join(__dirname, 'preload.js'),
         iconPath: assetPath('icon.png'),
-        hidden: PACKAGED_SMOKE_TEST || STARTUP_SMOKE,
+        hidden: PACKAGED_SMOKE_TEST || STARTUP_SMOKE && !PORTABLE_LIFECYCLE_SMOKE,
         onClosed: undefined,
         onRendererRecoveryExhausted: details => {
           log.error(`[xwxdeck] manager recovery exhausted: reason=${details.reason} code=${details.exitCode}`);
@@ -272,7 +309,9 @@ function startMainProcess(): void {
       controller.onDidChange(() => runDetached('refresh UI after controller change', refreshUi));
       updater.onDidChange(state => {
         runDetached('refresh UI after updater change', refreshUi);
-        if (state.status === 'ready') {
+        if (state.status === 'checking') nightlyUpdates?.recordCheck();
+        // A nightly background download must not pop the manager window open.
+        if (state.status === 'ready' && !unattendedUpdateDownload) {
           runDetached('show downloaded update', () => managerWindow?.showUpdateDetails() ?? Promise.resolve());
         }
       });
@@ -302,6 +341,7 @@ function startMainProcess(): void {
       if (!PACKAGED_SMOKE_TEST && !STARTUP_SMOKE) {
         runDetached('reconcile startup registration', reconcileStartupWithIntent);
         runDetached('restore legacy official history after startup', () => restoreLegacyOfficialHistoryIfChatGptStopped('startup'));
+        runDetached('clean installed Mac DMG', () => cleanupMacInstallerAfterLaunch(userDataDir));
       }
       if (STARTUP_SMOKE) {
         await finishRestartSmoke();
@@ -369,6 +409,7 @@ function startMainProcess(): void {
         return;
       }
       updater.scheduleStartupCheck();
+      startNightlyUpdates(userDataDir);
     })
     .catch(err => {
       if (PACKAGED_SMOKE_TEST || PACKAGED_BACKGROUND_GATEWAY_SMOKE) {
@@ -423,6 +464,7 @@ function startMainProcess(): void {
           confirmContext
         );
         log.info('[xwx-deck] explicit application exit restored direct client configuration and stopped the Gateway');
+        await notifyClaudeDesktopRestartAfterExit();
         clearFullShutdownWatchdog();
         quitState = 'ready';
         app.exit(0);
@@ -564,9 +606,13 @@ async function inspectSafeShutdown(): Promise<SafeShutdownPreparation> {
 
   const claudeMayBeRunning = controller.requiresClaudeClientExitBeforeShutdown() && await isClaudeRunning().catch(() => true);
   const activity = await controller.shutdownActivity();
-  const hasActiveConversation = activity.activeRequests > 0 || activity.pendingContinuations > 0;
+  // Auxiliary requests (model lists, token counts) are not conversations.
+  const hasActiveConversation = activity.activeUserResponses > 0 || activity.pendingContinuations > 0;
   return {
-    forceShutdown: chatGptMayBeRunning || claudeMayBeRunning || hasActiveConversation,
+    // Claude Desktop being open is not a reason to ask: its profile switches
+    // to the service's remote endpoint (or its own previous configuration)
+    // before the Gateway stops, and it is told to restart afterwards.
+    forceShutdown: chatGptMayBeRunning || hasActiveConversation,
     chatGptMayBeRunning,
     claudeMayBeRunning,
     activity,
@@ -585,7 +631,7 @@ async function prepareSafeShutdown(
     const activity = controller?.shutdownActivitySnapshot()
       ?? { activeRequests: 0, activeUserResponses: 0, pendingContinuations: 0 };
     const shutdown: SafeShutdownPreparation = {
-      forceShutdown: activity.activeRequests > 0 || activity.pendingContinuations > 0,
+      forceShutdown: activity.activeUserResponses > 0 || activity.pendingContinuations > 0,
       chatGptMayBeRunning: true, // Skip optional history repair on exit.
       claudeMayBeRunning: false,
       activity,
@@ -954,12 +1000,31 @@ async function restoreLegacyOfficialHistoryIfChatGptStopped(reason: string): Pro
   }
 }
 
+/**
+ * A running Claude Desktop keeps the Gateway address it read at launch. When
+ * exit moved it off the local Gateway, say so instead of implying the new
+ * connection is already in use.
+ */
+async function notifyClaudeDesktopRestartAfterExit(): Promise<void> {
+  if (PACKAGED_SMOKE_TEST || controller?.claudeDesktopRestartHint() !== 'direct') return;
+  try {
+    if (!await isClaudeDesktopRunning()) return;
+    if (!Notification.isSupported()) return;
+    new Notification({
+      title: 'Claude Desktop 需要重启',
+      body: `XwX Deck 已退出。${claudeDesktopRestartNote('direct')}`
+    }).show();
+  } catch (error) {
+    log.warn(`[xwx-deck] Claude Desktop restart notification failed: ${errorMessage(error)}`);
+  }
+}
+
 async function showImmediateShutdownConfirm(
-  activity: { activeRequests: number; pendingContinuations: number }
+  activity: { activeUserResponses: number; pendingContinuations: number }
 ): Promise<boolean> {
   const state: string[] = [];
-  if (activity.activeRequests > 0) state.push(`仍有 ${activity.activeRequests} 个 AI 请求正在通过代理传输。`);
-  else if (activity.pendingContinuations > 0) state.push('AI 对话正在等待工具调用继续。');
+  if (activity.activeUserResponses > 0) state.push(`${activity.activeUserResponses} 个回复正在生成。`);
+  if (activity.pendingContinuations > 0) state.push(`${activity.pendingContinuations} 个会话正在等待工具调用继续。`);
   const consequence = '继续后可能立即中断当前请求；未完成的回复和工具调用结果可能丢失。XwX Deck 不会关闭或打开 ChatGPT。';
   const options: Electron.MessageBoxOptions = {
     type: 'warning',
@@ -1102,15 +1167,96 @@ async function reconcileStartupWithIntent(): Promise<void> {
   }
 }
 
+function startNightlyUpdates(userDataDir: string): void {
+  if (!updater?.state().supported) return;
+  nightlyUpdates = new NightlyUpdateScheduler({
+    seed: `${os.hostname()}\u0000${userDataDir}`,
+    updater: () => updater!.state(),
+    declinedVersion: () => updater?.declinedVersion(),
+    check: async () => {
+      await updater?.checkForUpdates(true, true);
+    },
+    download: async () => {
+      if (!updater) return;
+      unattendedUpdateDownload = true;
+      try {
+        await updater.downloadUpdate(true);
+      } finally {
+        unattendedUpdateDownload = false;
+      }
+    },
+    install: installUpdateUnattended,
+    systemIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+    busy: () => quitState !== 'idle' || fullShutdownRequested || tracingToggle !== undefined,
+    logger: log
+  });
+  nightlyUpdates.start();
+  // A machine woken inside the nightly window should not wait for the next tick.
+  powerMonitor.on('resume', () => runDetached('nightly update after resume', () => nightlyUpdates?.tick() ?? Promise.resolve()));
+}
+
+/**
+ * Nightly install: only when the regular safe-exit inspection needs no
+ * confirmation. Active conversations, a ChatGPT that must exit first, or a
+ * failed inspection defer instead of prompting an absent user.
+ */
+async function installUpdateUnattended(): Promise<NightlyInstallOutcome> {
+  if (!updater || !controller) return { kind: 'deferred', reason: 'application still starting' };
+  if (quitState !== 'idle' || fullShutdownRequested) return { kind: 'deferred', reason: 'application is exiting' };
+  const shutdown = await inspectSafeShutdownWithinLimit();
+  if (shutdown.forceShutdown) {
+    const reason = shutdown.inspectionFailed
+      ? 'safe-exit inspection failed'
+      : shutdown.activity.activeUserResponses > 0 || shutdown.activity.pendingContinuations > 0
+        ? 'conversation in progress'
+        : 'ChatGPT must exit before the Gateway stops';
+    return { kind: 'deferred', reason };
+  }
+  const win = managerWindow?.current();
+  const windowVisible = Boolean(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized());
+  const result = await installUpdate({ unattended: true, launchHidden: !windowVisible, inspected: shutdown });
+  if (result.status !== 'installing') return { kind: 'deferred', reason: 'activity changed during preflight' };
+  return { kind: 'started' };
+}
+
 async function restartAndInstall() {
+  return installUpdate();
+}
+
+async function installUpdate(options: {
+  readonly unattended?: boolean;
+  readonly launchHidden?: boolean;
+  readonly inspected?: SafeShutdownPreparation;
+} = {}) {
   if (!updater) throw new Error('XwX Deck updater is still starting.');
   if (quitState === 'cleaning') throw new Error('XwX Deck 正在退出，请稍候。');
+  if (updater.state().status === 'ready') {
+    try {
+      await updater.preflightInstall();
+    } catch (error) {
+      // Nothing has been stopped yet. A nightly attempt keeps the download ready.
+      if (!options.unattended) {
+        updater.failInstallation(error);
+        await refreshUi();
+      }
+      throw error;
+    }
+  }
+  if (options.unattended) {
+    const latest = await inspectSafeShutdownWithinLimit();
+    if (latest.forceShutdown || powerMonitor.getSystemIdleTime() < NIGHTLY_IDLE_THRESHOLD_SECONDS
+        || tracingToggle || quitState !== 'idle') return updater.state();
+  }
   updater.markInstalling();
   await refreshUi();
   if (updater.state().installMode === 'manual-dmg') {
     try {
       await updater.quitAndInstall();
       await refreshUi();
+      // Finder cannot replace the live process. The user already confirmed
+      // opening this installer; close the old app through its normal guarded
+      // shutdown before the drag-and-drop replacement.
+      setTimeout(() => app.quit(), 300).unref?.();
     } catch (error) {
       updater.failInstallation(error);
       await refreshUi();
@@ -1122,7 +1268,7 @@ async function restartAndInstall() {
     fullShutdownRequested = true;
     quitState = 'cleaning';
     const portable = updater.state().portable;
-    await prepareSafeShutdown();
+    if (!options.inspected) await prepareSafeShutdown();
     armFullShutdownWatchdog();
     await withOperationTimeout(
       startExitRecoveryGuardian(),
@@ -1137,7 +1283,7 @@ async function restartAndInstall() {
     );
     hideFullShutdownUi();
     quitState = 'ready';
-    await updater.quitAndInstall();
+    await updater.quitAndInstall({ unattended: options.unattended, launchHidden: options.launchHidden });
     if (portable) app.quit();
   } catch (error) {
     clearFullShutdownWatchdog();
@@ -1160,12 +1306,19 @@ async function restartAndInstall() {
 
 async function cancelUpdate() {
   if (!updater) throw new Error('XwX Deck updater is still starting.');
+  nightlyUpdates?.decline(updater.state().targetVersion);
   const state = await updater.discardDownloadedUpdate();
   await refreshUi().catch(() => undefined);
   return state;
 }
 
 async function handlePortableUpdateLaunchResult(): Promise<void> {
+  if (!PORTABLE_UPDATE_RESULT && !PACKAGED_SMOKE_TEST && app.isPackaged) {
+    runDetached('sweep stale portable update files', async () => {
+      const removed = await sweepStalePortableUpdateFiles(process.env.PORTABLE_EXECUTABLE_FILE);
+      if (removed.length) log.info(`[updater] removed stale update files: ${removed.join(', ')}`);
+    });
+  }
   if (!PORTABLE_UPDATE_RESULT || PACKAGED_SMOKE_TEST) return;
   if (PORTABLE_UPDATE_RESULT.kind === 'failed') {
     dialog.showErrorBox('XwX Deck 更新未完成', `原路径程序已重新打开。\n\n${PORTABLE_UPDATE_RESULT.message}`);
@@ -1223,18 +1376,44 @@ async function toggleTracingOnce(enabled?: boolean, force = false): Promise<XwXD
  * and explained in the manager's bottom-right notice surface. */
 async function toggleTracingFromTray(enabled: boolean): Promise<void> {
   try {
-    const next = await toggleTracing(enabled);
+    let next: XwXDeckRuntimeState | undefined;
+    try {
+      next = await toggleTracing(enabled);
+    } catch (err) {
+      if (enabled || !isTraceStopBusyError(err)) throw err;
+      // The user asked to stop. Give the same single wait/force choice as the
+      // Trace page instead of refusing from the tray.
+      if (!await confirmTrayTraceForceStop(err)) return;
+      next = await toggleTracing(false, true);
+    }
     if (next) {
       await managerWindow?.showNotice(next.lastError
         ? lifecycleFailure(next.lastError, '更新 Trace 配置')
         : next.tracingEnabled
-          ? { message: 'Trace 已开启', description: '先发送一条新消息；若仍无记录，客户端可能未读取新连接，请完全退出并重新打开相应客户端。', type: 'success' }
-          : traceStoppedNotice(next.backgroundGatewayAction === 'close'));
+          ? next.claudeDesktopRestart === 'local'
+            ? { message: 'Trace 已开启', description: claudeDesktopRestartNote('local'), type: 'info' }
+            : { message: 'Trace 已开启', description: '先发送一条新消息；若仍无记录，客户端可能未读取新连接，请完全退出并重新打开相应客户端。', type: 'success' }
+          : traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart));
     }
   } catch (err) {
     log.warn(`[xwx-deck] tray Trace toggle failed: ${errorMessage(err)}`);
     await managerWindow?.showNotice(lifecycleFailure(err, '切换 Trace'));
   }
+}
+
+async function confirmTrayTraceForceStop(error: unknown): Promise<boolean> {
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    buttons: ['继续等待', '强制停止'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '关闭 Trace',
+    message: '关闭 Trace？',
+    detail: `${normalizeErrorMessage(error)}现在关闭会中断它们；继续等待则保持 Trace 开启。`
+  };
+  const owner = managerWindow?.current();
+  const result = owner ? await dialog.showMessageBox(owner, options) : await dialog.showMessageBox(options);
+  return result.response === 1;
 }
 
 async function showManagerNotice(message: string, type: 'success' | 'error' | 'info', details: Pick<LifecycleNotice, 'description' | 'action'> = {}): Promise<void> {

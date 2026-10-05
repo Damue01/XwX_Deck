@@ -1,6 +1,6 @@
 import { ProvidersPanel } from './ProvidersPanel';
 import * as React from 'react';
-import { Trash2, Pencil, ChevronDown, ArrowDownToLine, Check, LoaderCircle } from 'lucide-react';
+import { Trash2, Pencil, ChevronDown, ArrowDownToLine, Check, LoaderCircle, Sun, Moon } from 'lucide-react';
 import type { XwXDeckRuntimeState, XwXDeckUpdateState } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
 import { isDesktop } from '@/bridge/api';
@@ -122,14 +122,14 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       ? `${updateState.targetVersion} 已下载，点击打开安装包`
       : `${updateState.targetVersion} 已下载，点击重启安装`
     : updateState?.status === 'downloading'
-      ? `正在下载 ${updateState.targetVersion} · ${Math.round(updateState.percent || 0)}%`
+      ? `正在下载 ${updateState.targetVersion}，${Math.round(updateState.percent || 0)}%`
       : `发现新版本 ${updateState?.targetVersion}，点击下载`;
 
   const confirmReadyUpdate = React.useCallback(async (version: string, manual: boolean) => {
     const proceed = await confirm({
       title: `XwX Deck ${version} 已准备好`,
       body: manual
-        ? '将打开已校验的 DMG。打开后，请先从菜单栏安全退出当前 XwX Deck，再把新版拖入“应用程序”并选择覆盖。如果 macOS 再次阻止打开，请参照安装包中的“首次打开说明”。'
+        ? '将打开已校验的 DMG，并安全退出当前 XwX Deck。退出完成后，把新版拖入“应用程序”并选择替换。如果 macOS 再次阻止打开，请参照安装包中的“首次打开说明”。'
         : '重启后将自动完成更新，无需执行其他安装操作。',
       cancelText: '稍后',
       confirmText: manual ? '打开安装包' : '重启更新'
@@ -140,7 +140,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       if (manual) {
         setUpdateState(next);
         bridge.patch({ updateState: next });
-        showToast('安装包已打开；请先安全退出当前 XwX Deck，再拖入“应用程序”覆盖', 'info');
+        showToast('安装包已打开，正在安全退出；退出后拖入“应用程序”替换', 'info');
       }
     } catch (error) {
       promptedUpdateRef.current = '';
@@ -187,10 +187,10 @@ export function SettingsPage({ active }: Props): React.ReactElement {
 
   React.useEffect(() => {
     const version = updateState?.targetVersion || '';
-    if (updateState?.status !== 'ready' || !version || promptedUpdateRef.current === version) return;
+    if (updateState?.background || updateState?.status !== 'ready' || !version || promptedUpdateRef.current === version) return;
     promptedUpdateRef.current = version;
     void confirmReadyUpdate(version, updateState?.installMode === 'manual-dmg');
-  }, [confirmReadyUpdate, updateState?.installMode, updateState?.status, updateState?.targetVersion]);
+  }, [confirmReadyUpdate, updateState?.background, updateState?.installMode, updateState?.status, updateState?.targetVersion]);
 
   const checkForUpdates = React.useCallback(async () => {
     if (checkingUpdate || updateDownloading || updateState?.status === 'installing') return;
@@ -396,14 +396,14 @@ export function SettingsPage({ active }: Props): React.ReactElement {
         <div className="group">
           <div className="group-label"><span className="eyebrow">应用</span></div>
           <div className="field-row">
-            <span className="fr-label">夜间模式</span>
+            <label className="fr-label fr-label-action" htmlFor="themeToggle">夜间模式</label>
             <div className="fr-value">
               <Toggle
                 id="themeToggle"
                 checked={theme === 'night'}
                 ariaLabel="夜间模式"
-                title={theme === 'night' ? '当前为夜间模式' : '切换到夜间模式'}
-                onToggle={() => setTheme(theme === 'night' ? 'day' : 'night')}
+                thumb={<span className="theme-glyph" aria-hidden="true"><Sun className="theme-glyph-sun" /><Moon className="theme-glyph-moon" /></span>}
+                onToggle={() => setTheme(theme === 'night' ? 'day' : 'night', document.getElementById('themeToggle'))}
               />
             </div>
           </div>
@@ -412,7 +412,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
             <div className="fr-value">
               {runtime?.startup?.warning && <button type="button" className="version-check"
                 disabled={busyStartup} title={runtime.startup.warning}
-                onClick={() => void saveStartup(startupEnabled)}>待同步 · 重试</button>}
+                onClick={() => void saveStartup(startupEnabled)}>重试同步</button>}
               <Toggle
                 id="startupToggle"
                 checked={startupEnabled}
@@ -439,10 +439,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
                 onClick={checkForUpdates}
               >
                 {checkingUpdate ? (
-                  <>
-                    <LoaderCircle className="ic version-check-spinner" aria-hidden="true" />
-                    <span>检查中…</span>
-                  </>
+                  <span>检查中…</span>
                 ) : (
                   updateState?.currentVersion || '—'
                 )}

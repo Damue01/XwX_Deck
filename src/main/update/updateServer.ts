@@ -4,7 +4,6 @@ export const DEFAULT_METADATA_PUSH_SERVER = '';
 export function updateServerUrl(): string {
   return String(
     process.env.XWX_DECK_UPDATE_SERVER_URL
-    || process.env.XWX_DECK_UPDATE_SERVER_URL
     || DEFAULT_UPDATE_SERVER
   ).replace(/\/+$/, '');
 }

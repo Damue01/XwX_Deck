@@ -358,7 +358,7 @@ async function readSettings(userDataDir: string): Promise<import('./trace/codexP
       providerAdapter: provider?.adapter,
       providerId: provider ? providerCodexId(provider, unified) : undefined,
       providerName: provider?.displayName,
-      requiresOpenAiAuth: false,
+      preserveOfficialLogin: value.codexEnhancements?.preserveOfficialLogin !== false,
       unifySessionHistory: unified,
       directProviders: providerDirectConnections(value.providers?.connections),
       requiresGateway: providerRequiresTrace(provider ?? value.compatible, provider?.codexModel || value.codexModels?.compatible || '', catalog),

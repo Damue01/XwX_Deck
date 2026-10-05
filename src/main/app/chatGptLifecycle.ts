@@ -127,6 +127,38 @@ export async function isClaudeRunning(platform: SupportedPlatform = process.plat
   return false;
 }
 
+function windowsClaudeDesktopProcess(output: string): boolean {
+  return output.split(/\r?\n/).some(line => {
+    const match = line.trim().match(/^([^|]+)\|\d+\|(.*)$/);
+    if (!match) return false;
+    const [, name, path] = match;
+    if (/^Claude Desktop$/i.test(name)) return true;
+    return /^Claude$/i.test(name) && /[/\\](?:Claude|Claude Desktop|AnthropicClaude|Claude_[^/\\]+)[/\\](?:app[/\\])?Claude\.exe$/i.test(path);
+  });
+}
+
+function macClaudeDesktopProcess(output: string): boolean {
+  return output.split(/\r?\n/).some(line => {
+    const match = line.trim().match(/^\d+\s+(\S+)\s+([\s\S]+)$/);
+    return !!match && !/^Z/i.test(match[1])
+      && /\/Claude\.app\/Contents\/MacOS\/Claude(?:\s|$)/i.test(match[2]);
+  });
+}
+
+/** A restart hint concerns the Desktop app, not a running Claude Code CLI. */
+export async function isClaudeDesktopRunning(platform: SupportedPlatform = process.platform): Promise<boolean> {
+  if (platform === 'win32') {
+    const command = `Get-Process -Name Claude,'Claude Desktop' -ErrorAction SilentlyContinue | ForEach-Object { "$($_.ProcessName)|$($_.Id)|$($_.Path)" }`;
+    return windowsClaudeDesktopProcess(await execFileText('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command', command
+    ]));
+  }
+  if (platform === 'darwin') {
+    return macClaudeDesktopProcess(await execFileText('ps', ['-axo', 'pid=,state=,command=']));
+  }
+  return false;
+}
+
 export interface ResetClientProcess {
   readonly pid: number;
   readonly label: string;
@@ -241,6 +273,8 @@ export const __test = {
   windowsChatGptMainProcessIds,
   macClaudeMainProcessIds,
   windowsClaudeMainProcessIds,
+  windowsClaudeDesktopProcess,
+  macClaudeDesktopProcess,
   windowsResetClientProcesses,
   windowsTasklistResetProcesses,
   windowsRunningClientLabels,

@@ -5,7 +5,7 @@
  * a different question than the one that matters at request time. A vendor page
  * describes the model's own API; models.dev and LiteLLM describe what some
  * catalog believes; neither observes what the configured gateway actually does.
- * `tools/probe-reasoning-contract.mjs` does observe it, so its results outrank
+ * `tools/dev/probe-reasoning-contract.mjs` does observe it, so its results outrank
  * the aggregators — but never a cited model-owner page, which stays
  * authoritative in `officialModelRegistry.ts`.
  *
@@ -24,7 +24,7 @@ export interface ProbedModelCapability {
   readonly evidence: string;
 }
 
-const REASONING_TOKENS_OBSERVED = 'emitted reasoning tokens on a trivial prompt via tools/probe-reasoning-contract.mjs';
+const REASONING_TOKENS_OBSERVED = 'emitted reasoning tokens on a trivial prompt via tools/dev/probe-reasoning-contract.mjs';
 
 /**
  * These ids are marked non-reasoning by models.dev/LiteLLM, which would
