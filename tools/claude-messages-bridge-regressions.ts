@@ -81,6 +81,9 @@ export async function testClaudeMessagesBridgeRegressions(): Promise<void> {
     'a connection set to Chat routes undeclared models over Chat, like Codex');
   assert.equal(resolveClaudeModelProtocol({ codexApiFormat: 'responses' }, entry({ id: 'qwen3.8-max', catalogEndpoints: ['openai'] })), 'responses');
   assert.equal(resolveClaudeModelProtocol(undefined, entry({ id: 'mystery' })), undefined);
+  assert.equal(resolveClaudeModelProtocol({ adapter: 'responses', codexApiFormat: 'responses' },
+    entry({ id: 'deepseek-v4-pro', catalogEndpoints: ['openai'], officialProtocols: ['chat-completions'] })),
+  'responses', 'explicit Responses must outrank stale third-party protocol enrichment for Claude too');
 
   // --- Request: Messages → Responses -------------------------------------------
   const conversation = {

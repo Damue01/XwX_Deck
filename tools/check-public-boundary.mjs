@@ -29,7 +29,11 @@ for (const relative of ['src/renderer/features/sync/SyncPage.tsx','src/main/app/
 const settings = await readFile(path.join(root, 'src/main/app/settings.ts'), 'utf8');
 check(settings.includes('connections: configured ? [initial] : []'), 'standalone registry must support empty connections');
 const helper = await readFile(path.join(root, 'src/main/gatewayHelper.ts'), 'utf8');
-check(helper.includes('return { maxSessions: 0, maxStorageBytes: 0 }'), 'helper must reject automatic retention limits');
+check(
+  helper.includes('const maxSessions = typeof record.maxSessions')
+  && helper.includes('const maxStorageBytes = typeof record.maxStorageBytes'),
+  'helper must apply configured Trace retention limits'
+);
 if (failures.length) {
   console.error('Public boundary check failed:');
   for (const failure of failures) console.error(`- ${failure}`);

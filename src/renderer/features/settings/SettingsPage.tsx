@@ -1,4 +1,5 @@
 import { ProvidersPanel } from './ProvidersPanel';
+import { ProviderSetupShortcuts } from './ProviderSetupShortcuts';
 import * as React from 'react';
 import { Trash2, Pencil, ChevronDown, ArrowDownToLine, Check, LoaderCircle, Sun, Moon } from 'lucide-react';
 import type { XwXDeckRuntimeState, XwXDeckUpdateState } from '@/bridge/types';
@@ -10,6 +11,9 @@ import { useConfirm, useConfirmChecked } from '@/components/ui/confirm-dialog';
 import { hostFromUrl, isValidServiceUrl } from '@/lib/utils';
 import { useTheme } from '@/lib/theme';
 import { Toggle } from '@/features/shell/Toggle';
+import { Meter } from '@/components/ui/meter';
+import { Badge } from '@/components/ui/badge';
+import { TraceIndexRepairSection } from './TraceIndexRepairSection';
 import { RepairCenterSheet } from '@/features/settings/RepairCenterSheet';
 import { announceAvailableUpdate } from '@/features/shell/UpdateNotification';
 
@@ -22,10 +26,15 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   const [runtime, setRuntime] = React.useState<XwXDeckRuntimeState | null>(bridge.runtime);
   const [updateState, setUpdateState] = React.useState<XwXDeckUpdateState | null>(bridge.updateState);
   const [busyStartup, setBusyStartup] = React.useState(false);
-  const [busyRepair, setBusyRepair] = React.useState(false);
   const [busyReset, setBusyReset] = React.useState(false);
   const [checkingUpdate, setCheckingUpdate] = React.useState(false);
   const [traceOpen, setTraceOpen] = React.useState(false);
+  const [modelConfigOpen, setModelConfigOpen] = React.useState(false);
+  const [limitDraft, setLimitDraft] = React.useState('2');
+  const [editingLimit, setEditingLimit] = React.useState(false);
+  const [savingStorage, setSavingStorage] = React.useState(false);
+  const limitCommitPending = React.useRef(false);
+  const openModelConfig = React.useCallback(() => setModelConfigOpen(true), []);
   const promptedUpdateRef = React.useRef<string>('');
   const [theme, setTheme] = useTheme(runtime?.theme, bridge.api.setTheme);
   const confirm = useConfirm();
@@ -33,11 +42,131 @@ export function SettingsPage({ active }: Props): React.ReactElement {
 
   React.useEffect(() => { if (bridge.runtime) setRuntime(bridge.runtime); }, [bridge.runtime]);
   React.useEffect(() => { if (bridge.updateState) setUpdateState(bridge.updateState); }, [bridge.updateState]);
+  React.useEffect(() => {
+    if (!editingLimit && runtime?.traceWarningGB !== undefined) setLimitDraft(String(runtime.traceWarningGB));
+  }, [editingLimit, runtime?.traceWarningGB]);
+  React.useEffect(() => {
+    if (!active) return;
+    const showTraceSettings = () => setTraceOpen(true);
+    window.addEventListener('xwxdeck:open-trace-settings', showTraceSettings);
+    return () => window.removeEventListener('xwxdeck:open-trace-settings', showTraceSettings);
+  }, [active]);
+  React.useEffect(() => {
+    if (!traceOpen && editingLimit) {
+      setEditingLimit(false);
+      setLimitDraft(String(runtime?.traceWarningGB ?? 2));
+    }
+  }, [traceOpen, editingLimit, runtime?.traceWarningGB]);
 
   const traceRoot = runtime?.traceRoot || '—';
   const logRoot = runtime?.logRoot || '—';
   const startupSupported = runtime?.startup?.supported !== false;
   const startupEnabled = startupSupported && (runtime?.startup?.desiredEnabled ?? runtime?.startup?.enabled) === true;
+  const limitValue = Number(limitDraft);
+  const limitValid = /^\d+$/.test(limitDraft) && Number.isSafeInteger(limitValue)
+    && limitValue >= 0 && limitValue <= 1024;
+  const storageExceeded = (runtime?.traceWarningGB ?? 2) > 0
+    && (runtime?.traceStorageBytes ?? 0) > (runtime?.traceWarningGB ?? 2) * 1024 ** 3;
+  const needsManualCleanup = storageExceeded && !runtime?.traceAutoCleanup;
+  const storageUsedText = runtime?.traceStorageBytes === undefined
+    ? '—'
+    : runtime.traceStorageBytes >= 1024 ** 3
+      ? `${(runtime.traceStorageBytes / 1024 ** 3).toFixed(1)} GB`
+      : runtime?.storageText.split(' / ')[0] ?? '—';
+  const storageLimitGB = runtime?.traceWarningGB ?? 2;
+  const storagePercent = storageLimitGB === 0 ? 0
+    : Math.min(100, Math.max(0, (runtime?.traceStorageBytes ?? 0) / (storageLimitGB * 1024 ** 3) * 100));
+  const saveStorage = React.useCallback(async (input: { limitGB?: number; autoCleanup?: boolean }) => {
+    if (savingStorage) return;
+    setSavingStorage(true);
+    try {
+      const next = await bridge.api.setTraceStoragePolicy(input);
+      setRuntime(next);
+      bridge.patch({ runtime: next });
+      if (next.traceStorageNotice) showToast('Trace 存储设置已保存', 'info', undefined, { description: next.traceStorageNotice });
+    } catch (error) {
+      showErrorToast('更新 Trace 存储设置失败', error);
+    } finally {
+      setSavingStorage(false);
+    }
+  }, [bridge.api, bridge.patch, savingStorage]);
+
+  const commitLimit = React.useCallback(async () => {
+    if (limitCommitPending.current) return;
+    limitCommitPending.current = true;
+    try {
+      setEditingLimit(false);
+      if (!limitValid) {
+        setLimitDraft(String(storageLimitGB));
+        showToast('请输入 0–1024 GB 的整数', 'info');
+        return;
+      }
+      if (limitValue === runtime?.traceWarningGB) return;
+      if (limitValue === 0) {
+        const proceed = await confirm({
+          title: '只保留用量统计？',
+          body: '现有 Trace 详细记录将被永久删除。之后不再保存请求和响应内容，只保留 token 用量与费用统计。Gateway 仍会正常转发。',
+          confirmText: '删除记录并切换',
+          cancelText: '取消',
+          tone: 'danger'
+        });
+        if (!proceed) {
+          setLimitDraft(String(storageLimitGB));
+          return;
+        }
+      }
+      await saveStorage({ limitGB: limitValue });
+    } finally {
+      limitCommitPending.current = false;
+    }
+  }, [confirm, limitValid, limitValue, runtime?.traceWarningGB, saveStorage, storageLimitGB]);
+
+  const limitControl = editingLimit ? (
+    <span className="trace-storage-limit-editor">
+      <input
+        id="traceWarningGB"
+        type="number"
+        min={0}
+        max={1024}
+        step={1}
+        value={limitDraft}
+        aria-label="Trace 存储上限，单位 GB"
+        aria-invalid={!limitValid}
+        disabled={savingStorage}
+        autoFocus
+        onChange={event => setLimitDraft(event.target.value)}
+        onBlur={commitLimit}
+        onKeyDown={event => {
+          if (event.key === 'Enter') event.currentTarget.blur();
+          if (event.key === 'Escape') {
+            setLimitDraft(String(storageLimitGB));
+            setEditingLimit(false);
+          }
+        }}
+      />
+      <span>GB</span>
+    </span>
+  ) : (
+    <button
+      type="button"
+      className="trace-storage-limit"
+      aria-label={`修改 Trace 存储设置，当前 ${storageLimitGB === 0 ? '仅用量统计' : `${storageLimitGB} GB`}`}
+      disabled={savingStorage}
+      onClick={() => setEditingLimit(true)}
+    >
+      {storageLimitGB === 0 ? '仅用量' : `${storageLimitGB} GB`}
+    </button>
+  );
+  const autoCleanupControl = (
+    <Toggle
+      id="traceAutoCleanup"
+      checked={runtime?.traceAutoCleanup === true}
+      busy={savingStorage}
+      ariaLabel="超出上限时自动清理旧 Trace 记录"
+      title="开启后，超出上限时会从最旧的完整对话开始删除，保留正在记录的对话。"
+      onToggle={() => void saveStorage({ autoCleanup: runtime?.traceAutoCleanup !== true })}
+    />
+  );
   const changeDir = React.useCallback(async (kind: 'trace' | 'logs') => {
     let resumeTrace = false;
     try {
@@ -275,35 +404,6 @@ export function SettingsPage({ active }: Props): React.ReactElement {
     }
   }, [bridge.api, bridge.runtime, busyReset, confirmChecked]);
 
-  const handleQuickRepair = React.useCallback(async () => {
-    if (busyRepair) return;
-    // previewApi returns a fully populated runtime, so `bridge.runtime === null`
-    // never fired in the browser preview: the mock repair reported success and
-    // the mock reset left the button stuck busy. isDesktop() checks the preload
-    // bridge instead.
-    if (!isDesktop()) {
-      showToast('浏览器预览不会清理本地数据', 'info');
-      return;
-    }
-    setBusyRepair(true);
-    try {
-      const result = await bridge.api.repairApplication();
-      // The caches rebuild within seconds, so a fixed success message made a
-      // real deletion and a no-op look identical. Report what actually went.
-      if (result.removedCachePaths === 0) {
-        showToast('本地缓存已经是干净的，无需清理', 'info');
-      } else {
-        const size = `${Math.round(result.removedBytes / 1024)} KB`;
-        const models = result.refreshedModels ? `，已重新拉取 ${result.refreshedModels} 个模型` : '';
-        showToast(`已清理 ${result.removedCachePaths} 项本地缓存${size ? `（${size}）` : ''}${models}`, 'success');
-      }
-    } catch (error) {
-      showErrorToast('无法运行快速修复', error);
-    } finally {
-      setBusyRepair(false);
-    }
-  }, [bridge.api, busyRepair]);
-
   return (
     <section
       className={`page${active ? ' current' : ''}`}
@@ -316,7 +416,20 @@ export function SettingsPage({ active }: Props): React.ReactElement {
 
         {/* Provider */}
         <div className="group">
-          <ProvidersPanel />
+          <div className="group-label">
+            <button type="button" className="trace-section-trigger" aria-expanded={modelConfigOpen}
+              aria-controls="model-config-content" onClick={() => setModelConfigOpen(open => !open)}>
+              <span className="eyebrow">模型配置</span>
+              <ChevronDown size={15} className="trace-section-chevron" aria-hidden="true" />
+            </button>
+          </div>
+          <div id="model-config-content" hidden={!modelConfigOpen}>
+            <div className="model-config-client">
+              <h3 className="model-config-subheading">客户端</h3>
+              <ProviderSetupShortcuts kind="client" />
+            </div>
+            <ProvidersPanel onRequestOpen={openModelConfig} />
+          </div>
         </div>
 
         {/* Trace */}
@@ -332,9 +445,26 @@ export function SettingsPage({ active }: Props): React.ReactElement {
               <span className="eyebrow">Trace</span>
               <ChevronDown size={15} className="trace-section-chevron" aria-hidden="true" />
             </button>
+            {needsManualCleanup && <Badge variant="secondary">超出上限</Badge>}
           </div>
           <div className="trace-list" id="trace-settings-content" hidden={!traceOpen}>
-            <p className="text-muted-foreground text-sm">Trace 记录保存在本地，不自动清理。需要时可手动删除。</p>
+            <div className="trace-storage">
+              <div className="trace-storage-heading">
+                <span className="trace-storage-heading-label">Trace 记录</span>
+                <div className="trace-storage-inline-reading">
+                  <span>{storageUsedText}{storageLimitGB === 0 ? '' : ' /'}</span>
+                  {limitControl}
+                </div>
+              </div>
+              {storageLimitGB > 0 && <Meter value={storagePercent} min={0} max={100}
+                aria-label={storageLimitGB === 0 ? '仅用量模式，不保存详细 Trace' : `Trace 记录占用 ${storageUsedText}，设置上限 ${storageLimitGB} GB`}
+                className="trace-storage-meter" />}
+              {storageLimitGB > 0 && <div className="trace-storage-controls">
+                <label className="trace-storage-control-label" htmlFor="traceAutoCleanup"
+                  title="开启后，超出上限时会从最旧的完整对话开始删除，保留正在记录的对话。">超出上限时自动清理</label>
+                <div className="trace-storage-control-value">{autoCleanupControl}</div>
+              </div>}
+            </div>
             <div className="trace-row">
               <button
                 type="button"
@@ -389,6 +519,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
                 <Trash2 className="ic" size={18} strokeWidth={1.55} />
               </span>
             </button>
+            <TraceIndexRepairSection />
           </div>
         </div>
 
@@ -478,7 +609,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
           </div>
         </div>
 
-        <RepairCenterSheet quickRepairBusy={busyRepair} onQuickRepair={() => void handleQuickRepair()} onOpenReset={() => void handleReset()} />
+        <RepairCenterSheet onOpenReset={() => void handleReset()} />
       </div>
     </section>
   );

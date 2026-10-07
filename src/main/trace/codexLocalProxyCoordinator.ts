@@ -78,8 +78,10 @@ export class CodexLocalProxyCoordinator {
     }
 
     if (!isLoopbackUrl(snapshot.activeBaseUrl)) return { status: 'not-needed' };
+    const original = await readTextOrUndefined(snapshot.configPath);
     const fieldLocation: CodexLocalProxyField = snapshot.activeProvider === 'openai'
-      ? snapshot.authMode === 'chatgpt' ? 'chatgpt-base-url' : 'openai-base-url'
+      ? readTomlTopLevelString(original ?? '', 'openai_base_url')?.trim() === snapshot.activeBaseUrl
+        ? 'openai-base-url' : snapshot.authMode === 'chatgpt' ? 'chatgpt-base-url' : 'openai-base-url'
       : 'provider-section';
     if (fieldLocation === 'provider-section'
       && !isXwXManagedProvider(snapshot.activeProvider)
@@ -87,7 +89,7 @@ export class CodexLocalProxyCoordinator {
       return { status: 'unsupported', localBaseUrl: snapshot.activeBaseUrl };
     }
     const directBaseUrl = snapshot.authMode === 'chatgpt'
-      ? fieldLocation === 'provider-section'
+      ? fieldLocation !== 'chatgpt-base-url'
         ? CODEX_CHATGPT_OAUTH_PROVIDER_TARGET
         : CODEX_CHATGPT_OAUTH_PROVIDER_TARGET.replace(/\/codex$/, '')
       : snapshot.authMode === 'api-key'
@@ -95,7 +97,6 @@ export class CodexLocalProxyCoordinator {
         : undefined;
     if (!directBaseUrl) return { status: 'unsupported', localBaseUrl: snapshot.activeBaseUrl };
 
-    const original = await readTextOrUndefined(snapshot.configPath);
     if (original === undefined || configBaseUrl(original, snapshot.activeProvider, fieldLocation) !== snapshot.activeBaseUrl) {
       throw new Error('ChatGPT 配置在连接调整前发生了变化。');
     }

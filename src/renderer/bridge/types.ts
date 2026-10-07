@@ -1,4 +1,5 @@
 import type { ProviderSnapshot, ProviderInput, ProviderClient, ProviderValidationResult } from '../../shared/providers';
+import type { SetupWebsite, SetupWebsites } from '../../shared/setupWebsites';
 // Shared data shapes for the window.xwxDeck bridge surface.
 // All types are plain serialisable objects; nothing from Electron is imported here.
 import type { ProviderPresetId } from '../../shared/providerProfiles';
@@ -361,6 +362,8 @@ export interface TraceRetentionRepairResult {
 // ---- XwXDeck API surface -------------------------------------------------
 
 export interface XwXDeckApi {
+  readonly setupWebsites: SetupWebsites;
+  openSetupWebsite(site: SetupWebsite): Promise<void>;
   getProviders(): Promise<ProviderSnapshot>;
   saveProvider(input: ProviderInput): Promise<ProviderSnapshot>;
   deleteProvider(id: string): Promise<ProviderSnapshot>;
@@ -448,6 +451,7 @@ export interface XwXDeckApi {
   openDataFolder(): Promise<void>;
   openLogFolder(): Promise<void>;
   clearHistory(): Promise<XwXDeckRuntimeState>;
+  setTraceStoragePolicy(input: { limitGB?: number; autoCleanup?: boolean }): Promise<XwXDeckRuntimeState>;
   inspectTraceIndexRepair(): Promise<TraceIndexRepairPlan>;
   applyTraceIndexRepair(expectedIndexSha256?: string): Promise<AppliedTraceIndexRepair>;
   /** True when stopping tracing would break the active ChatGPT (chat-completions bridge) model. */

@@ -1,3 +1,4 @@
+import { testOfficialProviders } from './official-provider-smoke';
 import { testManagerIpc } from './manager-ipc-regressions';
 import { testDirectRestore } from './direct-restore-smoke';
 import { testProviderRegistry } from './provider-registry-smoke';
@@ -239,6 +240,8 @@ try {
   testRendererErrorMessages();
   await testProviderValidation();
   await testProviderRegistry(root);
+  await testOfficialProviders(root);
+  completed.push('official provider presets and local Gateway request paths');
   completed.push('standalone Provider registry migration, isolation, editable failures and official catalog');
   await testCodexConversationDoctor();
   await testTraceDeletionTransactions();
@@ -261,6 +264,8 @@ try {
   await testCodexOfficialAndCustomTakeover();
   await testClaudeProviderSwitch();
   await testCodexProviderSwitch();
+  await testCompatibleServiceClearsGatewayResidue();
+  completed.push('CompatibleService config clears official Gateway root loopback residue');
   await testCodexModelCatalogGateway();
   await testCodexOfficialAuthPolicy();
   await testCodexEnhancements();
@@ -287,6 +292,68 @@ try {
   console.log(`PASS ${completed.length} core smoke tests`);
 } finally {
   await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+}
+
+async function testCompatibleServiceClearsGatewayResidue(): Promise<void> {
+  const previousHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = path.join(root, 'codex-residue', '.codex');
+  try {
+    await fs.mkdir(process.env.CODEX_HOME, { recursive: true });
+    await fs.writeFile(path.join(process.env.CODEX_HOME, 'auth.json'), '{"auth_mode":"chatgpt"}\n');
+    await fs.writeFile(path.join(process.env.CODEX_HOME, 'config.toml'), [
+      'model_provider = "xwx_deck"',
+      'model = "deepseek-v4-pro"',
+      'chatgpt_base_url = "http://127.0.0.1:45233/backend-api"',
+      '',
+      '[model_providers.xwx_deck]',
+      'name = "XwX Deck"',
+      'base_url = "https://api.deepseek.com"',
+      'wire_api = "responses"',
+      'requires_openai_auth = true',
+      ''
+    ].join('\n'));
+    await new CodexConfigManager(path.join(root, 'codex-residue-user-data')).update({
+      mode: 'compatible',
+      compatibleModel: 'deepseek-v4-pro',
+      compatibleBaseUrl: 'https://api.deepseek.com',
+      compatibleBearerToken: 'fixture-token'
+    });
+    const toml = await fs.readFile(path.join(process.env.CODEX_HOME, 'config.toml'), 'utf8');
+    assert.doesNotMatch(toml, /^chatgpt_base_url\s*=/m,
+      'CompatibleService must clear an official Gateway root loopback so workspace routing stays direct');
+    assert.match(toml, /\[model_providers\.xwx_deck\][\s\S]*base_url = "https:\/\/api\.deepseek\.com/);
+    await fs.appendFile(path.join(process.env.CODEX_HOME, 'config.toml'), '\n');
+    const accountRoot = 'https://regional.example/backend-api';
+    const beforeGateway = await fs.readFile(path.join(process.env.CODEX_HOME, 'config.toml'), 'utf8');
+    await fs.writeFile(path.join(process.env.CODEX_HOME, 'config.toml'), `chatgpt_base_url = "${accountRoot}"\n${beforeGateway}`);
+    const manager = new CodexConfigManager(path.join(root, 'codex-account-routing-user-data'));
+    for (const unifySessionHistory of [false, true]) {
+      await manager.update({ mode: 'official', officialModel: 'gpt-6.1-sol',
+        gatewayBaseUrl: 'http://127.0.0.1:45233/backend-api/codex', unifySessionHistory });
+      const config = parseToml(await fs.readFile(path.join(process.env.CODEX_HOME!, 'config.toml'), 'utf8'));
+      assert.equal(config.openai_base_url, 'http://127.0.0.1:45233/backend-api/codex');
+      assert.equal(config.chatgpt_base_url, accountRoot, 'external HTTPS account root remains unchanged');
+      assert.equal(await manager.readOfficialBaseUrl(), accountRoot, 'local model override must not hide a direct account fallback');
+      assert.equal((await manager.read()).mode, 'official');
+      assert.equal((await manager.read()).activeBaseUrl, 'http://127.0.0.1:45233/backend-api/codex');
+      await manager.update({ mode: 'official', officialModel: 'gpt-6.1-sol', unifySessionHistory: false });
+      assert.equal((await manager.read()).activeProvider, 'openai');
+      assert.equal(await manager.referencesLocalGateway('http://127.0.0.1:45233'), false);
+    }
+
+    const externalModelBase = 'https://model-override.example/backend-api/codex';
+    await fs.writeFile(path.join(process.env.CODEX_HOME, 'config.toml'),
+      `model_provider = "openai"\nchatgpt_base_url = "${accountRoot}"\nopenai_base_url = "${externalModelBase}"\n`);
+    const overrideManager = new CodexConfigManager(path.join(root, 'codex-account-routing-override-user-data'));
+    await overrideManager.update({ mode: 'official', officialModel: 'gpt-6.1-sol',
+      gatewayBaseUrl: 'http://127.0.0.1:45233/backend-api/codex' });
+    assert.equal(await overrideManager.readOfficialBaseUrl(), externalModelBase,
+      'restoration ledger preserves an explicit model override independently from the account root');
+
+  } finally {
+    if (previousHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousHome;
+  }
 }
 
 async function testExitRecovery(): Promise<void> {
@@ -330,9 +397,12 @@ async function testExitRecovery(): Promise<void> {
   let result;
   try {
     const recover = () => runExitRecovery({ userDataDir: userData, managerPid: 99102, terminateProcess: async pid => { terminated.push(pid); } });
-    await assert.rejects(recover(), /仍有客户端依赖/);
-    assert.deepEqual(terminated, [], 'unresolved externally edited localhost must keep the Gateway alive');
-    assert.equal(JSON.parse(await fs.readFile(paths.claudeSettingsPath, 'utf8')).env.ANTHROPIC_BASE_URL, 'http://localhost:44995');
+    const externalConfig = await fs.readFile(paths.claudeSettingsPath, 'utf8');
+    await assert.rejects(recover(), /仍有客户端依赖本地 Gateway/);
+    assert.deepEqual(terminated, [], 'keep both processes when external configuration still needs the Gateway');
+    assert.equal(await fs.readFile(paths.claudeSettingsPath, 'utf8'), externalConfig,
+      'exit recovery must preserve externally modified configuration byte for byte');
+    await fs.stat(path.join(userData, 'gateway', 'runtime.json'));
     assert.ok(await backup.read('claude'), 'retain field ownership evidence for retry');
     claudeLive.env.ANTHROPIC_BASE_URL = 'https://user-direct.example';
     await fs.writeFile(paths.claudeSettingsPath, JSON.stringify(claudeLive));
@@ -2167,8 +2237,8 @@ async function testControllerColdStartTransactions(): Promise<void> {
       await controller.disable();
       const repairedConfig = await fs.readFile(paths.codexConfigPath, 'utf8');
       assert.doesNotMatch(repairedConfig, new RegExp(`127\\.0\\.0\\.1:${deadPort}`));
-      assert.equal(await new CodexConfigManager(userData).referencesLocalGateway(traceState.localBaseUrl!), true,
-        'stopping Trace keeps the healthy official fallback for tasks that cached the replacement endpoint');
+      assert.equal(await new CodexConfigManager(userData).referencesLocalGateway(traceState.localBaseUrl!), false,
+        'stopping Trace detaches the local Gateway and restores direct service');
       await controller.shutdown();
       assert.match(await fs.readFile(paths.codexConfigPath, 'utf8'), /base_url = "https:\/\/chatgpt\.com\/backend-api\/codex"/,
         'fully stopping the proxy restores official direct service');
@@ -3794,6 +3864,25 @@ async function testCodexGatewayTransitionMatrix(): Promise<void> {
     ).toString(),
     'https://chatgpt.com/backend-api/codex/models?client_version=qa'
   );
+  const officialWhamRoute = controllerTest.buildCodexOfficialGatewayRoutes(
+    { ...settings, compatible: { ...settings.compatible, bearerToken: 'compatible-secret' } },
+    'chatgpt',
+    'official-oauth'
+  ).find(route => route.path === '/backend-api/wham');
+  assert(officialWhamRoute, 'official ChatGPT Gateway must publish the /wham account/workspace passthrough route');
+  assert.equal(officialWhamRoute.capture, false, 'account/workspace utility calls must not create conversation traces');
+  assert.equal(officialWhamRoute.upstreamBaseUrl, 'https://chatgpt.com/backend-api');
+  assert.equal(officialWhamRoute.stripPathPrefix, '/backend-api');
+  assert.equal(officialWhamRoute.blockedBearerToken, 'compatible-secret');
+  assert.equal(officialWhamRoute.replacementBearerToken, 'official-oauth');
+  assert.equal(
+    tapProxyTest.buildUpstreamUrl(
+      officialWhamRoute.upstreamBaseUrl,
+      new URL('http://127.0.0.1:44233/backend-api/wham/accounts/check'),
+      officialWhamRoute.stripPathPrefix
+    ).toString(),
+    'https://chatgpt.com/backend-api/wham/accounts/check'
+  );
   assert.equal(
     localOfficialRoutes.find(route => route.path === '/backend-api/codex/responses')?.webSocket,
     'official-responses',
@@ -3824,7 +3913,8 @@ async function testCodexGatewayTransitionMatrix(): Promise<void> {
     '兼容服务 routes must remain HTTP/SSE even when a model advertises Responses');
   const transitionRoot = path.join(root, 'gateway-transition-matrix');
   await fs.mkdir(transitionRoot, { recursive: true });
-  const proxy = new TapProxy(new TraceStore(path.join(transitionRoot, 'trace')), [0]);
+  const transitionStore = new TraceStore(path.join(transitionRoot, 'trace'));
+  const proxy = new TapProxy(transitionStore, [0]);
   const proxyUrl = await proxy.start();
   const send = async (input: unknown, model = 'responses-model', requestPath = '/backend-api/codex/responses') => {
     const response = await fetch(`${proxyUrl}${requestPath}`, {
@@ -3861,6 +3951,61 @@ async function testCodexGatewayTransitionMatrix(): Promise<void> {
     assert.deepEqual(switchedTurns.map(item => item.provider).sort(), ['compatible', 'official']);
     const officialSeen = seen.find(item => item.body.input === 'after-switch-official')!;
     assert.equal(officialSeen.authorization, 'Bearer official-oauth', '兼容服务 key must be replaced on official route');
+
+    // 官方账户/工作区接口必须穿过同一 Gateway，否则 Desktop 登录后的
+    // workspace routing discovery 会 404/502。兼容服务 key 同样要被替换。
+    const whamResponse = await fetch(`${proxyUrl}/backend-api/wham/accounts/check`, {
+      method: 'GET',
+      headers: {
+        'user-agent': 'codex-cli/qa',
+        authorization: 'Bearer compatible-secret'
+      }
+    });
+    assert.equal(whamResponse.status, 200, 'official /wham account request must pass through the Gateway');
+    const whamSeen = seen.find(item => item.path === '/official/backend-api/wham/accounts/check');
+    assert(whamSeen, 'official /wham account request must reach the official upstream');
+    assert.equal(whamSeen.authorization, 'Bearer official-oauth', '兼容服务 key must be replaced on the /wham passthrough route');
+
+    // Trace on an otherwise direct official subscription uses ordinary
+    // takeover routes, rather than buildCodexOfficialGatewayRoutes.
+    const takeoverRoutes = controllerTest.buildClientRoutes([{
+      client: 'codex-cli', status: 'taken', codexRouteKind: 'chatgpt-oauth',
+      upstreamBaseUrl: `${serverUrl(officialServer)}/backend-api`
+    }]);
+    assert.equal(takeoverRoutes.find(route => route.path === '/backend-api/wham')?.capture, false);
+    assert.equal(takeoverRoutes.find(route => route.path === '/backend-api/codex/responses')?.webSocket,
+      'official-responses', 'ordinary official Trace must also support the Desktop WebSocket transport');
+    proxy.setClientRoutes(takeoverRoutes);
+    for (const requestPath of ['/backend-api/wham/accounts/check', '/backend-api/wham/usage', '/backend-api/wham/profiles/me']) {
+      const response = await fetch(`${proxyUrl}${requestPath}?qa=takeover`, {
+        headers: { 'user-agent': 'codex-cli/qa', authorization: 'Bearer official-oauth' }
+      });
+      assert.equal(response.status, 200, `ordinary Trace must forward ${requestPath}`);
+      await response.text();
+      assert.equal(seen.at(-1)?.path, `${requestPath}?qa=takeover`, 'account path and query must remain intact');
+      assert.equal(seen.at(-1)?.authorization, 'Bearer official-oauth');
+    }
+    assert.equal((await transitionStore.listSessions()).length, 0,
+      'OAuth account discovery and usage must never create conversation traces');
+
+    const deepSeek = {
+      id: 'deepseek-fixture', displayName: 'DeepSeek', providerPreset: 'auto' as const,
+      baseUrl: `${serverUrl(compatibleServer)}/compatible/v1`, bearerToken: 'compatible-secret',
+      adapter: 'responses' as const, codexApiFormat: 'responses' as const,
+      codexModel: 'deepseek-v4-pro', codexContextWindow: 0,
+      claudeModels: { fable: '', opus: '', sonnet: '', haiku: '' }
+    };
+    proxy.setClientRoutes(controllerTest.buildCodexGatewayRoutes({
+      ...settings,
+      compatible: { ...settings.compatible, baseUrl: deepSeek.baseUrl, bearerToken: deepSeek.bearerToken },
+      providers: { version: 1, connections: [deepSeek], selected: { codex: deepSeek.id, claude: null } }
+    }, [{ id: deepSeek.codexModel, vendor: 'deepseek', protocols: [], clients: ['codex'],
+      catalogEndpoints: ['openai'], officialProtocols: ['chat-completions'] }])
+      .map(route => ({ ...route, capture: false })));
+    await send('explicit DeepSeek Responses with stale metadata', deepSeek.codexModel);
+    assert.equal(seen.at(-1)?.path, '/compatible/v1/responses',
+      'Desktop ingress must keep native Responses despite stale Chat-only metadata');
+    assert.equal(seen.at(-1)?.body.model, deepSeek.codexModel);
 
     // Official -> 兼容服务. All three model protocols share the unchanged
     // local Gateway endpoint and receive only the 兼容服务 edge credential.
@@ -4818,6 +4963,19 @@ async function testCodexProtocolPolicy(): Promise<void> {
   assert.equal(resolveProviderCodexProtocol(undefined, 'custom-model'), 'responses');
   assert.equal(resolveProviderCodexProtocol(undefined, 'claude-sonnet-4-5'), 'responses');
   assert.equal(resolveProviderCodexProtocol(undefined, 'codex-auto-review'), 'responses');
+  const staleDeepSeekCatalog: ModelCatalogEntry[] = [{
+    id: 'deepseek-v4-pro', vendor: 'deepseek', protocols: [], clients: ['codex'],
+    catalogEndpoints: ['openai'], officialProtocols: ['chat-completions']
+  }];
+  assert.equal(resolveProviderCodexProtocol({ adapter: 'responses', codexApiFormat: 'responses' },
+    'deepseek-v4-pro', staleDeepSeekCatalog), 'responses',
+  'explicit Responses must survive stale third-party Chat-only enrichment');
+  assert.equal(resolveProviderCodexProtocol({ adapter: 'auto', codexApiFormat: 'responses' },
+    'deepseek-v4-pro', staleDeepSeekCatalog), 'chat-completions',
+  'automatic connections retain their existing directory-enrichment policy');
+  assert.equal(resolveProviderCodexProtocol({ adapter: 'responses', codexApiFormat: 'responses' },
+    'deepseek-v4-pro', [{ ...staleDeepSeekCatalog[0], protocols: ['chat-completions'], protocolsDeclared: true }]),
+  'chat-completions', 'actual service declarations still outrank the connection default');
   const claudeEntry = (patch: Partial<ModelCatalogEntry> = {}): ModelCatalogEntry => ({
     id: 'claude-sonnet-4-5',
     vendor: 'Anthropic',
@@ -6001,6 +6159,7 @@ async function testCodexOfficialAndCustomTakeover(): Promise<void> {
   await fs.writeFile(paths.codexAuthPath, officialAuth);
   const officialOriginal = [
     'model_provider = "openai"',
+    'chatgpt_base_url = "https://chatgpt.com/backend-api"',
     'model_catalog_json = "/tmp/external-official-catalog.json"',
     '',
     '[model_providers.compatible]',
@@ -6013,7 +6172,7 @@ async function testCodexOfficialAndCustomTakeover(): Promise<void> {
   assert.ok(!('reason' in officialDetection));
   assert.equal(officialDetection.provider, 'openai');
   assert.equal(officialDetection.routeKind, 'chatgpt-oauth');
-  assert.equal(officialDetection.fieldLocation, 'chatgpt-base-url');
+  assert.equal(officialDetection.fieldLocation, 'openai-base-url');
   assert.equal(officialDetection.baseUrl, 'https://chatgpt.com/backend-api');
 
   const backup = new ClientBackupStore(path.join(base, 'user-data'));
@@ -6023,7 +6182,8 @@ async function testCodexOfficialAndCustomTakeover(): Promise<void> {
   assert.equal(officialTakeover.codexRouteKind, 'chatgpt-oauth');
   const officialDuringTrace = await fs.readFile(paths.codexConfigPath, 'utf8');
   assert.match(officialDuringTrace, /^model_provider = "openai"$/m);
-  assert.match(officialDuringTrace, /^chatgpt_base_url = "http:\/\/127\.0\.0\.1:44998\/backend-api"$/m);
+  assert.match(officialDuringTrace, /^openai_base_url = "http:\/\/127\.0\.0\.1:44998\/backend-api\/codex"$/m);
+  assert.match(officialDuringTrace, /^chatgpt_base_url = "https:\/\/chatgpt\.com\/backend-api"$/m, "OAuth account root stays direct HTTPS");
   assert.doesNotMatch(officialDuringTrace, /^model_catalog_json\s*=/m,
     'official Trace takeover must temporarily remove a foreign model catalog pointer');
   assert.doesNotMatch(officialDuringTrace, /\[model_providers\.xwx_deck\]/);
@@ -6032,10 +6192,12 @@ async function testCodexOfficialAndCustomTakeover(): Promise<void> {
   const parsedOfficialDuringTrace = parseToml(officialDuringTrace) as {
     model_provider?: unknown;
     chatgpt_base_url?: unknown;
+    openai_base_url?: unknown;
     model_providers?: Record<string, Record<string, unknown>>;
   };
   assert.equal(parsedOfficialDuringTrace.model_provider, 'openai');
-  assert.equal(parsedOfficialDuringTrace.chatgpt_base_url, 'http://127.0.0.1:44998/backend-api');
+  assert.equal(parsedOfficialDuringTrace.chatgpt_base_url, 'https://chatgpt.com/backend-api');
+  assert.equal(parsedOfficialDuringTrace.openai_base_url, 'http://127.0.0.1:44998/backend-api/codex');
   assert.deepEqual(await fs.readFile(paths.codexAuthPath), officialAuth);
   await orchestrator.restoreAll();
   assert.equal(await fs.readFile(paths.codexConfigPath, 'utf8'), officialOriginal);
@@ -7617,7 +7779,8 @@ async function testProxyCapture(): Promise<void> {
       apiType: 'responses',
       upstreamBaseUrl: `http://127.0.0.1:${address.port}/official`,
       defaultProtocol: 'responses',
-      webSocket: 'official-responses'
+      webSocket: 'official-responses',
+      modelAliases: { 'deepseek-v4-pro': 'gpt-native' }
     }]);
     const proxyWebSocketUrl = `${proxyUrl.replace(/^http/, 'ws')}/v1/responses`;
     let clientWebSocketUpgradeHeaders: http.IncomingHttpHeaders = {};
@@ -7662,7 +7825,7 @@ async function testProxyCapture(): Promise<void> {
     const firstWebSocketResponse = receiveWebSocketResponse();
     clientWebSocket.send(JSON.stringify({
       type: 'response.create',
-      model: 'gpt-native',
+      model: 'deepseek-v4-pro',
       instructions: 'official websocket',
       input: [{ type: 'message', role: 'user', content: 'full websocket request' }],
       tools: [],
@@ -7675,6 +7838,8 @@ async function testProxyCapture(): Promise<void> {
     }));
     const firstWebSocketEvents = await firstWebSocketResponse;
     assert.equal(firstWebSocketEvents.at(-1)?.response?.id, 'resp_ws_1');
+    assert.equal(upstreamWebSocketFrames[0]?.model, 'gpt-native',
+      'a cached model from the previous provider must be translated on official WebSocket frames');
 
     const secondWebSocketResponse = receiveWebSocketResponse();
     clientWebSocket.send(JSON.stringify({

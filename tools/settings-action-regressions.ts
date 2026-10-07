@@ -128,10 +128,11 @@ export async function testSettingsActions(root: string): Promise<void> {
     internal.proxy.isListening = () => true;
     internal.proxy.enforceTraceRetention = async () => { throw new Error('fixture helper offline'); };
     const state = await controller.setTraceStoragePolicy({ autoCleanup: true, limitGB: 0 });
-    assert.equal(state.traceAutoCleanup, false);
-    assert.equal(state.traceWarningGB, 2);
+    assert.equal(state.traceAutoCleanup, true);
+    assert.equal(state.traceWarningGB, 0);
     const saved = await new XwXDeckSettingsStore(userData).read();
-    assert.equal(saved.traceAutoCleanup, false);
+    assert.equal(saved.traceAutoCleanup, true);
+    assert.equal(saved.traceWarningGB, 0);
     assert.equal(saved.maxStorageMB, 0);
     assert.equal(saved.maxSessions, 0);
 

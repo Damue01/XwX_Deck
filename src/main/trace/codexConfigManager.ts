@@ -328,18 +328,20 @@ export class CodexConfigManager {
     const rootText = rootToml(text ?? '');
     const authMode = await readAuthMode(paths.codexAuthPath);
 
-    let configured = readTomlTopLevelString(
-      rootText,
-      authMode === 'chatgpt' ? 'chatgpt_base_url' : 'openai_base_url'
-    )?.trim();
-    if (!configured || isLoopbackUrl(configured)) {
+    let configured = officialDirectBaseUrl(rootText, authMode);
+    const modelBase = readTomlTopLevelString(rootText, 'openai_base_url')?.trim();
+    if (!configured || modelBase && isLoopbackUrl(modelBase)) {
       const restore = await this.readDirectRestoreRecord();
       if (restore?.configPath === paths.codexConfigPath) {
-        const baseline = readTomlTopLevelString(
-          rootToml(restore.originalContent ?? ''),
-          authMode === 'chatgpt' ? 'chatgpt_base_url' : 'openai_base_url'
-        )?.trim();
-        if (baseline && !isLoopbackUrl(baseline)) configured = baseline;
+        const baselineRoot = rootToml(restore.originalContent ?? '');
+        const previousModelBase = readTomlTopLevelString(baselineRoot, 'openai_base_url')?.trim();
+        const writtenModelBase = readTomlTopLevelString(rootToml(restore.writtenContent), 'openai_base_url')?.trim();
+        if (modelBase && modelBase === writtenModelBase
+          && previousModelBase && !isLoopbackUrl(previousModelBase)) {
+          configured = previousModelBase;
+        } else if (!configured) {
+          configured = officialDirectBaseUrl(baselineRoot, authMode);
+        }
       }
     }
     if (configured && !isLoopbackUrl(configured)) return normalizeEndpoint(configured);
@@ -387,7 +389,7 @@ export class CodexConfigManager {
     )?.trim();
     const activeSection = readProviderSection(text ?? '', activeProvider);
     const activeBaseUrl = activeProvider === 'openai'
-      ? explicitOfficialBase || (
+      ? readTomlTopLevelString(rootText, 'openai_base_url')?.trim() || explicitOfficialBase || (
         authMode === 'chatgpt'
           ? CODEX_CHATGPT_OAUTH_TARGET
           : `${CODEX_DEFAULT_TARGET}/v1`
@@ -916,30 +918,39 @@ export class CodexConfigManager {
   }
 }
 
+/** Model overrides take precedence; the account root is only a direct fallback. */
+function officialDirectBaseUrl(rootText: string, authMode: CodexAuthMode): string | undefined {
+  const modelBase = readTomlTopLevelString(rootText, 'openai_base_url')?.trim();
+  if (modelBase && !isLoopbackUrl(modelBase)) return modelBase;
+  if (authMode === 'chatgpt') {
+    const accountBase = readTomlTopLevelString(rootText, 'chatgpt_base_url')?.trim();
+    if (accountBase && !isLoopbackUrl(accountBase)) return accountBase;
+  }
+  return undefined;
+}
+
 function patchOfficialConfig(text: string, input: CodexConfigUpdate, authMode: CodexAuthMode): string {
   const officialModel = cleanString(input.officialModel) || DEFAULT_OFFICIAL_MODEL;
   const gatewayBaseUrl = cleanString(input.gatewayBaseUrl).replace(/\/+$/, '');
-  const configuredBaseUrl = readTomlTopLevelString(
-    rootToml(text),
-    authMode === 'chatgpt' ? 'chatgpt_base_url' : 'openai_base_url'
-  )?.trim();
+  const configuredBaseUrl = officialDirectBaseUrl(rootToml(text), authMode);
   const directBaseUrl = configuredBaseUrl && !isLoopbackUrl(configuredBaseUrl)
     ? configuredBaseUrl
     : authMode === 'chatgpt'
       ? CODEX_CHATGPT_OAUTH_PROVIDER_TARGET
       : `${CODEX_DEFAULT_TARGET}/v1`;
   let next = text;
-  if (!gatewayBaseUrl) next = removeRootLoopbackResidue(next);
+  // Model routing never sends the ChatGPT account/workspace layer through
+  // the local Gateway. A root chatgpt_base_url/openai_base_url left over from
+  // official Gateway mode must not send workspace routing discovery to 127.0.0.1.
+  next = removeRootLoopbackResidue(next);
   next = setTomlStringKey(next, 'model_provider', input.unifySessionHistory === true ? CODEX_STABLE_PROVIDER : 'openai').text;
   next = setTomlStringKey(next, 'model', officialModel).text;
   next = patchModelContextWindow(next, input);
   next = removeTomlBooleanKey(next, 'disable_response_storage').text;
   if (gatewayBaseUrl) {
-    const key = authMode === 'chatgpt' ? 'chatgpt_base_url' : 'openai_base_url';
-    const baseUrl = authMode === 'chatgpt'
-      ? gatewayBaseUrl.replace(/\/codex$/i, '')
-      : gatewayBaseUrl;
-    next = setTomlStringKey(next, key, baseUrl).text;
+    // Keep OAuth workspace discovery on its HTTPS root. openai_base_url only
+    // overrides model requests, including the built-in subscription provider.
+    next = setTomlStringKey(next, 'openai_base_url', gatewayBaseUrl).text;
   }
   if (input.unifySessionHistory === true) {
     next = patchProviderConnection(next, CODEX_STABLE_PROVIDER, 'XwX Deck', {
@@ -998,6 +1009,7 @@ function patchCompatibleServiceConfig(text: string, input: CodexConfigUpdate): s
   if (!upstreamBearerToken) throw new Error('CompatibleService bearer token is required.');
 
   let next = text;
+  next = removeRootLoopbackResidue(next);
   next = setTomlStringKey(next, 'model_provider', provider).text;
   next = setTomlStringKey(next, 'model', model).text;
   next = patchModelContextWindow(next, input);

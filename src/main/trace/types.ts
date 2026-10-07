@@ -71,7 +71,7 @@ export interface TapClientRoute {
   readonly openAiBaseUrl?: string;
   /** Optional authoritative per-model wire protocol discovered from the service. */
   readonly modelProtocols?: Readonly<Record<string, 'responses' | 'chat-completions' | 'anthropic-messages'>>;
-  /** Claude Desktop-safe picker ID mapped back to the provider's real model ID. */
+  /** Desktop picker aliases or remembered models translated to the selected connection's model. */
   readonly modelAliases?: Readonly<Record<string, string>>;
   /** Provider-wide fallback used only when per-model metadata is unavailable. */
   readonly defaultProtocol?: 'responses' | 'chat-completions' | 'anthropic-messages';

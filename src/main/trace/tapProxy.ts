@@ -83,6 +83,9 @@ const ALLOWED_PATH_PREFIXES: ReadonlyArray<{ prefix: string; apiType: TapApiType
   { prefix: '/v1/chat/completions', apiType: 'chat-completions' },
   { prefix: '/v1/models', apiType: 'responses' },
   { prefix: '/v1/responses', apiType: 'responses' },
+  // ChatGPT 官方账户/工作区接口（/wham/*）在 official 模式下经 chatgpt_base_url
+  // 走同一本地 Gateway；放行后由官方路由表转发到 chatgpt.com/backend-api。
+  { prefix: '/backend-api/wham', apiType: 'responses' },
   { prefix: '/backend-api/codex/models', apiType: 'responses' },
   { prefix: '/backend-api/codex/responses', apiType: 'responses' }
 ];
@@ -551,8 +554,10 @@ export class TapProxy {
           return;
         }
         const targetUpstream = routeUpstreamIdentity(route, request.headers);
+        const wireBody = route.upstreamModelId && route.upstreamModelId !== model
+          ? replaceRequestModel(body, route.upstreamModelId) : body;
         const continuation = await this.responsesContinuations.prepareRequest(
-          body,
+          wireBody,
           targetUpstream,
           'responses'
         );

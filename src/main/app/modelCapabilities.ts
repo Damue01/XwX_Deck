@@ -3,7 +3,8 @@ import { readTextOrUndefined, writeFileAtomic } from '../shared/fsx';
 import type {
   ModelCapabilityField,
   ModelCapabilitySource,
-  ModelCatalogEntry
+  ModelCatalogEntry,
+  ModelProtocol
 } from './modelCatalog';
 import { findBuiltInModelCapability } from './builtInModelCapabilityRegistry';
 import { findOfficialModelRecord } from './officialModelRegistry';
@@ -22,6 +23,9 @@ interface Capability {
   readonly toolCalling?: boolean;
   readonly structuredOutput?: boolean;
   readonly interleavedThinking?: boolean;
+  /** LiteLLM only: OpenAI protocols published by `servingProvider`. */
+  readonly openAiProtocols?: readonly ModelProtocol[];
+  readonly servingProvider?: string;
 }
 
 interface IndexedCapability {
@@ -121,6 +125,11 @@ function enrichEntry(entry: ModelCatalogEntry, remote: RemoteCapabilities): Mode
   // unknown. It still has to pass the same conservative matching rules.
   const litellm = resolveCapability(remote.litellm, entry.id, 'litellm');
   const builtin = builtinCapability(entry.id);
+  // 兼容服务 serves each model with the same protocols as its official API,
+  // so the owner's published endpoints settle what its OpenAI directory omits.
+  const officialProtocols = !entry.protocolsDeclared && entry.catalogEndpoints?.includes('openai')
+    ? resolveOfficialOpenAiProtocols(remote.litellm, entry.id)
+    : undefined;
   const sources: Partial<Record<ModelCapabilityField, ModelCapabilitySource>> = {
     ...(entry.capabilitySources ?? {})
   };
@@ -282,6 +291,7 @@ function enrichEntry(entry: ModelCatalogEntry, remote: RemoteCapabilities): Mode
     toolCalling,
     structuredOutput,
     interleavedThinking,
+    ...(officialProtocols ? { officialProtocols } : {}),
     capabilitySources: sources,
     missingCapabilities
   };
@@ -505,7 +515,12 @@ function parseLiteLLM(value: unknown, index: CapabilityIndex): void {
         ? ['none', 'low', 'medium', 'high', 'xhigh']
         : ['low', 'medium', 'high']
       : [];
+    const openAiProtocols = liteLlmOpenAiProtocols(raw);
     const capability: Capability = {
+      ...(openAiProtocols.length ? { openAiProtocols } : {}),
+      ...(openAiProtocols.length && typeof raw.litellm_provider === 'string'
+        ? { servingProvider: raw.litellm_provider.trim().toLowerCase() }
+        : {}),
       ...(positiveInt(raw.max_input_tokens) ? { contextWindow: positiveInt(raw.max_input_tokens) } : {}),
       ...(positiveInt(raw.max_output_tokens) ? { maxOutputTokens: positiveInt(raw.max_output_tokens) } : {}),
       ...(raw.supports_vision === true ? { vision: true, inputModalities: ['text', 'image'] } : {}),
@@ -516,6 +531,69 @@ function parseLiteLLM(value: unknown, index: CapabilityIndex): void {
     };
     if (Object.keys(capability).length) addToIndex(index, id, id, capability);
   }
+}
+
+/**
+ * `supported_endpoints` is the explicit list; without it `mode` names the one
+ * route LiteLLM uses (`chat` is Chat Completions, `responses` is Responses).
+ */
+function liteLlmOpenAiProtocols(raw: Record<string, unknown>): ModelProtocol[] {
+  const out: ModelProtocol[] = [];
+  if (Array.isArray(raw.supported_endpoints)) {
+    const endpoints = raw.supported_endpoints
+      .filter((item): item is string => typeof item === 'string')
+      .map(item => item.trim().toLowerCase().replace(/\/+$/, ''));
+    if (endpoints.some(item => item.endsWith('/responses'))) out.push('openai-responses');
+    if (endpoints.some(item => item.endsWith('/chat/completions'))) out.push('chat-completions');
+    if (out.length) return out;
+  }
+  if (raw.mode === 'responses') out.push('openai-responses');
+  else if (raw.mode === 'chat') out.push('chat-completions');
+  return out;
+}
+
+/**
+ * Only the model owner's own entry describes the official API; reseller
+ * routes for the same id often expose Chat alone. Without an owner entry the
+ * unprefixed id (LiteLLM's native-provider key) is used; otherwise unknown.
+ */
+function resolveOfficialOpenAiProtocols(index: CapabilityIndex, id: string): ModelProtocol[] | undefined {
+  const normalized = normalizeId(id);
+  const bare = bareId(normalized);
+  const owners = liteLlmOwnerProviders(bare);
+  const levels = [index.exact.get(normalized), index.bare.get(bare), index.canonical.get(canonicalId(bare))];
+  for (const matches of levels) {
+    const published = matches?.filter(item => item.capability.openAiProtocols?.length);
+    if (!published?.length) continue;
+    for (const owner of owners) {
+      const owned = published.filter(item => item.capability.servingProvider === owner);
+      if (owned.length) return unionProtocols(owned);
+    }
+  }
+  const native = index.exact.get(bare)?.filter(item => item.capability.openAiProtocols?.length);
+  return native?.length ? unionProtocols(native) : undefined;
+}
+
+function unionProtocols(matches: readonly IndexedCapability[]): ModelProtocol[] {
+  const values = new Set(matches.flatMap(item => item.capability.openAiProtocols ?? []));
+  return (['openai-responses', 'chat-completions'] as const).filter(protocol => values.has(protocol));
+}
+
+/** LiteLLM provider ids of the vendor that owns a model family. */
+function liteLlmOwnerProviders(modelId: string): readonly string[] {
+  const canonical = canonicalId(modelId);
+  if (/^(?:gpt|chatgpt|codex|o[1-9])/.test(canonical)) return ['openai'];
+  if (/^(?:qwen|qwq)/.test(canonical)) return ['dashscope'];
+  if (/^deepseek/.test(canonical)) return ['deepseek'];
+  if (/^(?:kimi|moonshot)/.test(canonical)) return ['moonshot'];
+  if (/^(?:glm|chatglm)/.test(canonical)) return ['zai', 'zhipuai'];
+  if (/^minimax/.test(canonical)) return ['minimax'];
+  if (/^(?:doubao|seed)/.test(canonical)) return ['volcengine'];
+  if (/^grok/.test(canonical)) return ['xai'];
+  if (/^claude/.test(canonical)) return ['anthropic'];
+  if (/^gemini/.test(canonical)) return ['gemini'];
+  if (/^(?:mistral|codestral|devstral|magistral)/.test(canonical)) return ['mistral'];
+  return [];
 }
 
 function createIndex(): CapabilityIndex {

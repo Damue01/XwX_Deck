@@ -19,6 +19,7 @@ import type {
   WindowState,
 } from './types';
 import { detectProviderPreset } from '../../shared/providerProfiles';
+import { setupWebsiteUrl, setupWebsitesFor } from '../../shared/setupWebsites';
 
 function previewCustomBackground(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
@@ -49,6 +50,8 @@ function expandConversationPreview(
 
 export function createPreviewApi(): XwXDeckApi {
   const previewQuery = typeof location !== 'undefined' ? new URLSearchParams(location.search) : undefined;
+  const setupPlatform = previewQuery?.get('setup-platform') ?? 'darwin';
+  const setupArch = previewQuery?.get('setup-arch') ?? 'arm64';
   const hasTraceSkipped = previewQuery?.get('trace-skipped') === '1';
   const hasTraceLive = previewQuery?.get('trace-live') === '1' || previewQuery?.get('appearance') === '1';
   const chatGptRestartRecommended = previewQuery?.get('chatgpt-restart') === '1';
@@ -186,6 +189,8 @@ export function createPreviewApi(): XwXDeckApi {
     sessions: number;
     traces: number;
     storageText: string;
+    traceWarningGB: number;
+    traceAutoCleanup: boolean;
     clients: Array<{
       id: ClientId; label: string; enabled: boolean;
       status: 'idle' | 'taken' | 'skipped' | 'off'; statusText: string; detail: string;
@@ -208,6 +213,8 @@ export function createPreviewApi(): XwXDeckApi {
     sessions: 0,
     traces: 0,
     storageText: '0 B',
+    traceWarningGB: 2,
+    traceAutoCleanup: false,
     clients: [
       { id: 'claude-cli', label: 'Claude', enabled: true, status: 'idle', statusText: '待命', detail: '追踪未开启' },
       { id: 'codex-cli', label: 'ChatGPT', enabled: true, status: 'idle', statusText: '待命', detail: '追踪未开启' }
@@ -236,7 +243,7 @@ export function createPreviewApi(): XwXDeckApi {
 
   const buildState = (): XwXDeckRuntimeState => ({
     ...state,
-    traceStorageBytes: 0, traceWarningGB: 2, traceAutoCleanup: false,
+    traceStorageBytes: 0, traceWarningGB: state.traceWarningGB, traceAutoCleanup: state.traceAutoCleanup,
     backgroundGatewayActive: state.tracingEnabled,
     backgroundGatewayAction: state.tracingEnabled ? 'close' : undefined,
     chatGptRestartRecommended,
@@ -330,6 +337,8 @@ export function createPreviewApi(): XwXDeckApi {
   };
   let providers: ProviderSnapshot = { version: 1, connections: [], selected: { codex: null, claude: null }, active: { codex: null, claude: null } };
   return {
+    setupWebsites: setupWebsitesFor(setupPlatform, setupArch),
+    openSetupWebsite: async site => { window.open(setupWebsiteUrl(site, setupPlatform, setupArch), '_blank', 'noopener,noreferrer'); },
     getState: async () => buildState(),
     setStartupEnabled: async (enabled) => {
       state.startup = { ...state.startup, enabled };
@@ -649,6 +658,11 @@ export function createPreviewApi(): XwXDeckApi {
     openDataFolder: async () => undefined,
     openLogFolder: async () => undefined,
     clearHistory: async () => buildState(),
+    setTraceStoragePolicy: async (input) => {
+      if (typeof input?.limitGB === 'number') state.traceWarningGB = input.limitGB;
+      if (typeof input?.autoCleanup === 'boolean') state.traceAutoCleanup = input.autoCleanup;
+      return buildState();
+    },
     inspectTraceIndexRepair: async () => ({
       rootPath: state.traceRoot,
       indexPath: `${state.traceRoot}\\index.json`,

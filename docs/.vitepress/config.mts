@@ -5,7 +5,7 @@ const base = process.env.DOCS_BASE || '/';
 export default defineConfig({
   lang: 'zh-CN',
   title: 'XwX Deck',
-  description: '本地 Claude / ChatGPT 请求追踪与模型网关',
+  description: '为 Claude 与 ChatGPT 配置第三方 API，查看请求与用量',
   base,
   cleanUrls: true,
   head: [
@@ -16,9 +16,9 @@ export default defineConfig({
     logo: '/icon.png',
     siteTitle: 'XwX Deck',
     nav: [
-      { text: '指南', link: '/getting-started' },
+      { text: '下载', link: '/download' },
+      { text: '快速开始', link: '/getting-started' },
       { text: '用户手册', link: '/user-manual' },
-      { text: '架构', link: '/architecture' },
       { text: '服务商兼容', link: '/provider-compatibility' },
       { text: 'GitHub', link: 'https://github.com/Damue01/XwX_Deck' }
     ],
@@ -27,6 +27,7 @@ export default defineConfig({
         text: '使用',
         items: [
           { text: '首页', link: '/' },
+          { text: '下载与安装', link: '/download' },
           { text: '快速开始', link: '/getting-started' },
           { text: '用户手册', link: '/user-manual' },
           { text: 'macOS 首次运行', link: '/macos-first-run' },
@@ -37,6 +38,7 @@ export default defineConfig({
         text: '维护',
         items: [
           { text: '架构', link: '/architecture' },
+          { text: '模型服务源码导读', link: '/provider-setup-and-routing' },
           { text: '模型能力', link: '/model-capability-maintenance' },
           { text: '会话路由', link: '/session-routing' },
           { text: 'Trace 捕获与恢复', link: '/trace-capture-session-recovery' },

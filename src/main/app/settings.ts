@@ -397,9 +397,10 @@ export class XwXDeckSettingsStore {
 
   async ensureUnlimitedTraceRetention(): Promise<{ changed: boolean; persistedSettingsChanged: boolean; legacyLimitsFound: boolean; settings: XwXDeckSettings }> {
     const raw = await readJson<XwXDeckSettings | undefined>(this.path(), undefined);
-    const legacyLimitsFound = !!raw && (positiveNumber(raw.maxSessions) || positiveNumber(raw.maxStorageMB) || raw.traceAutoCleanup === true);
-    const settings = await this.update({ maxSessions: 0, maxStorageMB: 0, traceWarningGB: 2, traceAutoCleanup: false });
-    return { changed: legacyLimitsFound, persistedSettingsChanged: legacyLimitsFound, legacyLimitsFound, settings };
+    const legacyLimitsFound = !!raw && (positiveNumber(raw.maxSessions) || positiveNumber(raw.maxStorageMB));
+    const persistedSettingsChanged = !!raw && (raw.maxSessions !== 0 || raw.maxStorageMB !== 0);
+    const settings = await this.update({ maxSessions: 0, maxStorageMB: 0 });
+    return { changed: legacyLimitsFound, persistedSettingsChanged, legacyLimitsFound, settings };
   }
 
   async update(patch: XwXDeckSettingsPatch): Promise<XwXDeckSettings> {
@@ -490,13 +491,15 @@ function normalizeSettings(value: XwXDeckSettings, preserveProviderIdentity = fa
       customImageOverlay: clampInt(value.traceAppearance?.customImageOverlay, 0, 80, DEFAULT_TRACE_APPEARANCE.customImageOverlay)
     },
     startupEnabled: value.startupEnabled === true,
-    // XwX Deck never deletes Trace history automatically. Keep these
-    // serialized compatibility fields pinned to zero and reject unsupported
-    // renderer or configuration patches that try to revive retention budgets.
+    // Legacy maxSessions/maxStorageMB stay pinned to zero; storage budgets are
+    // only controlled by the explicit traceWarningGB/traceAutoCleanup policy
+    // that the user can change from the Trace settings.
     maxSessions: 0,
     maxStorageMB: 0,
-    traceWarningGB: 2,
-    traceAutoCleanup: false,
+    traceWarningGB: typeof value.traceWarningGB === 'number' && Number.isSafeInteger(value.traceWarningGB)
+      && value.traceWarningGB >= 0 && value.traceWarningGB <= 1024
+      ? value.traceWarningGB : 2,
+    traceAutoCleanup: value.traceAutoCleanup === true,
     traceRoot: cleanDirectory(value.traceRoot),
     logRoot: cleanDirectory(value.logRoot),
     claudeConfigDir: cleanDirectory(value.claudeConfigDir),

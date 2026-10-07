@@ -23,6 +23,7 @@ import { ClientBackupStore } from '../trace/clientBackupStore';
 import { ClientFallbackStore, type ClientFallbackState } from '../trace/clientFallbackStore';
 import {
   baseUrlHasV1Suffix,
+  CODEX_CHATGPT_OAUTH_TARGET,
   CODEX_CHATGPT_OAUTH_PROVIDER_TARGET,
   CODEX_DEFAULT_TARGET,
   CODEX_STABLE_PROVIDER,
@@ -585,23 +586,8 @@ export class XwXDeckController {
         const restoreStaleGateway = hasRecoveryState
           || isLoopbackUrl(codex.activeBaseUrl)
           || this.proxy.isListening() && !this.claudeDesktopGatewayEnabled;
-        if (this.proxy.isListening() && this.role === 'owner' && !this.settings.gatewayPaused) {
-          // Reattach the non-recording routes retained for clients that cached
-          // localhost. Do not tear down a healthy data plane on manager reopen.
-          await this.proxy.start();
-          this.startLockWatcher(this.traceStore.rootPath());
-          await this.restoreCodexGatewayOnStartup(true);
-          await this.restoreClientFallbacksOnStartup(await this.readLiveClientFallbackState());
-          await this.refreshProxyRoutes();
-          await this.proxy.synchronize?.();
-          if (!this.hasManagedBackgroundDataPlane() && !this.claudeDesktopGatewayEnabled) {
-            await this.proxy.stop();
-            this.stopLockWatcher();
-            this.role = undefined;
-          }
-          this.setStartupPhase('ready');
-        } else if (restoreStaleGateway) {
-          await this.shutdownUnlocked({ disableTrace: true, skipCodexHistoryRepair: true });
+        if (restoreStaleGateway) {
+          await this.disableUnlocked();
         } else {
           const restored = await this.codexLocalProxy.restore();
           if (restored.conflict) log(`[xwx-deck] startup preserved current ChatGPT connection: ${restored.conflict}`);
@@ -999,79 +985,16 @@ export class XwXDeckController {
           throw new ShutdownDrainTimeoutError(activity.activeUserResponses, activity.pendingContinuations);
         }
       }
-      if (this.codexHistoryTimer) clearTimeout(this.codexHistoryTimer);
-      this.codexHistoryTimer = undefined;
-      if (this.role === 'owner') {
-        const localBaseUrl = this.localBaseUrl();
-        const codexTakeover = this.clientTakeovers.find(result => (
-          result.client === 'codex-cli' && result.status === 'taken'
-        ));
-        let retainOfficialGateway = this.proxy.background
-          && !!this.localBaseUrl()
-          && this.settings?.clientEnabled.codex !== false
-          && this.codexGatewayEnabled
-          && this.codexGatewayMode === 'official';
-        let officialConfig: CodexConfigSnapshot | undefined;
-        if (!retainOfficialGateway && codexTakeover) {
-          officialConfig = await this.readUnderlyingCodexConfig().catch(() => undefined);
-          retainOfficialGateway = officialConfig?.mode === 'official';
-        }
-        if (retainOfficialGateway && await this.codexLocalProxy.hasPendingOriginalRestore()) {
-          // Trace temporarily yielded a different healthy XwX endpoint. Restore
-          // that owner instead of pinning this helper as the cached fallback.
-          retainOfficialGateway = false;
-        }
-        const retainedTakeovers = this.clientTakeovers.filter(takeover => (
-          takeover.status === 'taken'
-          && !(retainOfficialGateway && takeover.client === 'codex-cli')
-          && !(this.codexGatewayEnabled && takeover.client === 'codex-cli')
-        ));
-        const nextFallbacks = mergeClientFallbacks(this.clientFallbacks, retainedTakeovers)
-          .filter(fallback => !(retainOfficialGateway && fallback.client === 'codex-cli'))
-          .filter(fallback => !(this.codexGatewayEnabled && fallback.client === 'codex-cli'));
-        if (localBaseUrl) {
-          await this.clientFallbackStore.write(localBaseUrl, nextFallbacks);
-        } else if (nextFallbacks.length > 0) {
-          throw new Error('本地 Gateway 地址不可用，已取消停止 Trace。');
-        } else {
-          await this.clientFallbackStore.clear();
-        }
-        const restored = retainOfficialGateway
-          ? [await this.clientOrchestrator.restoreOne('claude-cli')].filter((result): result is ClientRestoreResult => !!result)
-          : await this.clientOrchestrator.restoreAll();
-        this.lastError = restoreConflictNotice(restored);
-        const connection = await this.codexLocalProxy.restore();
-        if (connection.conflict) this.lastError = [this.lastError, connection.conflict].filter(Boolean).join('；');
-        this.clientTakeovers = [];
-        this.clientFallbacks = nextFallbacks;
-        if (retainOfficialGateway) {
-          officialConfig ??= await this.readUnderlyingCodexConfig().catch(() => undefined);
-          this.codexGatewayEnabled = true;
-          this.codexGatewayMode = 'official';
-          this.codexOfficialAuthMode = officialConfig?.authMode;
-          this.codexOfficialBearerToken = await this.codexOfficialAuth.readCurrentBearerToken();
-          this.codexOfficialUpstreamBaseUrl = officialConfig
-            ? officialGatewayUpstreamFromSnapshot(officialConfig)
-            : await this.codexConfig.readOfficialBaseUrl();
-        }
-      }
-      this.settings = await this.settingsStore.update({ tracingEnabled: false });
-      this.active = false;
-      this.clientsSeenSinceEnable.clear();
+      await this.shutdownUnlocked({
+        disableTrace: true,
+        drainTimeoutMs: 1_000,
+        skipCodexHistoryRepair: true,
+        force,
+        forceRestoreClients: force
+      });
+      if (!force || !this.lastError) this.lastError = undefined;
       this.chatGptConnectionIssue = undefined;
-      if (!this.codexGatewayEnabled) this.chatGptRestartRecommended = false;
-      this.proxy.setRecordingEnabled(false);
-      if (this.role === 'owner') {
-        await this.refreshProxyRoutes();
-        await this.proxy.synchronize?.();
-      }
-      if (this.settings.codexEnhancements.pendingHistoryRestore) {
-        await this.restorePendingCodexHistory('trace disabled');
-      } else if (this.settings.codexEnhancements.unifySessionHistory) {
-        await this.mergeCodexHistoryBestEffort('trace disabled');
-      }
-      this.setStartupPhase('ready');
-      this.fireChange();
+      this.chatGptRestartRecommended = false;
       this.scheduleClaudeDesktopSync();
       log(`[xwx-deck] Trace disable took ${Date.now() - startedAt}ms${force ? ' (force)' : ''}`);
     } catch (error) {
@@ -1713,7 +1636,7 @@ export class XwXDeckController {
       if (config.mode === 'official' && isLoopbackUrl(config.activeBaseUrl)) {
         await this.assertCodexGatewayRoute();
         if (!sameHttpEndpoint(config.activeBaseUrl,
-          `${this.localBaseUrl()?.replace(/\/+$/, '')}/backend-api`)) {
+          `${this.localBaseUrl()?.replace(/\/+$/, '')}/backend-api/codex`)) {
           throw new Error('ChatGPT 配置复读后指向的不是当前运行中的 Gateway。');
         }
       }
@@ -2114,7 +2037,13 @@ export class XwXDeckController {
         // Selecting a connection is a local configuration action. Do not
         // inspect the other client's config or make a remote /models request
         // just to change the selected link.
-        if (client === 'codex' && id !== registry.selected.codex) this.invalidateProviderCatalog();
+        if (client === 'codex' && id !== registry.selected.codex) {
+          this.invalidateProviderCatalog();
+          if (provider) this.compatibleServiceCatalog = await readCompatibleServiceModelCatalogCache(
+            this.compatibleServiceModelCatalogCachePath(), provider.baseUrl, provider.bearerToken,
+            provider.providerPreset, true
+          ).catch(() => []);
+        }
         {
           await this.setModelServiceUnlocked(client, !!id, true, {
             directProviderSwitch: true,
@@ -2219,7 +2148,7 @@ export class XwXDeckController {
         if (!id && isLoopbackUrl(config.activeBaseUrl)) {
           await this.assertCodexGatewayRoute();
           if (!sameHttpEndpoint(config.activeBaseUrl,
-            `${this.localBaseUrl()?.replace(/\/+$/, '')}/backend-api`)) {
+            `${this.localBaseUrl()?.replace(/\/+$/, '')}/backend-api/codex`)) {
             throw new Error('ChatGPT 配置复读后指向的不是当前运行中的 Gateway。');
           }
         }
@@ -3079,7 +3008,6 @@ export class XwXDeckController {
   }
 
   private async setTraceStoragePolicyUnlocked(input: { limitGB?: unknown; autoCleanup?: unknown }): Promise<XwXDeckRuntimeState> {
-    input = { limitGB: 2, autoCleanup: false };
     if (input.limitGB === undefined && input.autoCleanup === undefined) throw new Error('没有需要修改的 Trace 存储设置。');
     if (input.limitGB !== undefined && (!Number.isSafeInteger(input.limitGB)
       || (input.limitGB as number) < 0 || (input.limitGB as number) > 1024)) {
@@ -3854,18 +3782,9 @@ export class XwXDeckController {
         && sameHttpEndpoint(claudeBaseUrl, localBaseUrl);
       const normalizedLocalBaseUrl = localBaseUrl.replace(/\/+$/, '');
       const expectedCodexBaseUrl = this.codexGatewayEnabled
-        ? this.codexGatewayMode === 'official'
-          ? codex?.authMode === 'chatgpt' && codex.activeProvider === 'openai'
-            ? `${normalizedLocalBaseUrl}/backend-api`
-            : `${normalizedLocalBaseUrl}/backend-api/codex`
-          : `${normalizedLocalBaseUrl}/backend-api/codex`
-        : codexTakeover?.codexRouteKind === 'chatgpt-oauth'
-          ? codex?.activeProvider === 'openai'
-            ? `${normalizedLocalBaseUrl}/backend-api`
-            : `${normalizedLocalBaseUrl}/backend-api/codex`
-          : codexTakeover
-            ? `${normalizedLocalBaseUrl}/v1`
-            : undefined;
+        || codexTakeover?.codexRouteKind === 'chatgpt-oauth'
+        ? `${normalizedLocalBaseUrl}/backend-api/codex`
+        : codexTakeover ? `${normalizedLocalBaseUrl}/v1` : undefined;
       codexConfigReady = sameHttpEndpoint(codex?.activeBaseUrl, expectedCodexBaseUrl)
         || (
           this.codexGatewayEnabled
@@ -5620,7 +5539,18 @@ function buildClientRoutes(
           apiType: 'responses',
           upstreamBaseUrl: takeover.upstreamBaseUrl,
           stripPathPrefix: '/backend-api',
+          webSocket: 'official-responses',
           capture
+        });
+        // Retain a non-recording account route for older clients that cached
+        // the previous local account root. New configurations keep it direct.
+        out.push({
+          source: 'codex-cli',
+          path: '/backend-api/wham',
+          apiType: 'responses',
+          upstreamBaseUrl: takeover.upstreamBaseUrl,
+          stripPathPrefix: '/backend-api',
+          capture: false
         });
         continue;
       }
@@ -5742,10 +5672,23 @@ function claudeDesktopDirectGateway(
   };
 }
 
-/**
- * Provider forwarding while Trace is enabled. Per-client capture controls
- * recording; the global Trace stop removes the complete model data plane.
- */
+/** Translate remembered models from other connections, preserving target-catalog models. */
+function buildCodexSelectionAliases(
+  settings: XwXDeckSettings,
+  mode: 'official' | 'compatible',
+  catalog: readonly ModelCatalogEntry[] = []
+): Record<string, string> {
+  const target = (mode === 'official' ? settings.codexModels.official : settings.codexModels.compatible).trim();
+  if (!target) return {};
+  const supported = new Set(catalog.filter(entry => entry.clients.includes('codex')).map(entry => entry.id));
+  supported.add(target);
+  const remembered = [settings.codexModels.official, settings.codexModels.compatible,
+    ...(settings.providers?.connections.map(provider => provider.codexModel) ?? [])];
+  return Object.fromEntries(remembered.filter(model => model && !supported.has(model)
+    && (mode !== 'official' || !isOfficialCodexModelId(model))).map(model => [model, target]));
+}
+
+/** Provider forwarding with per-client Trace capture controls. */
 function buildCodexGatewayRoutes(
   settings: XwXDeckSettings,
   catalog: readonly ModelCatalogEntry[] = []
@@ -5759,6 +5702,7 @@ function buildCodexGatewayRoutes(
   const modelSupportsCompact: Record<string, boolean> = {};
   const provider = selectedProvider(settings, 'codex');
   const connection = provider ?? settings.compatible;
+  const modelAliases = buildCodexSelectionAliases(settings, 'compatible', catalog);
   for (const entry of catalog) {
     modelProtocols[entry.id] = resolveProviderCodexProtocol(connection, entry.id, [entry]);
     if (entry.maxOutputTokens) modelMaxOutputTokens[entry.id] = entry.maxOutputTokens;
@@ -5805,6 +5749,7 @@ function buildCodexGatewayRoutes(
       upstreamBaseUrl,
       stripPathPrefix: '/backend-api/codex',
       transform: 'responses-compact-auto',
+      modelAliases,
       modelProtocols,
       modelMaxOutputTokens,
       modelSupportsCompact,
@@ -5824,6 +5769,7 @@ function buildCodexGatewayRoutes(
       upstreamBaseUrl,
       stripPathPrefix: '/backend-api/codex',
       transform: 'responses-to-chat-auto',
+      modelAliases,
       modelProtocols,
       modelMaxOutputTokens,
       compatibleServiceGateway: !provider || provider.adapter === 'auto',
@@ -5842,6 +5788,7 @@ function buildCodexGatewayRoutes(
       upstreamBaseUrl,
       stripPathPrefix,
       transform: 'responses-compact-auto',
+      modelAliases,
       modelProtocols,
       modelMaxOutputTokens,
       modelSupportsCompact,
@@ -5861,6 +5808,7 @@ function buildCodexGatewayRoutes(
       upstreamBaseUrl,
       stripPathPrefix,
       transform: 'responses-to-chat-auto',
+      modelAliases,
       modelProtocols,
       modelMaxOutputTokens,
       compatibleServiceGateway: !provider || provider.adapter === 'auto',
@@ -5876,6 +5824,7 @@ function buildCodexGatewayRoutes(
       source: 'codex-cli',
       path: '/v1/chat/completions',
       apiType: 'chat-completions',
+      modelAliases,
       upstreamBaseUrl,
       stripPathPrefix,
       capture,
@@ -5896,7 +5845,8 @@ function buildCodexOfficialGatewayRoutes(
   const aliasUpstreamBaseUrl = configuredUpstreamBaseUrl
     || (oauth ? CODEX_CHATGPT_OAUTH_PROVIDER_TARGET : CODEX_DEFAULT_TARGET);
   const aliasStripPathPrefix = baseUrlHasV1Suffix(aliasUpstreamBaseUrl) ? '/v1' as const : oauth ? '/v1' as const : undefined;
-  return [
+  const modelAliases = buildCodexSelectionAliases(settings, 'official');
+  const routes: TapClientRoute[] = [
     {
       source: 'codex-cli',
       path: '/v1/models',
@@ -5923,6 +5873,7 @@ function buildCodexOfficialGatewayRoutes(
       source: 'codex-cli',
       path: '/v1/responses/compact',
       apiType: 'responses',
+      modelAliases,
       upstreamBaseUrl: aliasUpstreamBaseUrl,
       stripPathPrefix: aliasStripPathPrefix,
       defaultProtocol: 'responses',
@@ -5934,6 +5885,7 @@ function buildCodexOfficialGatewayRoutes(
       source: 'codex-cli',
       path: '/v1/responses',
       apiType: 'responses',
+      modelAliases,
       upstreamBaseUrl: aliasUpstreamBaseUrl,
       stripPathPrefix: aliasStripPathPrefix,
       defaultProtocol: 'responses',
@@ -5946,6 +5898,7 @@ function buildCodexOfficialGatewayRoutes(
       source: 'codex-cli',
       path: '/backend-api/codex/responses/compact',
       apiType: 'responses',
+      modelAliases,
       upstreamBaseUrl: canonicalUpstreamBaseUrl,
       stripPathPrefix: '/backend-api/codex',
       defaultProtocol: 'responses',
@@ -5957,6 +5910,7 @@ function buildCodexOfficialGatewayRoutes(
       source: 'codex-cli',
       path: '/backend-api/codex/responses',
       apiType: 'responses',
+      modelAliases,
       upstreamBaseUrl: canonicalUpstreamBaseUrl,
       stripPathPrefix: '/backend-api/codex',
       defaultProtocol: 'responses',
@@ -5966,6 +5920,24 @@ function buildCodexOfficialGatewayRoutes(
       capture
     }
   ];
+  if (oauth) {
+    // 官方 ChatGPT 账户/工作区接口（account/read、profiles、usage、tasks）使用
+    // /wham/* 路径并跟随 chatgpt_base_url 进入本地 Gateway。缺少这条 passthrough
+    // 会把 workspace routing discovery 打成 404/502，表现为登录后
+    // “workspace routing discovery failed”。这些请求不是模型请求，不落 Trace。
+    const whamUpstreamBaseUrl = (configuredUpstreamBaseUrl || CODEX_CHATGPT_OAUTH_TARGET).replace(/\/codex$/i, '');
+    routes.push({
+      source: 'codex-cli',
+      path: '/backend-api/wham',
+      apiType: 'responses',
+      upstreamBaseUrl: whamUpstreamBaseUrl,
+      stripPathPrefix: '/backend-api',
+      blockedBearerToken: settings.compatible.bearerToken,
+      replacementBearerToken,
+      capture: false
+    });
+  }
+  return routes;
 }
 
 function officialCodexUpstream(authMode: CodexAuthMode | undefined): string {
@@ -6009,7 +5981,9 @@ function codexConfigRouteChanged(
   next: CodexConfigSnapshot
 ): boolean {
   return previous.activeProvider !== next.activeProvider
-    || !sameHttpEndpoint(previous.activeBaseUrl, next.activeBaseUrl);
+    || !sameHttpEndpoint(previous.activeBaseUrl, next.activeBaseUrl)
+    || (previous.mode === 'official' ? previous.officialModel : previous.compatible.model)
+      !== (next.mode === 'official' ? next.officialModel : next.compatible.model);
 }
 
 function effectivePort(url: URL): string {
@@ -6099,6 +6073,7 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 }
 
 export const __test = {
+  buildClientRoutes,
   buildCodexOfficialGatewayRoutes,
   buildCodexGatewayRoutes,
   buildClaudeDesktopRoutes,

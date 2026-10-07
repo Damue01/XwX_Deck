@@ -1,11 +1,13 @@
 # XwX Deck 文档
 
-- [五分钟使用指南](getting-started.md)
+- [下载与安装](download.md)
+- [快速开始](getting-started.md)
 - [用户手册](user-manual.md)
 - [macOS 首次运行](macos-first-run.md)
 - [服务商兼容](provider-compatibility.md)
 - [GitHub 发布流程](github-release.md)
 - [架构与维护](architecture.md)
+- [本次改动源码导读](provider-setup-and-routing.md)
 - [公共边界](public-release-boundary.md)
 - [Roadmap](roadmap.md)
 - [模型能力维护](model-capability-maintenance.md)

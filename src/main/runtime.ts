@@ -285,6 +285,7 @@ function startMainProcess(): void {
         toggleClient,
         openDashboard,
         clearHistory,
+        setTraceStoragePolicy,
         repairApplication,
         repairUnreadableSettings: async () => {
           if (!controller) throw new Error('XwX Deck 仍在启动。');
@@ -318,6 +319,18 @@ function startMainProcess(): void {
       await updater.start();
       reportStartupPhase('updater-initialization');
       await controller.start();
+      reportStartupPhase('controller-and-client-recovery');
+      const verifiedStartupState = await controller.runtimeState({ fast: true });
+      if (!verifiedStartupState.lastError && verifiedStartupState.readiness.startupPhase !== 'degraded') {
+        try {
+          if (await completeExitRecoveryAfterVerifiedStartup(userDataDir)) {
+            startupRecoveryNotice = undefined;
+            log.info('[xwx-deck] cleared historical exit recovery warning after verified startup');
+          }
+        } catch (error) {
+          log.warn(`[xwx-deck] could not clear historical exit recovery warning: ${errorMessage(error)}`);
+        }
+      }
       const metadataUrl = metadataPushUrl();
       if (!PACKAGED_SMOKE_TEST && metadataUrl) {
         metadataSubscriber = new MetadataInvalidationSubscriber(metadataUrl, async event => {
@@ -1453,6 +1466,14 @@ async function clearHistory(): Promise<XwXDeckRuntimeState | undefined> {
   return refreshUi();
 }
 
+async function setTraceStoragePolicy(
+  input: { limitGB?: number; autoCleanup?: boolean }
+): Promise<XwXDeckRuntimeState | undefined> {
+  if (!controller) return undefined;
+  await controller.setTraceStoragePolicy(input);
+  return refreshUi();
+}
+
 async function launchApplicationResetWorker(
   request: ApplicationResetRequest,
   userDataDir: string,
@@ -1624,14 +1645,15 @@ async function runPackagedBackgroundGatewaySmoke(userDataDir: string): Promise<v
   })).connections[1];
   await controller.switchClientProvider('codex', codex.id);
   await controller.switchClientProvider('claude', claude.id);
-  await controller.enable('packaged background Gateway fallback smoke');
-  await controller.disable();
+  // Closing the manager keeps Trace running; explicitly stopping Trace restores
+  // direct configuration and stops the helper, as covered by controller smoke.
+  await controller.enable('packaged background Gateway detach smoke');
   const state = await controller.runtimeState();
   if (!state.backgroundGatewayActive || !state.localBaseUrl) {
     throw new Error('Packaged app did not activate its independent Gateway helper.');
   }
-  if (state.tracingEnabled || state.readiness.recordingEnabled) {
-    throw new Error('Packaged fallback must forward without recording after Trace stops.');
+  if (!state.tracingEnabled || !state.readiness.recordingEnabled) {
+    throw new Error('Packaged manager detach must preserve active Trace recording.');
   }
   if (!await controller.detachManager()) {
     throw new Error('Packaged manager could not detach from its active Gateway helper.');

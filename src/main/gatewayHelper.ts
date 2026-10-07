@@ -214,6 +214,11 @@ async function run(): Promise<void> {
         proxy.setClientRoutes(nextClientRoutes);
         pricingModelIds = modelIdsFromRoutes(nextRoutes, nextClientRoutes);
         traceRetention = nextRetention;
+        if (nextRetention.maxSessions <= 0 && nextRetention.maxStorageBytes <= 0 && retentionCleanupTimer) {
+          clearTimeout(retentionCleanupTimer);
+          retentionCleanupTimer = undefined;
+          retentionCleanupScheduled = false;
+        }
         setRecordingEnabled(body.recording === true);
         generation = nextGeneration;
         if (retentionChanged) scheduleRetentionCleanup();
@@ -398,8 +403,20 @@ function provider(value: unknown): 'official' | 'compatible' | `provider:${strin
 }
 
 function normalizeTraceRetention(value: unknown): GatewayTraceRetention {
-  void value;
-  return { maxSessions: 0, maxStorageBytes: 0 };
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const maxSessions = typeof record.maxSessions === 'number' && Number.isFinite(record.maxSessions)
+    ? Math.max(0, Math.floor(record.maxSessions))
+    : 0;
+  const maxStorageBytes = typeof record.maxStorageBytes === 'number' && Number.isFinite(record.maxStorageBytes)
+    ? Math.max(0, Math.floor(record.maxStorageBytes))
+    : 0;
+  return {
+    maxSessions,
+    maxStorageBytes,
+    ...(record.usageOnly === true ? { usageOnly: true } : {})
+  };
 }
 
 function capturedClientForSource(source: TapTraceSource | undefined): GatewayCapturedClient | undefined {

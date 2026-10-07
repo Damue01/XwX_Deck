@@ -33,11 +33,7 @@ XwX Deck 的“服务商”指客户端请求最终转发到的模型 API，不�
 | Chat Completions | Responses → Chat Completions 本地转换 |
 | Anthropic Messages | Responses → Anthropic Messages 本地转换 |
 
-当模型目录只返回普通 OpenAI 模型列表，没有逐模型协议信息时，XwX Deck 才使用保守的模型族识别：
-
-- GPT 系列优先 Responses；
-- Claude 系列优先 Anthropic Messages；
-- 其他模型优先 Chat Completions。
+当模型目录没有逐模型协议信息时，明确选择的连接接口优先于外部能力补全；自动识别结合模型所属目录端点和已核验的官方协议元数据。证据不足时保留连接默认协议，不凭模型或服务名称猜测。
 
 用户不需要为每个模型填写协议。
 
@@ -111,7 +107,7 @@ XwX Deck 的“服务商”指客户端请求最终转发到的模型 API，不�
 
 当 URL 同时提供 OpenAI、Anthropic 和 Gemini 模型目录时，自动探测会合并这些模型，不需要用户选择“兼容服务 模式”。
 
-检测到 Anthropic Messages 模型后，Claude 代理入口会自动可用；只有 OpenAI 模型目录时，Claude 入口保持禁用并说明原因。
+Claude 可原生使用 Anthropic Messages 模型，也可通过本地 Gateway 桥接支持对话的 Responses / Chat Completions 模型。需要转换或 Desktop 别名转发的模型标为「需 Trace」；已知图片生成、嵌入等非对话模型不作为 Claude 对话模型开放。
 
 ## 火山方舟
 

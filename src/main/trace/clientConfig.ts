@@ -253,7 +253,7 @@ export function detectCodexUpstream(
       provider: 'openai',
       routeKind: chatgptOauth ? 'chatgpt-oauth' : 'openai-api',
       baseUrl: chatgptOauth ? CODEX_CHATGPT_OAUTH_TARGET : CODEX_DEFAULT_TARGET,
-      fieldLocation: chatgptOauth ? 'chatgpt-base-url' : 'openai-base-url',
+      fieldLocation: 'openai-base-url',
       stripV1: !chatgptOauth && baseUrlHasV1Suffix(CODEX_DEFAULT_TARGET),
       hadExplicitValue: false
     };
@@ -261,13 +261,18 @@ export function detectCodexUpstream(
   const provider = readTomlTopLevelString(text, 'model_provider')?.trim() || 'openai';
   if (provider === 'openai') {
     const routeKind: CodexRouteKind = chatgptOauth ? 'chatgpt-oauth' : 'openai-api';
-    const fieldLocation: CodexFieldLocation = chatgptOauth ? 'chatgpt-base-url' : 'openai-base-url';
-    const key = chatgptOauth ? 'chatgpt_base_url' : 'openai_base_url';
-    const configuredBaseUrl = readTomlTopLevelString(text, key)?.trim();
+    // Model traffic and workspace/account traffic must use separate roots.
+    // New Desktop versions require chatgpt_base_url to remain HTTPS.
+    const fieldLocation: CodexFieldLocation = 'openai-base-url';
+    const modelBaseUrl = readTomlTopLevelString(text, 'openai_base_url')?.trim();
+    const configuredBaseUrl = modelBaseUrl || (chatgptOauth
+      ? readTomlTopLevelString(text, 'chatgpt_base_url')?.trim()
+      : undefined);
     if (configuredBaseUrl && isLoopbackUrl(configuredBaseUrl)) {
       return { client: 'codex-cli', reason: 'loopback-residue', configPath: paths.codexConfigPath, upstreamBaseUrl: configuredBaseUrl };
     }
-    const baseUrl = configuredBaseUrl || (chatgptOauth ? CODEX_CHATGPT_OAUTH_TARGET : CODEX_DEFAULT_TARGET);
+    const selectedBaseUrl = configuredBaseUrl || (chatgptOauth ? CODEX_CHATGPT_OAUTH_TARGET : CODEX_DEFAULT_TARGET);
+    const baseUrl = chatgptOauth ? selectedBaseUrl.replace(/\/codex\/?$/i, '') : selectedBaseUrl;
     return {
       client: 'codex-cli',
       mode: chatgptOauth ? 'chatgpt-oauth' : 'api-key',

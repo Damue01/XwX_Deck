@@ -30,6 +30,8 @@ export interface ModelCatalogEntry {
   readonly protocolsDeclared?: boolean;
   /** CompatibleService directories that actually listed this model; [] means no endpoint evidence. */
   readonly catalogEndpoints?: readonly ModelCatalogEndpointKind[];
+  /** OpenAI protocols published by the model owner's official API. */
+  readonly officialProtocols?: readonly ModelProtocol[];
   /** Undefined means the service did not publish modality metadata. */
   readonly vision?: boolean;
   /** True only when the service explicitly advertises POST /responses/compact. */
@@ -436,12 +438,18 @@ function normalizeModelEntry(value: unknown): ModelCatalogEntry | undefined {
   const capabilitySources = normalizeCapabilitySources(value._xwx_capability_sources);
   const missingCapabilities = normalizeMissingCapabilities(value._xwx_missing_capabilities);
   const catalogEndpoints = value._xwx_catalog_endpoints ?? value.catalogEndpoints;
+  const officialProtocols = Array.isArray(value._xwx_official_protocols)
+    ? unique(value._xwx_official_protocols.filter(
+      (protocol): protocol is ModelProtocol => protocol === 'openai-responses' || protocol === 'chat-completions'
+    ))
+    : [];
   return {
     id, vendor, protocols, vision,
     ...(value._xwx_protocols_declared === true || value.protocolsDeclared === true ? { protocolsDeclared: true } : {}),
     ...(Array.isArray(catalogEndpoints) ? { catalogEndpoints: unique(catalogEndpoints.filter(
       (kind): kind is ModelCatalogEndpointKind => kind === 'openai' || kind === 'anthropic' || kind === 'gemini'
     )) } : {}),
+    ...(officialProtocols.length ? { officialProtocols } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     ...(inputModalities.length ? { inputModalities } : {}),
@@ -538,6 +546,7 @@ function serializeCachedModel(entry: ModelCatalogEntry): Record<string, unknown>
     protocols: entry.protocols,
     ...(entry.protocolsDeclared ? { _xwx_protocols_declared: true } : {}),
     ...(entry.catalogEndpoints ? { _xwx_catalog_endpoints: entry.catalogEndpoints } : {}),
+    ...(entry.officialProtocols?.length ? { _xwx_official_protocols: entry.officialProtocols } : {}),
     clients: entry.clients,
     ...(entry.vision !== undefined && !isFallback('vision') ? { vision: entry.vision } : {}),
     ...(entry.responsesCompact !== undefined ? { responses_compact: entry.responsesCompact } : {}),
@@ -584,6 +593,7 @@ function mergeEntries(a: ModelCatalogEntry, b: ModelCatalogEntry): ModelCatalogE
     ...(a.protocolsDeclared || b.protocolsDeclared ? { protocolsDeclared: true } : {}),
     ...(a.catalogEndpoints || b.catalogEndpoints
       ? { catalogEndpoints: unique([...(a.catalogEndpoints ?? []), ...(b.catalogEndpoints ?? [])]) } : {}),
+    ...((a.officialProtocols ?? b.officialProtocols) ? { officialProtocols: a.officialProtocols ?? b.officialProtocols } : {}),
     vision: a.vision ?? b.vision,
     contextWindow: a.contextWindow ?? b.contextWindow,
     maxOutputTokens: a.maxOutputTokens ?? b.maxOutputTokens,

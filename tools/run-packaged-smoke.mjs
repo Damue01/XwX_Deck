@@ -164,8 +164,8 @@ try {
       macUpdateBytes.toString('utf8')
     );
   }
-  // Standalone surface plus the three read-only conversation-diagnosis methods.
-  assert.equal(result.ipcMethods, 44);
+  // Standalone surface including diagnosis, setup links, and Trace storage policy.
+  assert.equal(result.ipcMethods, 46);
   assert.ok(Math.abs(result.ui.clearRowHeight - 48) <= 0.25, "clearRowHeight exceeds subpixel tolerance");
   assert.deepEqual(result.ui.faviconSize, { width: 256, height: 256 });
   assert.ok(result.ui.appearanceRightDelta <= 1, `appearance controls are misaligned by ${result.ui.appearanceRightDelta}px`);

@@ -634,6 +634,13 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     // Official mode does not use third-party protocol conversion.
     if (codexConfig?.mode !== 'compatible') return undefined;
     const modelId = codexChoiceByLabel.get(label)?.modelId ?? label;
+    const catalogEntry = activeCodexCatalog.find(item => item.id === modelId);
+    if (catalogEntry?.vendor === '已配置') {
+      return {
+        label: '不在目录',
+        hint: '这是上次选择的模型，当前服务目录未提供。可继续保留，或改选当前服务的模型。'
+      };
+    }
     if (!providerRequiresTrace(selectedCodexProvider ?? bridge.compatibleServiceConfig ?? undefined, modelId, activeCodexCatalog)) return undefined;
     return traceEnabled
       ? { label: '需 Trace', hint: `${modelId} 需要协议转换。Trace 已开启，可直接使用。` }

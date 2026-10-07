@@ -291,86 +291,17 @@ try {
   state = await first.runtimeState();
   assert.equal(state.tracingEnabled, false);
   assert.equal(state.readiness.recordingEnabled, false, 'stopping Trace must disable persistence immediately');
-  assert.equal(state.readiness.codexGatewayEnabled, true,
-    'stopping official Trace must retain a non-recording official route for cached localhost tasks');
+  assert.equal(state.readiness.codexGatewayEnabled, false,
+    'stopping official Trace must restore direct service and stop the local Gateway');
   const claudeAfterTraceStop = JSON.parse(await fs.readFile(path.join(claudeHome, 'settings.json'), 'utf8'));
   assert.equal(claudeAfterTraceStop.env.ANTHROPIC_BASE_URL, officialBaseUrl,
     'stopping Trace must restore the on-disk Claude upstream for newly started clients');
-  const traceCountAfterDisable = await waitForTraceCount(gatewayBase, 1);
-  assert.equal(
-    (await postJson(`${gatewayBase}/v1/messages`, {
-      model: 'claude-after-trace-stop',
-      max_tokens: 16,
-      messages: [{ role: 'user', content: 'cached Claude request' }]
-    }, {
-      'user-agent': 'claude-cli/2.1.0',
-      'x-api-key': 'isolated-claude-key',
-      'anthropic-version': '2023-06-01'
-    })).status,
-    200,
-    'a Claude process that cached localhost must keep forwarding after Trace stops'
+  await waitForClosed(Number(new URL(gatewayBase).port));
+  await assert.rejects(
+    postJson(`${gatewayBase}/v1/responses`, { model: 'official-after-trace-stop', input: [] }),
+    /fetch failed|ECONNREFUSED/i,
+    'a stopped Trace must not keep serving cached localhost requests'
   );
-  assert.equal(
-    (await postJson(`${gatewayBase}/v1/responses`, { model: 'official-after-trace-stop', input: [] })).status,
-    200,
-    'the cached Responses endpoint must continue forwarding after Trace stops'
-  );
-  assert.equal(
-    (await postJson(`${gatewayBase}/backend-api/codex/responses`, {
-      model: 'official-backend-after-trace-stop', input: []
-    })).status,
-    200,
-    'the exact cached ChatGPT backend Responses endpoint must continue forwarding after Trace stops'
-  );
-  assert.equal(
-    (await postJson(`${gatewayBase}/v1/models`, { model: 'models-after-trace-stop' })).status,
-    200,
-    'the cached model-directory endpoint must continue forwarding after Trace stops'
-  );
-  await new Promise(resolve => setTimeout(resolve, 150));
-  assert.equal(await readTraceCount(gatewayBase), traceCountAfterDisable,
-    'the retained official fallback must not record requests while Trace is off');
-
-  assert.equal(await first.detachManager(), true);
-  first = undefined;
-  second = new XwXDeckController(userData, {
-    backgroundGateway: true,
-    proxyListenPorts: [0],
-    disableBackgroundModelRefresh: true
-  });
-  await second.start();
-  state = await second.runtimeState();
-  assert.equal(state.tracingEnabled, false);
-  assert.equal(state.readiness.recordingEnabled, false);
-  assert.equal(state.localBaseUrl, gatewayBase, 'fallback reattach must preserve the cached endpoint');
-  assert.equal(state.readiness.codexGatewayEnabled, true,
-    'manager restart must re-publish the non-recording official fallback');
-  assert.equal(
-    (await postJson(`${gatewayBase}/v1/messages`, {
-      model: 'claude-after-fallback-reattach',
-      max_tokens: 16,
-      messages: [{ role: 'user', content: 'cached Claude after manager restart' }]
-    }, {
-      'user-agent': 'claude-cli/2.1.0',
-      'x-api-key': 'isolated-claude-key',
-      'anthropic-version': '2023-06-01'
-    })).status,
-    200,
-    'manager restart must re-publish the non-recording Claude fallback'
-  );
-  assert.equal(
-    (await postJson(`${gatewayBase}/v1/responses`, { model: 'official-after-fallback-reattach', input: [] })).status,
-    200
-  );
-  assert.equal(
-    (await postJson(`${gatewayBase}/backend-api/codex/responses`, {
-      model: 'official-backend-after-fallback-reattach', input: []
-    })).status,
-    200,
-    'manager reattach must republish the exact cached ChatGPT backend Responses route'
-  );
-  first = second;
-  second = undefined;
   await first.shutdown();
   await assert.rejects(
     fs.stat(path.join(userData, 'gateway', 'client-fallbacks.json')),

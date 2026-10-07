@@ -18,6 +18,7 @@ export async function testProviderSelections(root: string): Promise<void> {
   const env = { CODEX_HOME: process.env.CODEX_HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, XWX_DECK_CLIENT_HOME: process.env.XWX_DECK_CLIENT_HOME };
   const originalFetch = globalThis.fetch;
   let controller: XwXDeckController | undefined;
+  let chatGptRunning = false;
   try {
     process.env.CODEX_HOME = codexHome;
     process.env.CLAUDE_CONFIG_DIR = claudeHome;
@@ -45,7 +46,7 @@ export async function testProviderSelections(root: string): Promise<void> {
     assert.equal(networkRequests, 0, 'showing model names must not wait for remote capability services');
 
     controller = new XwXDeckController(userData, { proxyListenPorts: [0], disableBackgroundModelRefresh: true,
-      chatGptRunning: async () => false, codexHistoryMutationAllowed: async () => true });
+      chatGptRunning: async () => chatGptRunning, codexHistoryMutationAllowed: async () => true });
     await controller.start();
     const store = new XwXDeckSettingsStore(userData);
     const a = await controller.saveProvider({ displayName: 'SelectionA', baseUrl: 'https://a.example.invalid/v1', bearerToken: 'fixture-a', adapter: 'responses', codexModel: 'gpt-5.5' });
@@ -60,8 +61,22 @@ export async function testProviderSelections(root: string): Promise<void> {
       const written = await manager.read();
       assert.equal(written.mode, id ? 'compatible' : 'official');
       assert.equal(written.activeProvider, id === aid ? 'SelectionA' : id === bid ? 'SelectionB' : 'openai');
+      assert.equal(id ? written.compatible.model : written.officialModel, id === bid ? 'deepseek-chat' : 'gpt-5.5',
+        'switching a connection must restore its own remembered model');
     }
     assert.equal(networkRequests, requestsBeforeSwitch, 'provider writes never request a model directory');
+
+    chatGptRunning = true;
+    const beforeModelChange = await manager.read();
+    await controller.saveProvider({ id: aid, displayName: 'SelectionA', baseUrl: 'https://a.example.invalid/v1',
+      bearerToken: 'fixture-a', adapter: 'responses', codexModel: 'gpt-6.1-sol' });
+    const afterModelChange = await manager.read();
+    assert.equal(afterModelChange.activeProvider, beforeModelChange.activeProvider);
+    assert.equal(afterModelChange.activeBaseUrl, beforeModelChange.activeBaseUrl);
+    assert.equal(afterModelChange.compatible.model, 'gpt-6.1-sol');
+    assert.equal((await controller.runtimeState()).chatGptRestartRecommended, true,
+      'a cached model needs a restart notice even when the provider and endpoint stay the same');
+    chatGptRunning = false;
 
     await controller.enable('provider selection regression');
     for (const id of [bid, null, aid, bid]) {

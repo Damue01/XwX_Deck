@@ -618,6 +618,8 @@ async function testControllerStartupAcrossLegacyPortabilityGap(): Promise<void> 
       ''
     ].join('\n'), 'utf8');
     await new XwXDeckSettingsStore(testUserData).update({
+      tracingEnabled: true,
+      clientEnabled: { claude: false, codex: true },
       compatible: {
         baseUrl: 'https://compatible.example/v1',
         bearerToken: 'legacy-startup-compatible-key',

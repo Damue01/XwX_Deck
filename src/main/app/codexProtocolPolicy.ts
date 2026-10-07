@@ -24,8 +24,13 @@ export function resolveProviderCodexProtocol(
   if (entry.protocolsDeclared) return resolveCatalogCodexProtocol(entry, fallback);
   // Directory membership is evidence; vendor/name-based routing is not.
   if (entry.catalogEndpoints) {
-    return entry.catalogEndpoints.includes('anthropic') && !entry.catalogEndpoints.includes('openai')
-      ? 'anthropic-messages' : fallback;
+    if (!entry.catalogEndpoints.includes('openai')) {
+      return entry.catalogEndpoints.includes('anthropic') ? 'anthropic-messages' : fallback;
+    }
+    // An explicit connection protocol outranks enrichment from third-party
+    // registries, which may lag behind the service's current API support.
+    return provider?.adapter && provider.adapter !== 'auto'
+      ? fallback : officialOpenAiProtocol(entry, fallback) ?? fallback;
   }
   // Older caches retained Anthropic endpoint membership in Claude-only protocol entries.
   // Preserve that evidence without trusting model-name protocol guesses.
@@ -68,9 +73,26 @@ export function resolveClaudeModelProtocol(
   // Missing protocol metadata keeps the current connection default.
   if (entry.catalogEndpoints?.includes('openai')) {
     const preferred = provider?.codexApiFormat === 'chat-completions' ? 'chat-completions' : 'responses';
-    return preferred;
+    return provider?.adapter && provider.adapter !== 'auto'
+      ? preferred : officialOpenAiProtocol(entry, preferred) ?? preferred;
   }
   return undefined;
+}
+
+/**
+ * The OpenAI protocol the model's official API publishes, preferring the
+ * connection's choice when both are available. Undefined when unknown.
+ */
+function officialOpenAiProtocol(
+  entry: ModelCatalogEntry,
+  preferred: CodexProtocol
+): 'responses' | 'chat-completions' | undefined {
+  const official = new Set(entry.officialProtocols ?? []);
+  const responses = official.has('openai-responses');
+  const chat = official.has('chat-completions');
+  if (preferred === 'chat-completions' && chat) return 'chat-completions';
+  if (responses) return 'responses';
+  return chat ? 'chat-completions' : undefined;
 }
 
 /** Models whose published purpose is not a conversational coding-agent turn. */

@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { Menu } from '@base-ui/react/menu';
-import { Ellipsis, Eye, EyeOff, Pencil, Plus } from 'lucide-react';
+import { ChevronDown, Ellipsis, Eye, EyeOff, Plus } from 'lucide-react';
+import { ProviderIcon, providerIconKind } from './ProviderIcon';
+import { ProviderSetupShortcuts } from './ProviderSetupShortcuts';
+import { newProviderDraft, type OfficialProviderId } from '../../../shared/officialProviders';
 import { useBridge } from '@/bridge/store';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { OPEN_PROVIDER_SETTINGS_EVENT, showErrorToast, showToast } from '@/lib/toast';
@@ -11,8 +14,6 @@ import {
   type ProviderConnection,
   type ProviderValidationResult
 } from '../../../shared/providers';
-
-const empty: ProviderInput = { displayName: '', baseUrl: '', bearerToken: '', adapter: 'auto' };
 
 const VALIDATION_TOAST_ID = 'provider-validation';
 
@@ -56,10 +57,20 @@ function showValidationResult(result: ProviderValidationResult): void {
   });
 }
 
-export function ProvidersPanel(): React.ReactElement {
+export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void }): React.ReactElement {
   const bridge = useBridge();
   const confirm = useConfirm();
-  const [draft, setDraft] = React.useState<ProviderInput | null>(null);
+  const [drafts, setDrafts] = React.useState<Record<string, ProviderInput>>({});
+  const [draftKey, setDraftKey] = React.useState('new');
+  const [editorOpen, setEditorOpen] = React.useState(false);
+  const [setupProvider, setSetupProvider] = React.useState<OfficialProviderId | null>(null);
+  const draft = drafts[draftKey] ?? null;
+  const setDraft = (value: ProviderInput | null) => setDrafts(current => {
+    const next = { ...current };
+    if (value) next[draftKey] = value;
+    else delete next[draftKey];
+    return next;
+  });
   const [showBearerToken, setShowBearerToken] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const previousName = bridge.providers?.connections.find(provider => provider.id === draft?.id)?.displayName;
@@ -71,6 +82,7 @@ export function ProvidersPanel(): React.ReactElement {
   const addButton = React.useRef<HTMLButtonElement | null>(null);
   const closeEditor = () => {
     setShowBearerToken(false);
+    setEditorOpen(false);
     setDraft(null);
     requestAnimationFrame(() => editorTrigger.current?.focus());
   };
@@ -98,13 +110,24 @@ export function ProvidersPanel(): React.ReactElement {
   const edit = React.useCallback((p: ProviderConnection, trigger: HTMLButtonElement | null) => {
     editorTrigger.current = trigger;
     setShowBearerToken(false);
-    setDraft({ id: p.id, displayName: p.displayName, baseUrl: p.baseUrl, bearerToken: p.bearerToken, adapter: p.adapter, providerPreset: p.providerPreset, codexModel: p.codexModel });
+    setDraftKey(p.id);
+    setEditorOpen(true);
+    setDrafts(current => current[p.id] ? current : { ...current, [p.id]: { id: p.id, displayName: p.displayName, baseUrl: p.baseUrl, bearerToken: p.bearerToken, adapter: p.adapter, providerPreset: p.providerPreset, codexModel: p.codexModel } });
   }, []);
+  const add = (preset: OfficialProviderId | 'custom') => {
+    const key = `new:${preset}`;
+    editorTrigger.current = addButton.current;
+    setShowBearerToken(false);
+    setDraftKey(key);
+    setEditorOpen(true);
+    setDrafts(current => current[key] ? current : { ...current, [key]: newProviderDraft(bridge.providers?.connections, preset) });
+  };
   React.useEffect(() => {
     const open = (event: Event) => {
       const id = (event as CustomEvent<string>).detail;
       const provider = bridge.providers?.connections.find(item => item.id === id);
       if (!provider) return;
+      onRequestOpen();
       edit(provider, document.getElementById(`provider-edit-${id}`) as HTMLButtonElement | null);
       requestAnimationFrame(() => {
         document.getElementById('provider-editor')?.scrollIntoView({ block: 'center' });
@@ -113,8 +136,8 @@ export function ProvidersPanel(): React.ReactElement {
     };
     window.addEventListener(OPEN_PROVIDER_SETTINGS_EVENT, open);
     return () => window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, open);
-  }, [bridge.providers, edit]);
-  const editor = draft && <form key={draft.id ?? 'new'} id="provider-editor" className="provider-editor" aria-label={draft.id ? '编辑模型服务' : '添加模型服务'} aria-busy={busy} onSubmit={e => {
+  }, [bridge.providers, edit, onRequestOpen]);
+  const editor = draft && <form key={draft.id ?? draftKey} id="provider-editor" className="provider-editor" hidden={!editorOpen} aria-label={draft.id ? '编辑模型服务' : '添加模型服务'} aria-busy={busy} onSubmit={e => {
     e.preventDefault();
     if (nameError) return;
     void run('保存模型服务失败', async () => {
@@ -136,7 +159,7 @@ export function ProvidersPanel(): React.ReactElement {
       <div className="field-row">
         <label className="fr-label" htmlFor="provider-name">名称</label>
         <div className="fr-value"><div className="provider-name-field">
-          <input id="provider-name" type="text" autoFocus className="txt-input" required maxLength={80}
+          <input id="provider-name" type="text" autoFocus={!!draft.id} className="txt-input" required maxLength={80}
             value={draft.displayName} placeholder="仅支持英文字母、数字、下划线和连字符"
             disabled={busy} aria-invalid={!!nameError && draft.displayName.length > 0}
             aria-describedby={nameError && draft.displayName.length > 0 ? 'provider-name-feedback' : undefined}
@@ -144,23 +167,28 @@ export function ProvidersPanel(): React.ReactElement {
           {nameError && draft.displayName.length > 0 && <small id="provider-name-feedback" className="provider-field-error" aria-live="polite">{nameError}</small>}
         </div></div>
       </div>
-      <div className="field-row"><label className="fr-label" htmlFor="provider-url">API 地址</label><div className="fr-value"><input id="provider-url" className="txt-input" type="url" required value={draft.baseUrl} placeholder="https://api.example.com/v1" disabled={busy} onChange={e => setDraft({ ...draft, baseUrl: e.target.value })} /></div></div>
-      <div className="field-row"><label className="fr-label" htmlFor="provider-key">访问密钥</label><div className="fr-value"><div className="provider-key-control"><input id="provider-key" className="txt-input" type={showBearerToken ? 'text' : 'password'} autoComplete="off" required value={draft.bearerToken} disabled={busy} onChange={e => setDraft({ ...draft, bearerToken: e.target.value })} /><button type="button" className="provider-key-visibility" aria-label={showBearerToken ? '隐藏访问密钥' : '显示访问密钥'} aria-pressed={showBearerToken} aria-controls="provider-key" title={showBearerToken ? '隐藏访问密钥' : '显示访问密钥'} disabled={busy} onClick={() => setShowBearerToken(value => !value)}><Eye className="provider-key-icon-show" aria-hidden="true" /><EyeOff className="provider-key-icon-hide" aria-hidden="true" /></button></div></div></div>
+      <div className="field-row"><label className="fr-label" htmlFor="provider-url">API 地址</label><div className="fr-value"><input id="provider-url" className="txt-input" type="url" required value={draft.baseUrl} placeholder="https://api.example.com/v1" disabled={busy} onChange={e => setDraft({ ...draft, baseUrl: e.target.value, ...(!draft.id ? { adapter: 'auto' as const } : {}) })} /></div></div>
+      <div className="field-row"><label className="fr-label" htmlFor="provider-key">访问密钥</label><div className="fr-value"><div className="provider-key-control"><input id="provider-key" className="txt-input" type={showBearerToken ? 'text' : 'password'} autoFocus={!draft.id} autoComplete="off" required value={draft.bearerToken} disabled={busy} onChange={e => setDraft({ ...draft, bearerToken: e.target.value })} /><button type="button" className="provider-key-visibility" aria-label={showBearerToken ? '隐藏访问密钥' : '显示访问密钥'} aria-pressed={showBearerToken} aria-controls="provider-key" title={showBearerToken ? '隐藏访问密钥' : '显示访问密钥'} disabled={busy} onClick={() => setShowBearerToken(value => !value)}><Eye className="provider-key-icon-show" aria-hidden="true" /><EyeOff className="provider-key-icon-hide" aria-hidden="true" /></button></div></div></div>
       <div className="prov-save-bar"><button type="button" className="provider-text-action" disabled={busy} onClick={closeEditor}>取消</button><button type="submit" className="btn primary" disabled={busy || !!nameError}>保存</button></div>
     </form>;
   return <div id="providerList" aria-busy={busy}>
     <div className="group-label provider-heading">
-      <span className="eyebrow">模型服务</span>
-      <button ref={addButton} type="button" className="provider-text-action" aria-label="添加模型服务" disabled={busy} onClick={e => { editorTrigger.current = e.currentTarget; setShowBearerToken(false); setDraft(empty); }}><Plus aria-hidden="true" />添加</button>
+      <h3 className="model-config-subheading">模型服务</h3>
+      <button ref={addButton} id="provider-add" type="button" className="provider-text-action" aria-label="添加自定义模型服务" disabled={busy} onClick={() => add('custom')}><Plus aria-hidden="true" />自定义</button>
     </div>
-    {!bridge.providers?.connections.length && !draft ? <p className="provider-empty">添加你使用的 API 服务连接。</p> : null}
+    <ProviderSetupShortcuts kind="service" disabled={busy} selectedProvider={setupProvider} onSelectProvider={setSetupProvider} onConfigure={add} />
     {(bridge.providers?.connections ?? []).map(p => <div className="provider" key={p.id}>
       <div className="provider-list-row">
-        <span className="provider-name">{p.displayName}</span>
-        <div className="provider-row-actions">
-        <button id={`provider-edit-${p.id}`} type="button" className="provider-edit-trigger" disabled={busy} aria-label={`编辑模型服务 ${p.displayName}`} aria-expanded={draft?.id === p.id} aria-controls={draft?.id === p.id ? 'provider-editor' : undefined} onClick={e => draft?.id === p.id ? closeEditor() : edit(p, e.currentTarget)}>
-          <Pencil aria-hidden="true" />
+        <button id={`provider-edit-${p.id}`} type="button" className="provider-disclosure" disabled={busy} aria-label={`编辑模型服务 ${p.displayName}`} aria-expanded={draft?.id === p.id && editorOpen} aria-controls={draft?.id === p.id ? 'provider-editor' : undefined} onClick={e => {
+          setShowBearerToken(false);
+          if (draft?.id === p.id) setEditorOpen(open => !open);
+          else edit(p, e.currentTarget);
+        }}>
+          <ProviderIcon kind={providerIconKind(drafts[p.id]?.baseUrl ?? p.baseUrl)} />
+          <span className="provider-name">{drafts[p.id]?.displayName || p.displayName}</span>
+          <ChevronDown className="trace-section-chevron" aria-hidden="true" />
         </button>
+        <div className="provider-row-actions">
         <Menu.Root>
           <Menu.Trigger type="button" className="provider-menu-trigger" aria-label={`${p.displayName} 的更多操作`} disabled={busy}><Ellipsis aria-hidden="true" /></Menu.Trigger>
           <Menu.Portal><Menu.Positioner className="conversation-header-menu-positioner" side="bottom" align="end" sideOffset={4}>
@@ -193,7 +221,7 @@ export function ProvidersPanel(): React.ReactElement {
                 await run('删除模型服务失败', async () => {
                 const providers = await bridge.api.deleteProvider(p.id);
                 bridge.patch({ providers });
-                if (draft?.id === p.id) setDraft(null);
+                setDrafts(current => { const next = { ...current }; delete next[p.id]; return next; });
                 refresh();
                 showToast('模型服务已删除');
                 requestAnimationFrame(() => addButton.current?.focus());
@@ -206,6 +234,19 @@ export function ProvidersPanel(): React.ReactElement {
       </div>
       {draft?.id === p.id && editor}
     </div>)}
-    {draft && !draft.id && editor}
+    {Object.entries(drafts).filter(([, pending]) => !pending.id).map(([key, pending]) => <div className="provider" key={key}>
+      <div className="provider-list-row">
+        <button type="button" className="provider-disclosure" disabled={busy} aria-label={`展开新模型服务 ${pending.displayName || '未命名'}`} aria-expanded={draftKey === key && editorOpen} aria-controls={draftKey === key ? 'provider-editor' : undefined} onClick={() => {
+          setDraftKey(key);
+          setEditorOpen(draftKey !== key || !editorOpen);
+          setShowBearerToken(false);
+        }}>
+          <ProviderIcon kind={providerIconKind(pending.baseUrl)} />
+          <span className="provider-name">{pending.displayName || '未命名'}</span>
+          <ChevronDown className="trace-section-chevron" aria-hidden="true" />
+        </button>
+      </div>
+      {draftKey === key && editor}
+    </div>)}
   </div>;
 }

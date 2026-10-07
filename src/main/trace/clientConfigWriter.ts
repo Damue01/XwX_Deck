@@ -589,14 +589,11 @@ export function patchCodexConfig(original: string, detection: CodexDetection, lo
 
 function codexConfigKey(detection: CodexDetection): 'base_url' | 'openai_base_url' | 'chatgpt_base_url' {
   if (detection.fieldLocation === 'provider-section') return 'base_url';
-  return detection.fieldLocation === 'chatgpt-base-url' ? 'chatgpt_base_url' : 'openai_base_url';
+  return 'openai_base_url';
 }
 
 function codexProxyValue(detection: CodexDetection, localProxyUrl: string): string {
   const base = localProxyUrl.replace(/\/+$/, '');
-  if (detection.fieldLocation === 'chatgpt-base-url') {
-    return `${base}/backend-api`;
-  }
   if (detection.routeKind === 'chatgpt-oauth') return `${base}/backend-api/codex`;
   return ensureSuffix(base, '/v1');
 }

@@ -104,8 +104,8 @@ try {
   assert.equal(exitCode, 0, result.error || `packaged manager exited with ${exitCode}`);
   assert.equal(result.ok, true);
   assert.equal(result.backgroundGatewayActive, true);
-  assert.equal(result.tracingEnabled, false);
-  assert.equal(result.recordingEnabled, false);
+  assert.equal(result.tracingEnabled, true);
+  assert.equal(result.recordingEnabled, true);
 
   runtime = await waitForRuntime(join(userData, 'gateway', 'runtime.json'));
   assert.equal(runtime.helperProtocolVersion, 14, 'packaged helper must publish its compatibility protocol');
@@ -117,8 +117,8 @@ try {
   assert.equal(response.status, 200, response.text);
   assert.equal(JSON.parse(response.text).output[0].content[0].text, 'packaged helper survived');
   const claudeConfig = JSON.parse(await readFile(join(claudeHome, 'settings.json'), 'utf8'));
-  assert.equal(claudeConfig.env.ANTHROPIC_BASE_URL, upstreamBaseUrl.replace(/\/v1$/, '/anthropic'),
-    'packaged Trace stop must restore Claude disk config to the upstream');
+  assert.equal(claudeConfig.env.ANTHROPIC_BASE_URL, result.localBaseUrl,
+    'closing the manager must preserve the active Claude Gateway configuration');
   const traceCountBeforeClaude = await readTraceCount(runtime.gatewayPort);
   const claudeResponse = await request(runtime.gatewayPort, '/v1/messages', {
     model: 'claude-packaged-fallback',
@@ -131,16 +131,20 @@ try {
   });
   assert.equal(claudeResponse.status, 200, claudeResponse.text);
   assert.equal(JSON.parse(claudeResponse.text).content[0].text, 'packaged Claude fallback survived');
-  await delay(150);
-  assert.equal(await readTraceCount(runtime.gatewayPort), traceCountBeforeClaude,
-    'packaged non-recording Claude fallback must not append a Trace record');
+  let traceCountAfterClaude = traceCountBeforeClaude;
+  for (let attempt = 0; attempt < 40 && traceCountAfterClaude <= traceCountBeforeClaude; attempt += 1) {
+    await delay(50);
+    traceCountAfterClaude = await readTraceCount(runtime.gatewayPort);
+  }
+  assert.ok(traceCountAfterClaude > traceCountBeforeClaude,
+    'the detached packaged Gateway must continue recording Claude requests');
 
   const token = (await readFile(join(userData, 'gateway', 'control.token'), 'utf8')).trim();
   const status = await request(runtime.controlPort, '/control/status', undefined, 'GET', { authorization: `Bearer ${token}` });
   assert.equal(JSON.parse(status.text).helperProtocolVersion, 14);
   await request(runtime.controlPort, '/control/stop', {}, 'POST', { authorization: `Bearer ${token}` });
   await waitForClosed(runtime.controlPort);
-  console.log('PASS packaged ASAR Gateway survives manager exit and serves non-recording Claude/ChatGPT fallbacks');
+  console.log('PASS packaged ASAR Gateway survives manager detach and keeps serving and recording Claude/ChatGPT requests');
   passed = true;
 } finally {
   if (runtime?.controlPort) {

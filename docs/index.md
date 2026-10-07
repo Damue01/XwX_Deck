@@ -3,31 +3,29 @@ layout: home
 
 hero:
   name: XwX Deck
-  text: 本地 AI 请求追踪与模型网关
-  tagline: 面向 Claude 与 ChatGPT 的开源可观测、协议适配和服务商管理工具
+  text: 轻松配置模型，清楚掌握用量
+  tagline: 为 Claude 与 ChatGPT 配置第三方 API，查看请求、Token、费用估算与耗时。
   image:
     src: /icon.png
     alt: XwX Deck
   actions:
     - theme: brand
+      text: 下载与安装
+      link: /download
+    - theme: alt
       text: 快速开始
       link: /getting-started
-    - theme: alt
-      text: 用户手册
-      link: /user-manual
     - theme: alt
       text: GitHub
       link: https://github.com/Damue01/XwX_Deck
 
 features:
-  - title: 本地 Trace
-    details: 查看真实上游、请求内容、Token、费用、耗时与会话归并结果。
-  - title: 多协议模型网关
-    details: 支持 OpenAI Responses、Chat Completions 与 Anthropic Messages 的兼容路由。
-  - title: 独立运行
-    details: 使用独立 appId、数据目录和 Gateway 端口，不与内部版本共享状态。
-  - title: 开源发布
-    details: 使用 GitHub Actions、Pages 和 Releases 完成测试、文档、构建和更新分发。
+  - title: 简单接入
+    details: 添加连接时预填 DeepSeek 官方地址，填入自己的密钥即可保存，也可修改为其他 API 服务。
+  - title: 用量可见
+    details: 按需开启追踪，查看请求模型、Token、费用估算与耗时。
+  - title: 问题可查
+    details: 查看实际请求和上游错误，配置操作有备份与恢复路径。
 ---
 
 ## 当前状态

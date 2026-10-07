@@ -21,7 +21,12 @@
     "toolsPage": true,
     "conversationDiagnostics": true,
     "excelToMarkdown": false,
-    "automaticTraceCleanup": false
+    "automaticTraceCleanup": true
+  },
+  "traceRetention": {
+    "unlimitedByDefault": true,
+    "automaticCleanupEnabledByDefault": false,
+    "requiresExplicitUserOptIn": true
   },
   "updates": {
     "enabledByDefault": true,

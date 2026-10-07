@@ -1,5 +1,6 @@
 import type { TraceRetentionRepairResult } from '../app/xwxDeckController';
 import type { ProviderInput, ProviderClient } from '../../shared/providers';
+import { setupWebsiteUrl } from '../../shared/setupWebsites';
 import {
   BrowserWindow,
   dialog,
@@ -37,6 +38,7 @@ export interface IpcHandlerDependencies {
   readonly toggleClient: (client: ClientId) => Promise<XwXDeckRuntimeState | undefined>;
   readonly openDashboard: () => Promise<void>;
   readonly clearHistory: () => Promise<XwXDeckRuntimeState | undefined>;
+  readonly setTraceStoragePolicy: (input: { limitGB?: number; autoCleanup?: boolean }) => Promise<XwXDeckRuntimeState | undefined>;
   readonly repairApplication: () => Promise<{
     removedCachePaths: number;
     removedBytes: number;
@@ -66,6 +68,7 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     return updater;
   };
   const handlers: Record<string, InvokeHandler> = {
+    'xwxdeck:open-setup-website': (_event, site) => shell.openExternal(setupWebsiteUrl(site, process.platform, process.arch)),
     'xwxdeck:get-state': () => deps.currentState(),
     'xwxdeck:get-trace-stats': () => requireController().traceStats(),
     'xwxdeck:get-update-state': () => deps.updateState(),
@@ -265,6 +268,20 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
       return deps.currentState();
     },
     'xwxdeck:clear-history': () => deps.clearHistory(),
+    'xwxdeck:set-trace-storage-policy': (_event, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('无效的 Trace 存储设置。');
+      const value = input as { limitGB?: unknown; autoCleanup?: unknown };
+      if (value.limitGB !== undefined && (typeof value.limitGB !== 'number' || !Number.isSafeInteger(value.limitGB))) {
+        throw new Error('Trace 存储上限须为 0–1024 GB 的整数。');
+      }
+      if (value.autoCleanup !== undefined && typeof value.autoCleanup !== 'boolean') {
+        throw new Error('无效的自动清理设置。');
+      }
+      return deps.setTraceStoragePolicy({
+        ...(value.limitGB !== undefined ? { limitGB: value.limitGB } : {}),
+        ...(value.autoCleanup !== undefined ? { autoCleanup: value.autoCleanup } : {})
+      });
+    },
     'xwxdeck:inspect-trace-index-repair': () => requireController().inspectTraceIndexRepair(),
     'xwxdeck:apply-trace-index-repair': (_event, expectedIndexSha256) => {
       if (expectedIndexSha256 !== undefined && typeof expectedIndexSha256 !== 'string') {

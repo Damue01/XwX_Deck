@@ -70,11 +70,11 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     const required = ${JSON.stringify([
       'getState', 'getTraceStats', 'getUpdateState', 'checkForUpdates', 'setStartupEnabled', 'setTheme', 'setTraceAppearance', 'chooseTraceBackground', 'clearTraceBackground', 'repairApplication', 'resetApplication', 'toggleTracing', 'toggleClient',
       'getCodexConfig', 'getCodexEnhancements', 'updateCodexEnhancements',
-      'getProviders', 'saveProvider', 'deleteProvider', 'switchClientProvider', 'fetchProviderModels', 'validateProvider',
+      'getProviders', 'saveProvider', 'deleteProvider', 'switchClientProvider', 'fetchProviderModels', 'validateProvider', 'openSetupWebsite',
       'diagnoseCodexConversations', 'queryCodexConversations', 'detailCodexConversation', 'cancelCodexConversationScan', 'setCodexConversationDiagnosticsActive', 'openCodexConversationPath', 'copyText',
       'inspectTraceIndexRepair', 'applyTraceIndexRepair',
       'getCompatibleServiceConfig', 'updateCompatibleServiceConfig', 'getModelServices', 'setModelService', 'isChatGptRunning',
-      'getClaudeModels', 'updateClaudeModels', 'clearHistory', 'refresh', 'toggleMaximize', 'setManagerView', 'fetchModels',
+      'getClaudeModels', 'updateClaudeModels', 'clearHistory', 'setTraceStoragePolicy', 'refresh', 'toggleMaximize', 'setManagerView', 'fetchModels',
       'updateTraceDirectories'
     ])};
     const missing = required.filter(name => typeof api[name] !== 'function');
@@ -214,7 +214,19 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     );
     assertStableViewport('settings');
     if ((await api.getProviders()).connections.length) throw new Error('fresh installation seeded an API provider');
-    document.querySelector('button[aria-label="添加模型服务"]').click();
+    const modelConfigSettings = document.querySelector('[aria-controls="model-config-content"]');
+    const modelConfigContent = document.getElementById('model-config-content');
+    if (!modelConfigSettings || !modelConfigContent?.hidden) throw new Error('model configuration must start collapsed');
+    modelConfigSettings.click();
+    await waitFor(() => !modelConfigContent.hidden, 'model configuration did not expand');
+    const shortcuts = [...modelConfigContent.querySelectorAll('.provider-shortcut')].map(item => item.textContent.trim());
+    if (shortcuts.join(',') !== 'ChatGPT,Claude,DeepSeek,千问,火山方舟,智谱 GLM,Kimi,MiniMax,腾讯 TokenHub') throw new Error('official setup shortcuts are missing or incorrect');
+    const providerMenu = modelConfigContent.querySelector('#provider-add');
+    if (!providerMenu || !api.setupWebsites.kimi || !api.setupWebsites.minimax || !api.setupWebsites.tencent
+      || !api.setupWebsites['claude-mac-mirror'] || !api.setupWebsites['claude-windows-x64-mirror']) {
+      throw new Error('official provider or client mirror setup entries are missing');
+    }
+    document.querySelector('button[aria-label="添加自定义模型服务"]').click();
     await waitFor(() => document.getElementById('provider-name'), 'provider editor did not open');
     const setField = async (id, value) => {
       const input = document.getElementById(id);
@@ -229,7 +241,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     document.getElementById('provider-editor').requestSubmit();
     await waitFor(() => !document.getElementById('provider-editor') && document.querySelector('.provider-name')?.textContent === 'Fixture_API', 'provider editor did not save through IPC');
     const providerEdit = document.querySelector('button[aria-label="编辑模型服务 Fixture_API"]');
-    if (!providerEdit || providerEdit.textContent.trim()) throw new Error('provider pencil control is missing');
+    if (!providerEdit || providerEdit.textContent.trim() !== 'Fixture_API' || providerEdit.getAttribute('aria-expanded') !== 'false') throw new Error('saved provider disclosure is missing or expanded');
     providerEdit.click();
     await waitFor(() => document.getElementById('provider-url')?.value === compatibleServiceBaseUrl, 'saved connection could not be edited');
     [...document.querySelectorAll('#provider-editor button')].find(button => button.textContent.trim() === '取消').click();
@@ -238,7 +250,10 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     settingsButton.click();
     await waitFor(() => document.getElementById('page-settings')?.classList.contains('current'), 'settings did not reopen');
 
-    const traceSettings = document.querySelector('.trace-section-trigger');
+    modelConfigSettings.click();
+    await waitFor(() => modelConfigContent.hidden, 'model configuration did not collapse');
+
+    const traceSettings = document.querySelector('[aria-controls="trace-settings-content"]');
     if (traceSettings?.getAttribute('aria-expanded') !== 'true') traceSettings.click();
     await waitFor(() => !document.getElementById('trace-settings-content')?.hidden, 'Trace settings did not expand');
     const clearRowRect = clearHistoryButton.getBoundingClientRect();
@@ -273,10 +288,13 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
         && repairSheet.getBoundingClientRect().right <= innerWidth + 0.5,
       'repair center sheet never finished sliding into the manager viewport'
     );
-    const quickRepairButton = document.getElementById('quickRepairApplication');
+    const indexRepairButton = document.getElementById('inspectTraceIndex');
+    if (document.getElementById('quickRepairApplication') || repairSheet.querySelector('#inspectTraceIndex')) {
+      throw new Error('repair center must match upstream current-problem and reset layout');
+    }
     const resetApplicationButton = document.getElementById('resetApplication');
     const repairClose = document.getElementById('repairCenterClose');
-    if (!repairSheet || !quickRepairButton || !resetApplicationButton || !repairClose) {
+    if (!repairSheet || !indexRepairButton || !resetApplicationButton || !repairClose) {
       throw new Error('repair center actions are missing');
     }
     const repairRect = repairSheet.getBoundingClientRect();
@@ -768,6 +786,8 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     }
     await managerWindow.webContents.executeJavaScript(`document.querySelector('.rail-btn[data-page="settings"]').click()`);
     await new Promise(resolve => setTimeout(resolve, 300));
+    await managerWindow.webContents.executeJavaScript(`(() => { const trigger = document.querySelector('[aria-controls="model-config-content"]'); if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click(); })()`);
+    await new Promise(resolve => setTimeout(resolve, 200));
     await managerWindow.webContents.executeJavaScript(`document.querySelector('button[aria-label="编辑模型服务 Fixture_API"]').click()`);
     await new Promise(resolve => setTimeout(resolve, 400));
     await fs.writeFile(path.join(screenshotDir, 'provider-editor.png'), (await managerWindow.webContents.capturePage()).toPNG());

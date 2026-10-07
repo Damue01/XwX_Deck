@@ -1,4 +1,5 @@
 import { clipboard, contextBridge, ipcRenderer } from 'electron';
+import { setupWebsitesFor } from '../shared/setupWebsites';
 
 type ClientId = 'claude-cli' | 'codex-cli';
 type StateListener = (state: unknown) => void;
@@ -20,6 +21,8 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 contextBridge.exposeInMainWorld('xwxDeck', {
+  setupWebsites: setupWebsitesFor(process.platform, process.arch),
+  openSetupWebsite: (site: unknown) => ipcRenderer.invoke('xwxdeck:open-setup-website', site),
   getState: () => ipcRenderer.invoke('xwxdeck:get-state'),
   getTraceStats: () => ipcRenderer.invoke('xwxdeck:get-trace-stats'),
   getUpdateState: () => ipcRenderer.invoke('xwxdeck:get-update-state'),
@@ -76,6 +79,7 @@ contextBridge.exposeInMainWorld('xwxDeck', {
   openDataFolder: () => ipcRenderer.invoke('xwxdeck:open-data-folder'),
   openLogFolder: () => ipcRenderer.invoke('xwxdeck:open-log-folder'),
   clearHistory: () => ipcRenderer.invoke('xwxdeck:clear-history'),
+  setTraceStoragePolicy: (payload: unknown) => ipcRenderer.invoke('xwxdeck:set-trace-storage-policy', payload),
   disableBreaksCodex: () => ipcRenderer.invoke('xwxdeck:disable-breaks-codex'),
   refresh: () => ipcRenderer.invoke('xwxdeck:refresh'),
   minimizeWindow: () => ipcRenderer.invoke('xwxdeck:window-minimize'),
