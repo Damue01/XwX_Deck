@@ -1,4 +1,5 @@
 import { ProvidersPanel } from './ProvidersPanel';
+import { DEFAULT_TRACE_LIMIT_GB, DEFAULT_TRACE_AUTO_CLEANUP } from '../../../shared/traceDefaults';
 import { ProviderSetupShortcuts } from './ProviderSetupShortcuts';
 import * as React from 'react';
 import { Trash2, Pencil, ChevronDown, ArrowDownToLine, Check, LoaderCircle, Sun, Moon } from 'lucide-react';
@@ -30,7 +31,8 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   const [checkingUpdate, setCheckingUpdate] = React.useState(false);
   const [traceOpen, setTraceOpen] = React.useState(false);
   const [modelConfigOpen, setModelConfigOpen] = React.useState(false);
-  const [limitDraft, setLimitDraft] = React.useState('2');
+  const [clientShortcutsOpen, setClientShortcutsOpen] = React.useState(false);
+  const [limitDraft, setLimitDraft] = React.useState(String(DEFAULT_TRACE_LIMIT_GB));
   const [editingLimit, setEditingLimit] = React.useState(false);
   const [savingStorage, setSavingStorage] = React.useState(false);
   const limitCommitPending = React.useRef(false);
@@ -54,7 +56,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   React.useEffect(() => {
     if (!traceOpen && editingLimit) {
       setEditingLimit(false);
-      setLimitDraft(String(runtime?.traceWarningGB ?? 2));
+      setLimitDraft(String(runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB));
     }
   }, [traceOpen, editingLimit, runtime?.traceWarningGB]);
 
@@ -65,15 +67,15 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   const limitValue = Number(limitDraft);
   const limitValid = /^\d+$/.test(limitDraft) && Number.isSafeInteger(limitValue)
     && limitValue >= 0 && limitValue <= 1024;
-  const storageExceeded = (runtime?.traceWarningGB ?? 2) > 0
-    && (runtime?.traceStorageBytes ?? 0) > (runtime?.traceWarningGB ?? 2) * 1024 ** 3;
+  const storageExceeded = (runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB) > 0
+    && (runtime?.traceStorageBytes ?? 0) > (runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB) * 1024 ** 3;
   const needsManualCleanup = storageExceeded && !runtime?.traceAutoCleanup;
   const storageUsedText = runtime?.traceStorageBytes === undefined
     ? '—'
     : runtime.traceStorageBytes >= 1024 ** 3
       ? `${(runtime.traceStorageBytes / 1024 ** 3).toFixed(1)} GB`
       : runtime?.storageText.split(' / ')[0] ?? '—';
-  const storageLimitGB = runtime?.traceWarningGB ?? 2;
+  const storageLimitGB = runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB;
   const storagePercent = storageLimitGB === 0 ? 0
     : Math.min(100, Math.max(0, (runtime?.traceStorageBytes ?? 0) / (storageLimitGB * 1024 ** 3) * 100));
   const saveStorage = React.useCallback(async (input: { limitGB?: number; autoCleanup?: boolean }) => {
@@ -160,11 +162,11 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   const autoCleanupControl = (
     <Toggle
       id="traceAutoCleanup"
-      checked={runtime?.traceAutoCleanup === true}
+      checked={runtime?.traceAutoCleanup ?? DEFAULT_TRACE_AUTO_CLEANUP}
       busy={savingStorage}
       ariaLabel="超出上限时自动清理旧 Trace 记录"
       title="开启后，超出上限时会从最旧的完整对话开始删除，保留正在记录的对话。"
-      onToggle={() => void saveStorage({ autoCleanup: runtime?.traceAutoCleanup !== true })}
+      onToggle={() => void saveStorage({ autoCleanup: !(runtime?.traceAutoCleanup ?? DEFAULT_TRACE_AUTO_CLEANUP) })}
     />
   );
   const changeDir = React.useCallback(async (kind: 'trace' | 'logs') => {
@@ -425,8 +427,16 @@ export function SettingsPage({ active }: Props): React.ReactElement {
           </div>
           <div id="model-config-content" hidden={!modelConfigOpen}>
             <div className="model-config-client">
-              <h3 className="model-config-subheading">客户端</h3>
-              <ProviderSetupShortcuts kind="client" />
+              <h3 className="model-config-subheading">
+                <button type="button" className="trace-section-trigger model-config-section-trigger"
+                  aria-expanded={clientShortcutsOpen} aria-controls="client-setup-shortcuts"
+                  onClick={() => setClientShortcutsOpen(open => !open)}>
+                  客户端<ChevronDown size={15} className="trace-section-chevron" aria-hidden="true" />
+                </button>
+              </h3>
+              <div id="client-setup-shortcuts" hidden={!clientShortcutsOpen}>
+                <ProviderSetupShortcuts kind="client" />
+              </div>
             </div>
             <ProvidersPanel onRequestOpen={openModelConfig} />
           </div>

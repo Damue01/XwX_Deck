@@ -30,7 +30,7 @@ features:
 
 ## 当前状态
 
-XwX Deck 仍处于 `0.1.x` 早期阶段。Windows 和 macOS 安装包应视为测试版本；macOS 包尚未经过 Developer ID 签名与 Apple 公证。
+当前源码版本为 `1.0.0`。公开安装包以 Releases 为准；macOS 包尚未经过 Developer ID 签名与 Apple 公证。
 
 ## 开源许可
 

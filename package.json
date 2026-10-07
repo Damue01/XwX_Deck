@@ -3,7 +3,7 @@
   "displayName": "XwX Deck",
   "description": "XwX Deck: local request tracing and model gateway management for Claude and ChatGPT.",
   "author": "XwX Deck",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "packageManager": "npm@11.6.2",
   "engines": {

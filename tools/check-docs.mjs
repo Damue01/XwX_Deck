@@ -35,12 +35,11 @@ for (const relative of docs) {
   }
 }
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-for (const phrase of ['XwX Deck','0.1.0','Apache License 2.0','app.xwxdeck.desktop','45233-45242','客户端配置同步','对话诊断','GitHub Releases']) {
+for (const phrase of ['XwX Deck',packageJson.version,'Apache License 2.0','app.xwxdeck.desktop','45233-45242','客户端配置同步','对话诊断','GitHub Releases']) {
   if (!readme.includes(phrase)) errors.push(`README.md: missing ${phrase}`);
 }
 const manual = fs.readFileSync(path.join(root, 'docs/user-manual.md'), 'utf8');
-if (!manual.includes('适用版本：XwX Deck 0.1.x')) errors.push('docs/user-manual.md: version line missing');
-if (packageJson.version !== '0.1.0') errors.push('package.json: standalone version must be 0.1.0');
+if (!manual.includes(`适用版本：XwX Deck ${packageJson.version}`)) errors.push('docs/user-manual.md: version line does not match package.json');
 if (errors.length) {
   console.error('Documentation consistency check failed:');
   for (const error of errors) console.error(`- ${error}`);

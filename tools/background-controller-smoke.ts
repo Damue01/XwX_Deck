@@ -204,6 +204,17 @@ try {
   await first.enable('official-reattach-smoke');
   state = await first.runtimeState();
   assert.equal(state.tracingEnabled, true);
+  assert.equal(state.traceWarningGB, 1);
+  assert.equal(state.traceAutoCleanup, true);
+  const defaultRuntime = JSON.parse(await fs.readFile(path.join(userData, 'gateway', 'runtime.json'), 'utf8'));
+  const defaultToken = (await fs.readFile(path.join(userData, 'gateway', 'control.token'), 'utf8')).trim();
+  const defaultStatusResponse = await fetch(`http://127.0.0.1:${defaultRuntime.controlPort}/control/status`, {
+    headers: { authorization: `Bearer ${defaultToken}` }
+  });
+  assert.equal(defaultStatusResponse.status, 200);
+  const defaultStatus = await defaultStatusResponse.json() as { traceRetention: { maxSessions: number; maxStorageBytes: number } };
+  assert.deepEqual(defaultStatus.traceRetention, { maxSessions: 0, maxStorageBytes: 1024 ** 3 },
+    'the running helper must apply the new 1 GB default, not just display it');
   assert.equal(state.backgroundGatewayAction, 'close');
   assert.equal(state.readiness.codexGatewayEnabled, false);
   assert.equal(state.readiness.codexConfigReady, true);

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { DEFAULT_TRACE_LIMIT_GB } from '../shared/traceDefaults';
 import { BridgeProvider, useBridge } from '@/bridge/store';
 import { clearLifecycleNotice, closeToast, showToast, showLifecycleNotice, ToastProvider } from '@/lib/toast';
 import { lifecycleFailure } from '../shared/lifecycleNotice';
@@ -57,7 +58,7 @@ function Shell(): React.ReactElement {
   const recoveryNotice = bridge.runtime?.lifecycleNotice;
   const connectionNotice = bridge.runtime?.connectionNotice;
   const traceStorageBytes = bridge.runtime?.traceStorageBytes ?? 0;
-  const traceWarningGB = bridge.runtime?.traceWarningGB ?? 2;
+  const traceWarningGB = bridge.runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB;
   const traceStorageText = bridge.runtime?.storageText ?? '0 B';
   React.useEffect(() => {
     if (!bridge.booted || !bridge.runtime) return;

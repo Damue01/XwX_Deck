@@ -726,6 +726,15 @@ async function testSettings(): Promise<void> {
   const initial = await store.read();
   assert.equal(initial.tracingEnabled, false);
   assert.equal(initial.gatewayPaused, false);
+  assert.equal(initial.traceWarningGB, 1);
+  assert.equal(initial.traceAutoCleanup, true);
+  const existingStore = new XwXDeckSettingsStore(path.join(root, 'settings-retention-existing'));
+  await fs.mkdir(path.dirname(existingStore.path()), { recursive: true });
+  await fs.writeFile(existingStore.path(), JSON.stringify({ ...initial, traceWarningGB: 2, traceAutoCleanup: false }));
+  await existingStore.update({ theme: 'night' });
+  const existing = await existingStore.read();
+  assert.equal(existing.traceWarningGB, 2, 'upgrade preserves the saved capacity');
+  assert.equal(existing.traceAutoCleanup, false, 'upgrade must not enable cleanup over an explicit opt-out');
   assert.deepEqual(initial.clientEnabled, { claude: true, codex: true });
   assert.equal(initial.codexEnhancements.preserveOfficialLogin, true);
   assert.equal(initial.codexEnhancements.unifySessionHistory, false);
@@ -825,9 +834,9 @@ async function testSettings(): Promise<void> {
   assert.equal(initial.traceRoot, '');
   assert.equal(initial.logRoot, '');
   assert.equal(initial.maxSessions, 0,
-    'Trace Session retention must default to unlimited');
+    'legacy Session count limits stay disabled');
   assert.equal(initial.maxStorageMB, 0,
-    'Trace storage retention must default to unlimited');
+    'legacy storage limits stay disabled independently of the current GB policy');
   const rejectedRetentionPatch = await store.update({ maxSessions: 25, maxStorageMB: 512 });
   assert.deepEqual(
     {
@@ -835,7 +844,7 @@ async function testSettings(): Promise<void> {
       maxStorageMB: rejectedRetentionPatch.maxStorageMB
     },
     { maxSessions: 0, maxStorageMB: 0 },
-    'unsupported settings patches must not enable automatic Trace cleanup'
+    'legacy settings patches must not replace the current storage policy'
   );
   // Regression: theme and startup intent must persist in settings.json so a
   // portable repackage (which changes the file:// origin / exe path) does not

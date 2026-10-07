@@ -212,6 +212,9 @@ try {
   });
   assert.deepEqual(stoppedRecording.capturedClients, [],
     'turning Trace off must reset the current capture epoch');
+  // Let the requested cleanup finish before injecting an unreadable index.
+  // Otherwise a valid in-progress index commit races the corruption fixture.
+  await waitForGatewayState(runtime.gatewayPort, state => state.sessions?.length === 1);
   const indexPath = path.join(traceRoot, 'index.json');
   const healthyIndexBytes = await readFile(indexPath);
   const invalidIndexBytes = Buffer.from('{"version":1,"sessions":[', 'utf8');

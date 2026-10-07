@@ -1,4 +1,5 @@
 import { CodexConversationDoctor } from './codexConversationDoctor';
+import { DEFAULT_TRACE_LIMIT_GB, DEFAULT_TRACE_AUTO_CLEANUP } from '../../shared/traceDefaults';
 import type { CodexConversationHealthReport } from '../../shared/codexConversationHealth';
 import { validateProviderConnection } from './providerValidation';
 import type { ProviderValidationResult } from '../../shared/providers';
@@ -3095,8 +3096,7 @@ export class XwXDeckController {
     } else if (this.proxy.background) {
       helper = { state: 'not-running' };
     } else {
-      // The embedded proxy is constructed with fixed unlimited callbacks and
-      // is used only by isolated smoke/development runtimes.
+      // The embedded proxy uses the same persisted policy callbacks as the helper.
       helper = { state: 'verified', maxSessions: 0, maxStorageBytes: expectedStorageBytes };
     }
 
@@ -3339,8 +3339,8 @@ export class XwXDeckController {
       traces: overview.traces,
       storageText: overview.storageText,
       traceStorageBytes: overview.traceStorageBytes,
-      traceWarningGB: this.settings?.traceWarningGB ?? 2,
-      traceAutoCleanup: this.settings?.traceAutoCleanup ?? false,
+      traceWarningGB: this.settings?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB,
+      traceAutoCleanup: this.settings?.traceAutoCleanup ?? DEFAULT_TRACE_AUTO_CLEANUP,
       traceStorageNotice: this.traceStorageNotice,
       clients: this.clientRows(readiness),
       theme: this.settings?.theme ?? 'day',
@@ -5270,9 +5270,9 @@ export class XwXDeckController {
     const store = new TraceStore(
       rootDir,
       () => 0,
-      () => undefined,
+      () => this.settings ? expectedTraceStorageBytes(this.settings) || undefined : undefined,
       sessions => this.codexThreadTitles.overlay(sessions),
-      () => false
+      () => this.settings?.traceWarningGB === 0
     );
     const proxy: TraceProxy = this.options.backgroundGateway
       ? new GatewayProcessClient(
@@ -5290,7 +5290,8 @@ export class XwXDeckController {
           traceRetention: () => {
             return {
               maxSessions: 0,
-              maxStorageBytes: 0
+              maxStorageBytes: this.settings ? expectedTraceStorageBytes(this.settings) : 0,
+              ...(this.settings?.traceWarningGB === 0 ? { usageOnly: true } : {})
             };
           }
         }

@@ -219,6 +219,12 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     if (!modelConfigSettings || !modelConfigContent?.hidden) throw new Error('model configuration must start collapsed');
     modelConfigSettings.click();
     await waitFor(() => !modelConfigContent.hidden, 'model configuration did not expand');
+    for (const id of ['client-setup-shortcuts', 'service-setup-shortcuts']) {
+      const content = document.getElementById(id);
+      if (!content?.hidden) throw new Error('setup icon sections must start collapsed');
+      document.querySelector('button[aria-controls="' + id + '"]').click();
+      await waitFor(() => !content.hidden, 'setup icon section did not expand');
+    }
     const shortcuts = [...modelConfigContent.querySelectorAll('.provider-shortcut')].map(item => item.textContent.trim());
     if (shortcuts.join(',') !== 'ChatGPT,Claude,DeepSeek,千问,火山方舟,智谱 GLM,Kimi,MiniMax,腾讯 TokenHub') throw new Error('official setup shortcuts are missing or incorrect');
     const providerMenu = modelConfigContent.querySelector('#provider-add');

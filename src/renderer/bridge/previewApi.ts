@@ -1,4 +1,5 @@
 import type { ProviderSnapshot, ProviderConnection } from '../../shared/providers';
+import { DEFAULT_TRACE_LIMIT_GB, DEFAULT_TRACE_AUTO_CLEANUP } from '../../shared/traceDefaults';
 import type {
   ClientId,
   ClaudeModelSettings,
@@ -213,8 +214,8 @@ export function createPreviewApi(): XwXDeckApi {
     sessions: 0,
     traces: 0,
     storageText: '0 B',
-    traceWarningGB: 2,
-    traceAutoCleanup: false,
+    traceWarningGB: DEFAULT_TRACE_LIMIT_GB,
+    traceAutoCleanup: DEFAULT_TRACE_AUTO_CLEANUP,
     clients: [
       { id: 'claude-cli', label: 'Claude', enabled: true, status: 'idle', statusText: '待命', detail: '追踪未开启' },
       { id: 'codex-cli', label: 'ChatGPT', enabled: true, status: 'idle', statusText: '待命', detail: '追踪未开启' }

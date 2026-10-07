@@ -1091,6 +1091,7 @@ svg.ic { width: 20px; height: 20px; display: block; fill: none; stroke: currentC
 /* ---- Settings page: provider list ---- */
 .model-config-client { margin-bottom: 16px; }
 .model-config-subheading { margin: 0 0 8px; color: var(--quiet); font-size: 13px; font-weight: 500; }
+.model-config-section-trigger { font: inherit; color: inherit; }
 .provider-heading .model-config-subheading { margin-bottom: 0; }
 .provider + .provider { margin-top: 2px; }
 .prov-row { width: 100%; min-height: 40px; padding: 0 2px; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; border: 0; background: transparent; text-align: left; }

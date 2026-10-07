@@ -45,10 +45,11 @@ check(contract.providerFramework?.protocolSelection === 'explicit-adapter-or-per
   'provider protocol selection must be driven by model metadata');
 check(contract.providerFramework?.defaultConnections?.length === 0, 'no default providers');
 check(contract.features?.automaticTraceCleanup === true
-  && contract.traceRetention?.unlimitedByDefault === true
-  && contract.traceRetention?.automaticCleanupEnabledByDefault === false
-  && contract.traceRetention?.requiresExplicitUserOptIn === true,
-  'Trace retention must remain unlimited until the user explicitly enables cleanup');
+  && contract.traceRetention?.unlimitedByDefault === false
+  && contract.traceRetention?.defaultStorageLimitGB === 1
+  && contract.traceRetention?.automaticCleanupEnabledByDefault === true
+  && contract.traceRetention?.preservesExplicitUserSettings === true,
+  'Trace must default to 1 GB automatic cleanup and preserve explicit user settings');
 check(contract.features?.repairCenter === true, 'repair center must remain enabled');
 check(contract.features?.safeExitRecovery === true, 'safe exit recovery must remain enabled');
 check(contract.features?.toolsPage === true && contract.features?.conversationDiagnostics === true,

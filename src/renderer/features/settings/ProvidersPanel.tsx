@@ -64,6 +64,7 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
   const [draftKey, setDraftKey] = React.useState('new');
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [setupProvider, setSetupProvider] = React.useState<OfficialProviderId | null>(null);
+  const [serviceShortcutsOpen, setServiceShortcutsOpen] = React.useState(false);
   const draft = drafts[draftKey] ?? null;
   const setDraft = (value: ProviderInput | null) => setDrafts(current => {
     const next = { ...current };
@@ -173,10 +174,18 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
     </form>;
   return <div id="providerList" aria-busy={busy}>
     <div className="group-label provider-heading">
-      <h3 className="model-config-subheading">模型服务</h3>
+      <h3 className="model-config-subheading">
+        <button type="button" className="trace-section-trigger model-config-section-trigger"
+          aria-expanded={serviceShortcutsOpen} aria-controls="service-setup-shortcuts"
+          onClick={() => setServiceShortcutsOpen(open => !open)}>
+          模型服务<ChevronDown size={15} className="trace-section-chevron" aria-hidden="true" />
+        </button>
+      </h3>
       <button ref={addButton} id="provider-add" type="button" className="provider-text-action" aria-label="添加自定义模型服务" disabled={busy} onClick={() => add('custom')}><Plus aria-hidden="true" />自定义</button>
     </div>
-    <ProviderSetupShortcuts kind="service" disabled={busy} selectedProvider={setupProvider} onSelectProvider={setSetupProvider} onConfigure={add} />
+    <div id="service-setup-shortcuts" hidden={!serviceShortcutsOpen}>
+      <ProviderSetupShortcuts kind="service" disabled={busy} selectedProvider={setupProvider} onSelectProvider={setSetupProvider} onConfigure={add} />
+    </div>
     {(bridge.providers?.connections ?? []).map(p => <div className="provider" key={p.id}>
       <div className="provider-list-row">
         <button id={`provider-edit-${p.id}`} type="button" className="provider-disclosure" disabled={busy} aria-label={`编辑模型服务 ${p.displayName}`} aria-expanded={draft?.id === p.id && editorOpen} aria-controls={draft?.id === p.id ? 'provider-editor' : undefined} onClick={e => {

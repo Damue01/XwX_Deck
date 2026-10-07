@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { DEFAULT_TRACE_LIMIT_GB, DEFAULT_TRACE_AUTO_CLEANUP } from '../../shared/traceDefaults';
 import { resolveClientPaths } from '../trace/clientConfig';
 import { readTomlTopLevelString, readTomlStringKey, rootToml, findTomlSection } from '../trace/toml';
 import type { ProviderRegistry, ProviderConnection, ProviderClient } from '../../shared/providers';
@@ -166,8 +167,8 @@ const DEFAULT_SETTINGS: XwXDeckSettings = {
   startupEnabled: false,
   maxSessions: 0,
   maxStorageMB: 0,
-  traceWarningGB: 2,
-  traceAutoCleanup: false,
+  traceWarningGB: DEFAULT_TRACE_LIMIT_GB,
+  traceAutoCleanup: DEFAULT_TRACE_AUTO_CLEANUP,
   traceRoot: '',
   logRoot: '',
   claudeConfigDir: '',
@@ -367,8 +368,8 @@ export class XwXDeckSettingsStore {
         ...provider, codexProviderId: legacyActiveProvider
       })) } };
     }
-    // Retire legacy automatic limits. Only the explicit storage policy below
-    // may enable cleanup; old maxStorageMB values must never silently opt in.
+    // Retire legacy limits independently of the current storage policy.
+    // Explicit policy choices are preserved; missing fields use current defaults.
     if (value.maxSessions !== 0 || value.maxStorageMB !== 0
       || value.traceWarningGB !== normalized.traceWarningGB || !value.providers
       || providersNeedRegistryMigration(value.providers, normalized.providers)
@@ -498,8 +499,9 @@ function normalizeSettings(value: XwXDeckSettings, preserveProviderIdentity = fa
     maxStorageMB: 0,
     traceWarningGB: typeof value.traceWarningGB === 'number' && Number.isSafeInteger(value.traceWarningGB)
       && value.traceWarningGB >= 0 && value.traceWarningGB <= 1024
-      ? value.traceWarningGB : 2,
-    traceAutoCleanup: value.traceAutoCleanup === true,
+      ? value.traceWarningGB : DEFAULT_TRACE_LIMIT_GB,
+    traceAutoCleanup: typeof value.traceAutoCleanup === 'boolean'
+      ? value.traceAutoCleanup : DEFAULT_TRACE_AUTO_CLEANUP,
     traceRoot: cleanDirectory(value.traceRoot),
     logRoot: cleanDirectory(value.logRoot),
     claudeConfigDir: cleanDirectory(value.claudeConfigDir),

@@ -24,9 +24,10 @@
     "automaticTraceCleanup": true
   },
   "traceRetention": {
-    "unlimitedByDefault": true,
-    "automaticCleanupEnabledByDefault": false,
-    "requiresExplicitUserOptIn": true
+    "unlimitedByDefault": false,
+    "defaultStorageLimitGB": 1,
+    "automaticCleanupEnabledByDefault": true,
+    "preservesExplicitUserSettings": true
   },
   "updates": {
     "enabledByDefault": true,

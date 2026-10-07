@@ -1,6 +1,6 @@
 # 快速开始
 
-> 适用于 XwX Deck 0.1.x 独立版。
+> 适用于 XwX Deck 1.0.0 独立版。
 
 还没有安装客户端或获取 API 密钥，请先打开 [下载与安装](./download.md)。以下以 ChatGPT 客户端中的 Codex 接入 DeepSeek 为例。
 
