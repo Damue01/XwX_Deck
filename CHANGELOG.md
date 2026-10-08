@@ -18,6 +18,7 @@
 
 ### Changed
 
+- Windows 便携包包含更新器所需的配置文件；发布前在原生 Windows 和 Mac 上实际验证旧版检查、下载、校验和安装后的启动，发布后再验证匿名 GitHub 更新源。
 - 同步 XwX Deck `main` 的模型能力注册表、价格来源、分档/峰谷/短回复计费和实际服务模型名展示。
 - 加入当前 Gateway 实测能力层、推理档位收敛和目录预览/桥接档位诊断工具。
 - 修正 Chat Completions usage 双命名归零、缓存 TTL 分桶、跨 Session 用量聚合和费用不完整状态。

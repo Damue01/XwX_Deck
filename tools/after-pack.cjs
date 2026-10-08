@@ -17,6 +17,21 @@ const UNUSED_WINDOWS_RUNTIME_FILES = [
 async function trimUnusedElectronRuntime(context) {
   if (context.electronPlatformName !== 'win32') return;
 
+  // electron-builder writes this for NSIS, but not for the portable target.
+  // NsisUpdater still reads it when choosing its cache and signature policy,
+  // even though this app supplies its generic feed URL programmatically.
+  const feeds = context.packager.config.publish;
+  const feed = Array.isArray(feeds) ? feeds[0] : feeds;
+  if (feed?.provider !== 'generic' || typeof feed.url !== 'string') {
+    throw new Error('The Windows portable build requires the generic release feed.');
+  }
+  const updateConfig = { provider: 'generic', url: feed.url, updaterCacheDirName: 'xwx-deck-updater' };
+  const publisherName = context.packager.config.win?.publisherName;
+  if (publisherName) updateConfig.publisherName = publisherName;
+  await fs.writeFile(path.join(context.appOutDir, 'resources', 'app-update.yml'),
+    require('yaml').stringify(updateConfig), 'utf8');
+  console.log('[after-pack] wrote portable updater configuration');
+
   for (const fileName of UNUSED_WINDOWS_RUNTIME_FILES) {
     const filePath = path.join(context.appOutDir, fileName);
     await fs.rm(filePath, { force: true });
