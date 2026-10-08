@@ -27,6 +27,13 @@ XwX Deck 是一个独立的本地 Claude / ChatGPT 请求追踪与模型网关�
 
 从 [GitHub Releases](https://github.com/Damue01/XwX_Deck/releases) 下载对应系统的安装包，并核对 SHA-256。macOS Apple Silicon 使用 arm64 DMG，Windows 使用 EXE。完整说明见 [下载与安装](docs/download.md) 和 [快速开始](docs/getting-started.md)。
 
+| 系统 | 最新版下载 | 安装与后续更新 |
+| --- | --- | --- |
+| Windows x64 | [下载 EXE](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64.exe) | 放在可写目录后双击运行；支持应用内自动替换和重启。 |
+| Mac Apple Silicon（M 系列） | [下载 DMG](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-mac-arm64.dmg) | 拖入“应用程序”；应用内下载并校验更新后，手动拖拽替换。 |
+
+当前没有 Intel Mac、Windows ARM64 或 Linux 安装包。Mac 安装包没有 Apple Developer ID 签名和公证，首次打开请参照 [安装说明](docs/macos-first-run.md)。[版本记录与文件校验](https://github.com/Damue01/XwX_Deck/releases/latest) 集中在 Release 页面。
+
 新安装没有 API 连接。进入「设置 → 模型配置」，可以查看 ChatGPT / Claude 的下载入口，或选择七个官方模型服务预设。客户端和官方模型服务图标分别可折叠、默认收起。服务预设栏支持左右滚动；右上角固定的「自定义」按钮可直接添加其他连接。预设只填入名称、API 地址与接口类型，密钥需要自己填写，保存前不会创建连接。
 
 在模型页为 ChatGPT 和 Claude 分别选择服务和模型。每个连接独立记住选择，目录离线不会撤销已保存的配置。需要协议转换的模型会显示「需 Trace」；运行中的客户端可能缓存旧连接，切换后未生效时需完整退出并重新打开客户端。
