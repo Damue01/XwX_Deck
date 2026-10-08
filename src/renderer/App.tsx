@@ -95,8 +95,18 @@ function Shell(): React.ReactElement {
   }, [bridge.booted, runtimeError, recoveryNotice]);
 
   const notifiedConnectionNotice = React.useRef('');
+  const connectionTraceState = React.useRef<boolean | undefined>(undefined);
   React.useEffect(() => {
     if (!bridge.booted) return;
+    // The stop action owns its combined result notice, including model
+    // dependencies. Runtime broadcasts can arrive before or after that result.
+    if (bridge.runtime?.traceTransition === 'stopping') {
+      connectionTraceState.current = true;
+      return;
+    }
+    if (bridge.runtime?.traceTransition === 'starting') return;
+    const stopped = connectionTraceState.current === true && bridge.runtime?.tracingEnabled === false;
+    connectionTraceState.current = bridge.runtime?.tracingEnabled;
     const id = 'runtime-connection-notice';
     const signature = connectionNotice
       ? `${connectionNotice.message}\n${connectionNotice.description ?? ''}`
@@ -104,9 +114,10 @@ function Shell(): React.ReactElement {
     const stateSignature = `${signature}\n${runtimeError ? 'suppressed' : 'visible'}`;
     if (stateSignature === notifiedConnectionNotice.current) return;
     notifiedConnectionNotice.current = stateSignature;
+    if (stopped) return;
     if (connectionNotice && !runtimeError) showLifecycleNotice(connectionNotice, id);
     else closeToast(id);
-  }, [bridge.booted, connectionNotice, runtimeError]);
+  }, [bridge.booted, bridge.runtime?.tracingEnabled, bridge.runtime?.traceTransition, connectionNotice, runtimeError]);
 
   React.useEffect(() => {
     if (!bridge.booted) return;

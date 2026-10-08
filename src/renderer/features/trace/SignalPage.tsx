@@ -210,7 +210,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
           description: next.claudeDesktopRestart === 'local' ? claudeDesktopRestartNote('local') : TRACE_RESTART_DESCRIPTION
         }, TRACE_WAITING_TOAST_ID);
       } else {
-        showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart));
+        showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart, next.connectionNotice));
       }
     } catch (e) {
       void bridge.api.getState().then(runtime => bridge.patch({ runtime })).catch(() => undefined);
@@ -232,7 +232,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
           bridge.patch({ runtime: next });
           showLifecycleNotice(next.lastError
             ? lifecycleFailure(next.lastError, '恢复客户端配置')
-            : traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart));
+            : traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart, next.connectionNotice));
         } catch (forceError) {
           showLifecycleNotice(lifecycleFailure(forceError, '强制停止 Trace'));
         }

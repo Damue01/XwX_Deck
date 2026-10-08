@@ -1406,7 +1406,7 @@ async function toggleTracingFromTray(enabled: boolean): Promise<void> {
           ? next.claudeDesktopRestart === 'local'
             ? { message: 'Trace 已开启', description: claudeDesktopRestartNote('local'), type: 'info' }
             : { message: 'Trace 已开启', description: '先发送一条新消息；若仍无记录，客户端可能未读取新连接，请完全退出并重新打开相应客户端。', type: 'success' }
-          : traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart));
+          : traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart, next.connectionNotice));
     }
   } catch (err) {
     log.warn(`[xwx-deck] tray Trace toggle failed: ${errorMessage(err)}`);

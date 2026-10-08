@@ -38,7 +38,7 @@ function Toasts({
     <Toast.Portal data-slot="toast-portal" {...portalProps}>
       <Toast.Viewport
         className={cn(
-          "fixed z-60 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          "fixed z-(--z-toast) mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
           "data-[position*=top]:top-(--toast-inset) data-[position*=bottom]:bottom-(--toast-inset)",
           "data-[position*=left]:left-(--toast-inset) data-[position*=right]:right-(--toast-inset)",
           "data-[position*=center]:left-1/2 data-[position*=center]:-translate-x-1/2",

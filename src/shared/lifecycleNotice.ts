@@ -128,18 +128,25 @@ export function claudeDesktopRestartNote(hint: ClaudeDesktopRestartHint | undefi
     : hint === 'local' ? '重启 Claude Desktop 后才会记录它的对话。' : '';
 }
 
-export function traceStoppedNotice(forwarding = false, claudeDesktopRestart?: ClaudeDesktopRestartHint): LifecycleNotice {
+export function traceStoppedNotice(
+  forwarding = false,
+  claudeDesktopRestart?: ClaudeDesktopRestartHint,
+  connectionNotice?: LifecycleNotice
+): LifecycleNotice {
   const restart = !forwarding && claudeDesktopRestart === 'direct';
+  const requiresTrace = !forwarding && connectionNotice?.action === 'start-trace';
+  const description = [
+    requiresTrace ? '当前模型需重新开启 Trace 才能使用。' : '',
+    restart ? claudeDesktopRestartNote('direct') : ''
+  ].filter(Boolean).join('');
   return {
     message: forwarding ? 'Trace 关闭未完成' : 'Trace 已关闭',
     description: forwarding
       ? '后台仍在运行。请检查恢复结果后重试关闭。'
-      : restart
-        ? `Trace 记录已停止。${claudeDesktopRestartNote('direct')}`
-        : 'Trace 记录已停止，客户端配置已恢复直连或继续使用无记录模型路由。已保存的记录仍可查看。',
-    type: forwarding ? 'error' : restart ? 'info' : 'success',
+      : description || undefined,
+    type: forwarding ? 'error' : requiresTrace || restart ? 'info' : 'success',
     persistent: forwarding,
-    action: forwarding ? 'stop-trace' : undefined
+    action: forwarding ? 'stop-trace' : requiresTrace ? 'start-trace' : undefined
   };
 }
 

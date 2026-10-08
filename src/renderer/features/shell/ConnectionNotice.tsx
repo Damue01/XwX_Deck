@@ -56,7 +56,7 @@ export function ConnectionNotice(): React.ReactElement | null {
             ? { message: 'Trace 已开启', description: claudeDesktopRestartNote('local'), type: 'info' }
             : { message: 'Trace 已开启', description: '没有新记录时，重开客户端。', type: 'success' });
         } else {
-          showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart));
+          showLifecycleNotice(traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart, next.connectionNotice));
         }
       } catch (error) {
         void api.getState().then(state => patch({ runtime: state })).catch(() => undefined);
