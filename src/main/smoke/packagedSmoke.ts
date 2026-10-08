@@ -176,8 +176,13 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
           const registry = await api.getProviders();
           const expectedId = label === '官方订阅' ? null
             : registry.connections.find(provider => provider.displayName === label)?.id;
+          // Provider intent is saved before its route is applied. Wait for the
+          // applied connection too, rather than racing the next assertion.
+          const [services, config] = await Promise.all([api.getModelServices(), api.getCodexConfig()]);
           return codexServicePicker.value === label && !codexServicePicker.disabled
-            && registry.active.codex === expectedId;
+            && registry.active.codex === expectedId
+            && services.codex === (expectedId !== null)
+            && config.mode === (expectedId === null ? 'official' : 'compatible');
         },
         'ChatGPT service connection did not switch to ' + label
       );
