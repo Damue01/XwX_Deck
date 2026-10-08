@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { XwXDeckController } from '../src/main/app/xwxDeckController';
 import { XwXDeckSettingsStore } from '../src/main/app/settings';
+import { localFixtureHost } from './local-fixture-host';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'xwx-background-controller-'));
 const userData = path.join(root, 'user-data');
@@ -105,8 +106,8 @@ try {
     }));
   });
   const upstreamPort = await listen(upstream, '0.0.0.0');
-  const upstreamBaseUrl = `http://127.0.0.1.nip.io:${upstreamPort}/compatible/v1`;
-  const officialBaseUrl = `http://127.0.0.1.nip.io:${upstreamPort}/official/v1`;
+  const upstreamBaseUrl = `http://${localFixtureHost()}:${upstreamPort}/compatible/v1`;
+  const officialBaseUrl = `http://${localFixtureHost()}:${upstreamPort}/official/v1`;
   const direct = await postJson(`${upstreamBaseUrl}/responses`, { model: 'direct-preflight', input: [] });
   assert.equal(direct.status, 200, `isolated 兼容服务 preflight failed: ${JSON.stringify(direct.body)}`);
   // Keep the rollback fixture fully local as well. Route preflight now runs

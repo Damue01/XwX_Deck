@@ -101,7 +101,10 @@ const EXIT_GUARDIAN_START_TIMEOUT_MS = 3_000;
 
 const PORTABLE_UPDATE_SMOKE = process.env.XWX_DECK_PORTABLE_UPDATE_SMOKE === '1';
 const RESET_SMOKE = process.env.XWX_DECK_RESET_SMOKE === '1';
-const STARTUP_SMOKE = PORTABLE_UPDATE_SMOKE || RESET_SMOKE;
+const PACKAGED_UPDATE_SMOKE = process.env.XWX_DECK_PACKAGED_UPDATE_SMOKE === '1'
+  && Boolean(process.env.XWX_DECK_SMOKE_USER_DATA && process.env.XWX_DECK_CLIENT_HOME
+    && process.env.XWX_DECK_PACKAGED_UPDATE_RESULT);
+const STARTUP_SMOKE = PORTABLE_UPDATE_SMOKE || RESET_SMOKE || PACKAGED_UPDATE_SMOKE;
 // Lifecycle acceptance observes the normal visible/hidden launch decision.
 // The other startup fixtures deliberately suppress their windows.
 const PORTABLE_LIFECYCLE_SMOKE = PORTABLE_UPDATE_SMOKE && process.env.XWX_DECK_PORTABLE_LIFECYCLE_SMOKE === '1';
@@ -357,6 +360,10 @@ function startMainProcess(): void {
         runDetached('clean installed Mac DMG', () => cleanupMacInstallerAfterLaunch(userDataDir));
       }
       if (STARTUP_SMOKE) {
+        if (PACKAGED_UPDATE_SMOKE && PORTABLE_UPDATE_RESULT?.kind !== 'complete') {
+          await runPackagedUpdateAcceptance();
+          return;
+        }
         await finishRestartSmoke();
         return;
       }
@@ -1234,6 +1241,39 @@ async function installUpdateUnattended(): Promise<NightlyInstallOutcome> {
 
 async function restartAndInstall() {
   return installUpdate();
+}
+
+/** Real packaged acceptance: uses the renderer IPC and the production install handler. */
+async function runPackagedUpdateAcceptance(): Promise<void> {
+  const win = managerWindow?.current();
+  const resultPath = process.env.XWX_DECK_PACKAGED_UPDATE_RESULT!;
+  try {
+    if (!win || !updater) throw new Error('Update acceptance manager is unavailable.');
+    const result = await win.webContents.executeJavaScript(`(async () => {
+      const deadline = Date.now() + 15000;
+      while (!document.querySelector('button') || !window.xwxDeck) {
+        if (Date.now() > deadline) throw new Error('Update acceptance UI did not render.');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      const checked = await window.xwxDeck.checkForUpdates();
+      if (checked.status !== 'available') throw new Error('Check failed: ' + JSON.stringify(checked));
+      const downloaded = await window.xwxDeck.downloadUpdate();
+      if (downloaded.status !== 'ready') throw new Error('Download failed: ' + JSON.stringify(downloaded));
+      return { checked, downloaded, windowRendered: true };
+    })()`);
+    await updater.preflightInstall();
+    await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
+    await fs.promises.writeFile(`${resultPath}.png`, (await win.webContents.capturePage()).toPNG());
+    await fs.promises.writeFile(resultPath, JSON.stringify({ ...result,
+      actualVersion: app.getVersion(), pid: process.pid, preflightPassed: true
+    }, null, 2));
+    await restartAndInstall();
+  } catch (error) {
+    await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
+    await fs.promises.writeFile(resultPath, JSON.stringify({ error: errorMessage(error) }));
+    await controller?.forceExit();
+    app.exit(1);
+  }
 }
 
 async function installUpdate(options: {

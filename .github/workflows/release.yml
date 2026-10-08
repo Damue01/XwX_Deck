@@ -75,6 +75,23 @@ jobs:
       - name: Build Windows portable package
         run: npm run build:win
 
+      - name: Verify packaged Windows UI and IPC
+        run: npm run test:packaged
+
+      - name: Build isolated older version
+        run: node tools/build-update-baseline.mjs
+
+      - name: Verify actual download, replacement and restart
+        run: node tools/run-packaged-update-smoke.mjs
+
+      - name: Upload Windows verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-verification
+          path: test-results/
+          if-no-files-found: warn
+
       - name: Prepare Windows assets
         shell: pwsh
         run: |
@@ -110,6 +127,23 @@ jobs:
 
       - name: Build unsigned macOS arm64 package
         run: npm run build:mac:arm64
+
+      - name: Verify packaged macOS UI and IPC
+        run: npm run test:packaged
+
+      - name: Build isolated older version
+        run: node tools/build-update-baseline.mjs
+
+      - name: Verify actual DMG update and installed app startup
+        run: node tools/run-packaged-update-smoke.mjs
+
+      - name: Upload macOS verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-verification
+          path: test-results/
+          if-no-files-found: warn
 
       - name: Prepare macOS assets
         shell: bash
@@ -151,6 +185,13 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+          pattern: '*-x64'
+
+      - name: Download macOS package
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-arm64
+          path: release-assets
 
       - name: Generate update manifests and checksums
         env:

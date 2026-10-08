@@ -6,6 +6,7 @@ import { once } from 'node:events';
 import { XwXDeckSettingsStore } from '../src/main/app/settings';
 import { XwXDeckController } from '../src/main/app/xwxDeckController';
 import { readCodexOfficialModelCatalog } from '../src/main/app/codexOfficialModelCatalog';
+import { localFixtureHost } from './local-fixture-host';
 
 export async function testProviderRegistry(root: string): Promise<void> {
   const base = path.join(root, 'provider-registry');
@@ -26,9 +27,9 @@ export async function testProviderRegistry(root: string): Promise<void> {
     if (req.url?.endsWith('/chat/completions')) { res.end(JSON.stringify({ id: 'chat-provider-test', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] })); return; }
     res.end(JSON.stringify({ id: 'resp-provider', status: 'completed', model: body.model, output: [{ id: 'msg-provider', type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }] }));
   });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  server.listen(0, '0.0.0.0'); await once(server, 'listening');
   const port = (server.address() as { port: number }).port;
-  const upstream = `http://127.0.0.1.nip.io:${port}`;
+  const upstream = `http://${localFixtureHost()}:${port}`;
   let controller: XwXDeckController | undefined;
   try {
     process.env.CODEX_HOME = codexHome; process.env.CLAUDE_CONFIG_DIR = claudeHome; process.env.XWX_DECK_CLIENT_HOME = base;

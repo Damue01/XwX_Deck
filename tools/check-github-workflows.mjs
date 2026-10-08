@@ -40,6 +40,9 @@ check(release.includes('--draft'), 'release workflow must create a draft release
 check(release.includes('attest-build-provenance'), 'release workflow must attest build provenance');
 check(release.includes('macos-15'), 'release workflow must build on a native macOS arm64 runner');
 check(release.includes('windows-latest'), 'release workflow must build on a native Windows runner');
+check((release.match(/run-packaged-update-smoke\.mjs/g) ?? []).length === 2,
+  'release must validate actual packaged updates on Windows and Mac');
+check(release.includes("pattern: '*-x64'"), 'release assembly must exclude verification evidence from download assets');
 
 const pages = await readFile(path.join(workflowRoot, 'pages.yml'), 'utf8');
 check(pages.includes('deploy-pages'), 'Pages workflow must deploy with actions/deploy-pages');

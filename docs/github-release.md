@@ -39,6 +39,7 @@ Release workflow 会：
 
 1. 在原生 Windows x64 Runner 构建 EXE。
 2. 在原生 macOS arm64 Runner 构建 DMG。
+   两个平台都运行真实安装包的界面与 IPC 检查，并使用仅供测试的 0.9.9 安装包实际升级到待发布版本。Windows 验证原 EXE 替换和新版重启；Mac 验证 DMG 下载、校验、打开以及复制安装后的新版启动。失败会阻止生成草稿。
 3. 生成 `latest.yml`、`release.json`、SHA-256 和 `checksums.txt`。
 4. 生成 GitHub Artifact Attestation。
 5. 创建 Draft Release 并上传全部文件。
@@ -67,4 +68,6 @@ Windows 清单的 EXE URL 绑定具体版本标签，下载与安装前复查 `r
 
 Windows 保持运行时，会在本地时间 02:00–05:00 静默下载，空闲至少 15 分钟且安全退出检查通过才自动安装；用户取消的版本跨重启不再自动安装。macOS 不执行夜间安装，用户确认后打开 DMG、安全退出，再手动替换。
 
-2026-10-05 回读公开仓库时 Release 列表为空。当前更新流程通过本地模拟服务验证；合并源码或创建草稿都不会让已安装客户端收到更新。本轮未创建标签或发布制品。
+发布正式 Release 后运行 **Verify published update** workflow，输入最新版本标签。该流程在 Windows 和 Mac 原生 Runner 上匿名下载公开制品，再从真实旧版安装包使用默认 GitHub 更新源升级，保存版本、文件哈希、配置保留检查及界面截图。测试旧版不会上传到 Release。
+
+验证结果在 Actions 的 `published-update-Windows` 和 `published-update-macOS` artifacts 中；以 `receipt.json` 成功记录为准，不能把源码测试或本地 HTTP 测试当作公开源已验证。新版本应提升版本号并新建标签，禁止覆盖已发布安装包。
