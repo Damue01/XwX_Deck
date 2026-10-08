@@ -117,7 +117,9 @@ try {
     assert.equal(after.kind, 'complete');
     assert.equal(after.actualVersion, version);
     assert.equal(await hash(executable, 'sha256', 'hex'), expectedHash);
-    assert.equal(await hash(`${executable}.previous`, 'sha256', 'hex'), oldHash);
+    assert.notEqual(expectedHash, oldHash, 'The original executable must actually be replaced.');
+    assert.ok(after.cleanupPaths.includes(`${executable}.previous`),
+      'The production worker must report its old-version backup for cleanup after verified startup.');
   }
   assert.equal(after.windowReady, true);
   assert.equal(after.lastError, undefined);
