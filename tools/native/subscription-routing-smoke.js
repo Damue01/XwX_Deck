@@ -24,9 +24,8 @@
   check('fixed account uses inline radios rather than a nested selector',document.querySelector('[aria-label="固定使用 Fixture B"]').checked&&document.querySelectorAll('.configuration-dialog').length===1 && !document.querySelector('[role=alertdialog]'));
   await wait(()=>!document.querySelector('.subscription-strategy').disabled,'fixed save complete');await select('用完再换','exhaust');
   check('connected accounts join by default without checkboxes or redundant login actions',!document.querySelector('.subscription-account-row input[type=checkbox]')&&![...document.querySelectorAll('.subscription-account-row button')].some(button=>['登录','重新登录'].includes(button.textContent.trim())));
-  await wait(()=>!document.querySelector('[aria-label="Fixture A 的更多操作"]').disabled,'account save settled');
-  document.querySelector('[aria-label="Fixture A 的更多操作"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
-  document.querySelector('[aria-label="Fixture A 的更多操作"]').click();
+  await wait(()=>!document.querySelector('.subscription-account-row [aria-label="Fixture A 的更多操作"]').disabled,'account save settled');
+  document.querySelector('.subscription-account-row [aria-label="Fixture A 的更多操作"]').click();
   await wait(()=>[...document.querySelectorAll('[role=menuitem]')].some(item=>item.textContent.trim()==='暂停使用'),'account actions');
   [...document.querySelectorAll('[role=menuitem]')].find(item=>item.textContent.trim()==='暂停使用').click();
   await wait(async()=> (await window.xwxDeck.getSubscriptionAccounts()).routing.chatgpt.excludedAccountIds.includes('a'),'pause saved');
