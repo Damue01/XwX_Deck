@@ -282,6 +282,21 @@ impl ClaudeAccounts {
                 }
         })
     }
+    async fn stop_login(child: &mut tokio::process::Child) {
+        // npm installs can launch a .cmd wrapper on Windows. Killing only that
+        // wrapper leaves the owned login process running and its home locked.
+        #[cfg(windows)]
+        if let Some(id) = child.id() {
+            let _ = Command::new("taskkill")
+                .args(["/PID", &id.to_string(), "/T", "/F"])
+                .creation_flags(0x08000000)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await;
+        }
+        let _ = child.kill().await;
+    }
     pub async fn begin(&self, id: &str) -> Result<()> {
         self.cancel().await;
         let binary = self
@@ -368,7 +383,7 @@ impl ClaudeAccounts {
             tokio::pin!(deadline);
             let mut tick = tokio::time::interval(Duration::from_millis(100));
             let result: Result<()> = loop {
-                tokio::select! {_=cancelled.changed()=>{let _=child.kill().await;break Err("登录已取消".into());},_=&mut deadline=>{let _=child.kill().await;break Err("Claude 登录已超时，请重试".into());},_=tick.tick()=>{if let Ok(Some(raw))=read(&url_file){if engine.valid_url(raw.trim()){let mut flow=engine.flow.lock().await;if let Some(flow)=flow.as_mut().filter(|f|f.id==flow_id&&f.status=="waiting"){flow.url=raw.trim().into();if let Some(tx)=url_tx.take(){let _=tx.send(());}}}}},line=lines_rx.recv(),if !lines_rx.is_closed()=>{if let Some(line)=line{for raw in line.split_whitespace().filter(|v|engine.valid_url(v)){let mut flow=engine.flow.lock().await;if let Some(flow)=flow.as_mut().filter(|f|f.id==flow_id&&f.status=="waiting"){flow.url=raw.into();if let Some(tx)=url_tx.take(){let _=tx.send(());}}}}},exit=child.wait()=>{break if exit.is_ok_and(|s|s.success()){Ok(())}else{Err("Claude Code 官方登录未完成，请重试".into())};}}
+                tokio::select! {_=cancelled.changed()=>{Self::stop_login(&mut child).await;break Err("登录已取消".into());},_=&mut deadline=>{Self::stop_login(&mut child).await;break Err("Claude 登录已超时，请重试".into());},_=tick.tick()=>{if let Ok(Some(raw))=read(&url_file){if engine.valid_url(raw.trim()){let mut flow=engine.flow.lock().await;if let Some(flow)=flow.as_mut().filter(|f|f.id==flow_id&&f.status=="waiting"){flow.url=raw.trim().into();if let Some(tx)=url_tx.take(){let _=tx.send(());}}}}},line=lines_rx.recv(),if !lines_rx.is_closed()=>{if let Some(line)=line{for raw in line.split_whitespace().filter(|v|engine.valid_url(v)){let mut flow=engine.flow.lock().await;if let Some(flow)=flow.as_mut().filter(|f|f.id==flow_id&&f.status=="waiting"){flow.url=raw.into();if let Some(tx)=url_tx.take(){let _=tx.send(());}}}}},exit=child.wait()=>{break if exit.is_ok_and(|s|s.success()){Ok(())}else{Err("Claude Code 官方登录未完成，请重试".into())};}}
             };
             let outcome: Result<Account> = async {
                 result?;

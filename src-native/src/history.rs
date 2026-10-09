@@ -1,6 +1,6 @@
 use super::*;
 use rusqlite::{params, Connection, OpenFlags, TransactionBehavior};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 fn paths(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     if !root.exists() {
         return Ok(());
@@ -49,9 +49,17 @@ fn rewrite(file: &Path, expected: &str, new: &str) -> Result<()> {
     source
         .try_lock()
         .map_err(|_| "历史文件正在使用".to_string())?;
-    if first(file)?.0 != expected {
+    // Windows range locks exclude reads from other handles, including our own
+    // second open. Validate through the locked handle before copying its body.
+    let mut current_line = String::new();
+    (&mut BufReader::new(&mut source))
+        .take(1024 * 1024)
+        .read_line(&mut current_line)
+        .map_err(err)?;
+    if current_line != expected {
         return Err("历史元数据已被外部修改".into());
     }
+    source.rewind().map_err(err)?;
     let temp = file.with_extension(format!("rewrite-{}.tmp", millis()));
     let result = (|| {
         let mut target = fs::OpenOptions::new()
