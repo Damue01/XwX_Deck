@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 
 const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-rust-pilot-native-'));
 const installations=join(root,'installations');
-const binary = process.env.XWX_NATIVE_TEST_BINARY ?? resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwX Deck Rust Pilot.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
+const binary = process.env.XWX_NATIVE_TEST_BINARY ? resolve(process.env.XWX_NATIVE_TEST_BINARY) : resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwX Deck Rust Pilot.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
 const requests = [];
 const upstream = createServer(async (req, res) => {
   if (req.url === '/v1/models') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'pilot-model' }] })); return; }
