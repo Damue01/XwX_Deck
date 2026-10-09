@@ -3396,7 +3396,7 @@ async function testCodexConversationPortabilityGateway(): Promise<void> {
     const waitForRequestText = async (text: string): Promise<TapTraceRecord | undefined> => {
       for (let attempt = 0; attempt < 40; attempt += 1) {
         const latest = await store.latestTrace();
-        if (JSON.stringify(latest?.request.body).includes(text)) return latest;
+        if (JSON.stringify(latest?.request.body)?.includes(text)) return latest;
         await new Promise(resolve => setTimeout(resolve, 25));
       }
       return store.latestTrace();
