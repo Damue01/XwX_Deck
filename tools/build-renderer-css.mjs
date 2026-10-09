@@ -39,7 +39,7 @@ for (const m of matches) {
 }
 
 if (process.argv.includes("--minify")) {
-  outCss = (await transform(outCss, { loader: "css", minify: true, target: "chrome120" })).code;
+  outCss = (await transform(outCss, { loader: "css", minify: true, target: ["safari15", "chrome120"] })).code;
 }
 
 await mkdir(dirname(output), { recursive: true });

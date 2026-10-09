@@ -75,6 +75,15 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test-results/native-target
+          key: ${{ runner.os }}-native-rust-${{ hashFiles('src-native/Cargo.lock') }}
+
       - name: Build Windows portable package
         run: npm run build:win
 
@@ -130,6 +139,15 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test-results/native-target
+          key: ${{ runner.os }}-native-rust-${{ hashFiles('src-native/Cargo.lock') }}
 
       - name: Build unsigned macOS arm64 package
         run: npm run build:mac:arm64

@@ -67,6 +67,7 @@
     check('native theme authoritative', runtime.theme === 'night');
     check('Trace default 1 GB and automatic cleanup', runtime.traceWarningGB === 1 && runtime.traceAutoCleanup);
     document.querySelector('[aria-controls="trace-settings-content"]').click(); await delay(150);
+    await wait(() => getComputedStyle(document.querySelector('.trace-storage-limit')).textDecorationStyle === 'dashed', 'Trace capacity style ready');
     check('Trace capacity has an editable dashed underline', getComputedStyle(document.querySelector('.trace-storage-limit')).textDecorationStyle === 'dashed');
     document.querySelector('.trace-storage-limit').click(); await delay(100);
     check('clicking capacity opens the focused GB editor', document.activeElement?.id === 'traceWarningGB');

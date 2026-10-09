@@ -71,6 +71,15 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test-results/native-target
+          key: ${{ runner.os }}-native-rust-${{ hashFiles('src-native/Cargo.lock') }}
+
       - name: Compile native candidate and run isolated backend tests
         run: |
           npm run build:rust:pilot

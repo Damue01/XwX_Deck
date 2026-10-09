@@ -563,6 +563,25 @@ fn read_cc(path: &Path) -> Result<Vec<ImportItem>> {
     }
     Ok(out)
 }
+// Compare physical paths on both sides. Windows canonical paths use the
+// extended \?\ prefix, so comparing one against an ordinary root rejects valid files.
+fn within_isolated_root(path: &Path, root: &Path) -> bool {
+    if !path.starts_with(root)
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    if !path.exists() {
+        return true;
+    }
+    match (fs::canonicalize(path), fs::canonicalize(root)) {
+        (Ok(path), Ok(root)) => path.starts_with(root),
+        _ => false,
+    }
+}
+
 fn read_client(path: &Path, source: &str, isolated_root: Option<&Path>) -> Result<Vec<ImportItem>> {
     if source == "claude" {
         let settings = json_file(path)?;
@@ -616,11 +635,7 @@ fn read_client(path: &Path, source: &str, isolated_root: Option<&Path>) -> Resul
     {
         let auth_path = path.with_file_name("auth.json");
         if auth_path.exists() {
-            if isolated_root.is_some_and(|root| {
-                fs::canonicalize(&auth_path)
-                    .map(|p| !p.starts_with(root))
-                    .unwrap_or(true)
-            }) {
+            if isolated_root.is_some_and(|root| !within_isolated_root(&auth_path, root)) {
                 return Err("隔离验收只能读取隔离目录中的认证文件".into());
             }
             let auth = json_file(&auth_path)?;
@@ -694,13 +709,9 @@ impl Pilot {
                 return Err("无效导入来源".into());
             }
             if self.isolated
-                && specs.iter().any(|s| {
-                    !Path::new(&s.path).starts_with(&self.root)
-                        || Path::new(&s.path).exists()
-                            && fs::canonicalize(&s.path)
-                                .map(|p| !p.starts_with(&self.root))
-                                .unwrap_or(true)
-                })
+                && specs
+                    .iter()
+                    .any(|s| !within_isolated_root(Path::new(&s.path), &self.root))
             {
                 return Err("隔离验收只能读取隔离目录中的来源文件".into());
             }
@@ -774,21 +785,12 @@ impl Pilot {
                 items: vec![],
             };
             if found {
-                if self.isolated
-                    && (!path.starts_with(&self.root)
-                        || fs::canonicalize(path)
-                            .map(|p| !p.starts_with(&self.root))
-                            .unwrap_or(true))
-                {
+                if self.isolated && !within_isolated_root(path, &self.root) {
                     return Err("隔离验收只能读取隔离目录中的来源文件".into());
                 }
                 if self.isolated && spec.source == "magpie" {
                     let settings = path.with_file_name("settings.json");
-                    if settings.exists()
-                        && fs::canonicalize(settings)
-                            .map(|p| !p.starts_with(&self.root))
-                            .unwrap_or(true)
-                    {
+                    if settings.exists() && !within_isolated_root(&settings, &self.root) {
                         return Err("隔离验收只能读取隔离目录中的来源文件".into());
                     }
                 }
