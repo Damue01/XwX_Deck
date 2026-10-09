@@ -11141,6 +11141,29 @@ async function testViewerMessageContract(): Promise<void> {
   assert.equal(compactMessages[0].content[0].text, '前情提要：已完成 A、B', 'XwX compaction summaries decode back to UTF-8 text');
   assert.match(compactMessages[1].content[0].text, /无法解码/, 'opaque upstream compaction says so instead of showing blank');
   assert.match(compactMessages[2].content[0].text, /压缩触发点/, 'compaction_trigger is labelled');
+  assert.equal(compactMessages[0].content[0].compactionSource, 'gateway-summary');
+  assert.equal(compactMessages[1].content[0].compactionSource, 'upstream-opaque');
+  assert.equal(compactMessages[1].content[0].rawBlock.encrypted_content, 'OPAQUE_UPSTREAM_BLOB');
+  const originalScalar = { request: { body: { input: 'only the new turn', previous_response_id: 'earlier-turn' } }, upstream: { requestBody: { input: [{ role: 'user', content: 'restored old history' }, { role: 'user', content: 'only the new turn' }] } } };
+  const beforeScalar = JSON.stringify(originalScalar);
+  const scalarMessages = viewerApi.getMessages(originalScalar);
+  assert.equal(scalarMessages.length, 1, 'Do not splice restored upstream history into original client input');
+  assert.equal(scalarMessages[0].content[0].text, 'only the new turn');
+  assert.equal(JSON.stringify(originalScalar), beforeScalar, 'Reading a request must not mutate stored evidence');
+  const geminiOriginal = { request: { body: { contents: [{ role: 'user', parts: [{ inlineData: { mimeType: 'image/png', data: 'fixture-image' } }, { text: 'image question' }, { customPart: { value: 'must stay visible' } }] }] } } };
+  const beforeGemini = JSON.stringify(geminiOriginal);
+  const geminiBlocks = viewerApi.getMessages(geminiOriginal)[0].content;
+  assert.equal(geminiBlocks.length, 3, 'Gemini images and unknown parts must not disappear');
+  assert.equal(geminiBlocks[0].source.data, 'fixture-image');
+  assert.equal(geminiBlocks[0].rawBlock.inlineData.mimeType, 'image/png');
+  assert.equal(geminiBlocks[2].rawBlock.customPart.value, 'must stay visible');
+  assert.equal(JSON.stringify(geminiOriginal), beforeGemini);
+  const curlContext: Record<string, unknown> = { shellQuote: (value: unknown) => JSON.stringify(value), j: JSON.stringify, L: (zh: string) => zh };
+  vm.runInNewContext(extractViewerFunction(viewerScript, 'traceToCurl')+';this.traceToCurl=traceToCurl;', curlContext);
+  const curl = (curlContext.traceToCurl as (trace: unknown) => string)({ request: { method: 'POST', headers: {}, body: { contents: ['original-client-only'] } }, upstream: { url: 'https://fixture.invalid/v1/responses', requestBody: { input: ['actual-upstream-only'] } } });
+  assert.match(curl, /actual-upstream-only/);
+  assert.ok(!curl.includes('original-client-only'), 'cURL must not combine an upstream endpoint with the original client protocol');
+  assert.match((curlContext.traceToCurl as (trace: unknown) => string)({ request: { method: 'WS', body: { type: 'response.create' } } }), /不能作为 HTTP JSON/);
   completed.push('Trace role labels and lossless message fallbacks');
 }
 

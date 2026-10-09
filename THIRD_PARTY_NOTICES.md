@@ -52,3 +52,29 @@ Except for the VS Code mark below, the bundled provider and catalog SVG marks in
 The native Cursor Connect/protobuf adapter was informed by the MIT-licensed Cursor provider at https://github.com/magpie-community/plugins/tree/main/packages/cursor. Copyright (c) 2026 magpie-community contributors. The complete notice is retained in `docs/licenses/magpie-community-MIT.txt`.
 
 The VS Code mark is the unmodified blue stable SVG from [Microsoft’s official brand assets](https://code.visualstudio.com/brand). Visual Studio Code, VS Code, and the icon are trademarks of Microsoft Corporation. All rights reserved.
+
+## Additional client logos
+
+Pi, oh-my-pi, Crush, Qoder, Factory, MiMo Code, WorkBuddy, CodeBuddy, Hermes, Antigravity, OpenChamber and T3 Code assets are bundled from [yetone/magpie](https://github.com/yetone/magpie/tree/main/internal/gui/assets/icons). Brand names and marks belong to their respective owners.
+
+MIT License
+
+Copyright (c) 2026 yetone
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

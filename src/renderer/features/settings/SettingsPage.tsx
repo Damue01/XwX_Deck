@@ -2,7 +2,7 @@ import { changeLanguage, useLanguage, type Language, t } from '@/lib/i18n';
 import { ProvidersPanel } from './ProvidersPanel';
 import { DEFAULT_TRACE_LIMIT_GB, DEFAULT_TRACE_AUTO_CLEANUP } from '../../../shared/traceDefaults';
 import * as React from 'react';
-import { Trash2, Pencil, ChevronDown, ArrowDownToLine, Check, LoaderCircle, Sun, Moon, Plus } from 'lucide-react';
+import { Trash2, Pencil, ChevronRight, ArrowDownToLine, Check, LoaderCircle, Sun, Moon, Plus } from 'lucide-react';
 import type { XwXDeckRuntimeState, XwXDeckUpdateState } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
 import { isDesktop } from '@/bridge/api';
@@ -16,6 +16,8 @@ import { Meter } from '@/components/ui/meter';
 import { Badge } from '@/components/ui/badge';
 import { RepairCenterSheet } from '@/features/settings/RepairCenterSheet';
 import { announceAvailableUpdate } from '@/features/shell/UpdateNotification';
+import { useRememberedExpansion } from '@/lib/useRememberedExpansion';
+import { LanguagePicker } from './LanguagePicker';
 
 interface Props {
   readonly active: boolean;
@@ -25,8 +27,10 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   const bridge = useBridge();
   const language = useLanguage();
   const [savingLanguage, setSavingLanguage] = React.useState(false);
+  const languageCommitPending = React.useRef(false);
   const selectLanguage = async (next: Language) => {
-    if (savingLanguage || next === language) return;
+    if (languageCommitPending.current || next === language) return;
+    languageCommitPending.current = true;
     setSavingLanguage(true);
     try {
       await changeLanguage(next, async value => {
@@ -35,20 +39,32 @@ export function SettingsPage({ active }: Props): React.ReactElement {
         bridge.patch({ runtime: updated });
       });
     } catch (error) { showErrorToast(t('语言未保存'), error); }
-    finally { setSavingLanguage(false); }
+    finally { languageCommitPending.current = false; setSavingLanguage(false); }
   };
   const [runtime, setRuntime] = React.useState<XwXDeckRuntimeState | null>(bridge.runtime);
   const [updateState, setUpdateState] = React.useState<XwXDeckUpdateState | null>(bridge.updateState);
   const [busyStartup, setBusyStartup] = React.useState(false);
+  const [savingAutomaticUpdates, setSavingAutomaticUpdates] = React.useState(false);
+  const [applicationOpen, setApplicationOpen] = useRememberedExpansion('application');
+  const saveAutomaticUpdates = async () => {
+    if (savingAutomaticUpdates || !bridge.api.setAutomaticUpdates) return;
+    setSavingAutomaticUpdates(true);
+    try {
+      const updated = await bridge.api.setAutomaticUpdates(!(runtime?.automaticUpdates ?? true));
+      setRuntime(updated);
+      bridge.patch({ runtime: updated });
+    } catch (error) { showErrorToast(t('自动更新未保存'), error); }
+    finally { setSavingAutomaticUpdates(false); }
+  };
   const [busyReset, setBusyReset] = React.useState(false);
   const [checkingUpdate, setCheckingUpdate] = React.useState(false);
-  const [traceOpen, setTraceOpen] = React.useState(false);
-  const [modelConfigOpen, setModelConfigOpen] = React.useState(false);
+  const [traceOpen, setTraceOpen] = useRememberedExpansion('trace');
+  const [modelConfigOpen, setModelConfigOpen] = useRememberedExpansion('models');
   const [limitDraft, setLimitDraft] = React.useState(String(DEFAULT_TRACE_LIMIT_GB));
   const [editingLimit, setEditingLimit] = React.useState(false);
   const [savingStorage, setSavingStorage] = React.useState(false);
   const limitCommitPending = React.useRef(false);
-  const openModelConfig = React.useCallback(() => setModelConfigOpen(true), []);
+  const openModelConfig = React.useCallback(() => setModelConfigOpen(true), [setModelConfigOpen]);
   const promptedUpdateRef = React.useRef<string>('');
   const persistTheme = React.useCallback(async (theme: 'day' | 'night') => {
     try { return await bridge.api.setTheme(theme); }
@@ -68,7 +84,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
     const showTraceSettings = () => setTraceOpen(true);
     window.addEventListener('xwxdeck:open-trace-settings', showTraceSettings);
     return () => window.removeEventListener('xwxdeck:open-trace-settings', showTraceSettings);
-  }, [active]);
+  }, [active, setTraceOpen]);
   React.useEffect(() => {
     if (!traceOpen && editingLimit) {
       setEditingLimit(false);
@@ -432,9 +448,9 @@ export function SettingsPage({ active }: Props): React.ReactElement {
         <div className="group">
           <div className="group-label provider-heading">
             <button type="button" className="trace-section-trigger" aria-expanded={modelConfigOpen}
-              aria-controls="model-config-content" onClick={() => setModelConfigOpen(open => !open)}>
+              aria-controls="model-config-content" onClick={() => setModelConfigOpen(!modelConfigOpen)}>
               <span className="eyebrow">{t("模型配置")}</span>
-              <ChevronDown size={15} className="trace-section-chevron" aria-hidden="true" />
+              <ChevronRight size={15} className="trace-section-chevron" aria-hidden="true" />
             </button>
             <button id="provider-add" type="button" className="provider-text-action" onClick={event => openConfiguration(event.currentTarget)}><Plus aria-hidden="true" />{t("添加配置")}</button>
           </div>
@@ -451,10 +467,10 @@ export function SettingsPage({ active }: Props): React.ReactElement {
               className="trace-section-trigger"
               aria-expanded={traceOpen}
               aria-controls="trace-settings-content"
-              onClick={() => setTraceOpen(open => !open)}
+              onClick={() => setTraceOpen(!traceOpen)}
             >
               <span className="eyebrow">Trace</span>
-              <ChevronDown size={15} className="trace-section-chevron" aria-hidden="true" />
+              <ChevronRight size={15} className="trace-section-chevron" aria-hidden="true" />
             </button>
             {needsManualCleanup && <Badge variant="secondary">{t("超出上限")}</Badge>}
           </div>
@@ -533,20 +549,15 @@ export function SettingsPage({ active }: Props): React.ReactElement {
 
         {/* App */}
         <div className="group">
-          <div className="group-label"><span className="eyebrow">{t("应用")}</span></div>
-          <div className="field-row">
-            <label className="fr-label fr-label-action" htmlFor="applicationLanguage">{t("语言")}</label>
-            <div className="fr-value"><Toggle
-              id="applicationLanguage"
-              className="language-switch"
-              checked={language === 'en'}
-              busy={savingLanguage}
-              ariaLabel={t('语言') + (language === 'en' ? ': English' : '：简体中文')}
-              track={<span className="language-track" aria-hidden="true"><span>中</span><span>英</span></span>}
-              thumb={<span className="language-glyph" aria-hidden="true">{language === 'en' ? '英' : '中'}</span>}
-              onToggle={() => selectLanguage(language === 'en' ? 'zh-CN' : 'en')}
-            /></div>
+          <div className="group-label">
+            <button type="button" className="trace-section-trigger"
+              aria-expanded={applicationOpen} aria-controls="application-settings-content"
+              onClick={() => setApplicationOpen(!applicationOpen)}>
+              <span className="eyebrow">{t("应用")}</span>
+              <ChevronRight size={15} className="trace-section-chevron" aria-hidden="true" />
+            </button>
           </div>
+          <div id="application-settings-content" hidden={!applicationOpen}>
           <div className="field-row">
             <label className="fr-label fr-label-action" htmlFor="themeToggle">{t("夜间模式")}</label>
             <div className="fr-value">
@@ -558,6 +569,10 @@ export function SettingsPage({ active }: Props): React.ReactElement {
                 onToggle={() => setTheme(theme === 'night' ? 'day' : 'night')}
               />
             </div>
+          </div>
+          <div className="field-row">
+            <label className="fr-label fr-label-action" htmlFor="applicationLanguage">{t("语言")}</label>
+            <div className="fr-value"><LanguagePicker value={language} busy={savingLanguage} onChange={next => void selectLanguage(next)} /></div>
           </div>
           <div className="field-row">
             <span className="fr-label">{t("开机启动")}</span>
@@ -577,6 +592,17 @@ export function SettingsPage({ active }: Props): React.ReactElement {
                 onToggle={handleStartup}
               />
             </div>
+          </div>
+          <div className="field-row">
+            <label className="fr-label fr-label-action" htmlFor="automaticUpdatesToggle">{t("自动更新")}</label>
+            <div className="fr-value"><Toggle
+              id="automaticUpdatesToggle"
+              checked={runtime?.automaticUpdates ?? true}
+              busy={savingAutomaticUpdates}
+              disabled={!bridge.api.setAutomaticUpdates || !runtime}
+              ariaLabel={t("自动更新")}
+              onToggle={saveAutomaticUpdates}
+            /></div>
           </div>
           <div className="field-row">
             <span className="fr-label">{t("版本")}</span>
@@ -627,6 +653,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
                 </button>
               ) : null}
             </div>
+          </div>
           </div>
         </div>
 

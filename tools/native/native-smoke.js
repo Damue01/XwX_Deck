@@ -3,7 +3,7 @@
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   const wait = async (test, label) => {
     for (let i = 0; i < 100; i++) { if (test()) return; await delay(100); }
-    throw new Error(`Timed out: ${label}`);
+    throw new Error(`Timed out: ${label}; page=${document.querySelector('.page.current')?.id}; clients=${JSON.stringify([...document.querySelectorAll('[data-client-tab]')].map(tab=>({id:tab.dataset.clientTab,selected:tab.getAttribute('aria-selected')})))}; dialogs=${JSON.stringify([...document.querySelectorAll('[role=dialog]')].map(dialog=>dialog.id))}`);
   };
   const check = (label, value) => { if (!value) throw new Error(label); checks.push(label); };
   try {
@@ -18,6 +18,7 @@
     check('page identity', document.title === 'XwX Deck');
     check('native bridge', document.body.dataset.runtime === 'desktop');
     check('nonblank production renderer', document.querySelector('.rail [data-page="signal"]')?.getBoundingClientRect().height > 0 && document.querySelector('#captureBtn')?.getBoundingClientRect().height > 0);
+    for(const section of ['models','trace','application'])localStorage.removeItem(`xwx-deck:settings:${section}:expanded:v1`);
     const fresh = await window.xwxDeck.getProviders();
     check('empty new-install connections', fresh.connections.length === 0);
     for (const page of ['models', 'settings', 'signal']) {
@@ -31,17 +32,25 @@
     document.querySelector('[data-client-tab="codex"]').click();
     await wait(() => document.querySelector('[data-client-tab="codex"]').getAttribute('aria-selected') === 'true' && document.querySelector('#client-panel-codex').getBoundingClientRect().height > 0 && document.querySelector('#client-panel-claude').getBoundingClientRect().height === 0, 'selected client panel rendered');
     check('client tabs preserve separate model panels without a dropdown', document.querySelector('#client-panel-codex').getBoundingClientRect().height > 0 && document.querySelector('#client-panel-claude').getBoundingClientRect().height === 0 && !document.querySelector('#models-client'));
+    check('all main settings sections default to expanded', ['model-config-content','trace-settings-content','application-settings-content'].every(id=>!document.getElementById(id).hidden));
+    document.querySelector('.rail [data-page="settings"]').click(); await delay(100);
+    document.querySelector('[aria-controls="model-config-content"]').click();
+    document.querySelector('[aria-controls="trace-settings-content"]').click();
+    document.querySelector('.rail [data-page="models"]').click(); await delay(100);
     document.querySelector('.models-manage-clients').click();
     await wait(() => document.querySelector('#configuration-clients [data-client-download="cursor"]'), 'client manager');
-    check('client management opens at one level without expanding settings', document.querySelectorAll('[role=dialog]').length===1 && document.querySelector('#page-models').classList.contains('current') && document.querySelector('#model-config-content').hidden);
+    check('client management opens at one level without expanding settings', document.querySelectorAll('[role=dialog]:not([data-position])').length===1 && document.querySelector('#page-models').classList.contains('current') && document.querySelector('#model-config-content').hidden);
     check('merged desktop and CLI have no duplicate manager entries', !document.querySelector('#configuration-clients [data-client-download="codex-cli"]') && !document.querySelector('#configuration-clients [data-client-download="claude-code"]'));
     document.querySelector('#configuration-clients [data-client-download="cursor"]').click();
+    await wait(() => document.querySelector('#configuration-clients .configuration-detail'), 'download-only client details');
+    check('download-only Cursor does not promise automatic model configuration', !document.querySelector('.configuration-client-actions'));
+    document.querySelector('#configuration-clients [data-client-download="opencode"]').click();
     await wait(() => document.querySelector('.configuration-client-actions .btn.primary')?.disabled === false, 'isolated installed client');
     check('client details offer the explicit add action', document.querySelector('.configuration-client-actions .btn.primary').textContent === '添加到模型页');
     document.querySelector('.configuration-client-actions .btn.primary').click();
-    await wait(() => !document.querySelector('[role=dialog]') && document.querySelector('[data-client-tab="cursor"]')?.getAttribute('aria-selected')==='true', 'added client');
-    check('adding an installed client immediately creates and selects its model tab without changing service', (await window.xwxDeck.getModelClients()).includes('cursor') && (await window.xwxDeck.getProviders()).selected.codex === fresh.selected.codex);
-    check('new client opens its model panel', document.querySelector('#client-panel-cursor').getBoundingClientRect().height>0);
+    await wait(() => !document.querySelector('[role=dialog]:not([data-position])') && document.querySelector('[data-client-tab="opencode"]')?.getAttribute('aria-selected')==='true', 'added client');
+    check('adding an installed client immediately creates and selects its model tab without changing service', (await window.xwxDeck.getModelClients()).includes('opencode') && (await window.xwxDeck.getProviders()).selected.codex === fresh.selected.codex);
+    check('new client opens its model panel', document.querySelector('#client-panel-opencode').getBoundingClientRect().height>0);
     document.querySelector('[data-client-tab="codex"]').click(); await delay(150);
     check('client existing route is preserved without a redundant login service option', document.querySelector('button[aria-label="ChatGPT 使用的模型服务"]').textContent === '选择模型服务');
     document.querySelector('[data-client-tab="claude"]').click(); await delay(150);
@@ -59,6 +68,18 @@
     document.querySelector('#railToggle').click(); await delay(150);
     check('restore sidebar', (document.body.dataset.sidebar === 'collapsed') === wasCollapsed);
     document.querySelector('.rail [data-page="settings"]').click(); await delay(300);
+    const applicationFold=document.querySelector('[aria-controls="application-settings-content"]');
+    applicationFold.click(); await delay(100);
+    check('Application folds without exposing extra cards or controls', document.querySelector('#application-settings-content').hidden);
+    applicationFold.click(); await delay(100);
+    const automaticUpdates=document.querySelector('#automaticUpdatesToggle');
+    automaticUpdates.click();
+    await wait(()=>automaticUpdates.getAttribute('aria-checked')==='false'&&!automaticUpdates.disabled, 'automatic updates disabled');
+    check('automatic updates saved through the native switch', (await window.xwxDeck.getState()).automaticUpdates===false);
+    automaticUpdates.click();
+    await wait(()=>automaticUpdates.getAttribute('aria-checked')==='true'&&!automaticUpdates.disabled, 'automatic updates restored');
+    const languageBounds=document.querySelector('#applicationLanguage').getBoundingClientRect();
+    check('language value stays compact and has no permanent border', languageBounds.height <= 28 && getComputedStyle(document.querySelector('#applicationLanguage')).borderTopWidth === '0px');
     const dark = document.querySelector('#themeToggle');
     check('existing theme control', dark);
     dark.click(); await delay(600);
@@ -105,11 +126,53 @@
       check('configuration entry shares the model configuration row while folded', document.querySelector('#provider-add').parentElement === document.querySelector('[aria-controls="model-config-content"]').parentElement && document.querySelector('#model-config-content').hidden && document.querySelector('#provider-add').getBoundingClientRect().height > 0 && !document.querySelector('.model-config-subheading') && !document.querySelector('.configuration-page-head'));
       document.querySelector('#provider-add').click(); await delay(200);
       check('configuration categories have no search controls or tab divider', !document.querySelector('.configuration-dialog input[type=search]') && getComputedStyle(document.querySelector('.configuration-tabs')).borderBottomWidth === '0px');
-      check('three configuration categories use one tab row', document.querySelectorAll('.configuration-tabs [role=tab]').length===3 && document.querySelector('#configuration-services-tab').textContent==='API 服务');
+      check('four configuration categories use one tab row', document.querySelectorAll('.configuration-header .configuration-tabs [role=tab]').length===4 && document.querySelector('#configuration-services-tab').textContent==='API 服务');
       check('one configuration dialog with services selected by default', document.querySelectorAll('[role="dialog"]').length === 1 && document.querySelector('#configuration-services-tab').getAttribute('aria-selected') === 'true');
       check('initial service grid contains icon and name for every preset', document.querySelectorAll('.configuration-grid [data-service]').length === 31 && [...document.querySelectorAll('.configuration-grid [data-service]')].every(button => button.querySelector('.provider-brand-icon')));
+      const originalImportPreview = window.xwxDeck.previewConfigurationImport, originalImportFile = window.xwxDeck.chooseConfigurationImportFile, originalImportApply = window.xwxDeck.importConfigurations;
+      const importRequests = [], fileRequests = [];
+      const importFixture = { targetDigest:'ui-fixture-digest', sources:[
+        {source:'magpie',name:'Magpie',path:'/isolated/providers.json',found:true,error:'',items:[{fingerprint:'import-new',name:'Imported service',baseUrl:'https://fixture.example/v1',adapter:'openai',status:'new',reason:''}]},
+        {source:'cc-switch',name:'CC Switch',path:'/isolated/cc-switch.db',found:true,error:'',items:[{fingerprint:'import-existing',name:'Existing service',baseUrl:'https://existing.example/v1',adapter:'openai',status:'existing',reason:''},{fingerprint:'import-new',name:'Duplicate service',baseUrl:'https://fixture.example/v1',adapter:'openai',status:'duplicate',reason:''}]},
+        {source:'claude',name:'Claude CLI',path:'/isolated/settings.json',found:false,error:'',items:[]}
+      ]};
+      window.xwxDeck.previewConfigurationImport = async input => { fileRequests.push(input); await delay(120); return importFixture; };
+      window.xwxDeck.chooseConfigurationImportFile = async () => '/isolated/manual.json';
+      window.xwxDeck.importConfigurations = async input => { importRequests.push(input); return {providers:await window.xwxDeck.getProviders(),added:['ui-fixture']}; };
+      document.querySelector('.configuration-import-entry').click();
+      await wait(() => document.querySelector('.configuration-import input[type=checkbox]') && !document.querySelector('.configuration-import-refresh').disabled, 'flat import list');
+      check('import is a single titled task without configuration tabs or a return link', document.querySelectorAll('[role=dialog]').length === 1 && !document.querySelector('.configuration-header .configuration-tabs') && document.querySelector('.configuration-header').textContent.includes('导入已有配置') && !document.querySelector('.configuration-back'));
+      check('import lists unique detected configurations with inline sources and no missing-source placeholders', document.querySelectorAll('.configuration-import-item').length === 2 && document.querySelectorAll('.configuration-import input[type=checkbox]').length === 1 && !document.querySelector('.configuration-import').textContent.includes('Claude CLI') && [...document.querySelectorAll('.configuration-import-source-label')].map(item=>item.textContent).join(',')==='Magpie,CC Switch');
+      const cancelImport = document.querySelector('.configuration-import-actions .btn:not(.primary)'), primaryImport = document.querySelector('.configuration-import-actions .primary');
+      check('white Cancel and primary Import share one bottom action row', cancelImport.textContent==='取消' && primaryImport.textContent==='导入' && Math.abs(cancelImport.getBoundingClientRect().top-primaryImport.getBoundingClientRect().top)<1 && getComputedStyle(cancelImport).backgroundColor!==getComputedStyle(primaryImport).backgroundColor);
+      document.querySelector('.configuration-import input[type=checkbox]').click();
+      document.querySelector('.configuration-import-refresh').click();
+      await wait(() => document.querySelector('.configuration-refresh-spinner'), 'import refresh progress');
+      check('refresh immediately shows disabled spinning progress', document.querySelector('.configuration-import-refresh').disabled && !!document.querySelector('.configuration-refresh-spinner'));
+      await wait(() => !document.querySelector('.configuration-import-refresh').disabled, 'import rescan');
+      check('rechecking preserves a deliberately unchecked configuration', !document.querySelector('.configuration-import input[type=checkbox]').checked && document.querySelector('.configuration-import-actions .primary').disabled);
+      document.querySelector('[aria-label="文件说明"]').click(); await delay(150);
+      check('file help names original files and honestly excludes unsupported backup formats', document.querySelector('.configuration-import-help')?.textContent.includes('providers.json') && document.querySelector('.configuration-import-help')?.textContent.includes('CC Switch SQL 备份'));
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); await delay(200);
+      check('Escape closes only file help and preserves the import task', !document.querySelector('.configuration-import-help') && !!document.querySelector('.configuration-import'));
+      document.querySelector('.configuration-import-toolbar .provider-text-action').click();
+      await wait(() => fileRequests.at(-1)?.sources?.some(source=>source.path==='/isolated/manual.json'), 'auto-detected manual file');
+      await wait(() => !document.querySelector('.configuration-import-refresh').disabled, 'manual file preview');
+      check('manual file uses format detection and never imports before confirmation', fileRequests.at(-1).sources.at(-1).source==='auto' && importRequests.length===0);
+      document.querySelector('.configuration-import-actions .btn:not(.primary)').click(); await delay(100);
+      check('Cancel restores the configuration directory and keyboard focus without writing', !!document.querySelector('.configuration-header .configuration-tabs') && document.activeElement===document.querySelector('.configuration-import-entry') && importRequests.length===0 && (await window.xwxDeck.getProviders()).connections.length===0);
+      document.querySelector('.configuration-import-entry').click();
+      await wait(() => document.querySelector('.configuration-import-actions .primary')?.disabled===false,'reopened import');
+      document.querySelector('.configuration-import-actions .primary').click();
+      await wait(() => !document.querySelector('.configuration-import'),'confirmed import');
+      check('confirmation sends only selected eligible fingerprints and the reviewed digest', importRequests.length===1 && importRequests[0].fingerprints.join(',')==='import-new' && importRequests[0].targetDigest==='ui-fixture-digest');
+      check('successful import reports a compact success notification', document.querySelector('[data-slot=toast-title]')?.textContent==='已导入 1 个配置');
+      document.querySelector('[data-slot=toast-close]').click();
+      await wait(() => !document.querySelector('[data-slot=toast-title]'), 'import notification dismissed');
+      window.xwxDeck.previewConfigurationImport=originalImportPreview; window.xwxDeck.chooseConfigurationImportFile=originalImportFile; window.xwxDeck.importConfigurations=originalImportApply;
+      await wait(() => document.querySelector('[data-service=deepseek]')?.disabled===false,'service directory ready after import');
       document.querySelector('[data-service="deepseek"]').click(); await delay(200);
-      check('selection replaces grid with list and configuration in same dialog', document.querySelectorAll('[role="dialog"]').length === 1 && document.querySelector('.configuration-list') && document.querySelector('#provider-url').value === 'https://api.deepseek.com');
+      check('selection replaces grid with list and configuration in same dialog', document.querySelectorAll('[role="dialog"]').length === 1 && document.querySelector('.configuration-list') && document.querySelector('#provider-url')?.value === 'https://api.deepseek.com');
       check('visible production connection form without column or action dividers', document.querySelector('#provider-editor').getBoundingClientRect().height > 0 && getComputedStyle(document.querySelector('.configuration-content.has-detail .configuration-directory')).borderRightWidth === '0px' && getComputedStyle(document.querySelector('.configuration-detail .prov-save-bar')).borderTopWidth === '0px');
       check('default configuration fields are name URL and Key only', document.querySelectorAll('#provider-editor input').length === 3 && !document.querySelector('#provider-adapter') && document.querySelector('#provider-key').type === 'password');
       const fill = async (id, value) => {
@@ -127,12 +190,14 @@
       check('switching providers retains unsaved name and key', document.querySelector('#provider-name').value === 'Retained_Draft' && document.querySelector('#provider-key').value === 'isolated-draft-key');
       const opened = []; const openWebsite = window.xwxDeck.openSetupWebsite;
       window.xwxDeck.openSetupWebsite = async site => { opened.push(site); };
-      document.querySelector('.configuration-detail a.setup-card-link').click(); await delay(150);
+      document.querySelector('.provider-key-heading .provider-text-action').click(); await delay(150);
       check('official key shortcut invokes the approved preset entry', opened.at(-1) === 'deepseek');
       document.querySelector('#configuration-accounts-tab').click(); await delay(150);
+      check('subscriptions start in the same platform directory as other configuration tabs', !!document.querySelector('#configuration-accounts .configuration-grid') && !document.querySelector('#configuration-accounts .configuration-detail'));
+      document.querySelector('[data-subscription-service=chatgpt]').click(); await delay(150);
       await wait(() => document.querySelector('.subscription-login-button') && !document.querySelector('.subscription-login-button').disabled, 'native account registry read');
       check('empty subscriptions show the sign-in action without redundant desktop or empty-state instructions', !document.querySelector('.subscription-empty') && !document.querySelector('#configuration-accounts').textContent.includes('请在桌面应用中添加订阅账号'));
-      check('subscriptions use flat native account panel without key fields', document.querySelectorAll('[role=dialog]').length===1 && !document.querySelector('#configuration-accounts input[type=password]') && !document.querySelector('.subscription-login-button').disabled);
+      check('subscriptions use flat native account panel without key fields', document.querySelectorAll('[role=dialog]:not([data-position])').length===1 && !document.querySelector('#configuration-accounts input[type=password]') && !document.querySelector('.subscription-login-button').disabled);
       document.querySelector('[data-subscription-service="grok"]').click(); await delay(150);
       check('Grok requires the actual official CLI before account login', document.querySelector('.subscription-login-button').textContent.includes('安装 Grok Build'));
       check('subscription directory contains only implemented account sign-ins, never API presets', document.querySelectorAll('[data-subscription-service]').length === 5 && [...document.querySelectorAll('[data-subscription-service]')].every(button => ['chatgpt', 'grok', 'copilot', 'claude', 'cursor'].includes(button.dataset.subscriptionService)) && !document.querySelector('#configuration-accounts input[type=password]'));
@@ -157,41 +222,41 @@
       check('inline account name edit saves and restores the text control', fixtureLabel === '个人账号' && !document.querySelector('.subscription-rename input'));
       document.querySelector('.subscription-rename-trigger').click(); await delay(100);
       document.querySelector('[aria-label="账号名称"]').dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true })); await delay(150);
-      check('Escape cancels account rename without closing configuration', document.querySelectorAll('[role=dialog]').length === 1 && document.querySelector('.subscription-rename-trigger')?.textContent === fixtureLabel && !document.querySelector('.subscription-rename input'));
+      check('Escape cancels account rename without closing configuration', document.querySelectorAll('[role=dialog]:not([data-position])').length === 1 && document.querySelector('.subscription-rename-trigger')?.textContent === fixtureLabel && !document.querySelector('.subscription-rename input'));
       window.xwxDeck.getSubscriptionAccounts = accountSnapshot; window.xwxDeck.renameSubscriptionAccount = renameAccount;
 
       document.querySelector('#configuration-clients-tab').click(); await delay(150);
       document.querySelector('[data-client-download="codex"]').click(); await delay(150);
-      check('downloads render in same dialog with mirrors collapsed', document.querySelectorAll('[role="dialog"]').length === 1 && [...document.querySelectorAll('#configuration-clients details')].every(item => !item.open));
+      check('downloads render in same dialog with mirrors collapsed', document.querySelectorAll('[role="dialog"]:not([data-position])').length === 1 && [...document.querySelectorAll('#configuration-clients details')].every(item => !item.open));
       document.querySelector('#configuration-clients .setup-card-link').click(); await delay(150);
       check('official client download shortcut preserved', opened.at(-1) === 'codex' && window.xwxDeck.setupWebsites.codex === 'https://learn.chatgpt.com/docs/app');
       document.querySelector('[data-client-download="deepseek-harness"]').click(); await delay(150);
       document.querySelector('#configuration-clients .setup-card-link').click(); await delay(150);
-      check('DeepSeek Harness opens official landing page in same dialog', opened.at(-1) === 'download-deepseek-harness' && window.xwxDeck.setupWebsites['download-deepseek-harness'] === 'https://deepseek.com/harness/' && document.querySelectorAll('[role=dialog]').length === 1);
+      check('DeepSeek Harness opens official landing page in same dialog', opened.at(-1) === 'download-deepseek-harness' && window.xwxDeck.setupWebsites['download-deepseek-harness'] === 'https://deepseek.com/harness/' && document.querySelectorAll('[role=dialog]:not([data-position])').length === 1);
       document.querySelector('[data-client-download="codex"]').click(); await delay(150);
       document.querySelector('#configuration-clients details').open = true;
       document.querySelector('#configuration-clients [aria-label="Windows ARM64 国内镜像下载（第三方）"]').click(); await delay(150);
       check('explicit Windows ARM64 mirror remains independent of host', opened.at(-1) === 'chatgpt-windows-arm64-mirror');
-      const clipboard = []; const copyText = window.xwxDeck.copyText;
-      window.xwxDeck.copyText = async value => { clipboard.push(value); };
-      for (const client of ['codex-cli', 'claude-code']) {
-        document.querySelector(`[data-client-download="${client}"]`).click(); await delay(150);
-        check(`${client} keeps separate official downloads and collapsed CLI mirrors`, document.querySelector('.configuration-client-actions .btn.primary').textContent === '打开模型页' && document.querySelectorAll('#configuration-clients details').length === 2 && [...document.querySelectorAll('#configuration-clients details')].every(item => !item.open));
-        document.querySelector('#configuration-clients details').open = true;
-        document.querySelector('#configuration-clients [aria-label="Windows 安装脚本 国内镜像下载（第三方）"]').click(); await delay(100);
-        check(`${client} Windows mirror is not rewritten to the Mac host`, opened.at(-1) === `${client}-windows-mirror`);
-        document.querySelector('[aria-label="复制 Windows 镜像安装命令"]').click(); await delay(100);
-        check(`${client} installation is copied only, never executed`, clipboard.at(-1) === `irm https://install.agentsmirror.com/${client === 'codex-cli' ? 'codex' : 'claude'}/install.ps1 | iex`);
+      for (const [product, client, label] of [['codex', 'codex-cli', 'Codex CLI'], ['claude', 'claude-code', 'Claude Code CLI'], ['gemini-cli', 'gemini-cli', 'Gemini CLI']]) {
+        document.querySelector(`[data-client-download="${product}"]`).click(); await delay(150);
+        const links = document.querySelector('#configuration-clients');
+        check(`${client} keeps its official installation within its product page without commands`, !links.querySelector('code') && (product === client || [...links.querySelectorAll('h4')].some(heading => heading.textContent === label)));
+        links.querySelector(`[aria-label="${label} 官方下载"]`).click(); await delay(100);
+        check(`${client} opens its own official installation page`, opened.at(-1) === `download-${client}`);
       }
-      for (const [client, packageName] of [['gemini-cli', '@google/gemini-cli'], ['qwen-code', '@qwen-code/qwen-code'], ['opencode', 'opencode-ai']]) {
+      for (const client of ['opencode', 'qwen-code']) {
         document.querySelector(`[data-client-download="${client}"]`).click(); await delay(100);
-        document.querySelector('#configuration-clients details').open = true;
-        document.querySelector('[aria-label="复制 npm 镜像安装命令"]').click(); await delay(100);
-        check(`${client} has the original vendor package on the npm mirror without changing global npm settings`, clipboard.at(-1) === `npm install -g ${packageName} --registry=https://registry.npmmirror.com`);
+        check(`${client} labels the Desktop download and does not show commands`, document.querySelector('#configuration-clients .setup-card-download-version-heading h4').textContent.includes('Desktop') && [...document.querySelectorAll('#configuration-clients .setup-card-download-version-heading h4')].some(heading => heading.textContent.includes('CLI')) && !document.querySelector('#configuration-clients code'));
+        const mac = [...document.querySelectorAll('#configuration-clients details')].find(item => item.querySelector('summary').textContent.startsWith('Mac'));
+        mac.open = true;
+        const link = mac.querySelector('.setup-card-link');
+        check(`${client} downloads a Desktop DMG rather than a CLI archive`, link.href.endsWith('.dmg'));
+        link.click(); await delay(100);
+        check(`${client} preserves explicitly selected Apple Silicon download`, opened.at(-1) === `${client}-mac-arm64-download`);
       }
-      window.xwxDeck.copyText = copyText;
       window.xwxDeck.openSetupWebsite = openWebsite;
       document.querySelector('#configuration-services-tab').click(); await delay(150);
+      document.querySelector('[data-service="deepseek"]').click(); await delay(150);
       check('download navigation retains service draft', document.querySelector('#provider-name').value === 'Retained_Draft');
       document.querySelector('.provider-key-visibility').click(); await wait(() => document.querySelector('#provider-key').type === 'text', 'key visibility render');
       check('temporary key visibility works', document.querySelector('#provider-key').type === 'text');
@@ -211,11 +276,12 @@
       const plan = (await window.xwxDeck.getProviders()).connections[0];
       check('Coding Plan persists explicit profile and Chat protocol without automatic test messages', plan.providerPreset === 'qwen-coding-plan' && plan.adapter === 'chat-completions' && plan.baseUrl === context.upstream && validations === 0);
       window.xwxDeck.validateProvider = validate;
+      document.querySelector('.configuration-close').click(); await wait(() => !document.querySelector('[role=dialog]'), 'Coding Plan manager closed');
       await window.xwxDeck.deleteProvider(plan.id);
       document.querySelector('#provider-add').click(); await delay(150);
       check('reopening starts at complete service grid', document.querySelector('#configuration-services .configuration-grid') && !document.querySelector('#configuration-services .configuration-detail'));
       document.querySelector('[data-service="custom"]').click(); await delay(150);
-      check('custom protocol settings are collapsed', document.querySelector('.provider-advanced') && !document.querySelector('.provider-advanced').open);
+      check('custom form shows only name URL and key without advanced settings', !document.querySelector('.provider-advanced') && !document.querySelector('#provider-adapter') && document.querySelectorAll('#provider-editor input').length===3);
       await fill('#provider-name', 'Native_Test');
       await fill('#provider-url', context.upstream);
       await fill('#provider-key', 'isolated-test-key');
@@ -225,15 +291,34 @@
       if (document.querySelector('#model-config-content').hidden) document.querySelector('[aria-controls="model-config-content"]').click();
       await delay(200);
       const disclosure = document.querySelector('#provider-edit-Native_Test');
-      await wait(() => !document.querySelector('[role=dialog]') && !disclosure.disabled, 'saved dialog fully closed');
-      disclosure.focus(); const disclosureFocus = document.activeElement;
-      disclosure.click(); await delay(100);
-      check('saved connection expands with a single inline form without stealing focus', document.querySelectorAll('#provider-editor').length === 1 && document.activeElement === disclosureFocus && document.querySelector('#provider-editor').getBoundingClientRect().height > 0 && !document.querySelector('[role=dialog]'));
+      await wait(() => !!document.querySelector('[data-saved-provider="Native_Test"]'), 'save returns to configuration manager');
+      check('saved connection stays in a shared manager without inline expansion', document.querySelectorAll('#provider-editor').length===1 && !disclosure.hasAttribute('aria-expanded') && document.querySelector('#configuration-saved-tab[aria-selected="true"]'));
+      check('maintenance has quiet header checks and deletion, and matching sidebar actions', !!document.querySelector('#provider-models-tab') && !!document.querySelector('.prov-save-bar .configuration-destructive') && !document.querySelector('#providerList .provider-menu-trigger') && [...document.querySelectorAll('.configuration-management-actions button')].every(button=>button.className==='configuration-choice') && !document.querySelector('.provider-advanced'));
+      document.querySelector('#provider-models-tab').click(); await delay(100);
+      check('checks open in the same card and replace the form', !!document.querySelector('#provider-read-models') && !document.querySelector('#provider-editor') && document.querySelectorAll('[role=dialog]').length===1);
+      document.querySelector('#provider-config-tab').click(); await delay(100);
+      check('return to editing restores the selected configuration', document.querySelector('#provider-name').value==='Native_Test' && document.activeElement.id==='provider-config-tab');
+      const validateSaved=window.xwxDeck.validateProvider; let draftChecks=0;
+      window.xwxDeck.validateProvider=async args=>{draftChecks++;return validateSaved(args);};
       await fill('#provider-url', context.upstream + '/draft');
-      disclosure.click(); await delay(100); disclosure.click(); await delay(100);
-      check('collapse and reopen retain unsaved fields without moving focus into the form', document.querySelector('#provider-url').value === context.upstream + '/draft' && !document.querySelector('#provider-editor').contains(document.activeElement) && document.querySelectorAll('#provider-editor').length === 1);
-      disclosure.click(); await delay(100);
+      document.querySelector('#provider-models-tab').click(); await delay(100);
+      await wait(()=>document.querySelector('.provider-model-action button'), 'automatic model directory');
+      document.querySelector('.provider-model-action button').click(); await delay(100);
+      document.querySelector('#provider-config-tab').click(); await delay(100);
+      check('testing a changed draft does not send a request or implicitly save', draftChecks===0 && document.querySelector('#provider-url').value===context.upstream+'/draft');
+      window.xwxDeck.validateProvider=validateSaved;
+      [...document.querySelectorAll('.configuration-management-actions button')].find(button=>button.textContent==='新增配置').click(); await delay(100);
+      check('new catalog uses the shared saved tab instead of a return row', !!document.querySelector('.configuration-grid') && !!document.querySelector('#configuration-saved-tab') && !document.querySelector('.configuration-task-nav'));
+      document.querySelector('#configuration-saved-tab').click(); await delay(100);
+      check('return from catalog retains original selection and draft', document.querySelector('#provider-url').value===context.upstream+'/draft' && document.querySelector('[data-saved-provider="Native_Test"]').getAttribute('aria-pressed')==='true');
+      document.querySelector('.configuration-close').click(); await wait(() => !document.querySelector('[role=dialog]'), 'edit card closed');
+      check('closing the manager returns focus to its entry', document.activeElement.id === 'provider-add');
+      disclosure.focus(); disclosure.click(); await delay(200);
+      check('reopening the shared edit card retains unsaved fields', document.querySelector('#provider-url').value === context.upstream + '/draft' && document.querySelectorAll('#provider-editor').length === 1);
+      document.querySelector('.configuration-close').click(); await wait(() => !document.querySelector('[role=dialog]'), 'draft card closed');
 
+      const retained = (await window.xwxDeck.getProviders()).connections.find(item=>item.id==='Native_Test');
+      await window.xwxDeck.saveProvider({...retained,adapter:'responses'});
       await window.xwxDeck.switchClientProvider({ client: 'codex', providerId: 'Native_Test' });
       await window.xwxDeck.updateCodexConfig({ expectedProviderId: 'Native_Test', compatibleModel: 'pilot-model' });
       document.querySelector('.rail [data-page="signal"]').click(); await delay(300);
@@ -270,18 +355,37 @@
     }
     document.querySelector('.rail [data-page="signal"]').click(); await delay(300);
     document.querySelector('.rail [data-page="settings"]').click(); await delay(150);
-    check('language uses a compact Chinese/English switch without a menu or search', document.querySelector('#applicationLanguage').getAttribute('role') === 'switch' && document.querySelector('#applicationLanguage .language-track').textContent === '中英' && !document.querySelector('.language-menu'));
-    document.querySelector('#applicationLanguage').click();
+    check('language uses a quiet current value without a switch or search', document.querySelector('#applicationLanguage').getAttribute('role') !== 'switch' && document.querySelector('#applicationLanguage').textContent === '简体中文' && !document.querySelector('#applicationLanguage input'));
+    const chooseLanguage = async (name, locale) => {
+      document.querySelector('#applicationLanguage').click();
+      await wait(() => document.querySelectorAll('.language-menu [role=option]').length === 9, 'nine language choices');
+      check('language menu has native names and no search field', !document.querySelector('.language-menu input'));
+      [...document.querySelectorAll('.language-menu [role=option]')].find(option => option.textContent.trim() === name).click();
+      // Let React commit the busy state before checking that persistence finished.
+      await delay(100);
+      await wait(() => document.documentElement.lang === locale && document.querySelector('#applicationLanguage').getAttribute('aria-busy') === 'false' && !document.querySelector('#applicationLanguage').disabled, `saved language ${locale}`);
+      check(`native language ${locale} saved`, (await window.xwxDeck.getState()).language === locale);
+    };
+    for (const [name, locale] of [['繁體中文','zh-TW'],['日本語','ja'],['한국어','ko'],['Français','fr'],['Deutsch','de'],['Español','es'],['Português (Brasil)','pt-BR'],['English','en']]) await chooseLanguage(name, locale);
     await wait(() => document.documentElement.lang === 'en' && document.querySelector('#page-settings').textContent.includes('Application'), 'English rendered');
     check('English switch is saved in native preferences', (await window.xwxDeck.getState()).language === 'en');
-    check('language switching preserves theme, client tabs and named services', document.documentElement.dataset.theme === 'day' && (await window.xwxDeck.getModelClients()).includes('cursor') && (await window.xwxDeck.getProviders()).connections.some(item => item.displayName === 'Native_Second'));
+    check('language switching preserves theme, client tabs and named services', document.documentElement.dataset.theme === 'day' && (await window.xwxDeck.getModelClients()).includes('opencode') && (await window.xwxDeck.getProviders()).connections.some(item => item.displayName === 'Native_Second'));
     document.querySelector('.rail [data-page="models"]').click(); await delay(150);
     check('model page and shared controls update without remounting the selected client', document.querySelector('#page-models').textContent.includes('Model settings') && document.querySelector('.models-manage-clients').textContent.includes('Manage clients'));
     document.querySelector('.rail [data-page="settings"]').click(); await delay(150);
-    document.querySelector('#applicationLanguage').click();
+    await chooseLanguage('简体中文', 'zh-CN');
     await wait(() => document.documentElement.lang === 'zh-CN' && document.querySelector('#page-settings').textContent.includes('应用'), 'Chinese restored');
     check('Chinese switch is saved in native preferences', (await window.xwxDeck.getState()).language === 'zh-CN');
     document.querySelector('.rail [data-page="signal"]').click(); await delay(150);
+    check('repair entry has no redundant Support heading', !document.querySelector('.repair-entry-group .group-label'));
+    for(const section of ['model-config-content','trace-settings-content','application-settings-content']){const button=document.querySelector(`[aria-controls="${section}"]`);if(document.getElementById(section).hidden)button.click();}
+    document.querySelector('.rail [data-page="settings"]').click(); await delay(100);
+    document.querySelector('#automaticUpdatesToggle').click();await wait(()=>!document.querySelector('#automaticUpdatesToggle').disabled, 'update preference saved');
+    document.querySelector('#currentVersion').click();
+    await wait(()=>document.body.textContent.includes('XwX Deck 1.1.1 可更新')&&document.body.textContent.includes('立即下载'), 'update notification while automatic updates disabled');
+    check('new release notification includes manual download with automatic updates disabled', (await window.xwxDeck.getState()).automaticUpdates===false);
+    document.querySelector('#automaticUpdatesToggle').click();await wait(()=>!document.querySelector('#automaticUpdatesToggle').disabled, 'update preference restored');
+    document.querySelector('.rail [data-page="signal"]').click();await delay(100);
     check('no framework overlay', !document.querySelector('vite-error-overlay, nextjs-portal'));
     check('console health', window.__pilotErrors.length === 0);
     const report = { passed: true, checks, title: document.title, url: location.href, viewport: { width: innerWidth, height: innerHeight }, runtime: document.body.dataset.runtime, errors: window.__pilotErrors, userAgent: navigator.userAgent };

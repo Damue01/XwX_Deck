@@ -563,6 +563,40 @@ fn read_cc(path: &Path) -> Result<Vec<ImportItem>> {
     }
     Ok(out)
 }
+fn read_deck(path: &Path) -> Result<Vec<ImportItem>> {
+    let config = json_file(path)?;
+    let rows = config["providers"]["connections"].as_array()
+        .or_else(|| config["connections"].as_array())
+        .ok_or("没有找到 XwX Deck 模型服务配置")?;
+    if rows.len() > 1000 { return Err("配置条目超过 1000 个上限".into()); }
+    let mut out = vec![];
+    for raw in rows {
+        let name = field(raw, &["displayName", "id"]);
+        if !text(raw, "subscriptionAccountId").is_empty() {
+            out.push(skipped(name, raw, "此条目需要重新登录订阅账号")); continue;
+        }
+        let mut p: Provider = serde_json::from_value(raw.clone()).map_err(|_| "旧版 Deck 配置格式不受支持，原文件已保留")?;
+        if p.adapter.is_empty() { p.adapter = if p.codex_api_format.is_empty() { "auto".into() } else { p.codex_api_format.clone() }; }
+        let mut models = names(&config["importedProviderModels"][&p.id]);
+        if !p.codex_model.is_empty() { models.push(p.codex_model.clone()); }
+        models.sort(); models.dedup();
+        out.push(entry(name.into(), p, models, raw, false, &[15721, 3425]));
+    }
+    Ok(out)
+}
+fn detect_source(path: &Path) -> Result<&'static str> {
+    match path.extension().and_then(|s| s.to_str()) {
+        Some("db" | "sqlite" | "sqlite3") => return Ok("cc-switch"),
+        Some("toml") => return Ok("codex"),
+        _ => {}
+    }
+    let v = json_file(path)?;
+    if v["providers"].is_array() { return Ok("magpie"); }
+    if v["connections"].is_array() || v["providers"]["connections"].is_array() { return Ok("xwx-deck"); }
+    if v.as_object().is_some_and(|o| o.values().any(|s| s["providers"].is_object())) { return Ok("cc-switch"); }
+    if v["env"].is_object() { return Ok("claude"); }
+    Err("无法识别配置格式，原文件已保留".into())
+}
 // Compare physical paths on both sides. Windows canonical paths use the
 // extended \?\ prefix, so comparing one against an ordinary root rejects valid files.
 fn within_isolated_root(path: &Path, root: &Path) -> bool {
@@ -609,11 +643,8 @@ fn read_client(path: &Path, source: &str, isolated_root: Option<&Path>) -> Resul
         .and_then(Item::as_str)
         .unwrap_or("openai");
     if selected == "xwx_deck" {
-        return Ok(vec![skipped(
-            "Codex",
-            &json!({"config":config}),
-            "已由 Deck 管理，请从原始服务配置导入",
-        )]);
+        // This is Deck's generated route, not an independent import source.
+        return Ok(vec![]);
     }
     let empty = Item::None;
     let provider = parsed
@@ -702,7 +733,7 @@ impl Pilot {
                 serde_json::from_value(input["sources"].clone()).map_err(|_| "无效导入来源")?;
             if specs.len() > 8
                 || specs.iter().any(|s| {
-                    !["magpie", "cc-switch", "claude", "codex"].contains(&s.source.as_str())
+                    !["magpie", "cc-switch", "claude", "codex", "xwx-deck", "auto"].contains(&s.source.as_str())
                         || !Path::new(&s.path).is_absolute()
                 })
             {
@@ -739,6 +770,7 @@ impl Pilot {
             cc.join("cc-switch.db")
         };
         Ok(vec![
+            SourceSpec { source: "xwx-deck".into(), path: self.root.join("settings-before-native-migration.json").to_string_lossy().into() },
             SourceSpec {
                 source: "magpie".into(),
                 path: config
@@ -767,16 +799,19 @@ impl Pilot {
     fn import_scan(&self, input: &Value) -> Result<Preview> {
         let disk = self.import_target()?;
         let mut sources = vec![];
-        for spec in self.import_specs(input)? {
+        for mut spec in self.import_specs(input)? {
             let path = Path::new(&spec.path);
+            if self.isolated && !within_isolated_root(path, &self.root) { return Err("隔离验收只能读取隔离目录中的来源文件".into()); }
+            if spec.source == "auto" { spec.source = detect_source(path)?.into(); }
             let found = path.exists();
             let mut source = ImportSource {
                 source: spec.source.clone(),
                 name: match spec.source.as_str() {
                     "magpie" => "Magpie",
                     "cc-switch" => "CC Switch",
-                    "claude" => "Claude CLI",
-                    _ => "Codex CLI",
+                    "claude" => "Claude",
+                    "xwx-deck" => "旧版 XwX Deck",
+                    _ => "ChatGPT / Codex",
                 }
                 .into(),
                 path: spec.path.clone(),
@@ -797,6 +832,7 @@ impl Pilot {
                 match match spec.source.as_str() {
                     "magpie" => read_magpie(path),
                     "cc-switch" => read_cc(path),
+                    "xwx-deck" => read_deck(path),
                     _ => read_client(
                         path,
                         &spec.source,
@@ -822,6 +858,15 @@ impl Pilot {
                 }
             }
             sources.push(source);
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        for source in &mut sources {
+            for item in &mut source.items {
+                if let Some(p) = &item.provider {
+                    let identity = fingerprint(&json!([p.base_url.trim_end_matches('/'), p.bearer_token, p.adapter]));
+                    if !seen.insert(identity) { item.status = "duplicate".into(); item.reason = String::new(); }
+                }
+            }
         }
         Ok(Preview {
             target_digest: storage::digest(disk.as_bytes()),
@@ -857,7 +902,7 @@ impl Pilot {
                 .flat_map(|s| &s.items)
                 .find(|i| i.fingerprint == selected)
                 .ok_or("来源配置已变化，请刷新后重新选择；未写入任何配置")?;
-            if item.status == "existing" {
+            if item.status == "existing" || item.status == "duplicate" {
                 continue;
             }
             let p = item

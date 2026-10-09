@@ -624,7 +624,7 @@ impl Pilot {
         }
         Err(error)
     }
-    pub(super) async fn validate(&self, id: &str) -> Result<Value> {
+    pub(super) async fn validate(&self, id: &str, requested_model: Option<&str>) -> Result<Value> {
         let p = self
             .settings
             .connections
@@ -636,7 +636,9 @@ impl Pilot {
             .timeout(Duration::from_secs(8))
             .build()
             .map_err(err)?;
-        let model = if !p.codex_model.is_empty() {
+        let model = if let Some(model) = requested_model {
+            model
+        } else if !p.codex_model.is_empty() {
             p.codex_model.as_str()
         } else {
             p.claude_models["sonnet"].as_str().unwrap_or("")

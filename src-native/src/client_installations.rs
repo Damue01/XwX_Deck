@@ -8,6 +8,7 @@ pub fn canonical_id(id: &str) -> &str {
     match id {
         "codex-cli" => "codex",
         "claude-code" => "claude",
+        "cursor-cli" => "cursor",
         _ => id,
     }
 }
@@ -115,6 +116,11 @@ impl Discovery {
             ".opencode/bin",
             ".minimax-code/bin",
             ".minimax-code",
+            ".factory/bin",
+            ".hermes/venv/bin",
+            ".mimocode/bin",
+            ".qoder/bin",
+            ".omp/bin",
         ]
         .map(|path| home.join(path))
         .to_vec();
@@ -152,9 +158,22 @@ impl Discovery {
             "kimi-code" => (&["Kimi Code"], &["kimi"]),
             "minimax-code" => (&["MiniMax Code"], &["mcode"]),
             "gemini-cli" => (&[], &["gemini"]),
-            "qwen-code" => (&[], &["qwen"]),
+            "qwen-code" => (&["Qwen Code", "Qwen Code Desktop"], &["qwen"]),
             "grok-build" => (&[], &["grok"]),
-            "cursor" => (&["Cursor"], &["cursor"]),
+            "cursor" => (&["Cursor"], &["cursor", "cursor-agent"]),
+            "pi" => (&[], &["pi"]),
+            "oh-my-pi" => (&[], &["omp"]),
+            "crush" => (&[], &["crush"]),
+            "qoder" => (&["Qoder"], &["qoder", "qodercli"]),
+            "droid" => (&[], &["droid"]),
+            "copilot-cli" => (&[], &["copilot"]),
+            "mimo-code" => (&["MiMo Code", "Xiaomi MiMo"], &["mimocode"]),
+            "workbuddy" => (&["WorkBuddy"], &["workbuddy"]),
+            "codebuddy-code" => (&[], &["codebuddy", "cbc"]),
+            "hermes-agent" => (&[], &["hermes"]),
+            "antigravity-cli" => (&[], &["agy"]),
+            "openchamber" => (&["OpenChamber"], &["openchamber"]),
+            "t3-code" => (&["T3 Code", "T3 Code (Alpha)"], &["t3code"]),
             "windsurf" => (&["Windsurf", "Devin"], &["windsurf"]),
             "vscode" => (&["Visual Studio Code", "Microsoft VS Code"], &["code"]),
             "zed" => (&["Zed"], &["zed"]),
@@ -297,6 +316,21 @@ mod tests {
         assert!(discovery.installed("claude"));
         assert!(discovery.installed("claude-code"));
         assert!(!discovery.installed("codex"));
+    }
+    #[test]
+    fn finds_qwen_desktop_without_a_separate_cli() {
+        let f = Fixture::new();
+        f.file(
+            if cfg!(windows) {
+                "Applications/Qwen Code Desktop/Qwen Code Desktop.exe"
+            } else {
+                "Applications/Qwen Code Desktop.app/Contents/MacOS/Qwen Code Desktop"
+            },
+            true,
+        );
+        let discovery = Discovery::in_home(&f.0);
+        assert!(discovery.installed("qwen-code"));
+        assert!(!discovery.installed("gemini-cli"));
     }
     #[test]
     fn finds_node_version_manager_and_rechecks_after_installation() {

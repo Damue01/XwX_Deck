@@ -1,9 +1,9 @@
 import type { ProviderSnapshot } from './providers';
-export type ConfigurationImportSource = 'magpie' | 'cc-switch' | 'claude' | 'codex';
+export type ConfigurationImportSource = 'magpie' | 'cc-switch' | 'claude' | 'codex' | 'xwx-deck' | 'auto';
 export interface ConfigurationImportSpec { readonly source: ConfigurationImportSource; readonly path: string; }
 export interface ConfigurationImportItem {
   readonly fingerprint: string; readonly name: string; readonly baseUrl: string; readonly adapter: string;
-  readonly status: 'new' | 'paused' | 'existing' | 'unsupported'; readonly reason: string;
+  readonly status: 'new' | 'paused' | 'existing' | 'unsupported' | 'duplicate'; readonly reason: string;
 }
 export interface ConfigurationImportPreview {
   readonly targetDigest: string;

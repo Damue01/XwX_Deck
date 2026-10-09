@@ -579,7 +579,7 @@ impl TraceStore {
         let id = format!("session-{}", &digest(key.as_bytes())[..24]);
         let file = self.root.join(format!("{id}.jsonl"));
         let sessions = self.index["sessions"].as_array_mut().unwrap();
-        let at=sessions.iter().position(|s|s["id"]==id).unwrap_or_else(||{sessions.push(json!({"id":id,"startedAt":record["startedAt"],"updatedAt":record["completedAt"],"source":record["source"],"clientConversationKey":key,"firstPrompt":record["request"]["body"]["input"].as_str().unwrap_or(""),"firstModel":record["request"]["model"],"jsonlPath":file,"traceCount":0,"totalTokens":0,"totalDurationMs":0,"usageByModel":{},"nativeUsage":[]}));sessions.len()-1});
+        let at=sessions.iter().position(|s|s["id"]==id).unwrap_or_else(||{sessions.push(json!({"id":id,"startedAt":record["startedAt"],"updatedAt":record["completedAt"],"source":record["source"],"clientConversationKey":key,"firstPrompt":record["request"]["body"]["input"].as_str().or_else(||record["clientFirstPrompt"].as_str()).unwrap_or(""),"firstModel":record["request"]["model"],"jsonlPath":file,"traceCount":0,"totalTokens":0,"totalDurationMs":0,"usageByModel":{},"nativeUsage":[]}));sessions.len()-1});
         let summary = &mut sessions[at];
         let turn = summary["traceCount"].as_u64().unwrap_or(0) + 1;
         record["sessionId"] = json!(id);
@@ -668,6 +668,7 @@ pub(super) struct Capture {
     pub wire: String,
     pub key: String,
     pub raw: Vec<u8>,
+    pub chunk_receipts: Vec<(usize, u128)>,
     pub overflow: bool,
     pub done: bool,
 }
@@ -675,6 +676,7 @@ impl Capture {
     pub fn chunk(&mut self, bytes: &[u8]) {
         if self.raw.len() + bytes.len() <= 32 * 1024 * 1024 {
             self.raw.extend_from_slice(bytes);
+            self.chunk_receipts.push((self.raw.len(), millis().saturating_sub(self.record["startedAtMs"].as_u64().unwrap_or(0) as u128)));
         } else {
             self.overflow = true;
         }
@@ -718,7 +720,34 @@ impl Capture {
             self.record["usageEvidence"] =
                 json!({"upstream":{"protocol":self.wire,"raw":v["usage"]}});
         }
-        self.record["sse"] = json!({"events":raw.replace("\r\n","\n").split("\n\n").filter_map(|block|{let data=block.lines().filter_map(|l|l.strip_prefix("data:").map(str::trim_start)).collect::<Vec<_>>().join("\n");if data.is_empty(){None}else{Some(json!({"event":block.lines().find_map(|l|l.strip_prefix("event:").map(str::trim)),"data":data,"json":serde_json::from_str::<Value>(&data).ok(),"timestampMs":end}))}}).collect::<Vec<_>>()});
+        let client_protocol=text(&self.record["contextChanges"],"clientProtocol").to_string();
+        if ["chat-completions","gemini"].contains(&client_protocol.as_str()) {
+            let body=self.record["response"]["body"].clone();
+            if body["object"]=="response" {
+                self.record["intermediateResponse"]=json!({"protocol":"responses","body":body,"rawBody":self.record["response"]["rawBody"]});
+                self.record["response"]["body"]=super::ingress::response_json(&body,&client_protocol);
+                self.record["response"]["rawBody"]=Value::Null;
+                self.record["response"]["bodyFormat"]=json!("assembled");
+            }
+            self.record["response"]["protocol"]=json!(client_protocol);
+        }
+        let mut events = vec![];
+        let mut block = String::new();
+        let mut offset = 0;
+        let mut receipt = 0;
+        for line in raw.split_inclusive('\n') {
+            offset += line.len();
+            if line.trim_matches(['\r', '\n']).is_empty() {
+                let data = block.lines().filter_map(|l| l.strip_prefix("data:").map(str::trim_start)).collect::<Vec<_>>().join("\n");
+                if !data.is_empty() {
+                    while receipt + 1 < self.chunk_receipts.len() && self.chunk_receipts[receipt].0 < offset { receipt += 1; }
+                    let timestamp = self.chunk_receipts.get(receipt).map(|(_, at)| *at);
+                    events.push(json!({"event":block.lines().find_map(|l|l.strip_prefix("event:").map(str::trim)),"data":data,"json":serde_json::from_str::<Value>(&data).ok(),"timestampMs":timestamp}));
+                }
+                block.clear();
+            } else { block.push_str(line); }
+        }
+        self.record["sse"] = json!({"events":events,"timingBasis":"relative-upstream-chunk-receipt"});
         if self.overflow {
             self.record["error"] = json!("记录正文超过 32 MB，已截断；网络转发保持完整");
         }

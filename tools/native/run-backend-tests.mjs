@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 const suites = [
   "regressions.mjs",
   "provider-presets-test.mjs",
+  "provider-identity-test.mjs",
   "config-import-test.mjs",
   "subscriptions-test.mjs",
   "subscription-routing-test.mjs",
@@ -17,6 +18,8 @@ const suites = [
   "cursor-subscriptions-test.mjs",
   "official-test.mjs",
   "protocol-test.mjs",
+  "universal-gateway-test.mjs",
+  "expanded-clients-test.mjs",
   "trace-index-repair-test.mjs",
   "portability-test.mjs",
   "preferences-test.mjs",
@@ -25,6 +28,7 @@ const suites = [
   "reasoning-test.mjs",
   "client-management-test.mjs",
   "language-test.mjs",
+  "language-renderer-test.mjs",
   "portable-update-test.mjs"
 ];
 const results = [];

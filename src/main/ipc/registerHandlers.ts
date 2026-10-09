@@ -189,9 +189,12 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
       return requireController().updateCodexConfig(input);
     },
     'xwxdeck:validate-provider': (_event, input) => {
-      const value = input as { providerId?: unknown } | undefined;
+      const value = input as { providerId?: unknown; model?: unknown } | undefined;
       if (!value || typeof value.providerId !== 'string') throw new Error('无效的连接 ID。');
-      return requireController().validateProvider(value.providerId);
+      if (value.model !== undefined && (typeof value.model !== 'string' || !value.model.trim() || value.model.length > 512)) throw new Error('无效模型名称。');
+      return value.model === undefined
+        ? requireController().validateProvider(value.providerId)
+        : requireController().validateProvider(value.providerId, (value.model as string).trim());
     },
     'xwxdeck:fetch-models': (_event, input) => {
       const source = input && typeof input === 'object' && (input as { source?: unknown }).source === 'compatible'

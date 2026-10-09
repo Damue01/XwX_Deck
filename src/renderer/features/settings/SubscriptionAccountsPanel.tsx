@@ -1,8 +1,9 @@
 import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
 import { Menu } from '@base-ui/react/menu';
-import { ArrowUpRight, Check, Ellipsis, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Check, Ellipsis, X } from 'lucide-react';
 import { useBridge } from '@/bridge/store';
+import { subscriptionServiceNames } from '@/lib/subscriptionServices';
 import { showErrorToast, showToast } from '@/lib/toast';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import type { SubscriptionAccountsSnapshot, SubscriptionRoutingPolicy, SubscriptionStrategy } from '../../../shared/subscriptionAccounts';
@@ -16,11 +17,16 @@ const OPTIONS = [
   { id: 'cursor', label: 'Cursor', icon: 'cursor' }
 ] as const;
 
-export function SubscriptionAccountsPanel({ visible, initialPlatform = 'chatgpt' }: { visible: boolean; initialPlatform?: 'chatgpt' | 'grok' | 'copilot' | 'claude' | 'cursor' }): React.ReactElement {
+export function SubscriptionAccountsPanel({ visible, open, initialPlatform = null, embedded = false }: { visible: boolean; open: boolean; embedded?: boolean; initialPlatform?: 'chatgpt' | 'grok' | 'copilot' | 'claude' | 'cursor' | null }): React.ReactElement {
   useLanguage();
   const bridge = useBridge();
   const confirm = useConfirm();
-  const [platform, setPlatform] = React.useState<'chatgpt' | 'grok' | 'copilot' | 'claude' | 'cursor'>(initialPlatform);
+  const [platform, setPlatform] = React.useState<'chatgpt' | 'grok' | 'copilot' | 'claude' | 'cursor' | null>(initialPlatform);
+  const wasOpen = React.useRef(false);
+  React.useEffect(() => {
+    if (open && !wasOpen.current) { setPlatform(initialPlatform); setRenaming(null); }
+    wasOpen.current = open;
+  }, [open, initialPlatform]);
   const [renaming, setRenaming] = React.useState<string | null>(null);
   const [label, setLabel] = React.useState('');
   const lock = React.useRef(false);
@@ -70,15 +76,17 @@ export function SubscriptionAccountsPanel({ visible, initialPlatform = 'chatgpt'
     finally { revision.current++; lock.current = false; setBusy(false); }
   };
   const begin = (accountId?: string) => void run(async () => {
+    if (!platform) return;
     if (!bridge.api.beginSubscriptionSignIn) throw new Error(t('请在 Rust 桌面应用中添加订阅账号'));
     const next = await bridge.api.beginSubscriptionSignIn({ accountId, platform });
     if (next.flow) pendingSignIn.current.add(next.flow.id);
     setSnapshot(next);
   });
   const accounts = snapshot?.accounts.filter(account => (account.platform ?? 'chatgpt') === platform) ?? [];
-  const policy: SubscriptionRoutingPolicy = snapshot?.routing?.[platform] ?? { strategy: 'exhaust', fixedAccountId: '', excludedAccountIds: [] };
+  const policy: SubscriptionRoutingPolicy = (platform ? snapshot?.routing?.[platform] : undefined) ?? { strategy: 'exhaust', fixedAccountId: '', excludedAccountIds: [] };
   const hasQuota = accounts.some(account => account.quota);
   const savePolicy = (next: SubscriptionRoutingPolicy, message = t('账号策略已保存')) => void run(async () => {
+    if (!platform) return;
     if (!bridge.api.setSubscriptionRouting) throw new Error(t('当前版本不支持账号策略'));
     const previous = snapshot;
     const currentGeneration = generation.current;
@@ -99,15 +107,16 @@ export function SubscriptionAccountsPanel({ visible, initialPlatform = 'chatgpt'
     { id: 'reset-soon', label: t('优先使用即将恢复'), needsQuota: true }, { id: 'fixed', label: t('固定账号') }
   ];
 
-  return <div className="configuration-content has-detail subscription-workspace" aria-busy={busy}>
-    <div className="configuration-directory">
-      <div className="configuration-list" aria-label={t("订阅服务")}>{OPTIONS.map(item => <button className="configuration-choice" type="button" data-subscription-service={item.id} aria-pressed={platform === item.id} key={item.id} disabled={busy || waiting} onClick={() => {
+  return <div className={embedded ? 'configuration-detail subscription-accounts' : `configuration-content subscription-workspace${platform ? ' has-detail' : ''}`} aria-busy={busy}>
+    {!embedded && <div className="configuration-directory">
+      {platform && <button type="button" className="provider-text-action configuration-back" disabled={busy || waiting} onClick={() => { setPlatform(null); setRenaming(null); }}><ArrowLeft size={15} aria-hidden="true" />{t("全部订阅")}</button>}
+      <div className={platform ? 'configuration-list' : 'configuration-grid'} aria-label={t("订阅服务")}>{OPTIONS.map(item => <button className="configuration-choice" type="button" data-subscription-service={item.id} aria-pressed={platform === item.id} key={item.id} disabled={busy || waiting} onClick={() => {
         setRenaming(null);
         setPlatform(item.id); setError('');
       }}><ProviderIcon kind={item.icon} /><span>{item.label}</span></button>)}</div>
-    </div>
-    <div className="configuration-detail subscription-accounts">
-      <div className="configuration-detail-heading"><h3><ProviderIcon kind={platformInfo.icon} />{platformInfo.label}</h3>
+    </div>}
+    {platform && <div className={embedded ? 'subscription-accounts-body' : 'configuration-detail subscription-accounts'}>
+      <div className="configuration-detail-heading"><h3><ProviderIcon kind={platformInfo.icon} />{embedded ? t(subscriptionServiceNames[platform!]) : platformInfo.label}</h3>
         <a className="setup-card-link subscription-usage-link" href={bridge.api.setupWebsites[`subscription-${platform}-usage`]} target="_blank" rel="noopener noreferrer" onClick={event => {
           event.preventDefault();
           void bridge.api.openSetupWebsite(`subscription-${platform}-usage`).catch(failure => showErrorToast(t('打开用量页面失败'), failure));
@@ -163,6 +172,6 @@ export function SubscriptionAccountsPanel({ visible, initialPlatform = 'chatgpt'
           : <button type="button" className="btn btn-primary subscription-login-button" disabled={busy || snapshot?.supported === false} onClick={() => begin()}><ProviderIcon kind={platformInfo.icon} />{`Continue with ${platformInfo.label}`}</button>}
         {((snapshot?.flow?.status === 'failed' && (snapshot.flow.platform ?? 'chatgpt') === platform) || error) && <p className="provider-field-error" role="alert">{error || snapshot?.flow?.error}</p>}
       </>
-    </div>
+    </div>}
   </div>;
 }

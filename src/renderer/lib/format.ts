@@ -1,8 +1,8 @@
-import { t } from '@/lib/i18n';
+import { getLanguage, t } from '@/lib/i18n';
 // Pure formatting helpers ported from src/main/trace/webview/common.ts.
 // No DOM manipulation here — all functions are stateless and browser-environment-agnostic.
 
-export function formatNumber(value: unknown, locale = 'zh-CN'): string {
+export function formatNumber(value: unknown, locale = getLanguage()): string {
   return Math.max(0, Math.round(Number(value) || 0)).toLocaleString(locale);
 }
 

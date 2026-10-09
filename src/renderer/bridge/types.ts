@@ -85,7 +85,7 @@ export interface StartupSettingsSnapshot {
 // ---- Runtime state ---------------------------------------------------------
 
 export interface ClientStateRow {
-  readonly id: ClientId;
+  readonly id: ClientId | import("../../shared/clientDownloads").DownloadClientId;
   readonly label: string;
   readonly enabled: boolean;
   readonly status: 'idle' | 'taken' | 'skipped' | 'off';
@@ -142,6 +142,7 @@ export interface XwXDeckRuntimeState {
   readonly clients: readonly ClientStateRow[];
   readonly lastError?: string;
   readonly theme: AppTheme;
+  readonly automaticUpdates?: boolean;
   readonly language?: import('@/lib/i18n').Language | null;
   readonly traceAppearance: TraceAppearanceSnapshot;
   readonly startup?: StartupSettingsSnapshot;
@@ -342,7 +343,22 @@ export interface TraceRetentionRepairResult {
 
 // ---- XwXDeck API surface -------------------------------------------------
 
+export interface GatewayClientRoute {
+  readonly client: string;
+  readonly providerId: string | null;
+  readonly model: string;
+  readonly enabled: boolean;
+  readonly automatic: boolean;
+  readonly baseUrl: string | null;
+  readonly configDigest: string;
+  readonly requiresTakeover: boolean;
+  readonly configPaths: readonly string[];
+}
+
 export interface XwXDeckApi {
+  getClientRoute?(client: string): Promise<GatewayClientRoute>;
+  setClientRoute?(input: { client: string; providerId: string; model: string; configDigest: string; takeoverConfirmed?: boolean }): Promise<GatewayClientRoute>;
+  toggleGatewayClient?(client: string): Promise<XwXDeckRuntimeState>;
   previewConfigurationImport?(input?: import('../../shared/configImport').ConfigurationImportInput): Promise<import('../../shared/configImport').ConfigurationImportPreview>;
   importConfigurations?(input: import('../../shared/configImport').ConfigurationImportInput & { targetDigest: string; fingerprints: readonly string[] }): Promise<import('../../shared/configImport').AppliedConfigurationImport>;
   chooseConfigurationImportFile?(): Promise<string | null>;
@@ -381,6 +397,7 @@ export interface XwXDeckApi {
   restartAndInstall(): Promise<XwXDeckUpdateState>;
   cancelUpdate(): Promise<XwXDeckUpdateState>;
   setStartupEnabled(enabled: boolean): Promise<XwXDeckRuntimeState>;
+  setAutomaticUpdates?(enabled: boolean): Promise<XwXDeckRuntimeState>;
   setLanguage?(language: import('@/lib/i18n').Language): Promise<XwXDeckRuntimeState>;
   setTheme(theme: AppTheme): Promise<XwXDeckRuntimeState>;
   setTraceAppearance(payload: Partial<Omit<TraceAppearanceSnapshot, 'customImageUrl'>>): Promise<XwXDeckRuntimeState>;
@@ -418,7 +435,7 @@ export interface XwXDeckApi {
   deleteProvider(id: string): Promise<ProviderSnapshot>;
   switchClientProvider(input: { client: ProviderClient; providerId: string | null }): Promise<ProviderSnapshot>;
   fetchProviderModels(input: { providerId: string; refresh?: boolean }): Promise<readonly ModelCatalogEntry[]>;
-  validateProvider(input: { providerId: string }): Promise<ProviderValidationResult>;
+  validateProvider(input: { providerId: string; model?: string }): Promise<ProviderValidationResult>;
   getCompatibleServiceConfig(): Promise<CompatibleServiceConfigSnapshot>;
   updateCompatibleServiceConfig(payload: Record<string, unknown>): Promise<CompatibleServiceConfigSnapshot>;
 

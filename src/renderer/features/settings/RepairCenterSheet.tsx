@@ -87,7 +87,6 @@ export function RepairCenterSheet({
 
   return (
     <section className="group repair-entry-group">
-      <div className="group-label"><span className="eyebrow">{t("支持")}</span></div>
       <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Trigger
           render={(

@@ -170,7 +170,12 @@ async fn pilot_rpc(
             if hidden {
                 window.hide().map_err(|e| e.to_string())?;
             }
-            let response=reqwest::Client::new().post(format!("{base}/v1/responses")).json(&json!({"model":"pilot-model","input":"isolated native WebKit smoke","stream":true})).send().await.map_err(|e|e.to_string())?;
+            let generic = args.first().and_then(|v|v.get("client")).and_then(Value::as_str);
+            let (path, payload) = if let Some(client) = generic {
+                if client != "opencode" { return Err("无效隔离测试客户端".into()); }
+                (format!("/clients/{client}/v1/chat/completions"), json!({"model":"gpt-4.1","messages":[{"role":"user","content":"isolated native WebKit smoke"}],"stream":true}))
+            } else { ("/v1/responses".into(), json!({"model":"pilot-model","input":"isolated native WebKit smoke","stream":true})) };
+            let response=reqwest::Client::new().post(format!("{base}{path}")).json(&payload).send().await.map_err(|e|e.to_string())?;
             let status = response.status().as_u16();
             let body = response.text().await.map_err(|e| e.to_string())?;
             let visible = window.is_visible().map_err(|e| e.to_string())?;
@@ -569,6 +574,21 @@ fn main() {
         .setup(|app| {
             use tauri::menu::{Menu,MenuItem};
             use tauri::tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState};
+            // Captures must refresh native counters even when WebKit throttles polling.
+            let capture_shared=app.state::<Shared>().inner().clone();
+            let capture_handle=app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let Ok(mut events)=capture_shared.lock().await.trace_events() else {return;};
+                loop {
+                    match events.recv().await {
+                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                    while events.try_recv().is_ok() {}
+                    let state=capture_shared.lock().await.state();
+                    let _=capture_handle.emit("pilot-state",state);
+                }
+            });
             #[cfg(target_os="macos")]{
                 use tauri::menu::{Submenu,PredefinedMenuItem};
                 let quit=MenuItem::with_id(app,"native-quit","退出 XwX Deck",true,Some("Cmd+Q"))?;
@@ -589,14 +609,21 @@ fn main() {
             if !std::env::args().any(|a|a=="--pilot-root"){
                 let shared=app.state::<Shared>().inner().clone();let handle=app.handle().clone();
                 tauri::async_runtime::spawn(async move{
+                    let resumed={shared.lock().await.call("resumeTracing",&[]).await};
+                    match resumed {
+                        Ok(state)=>{let _=handle.emit("pilot-state",state);},
+                        Err(error)=>{let mut state=shared.lock().await.state();state["lastError"]=json!(error);let _=handle.emit("pilot-state",state);}
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(6000)).await;
-                    if let Ok(state)=shared.lock().await.call("checkForUpdates",&[]).await{let _=handle.emit("pilot-update",state);}
+                    if let Ok(state)=shared.lock().await.call("checkForAutomaticUpdates",&[]).await{let _=handle.emit("pilot-update",state);}
+                    let mut previous_update=Value::Null;
                     loop{
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                        let state=shared.lock().await.update_state();if state["status"]=="downloading"{let _=handle.emit("pilot-update",&state);}
+                        let state=shared.lock().await.update_state();if state!=previous_update{let _=handle.emit("pilot-update",&state);previous_update=state.clone();}
+                        #[cfg(target_os="macos")]if state["status"]=="available"{let _=shared.lock().await.call("downloadAutomaticUpdate",&[]).await;}
                         #[cfg(target_os="windows")]if portable_update::idle_for_nightly(){
                             let mut p=shared.lock().await;if !p.active()&&p.nightly_eligible(){
-                                if state["status"]=="available"{let _=p.call("downloadUpdate",&[]).await;}
+                                if state["status"]=="available"{let _=p.call("downloadAutomaticUpdate",&[]).await;}
                                 if state["status"]=="ready"{if let Ok(installer)=p.call("restartAndInstall",&[]).await{if let Some(path)=installer["path"].as_str(){if portable_update::spawn(std::path::Path::new(path)).is_ok(){handle.exit(0);}}}}
                             }
                         }
@@ -611,7 +638,7 @@ fn main() {
         .on_page_load(move |window,payload| {
             if smoke && payload.event()==tauri::webview::PageLoadEvent::Finished {
                 match window.label() {
-                    "main" => { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
+                    "main" => { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
                     _ => {}
                 }
             }

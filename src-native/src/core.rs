@@ -1,3 +1,7 @@
+#[path = "client_wiring.rs"]
+mod client_wiring;
+#[path = "ingress.rs"]
+mod ingress;
 #[path = "claude_accounts.rs"]
 mod claude_accounts;
 #[path = "client_installations.rs"]
@@ -110,7 +114,7 @@ pub struct Provider {
     #[serde(skip)]
     oauth: bool,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct Settings {
     theme: String,
@@ -130,6 +134,7 @@ struct Settings {
     codex_models: Value,
     claude_desktop: Value,
     startup_enabled: bool,
+    automatic_updates: bool,
     #[serde(flatten)]
     other: serde_json::Map<String, Value>,
 }
@@ -152,6 +157,7 @@ impl Default for Settings {
             codex_models: json!({"official":"","officialContextWindow":0}),
             claude_desktop: json!({"syncEnabled":false}),
             startup_enabled: false,
+            automatic_updates: true,
             other: serde_json::Map::new(),
         }
     }
@@ -172,6 +178,7 @@ struct Gateway {
 struct Route {
     subscriptions: subscriptions::Accounts,
     provider: Option<Provider>,
+    clients: std::collections::BTreeMap<String, Provider>,
     claude: Option<Provider>,
     client: reqwest::Client,
     count: Arc<AtomicU64>,
@@ -368,7 +375,7 @@ impl Pilot {
             settings_problem,
             recovery_problem: None,
         };
-        pilot.recovery_problem = pilot.recover_interrupted_gateway().err();
+        pilot.recovery_problem = pilot.restore_client_wiring(None).and_then(|_|pilot.recover_interrupted_gateway()).err();
         if pilot.settings_problem.is_none() {
             pilot.persist()?;
         }
@@ -471,11 +478,20 @@ impl Pilot {
             .as_str()
             .and_then(|id| self.settings.connections.iter().find(|p| p.id == id))
     }
+    fn generic_routes(&self) -> std::collections::BTreeMap<String, Provider> {
+        self.settings.other.get("clientRoutes").and_then(Value::as_object).into_iter().flatten()
+            .filter(|(id, v)| ingress::valid_client(id) && v["enabled"] != false)
+            .filter_map(|(id, v)| self.settings.connections.iter().find(|p| p.id == text(v,"providerId"))
+                .map(|p| {let mut p=p.clone(); p.codex_model=text(v,"model").into(); (id.clone(),p)})).collect()
+    }
     pub fn update_state(&self) -> Value {
         self.updates.state()
     }
-    #[cfg(target_os = "windows")]
+    pub fn trace_events(&self) -> Result<tokio::sync::broadcast::Receiver<String>> {
+        Ok(self.store.lock().map_err(err)?.events.subscribe())
+    }
     pub fn nightly_eligible(&self) -> bool {
+        if !self.settings.automatic_updates { return false; }
         let state = self.updates.state();
         read(&self.root.join("declined-update.json"))
             .ok()
@@ -489,12 +505,27 @@ impl Pilot {
     pub fn state(&self) -> Value {
         let active = self.gateway.is_some();
         let (sessions, count, bytes) = self.store.lock().unwrap().totals();
-        json!({"tracingEnabled":active,"readiness":{"startupPhase":"ready","proxyListening":active,"recordingEnabled":active,"claudeConfigReady":self.gateway.as_ref().is_some_and(|g|g.claude.is_some()),"claudeRouteReady":self.gateway.as_ref().is_some_and(|g|g.claude.is_some()),"codexConfigReady":self.gateway.as_ref().is_some_and(|g|g.codex_managed),"codexRouteReady":self.gateway.as_ref().is_some_and(|g|g.codex_managed),"codexGatewayEnabled":self.gateway.as_ref().is_some_and(|g|g.codex_managed)},
+        let mut state = json!({"tracingEnabled":active,"readiness":{"startupPhase":"ready","proxyListening":active,"recordingEnabled":active,"claudeConfigReady":self.gateway.as_ref().is_some_and(|g|g.claude.is_some()),"claudeRouteReady":self.gateway.as_ref().is_some_and(|g|g.claude.is_some()),"codexConfigReady":self.gateway.as_ref().is_some_and(|g|g.codex_managed),"codexRouteReady":self.gateway.as_ref().is_some_and(|g|g.codex_managed),"codexGatewayEnabled":self.gateway.as_ref().is_some_and(|g|g.codex_managed)},
           "localBaseUrl":self.gateway.as_ref().map(|g|format!("http://127.0.0.1:{}",g.port)),"traceRoot":self.trace_root(),"logRoot":self.log_root(),"claudeConfigDir":self.claude_dir(),"claudeConfigPath":self.claude_path(),
           "backgroundGatewayActive":active,"backgroundGatewayAction":if active {Some("close")} else {None},"chatGptRestartRecommended":false,
           "sessions":sessions,"traces":count,"storageText":format!("{bytes} B"),"traceStorageBytes":bytes,"traceWarningGB":self.settings.trace_warning_gb,"traceAutoCleanup":self.settings.trace_auto_cleanup,
           "clients":[{"id":"claude-cli","label":"Claude","enabled":self.settings.client_enabled["claude"],"status":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"taken"}else{"idle"},"statusText":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"追踪中"}else{"待命"},"detail":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"客户端请求正在追踪"}else{"客户端直连"}},{"id":"codex-cli","label":"ChatGPT","enabled":self.settings.client_enabled["codex"],"status":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"taken"}else{"idle"},"statusText":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"追踪中"}else{"待命"},"detail":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"客户端请求正在追踪"}else{"客户端直连"}}],
-          "lastError":self.settings_problem.clone().or_else(||self.recovery_problem.clone()).or_else(||self.store.lock().unwrap().read_problem.clone()).or_else(||self.config().err()),"theme":self.settings.theme,"language":self.settings.language.clone().unwrap_or_else(crate::language::system_language),"traceAppearance":self.trace_appearance(),"startup":{"enabled":self.settings.startup_enabled,"desiredEnabled":self.settings.startup_enabled,"supported":!self.isolated&&cfg!(any(target_os="macos",target_os="windows")),"launchHidden":true,"warning":if self.isolated {Some("隔离验证不注册系统登录项")}else{None}},"update":self.update_state()})
+          "lastError":self.settings_problem.clone().or_else(||self.recovery_problem.clone()).or_else(||self.store.lock().unwrap().read_problem.clone()).or_else(||self.config().err()),"theme":self.settings.theme,"language":self.settings.language.clone().unwrap_or_else(crate::language::system_language),"automaticUpdates":self.settings.automatic_updates,"traceAppearance":self.trace_appearance(),"startup":{"enabled":self.settings.startup_enabled,"desiredEnabled":self.settings.startup_enabled,"supported":!self.isolated&&cfg!(any(target_os="macos",target_os="windows")),"launchHidden":true,"warning":if self.isolated {Some("隔离验证不注册系统登录项")}else{None}},"update":self.update_state()});
+        if let Some(rows)=state["clients"].as_array_mut(){
+            let routes = self.generic_routes();
+            for (id, v) in self.settings.other.get("clientRoutes").and_then(Value::as_object).into_iter().flatten() {
+                let enabled = v["enabled"] != false;
+                let automatic = client_wiring::automatic_client(id);
+                let listening = active && routes.contains_key(id);
+                let wired = listening && (!automatic || self.root.join(format!("client-wiring-{id}.json")).exists());
+                let skipped = listening && automatic && !wired;
+                rows.push(json!({"id":id,"label":ingress::label(id),"enabled":enabled,
+                    "status":if !enabled {"off"} else if skipped {"skipped"} else if wired {"taken"} else {"idle"},
+                    "statusText":if !enabled {"已暂停"} else if skipped {"未接管"} else if wired && automatic {"追踪中"} else if wired {"入口已就绪"} else {"待命"},
+                    "detail":if skipped {"未检测到客户端，原配置保留"} else if wired && automatic {"客户端请求正在追踪"} else if wired {"将接入地址填入客户端后开始捕获"} else {"客户端直连"}}));
+            }
+        }
+        state
     }
     fn codex_snapshot(&self) -> Result<Value> {
         let d = self.config()?;
@@ -699,14 +730,15 @@ impl Pilot {
         } else {
             None
         };
-        for p in [provider.as_ref(), claude.as_ref()].into_iter().flatten() {
+        let generic=self.generic_routes();
+        for p in [provider.as_ref(), claude.as_ref()].into_iter().flatten().chain(generic.values()) {
             if validate && !p.subscription_account_id.is_empty() {
                 self.subscriptions
                     .validate_pool(&p.subscription_account_id)
                     .await?;
             }
         }
-        if provider.is_none() && claude.is_none() {
+        if provider.is_none() && claude.is_none() && self.generic_routes().is_empty() {
             return Err("请先安装并配置客户端，或保存并选择 API 连接".into());
         }
         if let Some(ref p) = provider {
@@ -867,6 +899,7 @@ impl Pilot {
         let config = self.manage_routes(g.port, &provider)?;
         {
             let mut routes = g.routes.write().map_err(err)?;
+            routes.clients = self.generic_routes();
             routes.provider = provider;
             routes.claude = claude;
         }
@@ -901,6 +934,7 @@ impl Pilot {
         let route = Route {
             subscriptions: self.subscriptions.clone(),
             provider: provider.clone(),
+            clients: self.generic_routes(),
             claude,
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -916,11 +950,11 @@ impl Pilot {
         let routes = Arc::new(std::sync::RwLock::new(route));
         let (shutdown, receive) = oneshot::channel();
         let app = Router::new()
-            .route("/v1/responses", any(forward))
-            .route("/responses", any(forward))
-            .route("/v1/messages", any(forward))
-            .route("/anthropic/v1/messages", any(forward))
-            .fallback(forward)
+            .route("/v1/responses", any(ingress::forward))
+            .route("/responses", any(ingress::forward))
+            .route("/v1/messages", any(ingress::forward))
+            .route("/anthropic/v1/messages", any(ingress::forward))
+            .fallback(ingress::forward)
             .with_state(routes.clone());
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, app)
@@ -955,6 +989,9 @@ impl Pilot {
             codex_official,
             cancel,
         });
+        if let Err(error)=self.apply_client_wiring(port){
+            return match self.stop().await{Ok(())=>Err(error),Err(restore)=>Err(format!("{error}；{restore}"))};
+        }
         if let Err(e) = self.desktop_apply(Some(port)) {
             eprintln!("Claude Desktop 同步失败：{e}");
         }
@@ -964,6 +1001,7 @@ impl Pilot {
         let Some(g) = self.gateway.as_ref() else {
             return Ok(());
         };
+        self.restore_client_wiring(None)?;
         self.restore_gateway_config(g)?;
         let g = self.gateway.take().unwrap();
         {
@@ -1118,6 +1156,28 @@ impl Pilot {
         }
         let input = args.first().cloned().unwrap_or(Value::Null);
         match method {
+            "getClientRoute" => self.client_route_snapshot(input.as_str().ok_or("无效客户端")?),
+            "setClientRoute" => {
+                let id=text(&input,"client");let snapshot=self.client_route_snapshot(id)?;
+                if snapshot["configDigest"]!=input["configDigest"] {return Err("客户端配置已变化，请重新检查后重试".into());}
+                if snapshot["requiresTakeover"]==true&&input["takeoverConfirmed"]!=true{return Err("请确认接管已有客户端配置".into());}
+                let provider_id=text(&input,"providerId");if !self.settings.connections.iter().any(|p|p.id==provider_id){return Err("模型服务不存在".into());}
+                let model=text(&input,"model");client_wiring::checked_model(id,model)?;
+                let previous=self.settings.clone();
+                self.restore_client_wiring(Some(id))?;
+                if !self.settings.other.contains_key("clientRoutes"){self.settings.other.insert("clientRoutes".into(),json!({}));}
+                self.settings.other.get_mut("clientRoutes").unwrap()[id]=json!({"providerId":provider_id,"model":model,"enabled":snapshot["enabled"],"acceptedDigest":self.client_route_snapshot(id)?["configDigest"]});
+                let port=self.gateway.as_ref().map(|g|g.port);
+                let result=self.persist().and_then(|_|if let Some(port)=port{self.apply_client_wiring_for(port,Some(id))}else{Ok(())});
+                if let Err(error)=result{self.settings=previous;let restored=self.persist().and_then(|_|if let Some(port)=port{self.apply_client_wiring_for(port,Some(id))}else{Ok(())});if let Err(recovery)=restored{self.recovery_problem=Some(recovery);}return Err(error);}
+                if let Some(g)=self.gateway.as_ref(){g.routes.write().map_err(err)?.clients=self.generic_routes();}
+                self.client_route_snapshot(id)
+            }
+            "resumeTracing" => {
+                let desired=self.settings.other.get("traceDesiredEnabled").and_then(Value::as_bool)
+                    .unwrap_or(self.selected().is_some()||self.selected_for("claude").is_some()||!self.generic_routes().is_empty());
+                if desired&&!self.active(){self.start().await?;}Ok(self.state())
+            }
             "getSubscriptionNotices" => Ok(self.subscriptions.pool.notices()),
             "getSubscriptionAccounts" => Ok(self.subscriptions.snapshot().await),
             "setSubscriptionRouting" => {
@@ -1166,7 +1226,10 @@ impl Pilot {
                 if !catalog.as_array().is_some_and(|rows|rows.iter().any(|row|row["id"]==id)) { return Err("未知客户端".into()); }
                 let id = client_installations::canonical_id(id);
                 let mut clients = self.model_clients();
-                if method == "removeModelClient" { clients.retain(|client|client!=id); }
+                if method == "removeModelClient" {
+                    if ingress::valid_client(id)&&self.settings.other.get("clientRoutes").and_then(|r|r.get(id)).is_some_and(|r|r["enabled"]!=false){Box::pin(self.call("toggleClient",&[json!(id)])).await?;}
+                    clients.retain(|client|client!=id);
+                }
                 else if !clients.iter().any(|client|client==id) {
                     if !self.client_discovery().installed(id) { return Err("未检测到客户端安装，请先安装并重新检测".into()); }
                     clients.push(id.to_owned());
@@ -1241,6 +1304,16 @@ impl Pilot {
             }
             "getUpdateState" => Ok(self.update_state()),
             "checkForUpdates"=>self.updates.check().await,
+            "checkForAutomaticUpdates"=>{
+                let state = self.updates.state();
+                if state["status"] != "idle" { Ok(state) }
+                else { self.updates.check().await }
+            },
+            "downloadAutomaticUpdate"=>{
+                let state = self.updates.state();
+                if !self.nightly_eligible() || state["status"] != "available" { Ok(state) }
+                else { self.updates.download() }
+            },
             "downloadUpdate"=>self.updates.download(),
             "cancelUpdate"=>self.updates.cancel(),
             "restartAndInstall"=>Ok(json!({"path":self.updates.installer().await?,"installMode":if cfg!(target_os="macos"){"manual-dmg"}else{"automatic"}})),
@@ -1319,7 +1392,14 @@ impl Pilot {
             "clearClaudeEnvironmentOverrides" => {
                 Err("进程环境变量需要在启动来源中移除并重启客户端；未修改系统环境".into())
             }
-            "validateProvider" => self.validate(text(&input, "providerId")).await,
+            "validateProvider" => {
+                let model = match input.get("model") {
+                    None => None,
+                    Some(Value::String(value)) if !value.trim().is_empty() && value.len() <= 512 => Some(value.trim()),
+                    _ => return Err("无效模型名称".into()),
+                };
+                self.validate(text(&input, "providerId"), model).await
+            },
             "updateClaudeModels" => {
                 if input.get("expectedProviderId").is_some()
                     && input["expectedProviderId"] != self.settings.selected["claude"]
@@ -1354,6 +1434,17 @@ impl Pilot {
                 Ok(models)
             }
             "toggleClient" => {
+                if let Some(id)=input.as_str().filter(|id|ingress::valid_client(id)) {
+                    let previous=self.settings.clone();
+                    let routes=self.settings.other.get_mut("clientRoutes").and_then(Value::as_object_mut).ok_or("客户端未配置")?;
+                    let route=routes.get_mut(id).ok_or("客户端未配置")?;let enabled=route["enabled"]==false;
+                    if !enabled{self.restore_client_wiring(Some(id))?;}
+                    self.settings.other.get_mut("clientRoutes").unwrap()[id]["enabled"]=json!(enabled);
+                    let port=self.gateway.as_ref().map(|g|g.port);
+                    let result=self.persist().and_then(|_|if enabled{if let Some(port)=port{self.apply_client_wiring_for(port,Some(id))}else{Ok(())}}else{Ok(())});
+                    if let Err(error)=result{self.settings=previous;let restored=self.persist().and_then(|_|if let Some(port)=port{self.apply_client_wiring_for(port,Some(id))}else{Ok(())});if let Err(recovery)=restored{self.recovery_problem=Some(recovery);}return Err(error);}
+                    if let Some(g)=self.gateway.as_ref(){g.routes.write().map_err(err)?.clients=self.generic_routes();}return Ok(self.state());
+                }
                 let client = match input.as_str() {
                     Some("claude-cli") => "claude",
                     Some("codex-cli") => "codex",
@@ -1409,12 +1500,22 @@ impl Pilot {
                 {
                     return Err("无效协议".into());
                 }
-                let id = if text(&input, "id").is_empty() {
-                    name
-                } else {
-                    text(&input, "id")
+                // A new connection must never reuse a renamed connection's identity.
+                let supplied_id = text(&input, "id");
+                if supplied_id.is_empty() && self.settings.connections.iter().any(|p| p.display_name == name) {
+                    return Err("连接名称已存在".into());
                 }
-                .to_string();
+                let id = if supplied_id.is_empty() {
+                    let mut candidate = name.to_string();
+                    let mut suffix = 2;
+                    while self.settings.connections.iter().any(|p| p.id == candidate) {
+                        candidate = format!("{}-{}", name, suffix);
+                        suffix += 1;
+                    }
+                    candidate
+                } else {
+                    supplied_id.to_string()
+                };
                 if self
                     .settings
                     .connections
@@ -1453,8 +1554,11 @@ impl Pilot {
                         .map(|p| p.claude_models.clone())
                         .unwrap_or_else(|| json!({"fable":"","opus":"","sonnet":"","haiku":""})),
                 };
-                self.settings.connections.retain(|p| p.id != id);
-                self.settings.connections.push(provider);
+                if let Some(index) = self.settings.connections.iter().position(|p| p.id == id) {
+                    self.settings.connections[index] = provider;
+                } else {
+                    self.settings.connections.push(provider);
+                }
                 self.persist()?;
                 Ok(self.providers())
             }
@@ -1544,6 +1648,13 @@ impl Pilot {
                 let Some(provider) = provider else {return self.official_catalog();};
                 self.catalog(provider).await
             }
+            "setAutomaticUpdates" => {
+                let enabled = input.as_bool().ok_or("无效更新设置")?;
+                let before = self.settings.automatic_updates;
+                self.settings.automatic_updates = enabled;
+                if let Err(error) = self.persist() { self.settings.automatic_updates = before; return Err(error); }
+                Ok(self.state())
+            }
             "setLanguage" => {
                 let language = input.as_str().ok_or("无效语言")?;
                 if !crate::language::is_supported(language) { return Err("无效语言".into()); }
@@ -1597,11 +1708,13 @@ impl Pilot {
                 Ok(self.state())
             }
             "toggleTracing" => {
-                if input.as_bool().unwrap_or(!self.active()) {
+                let desired=input.as_bool().unwrap_or(!self.active());
+                if desired {
                     self.start().await?;
                 } else {
                     self.stop().await?;
                 }
+                self.settings.other.insert("traceDesiredEnabled".into(),json!(desired));self.persist()?;
                 Ok(self.state())
             }
             _ => Err(format!(
@@ -1611,7 +1724,7 @@ impl Pilot {
     }
 }
 
-async fn forward(
+async fn forward_request(
     State(routes): State<Arc<std::sync::RwLock<Route>>>,
     request: Request,
 ) -> Response {
@@ -1638,7 +1751,7 @@ async fn forward(
         Err(_) => return protocol_error(413, "responses", "请求过大"),
     };
     let payload = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
-    let session = ["x-codex-thread-id", "session_id", "x-session-id"]
+    let session = ["x-codex-thread-id", "session_id", "x-session-id", "x-opencode-session", "x-gemini-session-id"]
         .iter()
         .find_map(|key| parts.headers.get(*key).and_then(|v| v.to_str().ok()))
         .or_else(|| payload["metadata"]["session_id"].as_str())
@@ -1650,6 +1763,7 @@ async fn forward(
                 .map(|id| format!("response:{id}"))
                 .unwrap_or_default()
         });
+    let session=parts.extensions.get::<ingress::Origin>().map(|o|format!("{}:{session}",o.client)).unwrap_or(session);
     let model = if is_claude {
         let alias = text(&payload, "model").trim_end_matches("[1m]");
         ["fable", "opus", "sonnet", "haiku"]
@@ -1897,7 +2011,8 @@ async fn forward_once(
     let resolved_wire = resolve_wire(&route.root, provider, model.as_deref(), incoming);
     let wire = resolved_wire.as_str();
     let subscription = !provider.subscription_account_id.is_empty();
-    let convert = incoming != wire && !metadata && !account;
+    let native_chat=parts.extensions.get::<ingress::Origin>().is_some_and(|o|o.protocol=="chat-completions")&&wire=="chat-completions";
+    let convert = incoming != wire && !metadata && !account && !native_chat;
     let compact = (convert || subscription)
         && !is_claude
         && (path.ends_with("/compact")
@@ -1913,8 +2028,12 @@ async fn forward_once(
         .get("x-codex-thread-id")
         .or_else(|| parts.headers.get("session_id"))
         .or_else(|| parts.headers.get("x-session-id"))
+        .or_else(|| parts.headers.get("x-opencode-session"))
+        .or_else(|| parts.headers.get("x-gemini-session-id"))
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
+    let scoped_session=parts.extensions.get::<ingress::Origin>().map(|o|format!("{}:{session}",o.client)).unwrap_or_else(||session.to_string());
+    let session=scoped_session.as_str();
     if !is_claude && !metadata && !account {
         if let Some(ref body) = payload {
             match continuation::expand(&route.root, provider, session, body, convert) {
@@ -1924,6 +2043,7 @@ async fn forward_once(
         }
     }
     let continuation_body = payload.clone();
+    if native_chat{payload=parts.extensions.get::<ingress::Origin>().map(|o|o.body.clone());}
     if compact {
         if let Some(ref mut body) = payload {
             if let Some(input) = body["input"].as_array_mut() {
@@ -2115,6 +2235,7 @@ async fn forward_once(
                 "host",
                 "authorization",
                 "x-api-key",
+                "x-goog-api-key",
                 "connection",
                 "content-length",
                 "transfer-encoding",
@@ -2177,6 +2298,7 @@ async fn forward_once(
         }
     };
     let mut output = Response::builder().status(response.status());
+    if native_chat{output=output.header("x-xwx-native-chat","1");}
     for (name, value) in response.headers() {
         if ![
             "connection",
@@ -2195,12 +2317,15 @@ async fn forward_once(
             .unwrap();
     }
     let index = route.count.fetch_add(1, Ordering::Relaxed) + 1;
-    let source = if is_claude { "claude-cli" } else { "codex-cli" };
+    let origin = parts.extensions.get::<ingress::Origin>();
+    let source = origin.map(|o|o.client.as_str()).unwrap_or(if is_claude { "claude-cli" } else { "codex-cli" });
     let native_key = parts
         .headers
         .get("x-codex-thread-id")
         .or_else(|| parts.headers.get("session_id"))
         .or_else(|| parts.headers.get("x-session-id"))
+        .or_else(|| parts.headers.get("x-opencode-session"))
+        .or_else(|| parts.headers.get("x-gemini-session-id"))
         .and_then(|v| v.to_str().ok())
         .or_else(|| {
             original_payload
@@ -2217,6 +2342,7 @@ async fn forward_once(
             ![
                 "authorization",
                 "x-api-key",
+                "x-goog-api-key",
                 "cookie",
                 "proxy-authorization",
                 "set-cookie",
@@ -2232,13 +2358,32 @@ async fn forward_once(
         record["upstream"]["transport"] = json!("cursor-connect-protobuf");
         record["upstream"]["transportRequest"] = adapter.request.clone();
     }
+    if let Some(origin)=origin {
+        record["sourceLabel"]=json!(ingress::label(&origin.client));
+        record["clientFirstPrompt"]=json!(ingress::first_prompt(&origin.body));
+        record["protocol"]=json!(origin.protocol);
+        record["request"]["body"]=origin.body.clone();
+        record["request"]["path"]=json!(origin.path);
+        record["request"]["url"]=json!(origin.path);
+        record["request"]["apiType"]=json!(origin.protocol);
+        record["normalizedRequest"]=original_payload.clone().unwrap_or(Value::Null);
+    }
+    record["upstream"]["requestBody"]=payload.clone().unwrap_or(Value::Null);
+    if compact || path.ends_with("/responses/compact") {
+        record["compact"] = json!(true);
+    }
     record["contextChanges"] = json!({"clientProtocol":incoming,"upstreamProtocol":wire,"historyRestored":original_payload.as_ref().is_some_and(|p|p.get("previous_response_id").is_some()) && payload.as_ref().is_some_and(|p|p.get("previous_response_id").is_none()),"transformed":payload!=original_payload});
+    if record["compact"] == true {
+        record["contextChanges"]["compactionMode"] = json!(if compact { "gateway-summary" } else { "upstream" });
+    }
+    if let Some(origin)=origin {if origin.protocol=="gemini"{let mut notes=vec![];if origin.body["generationConfig"].get("topK").is_some(){notes.push("topK 无跨协议等价项，使用上游采样规则");}if origin.body["generationConfig"]["thinkingConfig"].get("includeThoughts").is_some(){notes.push("展示上游提供的思考摘要，不生成或估算隐藏思考内容");}record["contextChanges"]["conversionNotes"]=json!(notes);}record["contextChanges"]["clientProtocol"]=json!(origin.protocol);record["contextChanges"]["transformed"]=json!(payload!=Some(origin.body.clone()));}
     let mut capture = storage::Capture {
         store: route.store.clone(),
         record,
         wire: wire.into(),
         key,
         raw: vec![],
+        chunk_receipts: vec![],
         overflow: false,
         done: false,
     };
@@ -2412,7 +2557,7 @@ async fn forward_once(
                                 let json_end = !native_sse
                                     && bytes.iter().rev().find(|b| !b.is_ascii_whitespace())
                                         == Some(&b'}');
-                                if !is_claude && !saved && (terminal_seen || json_end) {
+                                if !is_claude && !native_chat && !saved && (terminal_seen || json_end) {
                                     let value = serde_json::from_slice::<Value>(&guard.raw)
                                         .ok()
                                         .or_else(|| {

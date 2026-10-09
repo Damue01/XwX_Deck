@@ -5,12 +5,16 @@ import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 
 const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-rust-pilot-native-'));
 const installations=join(root,'installations');
 const binary = process.env.XWX_NATIVE_TEST_BINARY ? resolve(process.env.XWX_NATIVE_TEST_BINARY) : resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwX Deck Rust Pilot.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
 const requests = [];
+const updatePayload=Buffer.from('isolated update download fixture');let updateDownloads=0;
 const upstream = createServer(async (req, res) => {
+  if(req.url==='/release.json'){res.setHeader('content-type','application/json');res.end(JSON.stringify({schemaVersion:1,channel:'release',version:'1.1.1',tag:'v1.1.1',changelog:'Isolated update notification',files:[{platform:process.platform==='darwin'?'darwin':'windows',arch:process.arch,name:process.platform==='darwin'?'fixture.dmg':'fixture.exe',url:base.replace('/v1','')+'/update-fixture',size:updatePayload.length,sha256:createHash('sha256').update(updatePayload).digest('hex')}]}));return;}
+  if(req.url==='/update-fixture'){updateDownloads++;res.end(updatePayload);return;}
   if (req.url === '/v1/models') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'pilot-model' }] })); return; }
   let body = ''; for await (const part of req) body += part;
   requests.push({ path: req.url, authorization: req.headers.authorization, body: JSON.parse(body) });
@@ -21,11 +25,11 @@ const upstream = createServer(async (req, res) => {
 upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
 const base = `http://127.0.0.1:${upstream.address().port}/v1`;
 const keepOpen = process.argv.includes('--keep-open');
-const child = spawn(binary, ['--pilot-root', root, '--smoke', '--smoke-upstream', base, ...(!keepOpen ? ['--smoke-exit'] : [])], { env: {...process.env, XWX_SYSTEM_LANGUAGE_TEST:'zh-CN', XWX_CLIENT_INSTALLATIONS_TEST_HOME:installations}, stdio: ['ignore', 'inherit', 'inherit'] });
+const child = spawn(binary, ['--pilot-root', root, '--smoke', '--smoke-upstream', base, ...(!keepOpen ? ['--smoke-exit'] : [])], { env: {...process.env, XWX_DECK_UPDATE_SERVER_URL:base.replace('/v1',''), XWX_SYSTEM_LANGUAGE_TEST:'zh-CN', XWX_CLIENT_INSTALLATIONS_TEST_HOME:installations}, stdio: ['ignore', 'inherit', 'inherit'] });
 try {
   // The fresh isolated root is validated before installing test-only discovery fixtures.
   for(let i=0;i<100;i++){try{await readFile(join(root,'.xwx-rust-pilot'));break;}catch{await new Promise(resolve=>setTimeout(resolve,50));}}
-  for (const name of ['Cursor.app/Contents/MacOS/Cursor']) { const path=join(installations,'Applications',name); await mkdir(resolve(path,'..'),{recursive:true}); await writeFile(path,'isolated discovery fixture'); await chmod(path,0o755); }
+  for (const name of ['Cursor.app/Contents/MacOS/Cursor', 'OpenCode.app/Contents/MacOS/OpenCode']) { const path=join(installations,'Applications',name); await mkdir(resolve(path,'..'),{recursive:true}); await writeFile(path,'isolated discovery fixture'); await chmod(path,0o755); }
   let report;
   for (let i = 0; i < 1800; i++) {
     try { report = JSON.parse(await readFile(join(root, 'native-smoke.json'), 'utf8')); break; } catch { /* Native WebKit is still rendering. */ }
@@ -35,6 +39,7 @@ try {
   assert.ok(report, `Native smoke timed out; sandbox ${root}`);
   assert.equal(report.passed, true, JSON.stringify({ ...report, sandbox: root }));
   assert.equal(requests.length, 2);
+  assert.equal(updateDownloads,0,'notification checks must not automatically download an installer');
   for (const request of requests) {
     assert.equal(request.authorization, 'Bearer isolated-test-key'); assert.equal(request.path, '/v1/responses'); assert.equal(request.body.model, 'pilot-model');
   }

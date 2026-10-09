@@ -1,10 +1,10 @@
+import { GatewayClientModels } from './GatewayClientModels';
 import { t, getLanguage, useLanguage } from '@/lib/i18n';
 import { ProviderPicker } from './ProviderPicker';
 import { SlidersHorizontal } from 'lucide-react';
-import { ManageClientsDialog } from './ManageClientsDialog';
 import { ProviderIcon } from '../settings/ProviderIcon';
 import { ClientDownloads } from '../settings/ProviderSetupShortcuts';
-import { CLIENT_DOWNLOADS, MODEL_CLIENT_ADDED_EVENT, modelClientRoute, normalizeModelClients, type DownloadClientId } from '../../../shared/clientDownloads';
+import { CLIENT_DOWNLOADS, MODEL_CLIENT_ADDED_EVENT, canonicalModelClient, modelClientRoute, normalizeModelClients, type DownloadClientId } from '../../../shared/clientDownloads';
 import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
 import * as React from 'react';
 import type {
@@ -14,7 +14,7 @@ import type {
   ModelCatalogEntry,
 } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
-import { clearLifecycleNotice, closeToast, openProviderSettings, REPAIR_CODEX_CONFIG_EVENT, RESTORE_CLIENT_CONFIG_EVENT, runNoticeAction, showErrorToast, showLifecycleNotice, showToast } from '@/lib/toast';
+import { clearLifecycleNotice, closeToast, openConfiguration, openProviderSettings, REPAIR_CODEX_CONFIG_EVENT, RESTORE_CLIENT_CONFIG_EVENT, runNoticeAction, showErrorToast, showLifecycleNotice, showToast } from '@/lib/toast';
 import { lifecycleFailure } from '../../../shared/lifecycleNotice';
 import { normalizeErrorMessage } from '../../../shared/errors';
 import { modelCatalogFailureMessage } from '../../../shared/modelCatalogError';
@@ -60,7 +60,6 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   const bridge = useBridge();
   const confirm = useConfirm();
   const [selectedClient, setSelectedClient] = React.useState<DownloadClientId>('claude');
-  const [managingClients, setManagingClients] = React.useState(false);
   const clientTabsList = React.useRef<HTMLDivElement | null>(null);
   const shownClients = normalizeModelClients(bridge.modelClients);
   const clientRoute = modelClientRoute(selectedClient);
@@ -82,13 +81,12 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const added = (event: Event) => {
       const id = (event as CustomEvent<DownloadClientId>).detail;
       if (!CLIENT_DOWNLOADS.some(client => client.id === id)) return;
-      setSelectedClient(modelClientRoute(id) ?? id);
+      setSelectedClient(canonicalModelClient(id));
       window.dispatchEvent(new CustomEvent('xwxdeck:navigate', { detail: 'models' }));
     };
     window.addEventListener(MODEL_CLIENT_ADDED_EVENT, added);
     return () => window.removeEventListener(MODEL_CLIENT_ADDED_EVENT, added);
   }, []);
-  const clientManagerTrigger = React.useRef<HTMLButtonElement | null>(null);
   const [claudeModels, setClaudeModels] = React.useState<ClaudeModelSettings | null>(bridge.claudeModels);
   const [codexConfig, setCodexConfig] = React.useState<CodexConfigSnapshot | null>(bridge.codexConfig);
   const [enhancements, setEnhancements] = React.useState<CodexEnhancementsSnapshot | null>(bridge.codexEnhancements);
@@ -713,19 +711,20 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       inert={active ? undefined : true}
     >
       <div className="page-inner">
-        <div className="page-head"><h1>{t("模型配置")}</h1></div>
+        <div className="page-head"><h1>{t("模型")}</h1></div>
 
         <Tabs value={shownClients.includes(selectedClient) ? selectedClient : null} onValueChange={value => { if (value) setSelectedClient(value as DownloadClientId); }}>
           <div className="models-switch">
             <TabsList ref={clientTabsList} aria-label={t("选择客户端")}>
               {shownClients.map(id => <TabsTab key={id} value={id} id={`client-tab-${id}`} data-client-tab={id}>{CLIENT_DOWNLOADS.find(client => client.id === id)?.label}</TabsTab>)}
             </TabsList>
-            <button ref={clientManagerTrigger} type="button" className="txt-action models-manage-clients" onClick={() => setManagingClients(true)}><SlidersHorizontal size={15} aria-hidden="true" />{t("管理客户端")}</button>
+            <button type="button" className="txt-action models-manage-clients" onClick={event => openConfiguration(event.currentTarget, 'clients')}><SlidersHorizontal size={15} aria-hidden="true" />{t("客户端管理")}</button>
           </div>
           {!shownClients.length && <p className="model-client-status">{t("从「管理客户端」添加已安装的客户端")}</p>}
 
           {/* Claude panel */}
           <TabsPanel value={clientRoute === 'claude' ? selectedClient : 'claude'} keepMounted
+            hidden={clientRoute !== 'claude' || !shownClients.includes(selectedClient)}
             className="config-block"
             id="client-panel-claude"
             data-client-panel="claude"
@@ -760,6 +759,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
 
           {/* ChatGPT panel */}
           <TabsPanel value={clientRoute === 'codex' ? selectedClient : 'codex'} keepMounted
+            hidden={clientRoute !== 'codex' || !shownClients.includes(selectedClient)}
             className="config-block"
             id="client-panel-codex"
             data-client-panel="codex"
@@ -808,12 +808,10 @@ export function ModelsPage({ active }: Props): React.ReactElement {
               </div>
             )}
           </TabsPanel>
-          {addedClients.filter(id => modelClientRoute(id) === null).map(id => <TabsPanel key={id} value={id} keepMounted className="config-block model-client-setup" id={`client-panel-${id}`} data-client-panel={id}>
-            <div className="model-client-status"><ProviderIcon kind={CLIENT_DOWNLOADS.find(client => client.id === id)?.icon} /><span>{t("模型连接请在客户端中配置")}</span></div>
-            <ClientDownloads client={id} />
+          {addedClients.filter(id => modelClientRoute(id) === null).map(id => <TabsPanel key={id} value={id} hidden={selectedClient !== id} keepMounted className="config-block model-client-setup" id={`client-panel-${id}`} data-client-panel={id}>
+            <GatewayClientModels client={id} active={active && selectedClient === id} />
           </TabsPanel>)}
         </Tabs>
-        <ManageClientsDialog open={managingClients} onOpenChange={setManagingClients} finalFocus={clientManagerTrigger} onSelect={setSelectedClient} />
       </div>
     </section>
   );

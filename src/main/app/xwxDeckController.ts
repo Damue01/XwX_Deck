@@ -5313,7 +5313,7 @@ export class XwXDeckController {
   private providerValidationSequence = 0;
 
 
-  async validateProvider(id: string): Promise<ProviderValidationResult> {
+  async validateProvider(id: string, model?: string): Promise<ProviderValidationResult> {
     const settings = await this.settingsStore.read();
     const provider = settings.providers!.connections.find(connection => connection.id === id);
     if (!provider) throw new Error('服务连接不存在。');
@@ -5329,7 +5329,7 @@ export class XwXDeckController {
       log.warn(`[xwxdeck] provider model directory validation failed (${provider.displayName}): ${(error as Error).message}`);
     });
     try {
-      result = await validateProviderConnection(provider, fetch, controller.signal);
+      result = await validateProviderConnection(model ? { ...provider, codexModel: model.trim() } : provider, fetch, controller.signal);
       await catalogRefresh;
     } finally {
       clearTimeout(timeout);

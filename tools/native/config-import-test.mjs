@@ -40,7 +40,7 @@ try{
  await rpc('getState');await rpc('saveProvider',{displayName:'Keeper',baseUrl:base+'/keeper',bearerToken:'fixture-keeper-key',adapter:'responses',codexModel:'kept-model'});await rpc('switchClientProvider',{client:'codex',providerId:'Keeper'});
  const before=await rpc('getProviders'),clientBefore=await readFile(join(root,'codex/config.toml'),'utf8');
  const hashes=[await digest(magpie),await digest(cc)];const count=requests.length;
- const preview=await rpc('previewConfigurationImport');const items=preview.sources.filter(s=>s.source==='magpie'||s.source==='cc-switch').flatMap(s=>s.items);
+ let preview=await rpc('previewConfigurationImport');check('Deck-generated Codex routes are not offered as independent import sources',preview.sources.find(s=>s.source==='codex').items.length===0);const items=preview.sources.filter(s=>s.source==='magpie'||s.source==='cc-switch').flatMap(s=>s.items);
  check('discovery is read-only and never calls a vendor',requests.length===count&&hashes[0]===await digest(magpie)&&hashes[1]===await digest(cc));
  check('metadata preview contains no API keys',!JSON.stringify(preview).includes('fixture-key-')&&!JSON.stringify(preview).includes('sk-sp-fixture')&&!JSON.stringify(preview).includes('fixture-codex-key'));
  check('Magpie multi-protocol and protocol-specific spare keys are separate',items.filter(i=>i.name.startsWith('现有中转')).length===3&&items.filter(i=>i.status==='paused').length===1);
@@ -49,6 +49,8 @@ try{
  const chosen=items.filter(i=>i.status==='new').map(i=>i.fingerprint);
  await mkdir(join(root,'settings.pilot-tmp'));const refused=await call('importConfigurations',{sources:preview.sources.map(({source,path})=>({source,path})),targetDigest:preview.targetDigest,fingerprints:chosen});check('write failure rolls back memory without partially adding providers',!refused.ok&&JSON.stringify(await rpc('getProviders'))===JSON.stringify(before));await rm(join(root,'settings.pilot-tmp'),{recursive:true});
  await rpc('toggleTracing',true);const live=await rpc('getState');const liveClient=await readFile(join(root,'codex/config.toml'),'utf8');
+ // Trace's remembered start/stop preference is a settings write: refresh the read-only preview.
+ preview=await rpc('previewConfigurationImport');
  const result=await rpc('importConfigurations',{sources:preview.sources.map(({source,path})=>({source,path})),targetDigest:preview.targetDigest,fingerprints:chosen});
  check('import adds four API configurations while retaining existing selection',result.added.length===4&&JSON.stringify(result.providers.selected)===JSON.stringify(before.selected)&&result.providers.connections.find(p=>p.id==='Keeper').codexModel==='kept-model');
  check('import does not stop a live Gateway or rewrite client files',(await rpc('getState')).localBaseUrl===live.localBaseUrl&&await readFile(join(root,'codex/config.toml'),'utf8')===liveClient);
@@ -98,6 +100,22 @@ try{
  const chinese=(await rpc('getProviders')).connections.find(p=>p.displayName==='现有中转 (responses)');await rpc('saveProvider',{id:chinese.id,displayName:chinese.displayName,baseUrl:chinese.baseUrl,bearerToken:chinese.bearerToken,adapter:chinese.adapter});check('imported non-ASCII names can be edited without forced rename',true);
  await stop();start();check('imported names models and choices survive restart',(await rpc('getProviders')).connections.some(p=>p.displayName==='Legacy')&&(await rpc('getProviders')).active.codex===imported.id);
  fresh=await rpc('previewConfigurationImport');const settingsPath=join(root,'settings.json'),disk=JSON.parse(await readFile(settingsPath,'utf8'));disk.externalSentinel='preserve';await writeFile(settingsPath,JSON.stringify(disk));failed=await call('previewConfigurationImport');check('external target changes before preview are retained and reported',!failed.ok&&JSON.parse(await readFile(settingsPath,'utf8')).externalSentinel==='preserve');
- await stop();start();await rpc('getState');fresh=await rpc('previewConfigurationImport');check('external metadata remains after restart',fresh.sources.length===4);
+ const oldDeck=join(root,'settings-before-native-migration.json');
+ const oldRow={id:'old',displayName:'LegacyDeck',baseUrl:base+'/legacy-deck',bearerToken:'fixture-deck-key',adapter:'responses',codexModel:'legacy-model'};
+ await writeFile(oldDeck,JSON.stringify({providers:{connections:[oldRow,{...oldRow,id:'repeat',displayName:'Repeat'}, {...oldRow,id:'subscription',displayName:'OAuth',subscriptionAccountId:'old-oauth'}]}}));
+ await stop();start();await rpc('getState');
+ const detected=await rpc('previewConfigurationImport');
+ const oldSource=detected.sources.find(s=>s.source==='xwx-deck');
+ check('old Deck backup is detected and preview deduplicates identical credentials',oldSource.found&&oldSource.items.filter(i=>i.status==='new').length===1&&oldSource.items.filter(i=>i.status==='duplicate').length===1&&oldSource.items.some(i=>i.status==='unsupported'));
+ check('old Deck preview does not expose API or subscription credentials',!JSON.stringify(oldSource).includes('fixture-deck-key')&&!JSON.stringify(oldSource).includes('old-oauth'));
+ const automatic=await rpc('previewConfigurationImport',{sources:[{source:'auto',path:oldDeck}]});
+ check('manual file selection recognizes Deck format without a source dropdown',automatic.sources[0].source==='xwx-deck'&&automatic.sources[0].name==='旧版 XwX Deck');
+ const mag=JSON.parse(await readFile(magpie,'utf8'));mag.providers.push({name:'SameDeck',responses:oldRow.baseUrl,key:oldRow.bearerToken});await writeFile(magpie,JSON.stringify(mag));
+ const cross=await rpc('previewConfigurationImport');
+ check('duplicate configuration across detected tools is only offered once',cross.sources.flatMap(s=>s.items).filter(i=>i.baseUrl===oldRow.baseUrl&&i.status!=='duplicate').length===1);
+ const chosenOld=oldSource.items.find(i=>i.status==='new');
+ const importedOld=await rpc('importConfigurations',{sources:automatic.sources.map(({source,path})=>({source,path})),targetDigest:automatic.targetDigest,fingerprints:[chosenOld.fingerprint]});
+ check('legacy Deck imports locally without activating it or losing its model',importedOld.added.length===1&&importedOld.providers.connections.some(p=>p.displayName==='LegacyDeck'&&p.codexModel==='legacy-model')&&importedOld.providers.active.codex===imported.id);
+ await stop();start();await rpc('getState');fresh=await rpc('previewConfigurationImport');check('external metadata remains after restart',fresh.sources.length===5);
  await stop();console.log(JSON.stringify({passed:true,checks,requestCount:requests.length,root}));
 }finally{if(child?.exitCode===null)child.kill('SIGTERM');server.closeAllConnections();server.close();}

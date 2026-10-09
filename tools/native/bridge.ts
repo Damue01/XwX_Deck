@@ -21,6 +21,7 @@ const rpc = async (method: string, args: any[] = []) => {
   return value;
 };
 const methods = [
+  'getClientRoute', 'setClientRoute', 'resumeTracing',
   'previewConfigurationImport', 'importConfigurations', 'chooseConfigurationImportFile',
   'getModelClients', 'addModelClient', 'removeModelClient', 'detectClientInstallations',
   'setSubscriptionRouting', 'refreshSubscriptionUsage', 'getSubscriptionAccounts', 'beginSubscriptionSignIn', 'cancelSubscriptionSignIn', 'connectSubscriptionAccount', 'renameSubscriptionAccount', 'signOutSubscriptionAccount', 'openSubscriptionUsage',
@@ -28,7 +29,7 @@ const methods = [
   'getCodexConfig', 'getCodexEnhancements', 'getCompatibleServiceConfig', 'getModelServices',
   'getProviders', 'saveProvider', 'deleteProvider', 'switchClientProvider', 'fetchProviderModels',
   'fetchModels', 'validateProvider', 'getClaudeEnvironmentOverrides', 'isChatGptRunning',
-  'setTheme', 'setLanguage', 'setTraceAppearance', 'setTraceStoragePolicy', 'toggleTracing', 'toggleClient',
+  'setTheme', 'setLanguage', 'setAutomaticUpdates', 'setTraceAppearance', 'setTraceStoragePolicy', 'toggleTracing', 'toggleClient',
   'updateCodexConfig', 'setModelService', 'refresh', 'disableBreaksCodex',
   'minimizeWindow', 'toggleFullscreen', 'toggleMaximize', 'setManagerView', 'closeWindow',
   'moveWindowStart', 'moveWindow', 'moveWindowEnd', 'resizeWindowStart', 'resizeWindowMove', 'resizeWindowEnd',
@@ -41,6 +42,7 @@ const methods = [
   'inspectTraceIndexRepair', 'applyTraceIndexRepair', 'copyText'
 ];
 const bridge: any = Object.fromEntries(methods.map(method => [method, (...args: any[]) => rpc(method, args)]));
+bridge.toggleGatewayClient = (id: string) => rpc("toggleClient", [id]);
 bridge.setupWebsites = setupWebsitesFor(platform, __NATIVE_ARCH__);
 bridge.onState = (listener: any) => subscribe('state', listener);
 bridge.onWindowState = (listener: any) => { listener(windowState); return subscribe('window', listener); };

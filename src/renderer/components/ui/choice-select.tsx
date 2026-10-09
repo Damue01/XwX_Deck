@@ -11,8 +11,14 @@ export function ChoiceSelect({ id, label, value, items, placeholder = t('请选�
   placeholder?: string; disabled?: boolean; onChange: (id: string) => void;
 }): React.ReactElement {
   useLanguage();
+  const [open, setOpen] = React.useState(false);
+  const actions = React.useRef<Select.Root.Actions | null>(null);
+  React.useEffect(() => {
+    // Closing must release focus and pointer capture even in an inactive WebKit window.
+    if (!open) actions.current?.unmount();
+  }, [open]);
   const selected = items.find(item => item.id === value);
-  return <Select.Root value={value} onValueChange={next => { if (next !== null) onChange(next); }} disabled={disabled}>
+  return <Select.Root open={open} onOpenChange={setOpen} actionsRef={actions} value={value} onValueChange={next => { if (next !== null) onChange(next); }} disabled={disabled}>
     <Select.Trigger id={id} className="xwx-choice-trigger" aria-label={label}>
       <span className="xwx-choice-value">{selected?.label ?? placeholder}</span><Select.Icon><ChevronsUpDown size={15} aria-hidden="true" /></Select.Icon>
     </Select.Trigger>

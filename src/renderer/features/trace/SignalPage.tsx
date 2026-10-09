@@ -6,6 +6,7 @@ import { clearLifecycleNotice, showLifecycleNotice, showToast } from '@/lib/toas
 import { claudeDesktopRestartNote, isTraceStopBusyError, lifecycleFailure, traceStoppedNotice } from '../../../shared/lifecycleNotice';
 import { normalizeErrorMessage } from '../../../shared/errors';
 import { tokenCostPresentation, readoutRange } from '@/lib/format';
+import { modelClientRoute } from '../../../shared/clientDownloads';
 import { Tabs, TabsList, TabsTab } from '@/components/ui/tabs';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ParticleField, emitFieldRipple } from './ParticleField';
@@ -89,8 +90,8 @@ interface ClientToggleProps {
 
 function ClientToggle({ client, onToggle, variant, busy }: ClientToggleProps): React.ReactElement {
   useLanguage();
-  const uiId = client.id === 'claude-cli' ? 'claude' : 'codex';
-  const label = client.id === 'claude-cli' ? 'Claude' : 'ChatGPT';
+  const uiId = client.id === 'claude-cli' ? 'claude' : client.id === 'codex-cli' ? 'codex' : client.id;
+  const label = client.label;
   return (
     <button
       type="button"
@@ -136,7 +137,9 @@ export function SignalPage({ active }: Props): React.ReactElement {
   // get the same hidden-until-ready treatment.
   const transition = bridge.runtime?.traceTransition;
   const hidden = pending || !!transition;
-  const clients = bridge.runtime?.clients ?? [];
+  const clients = (bridge.runtime?.clients ?? []).filter(client =>
+    bridge.modelClients.some(id => client.id === 'claude-cli' ? modelClientRoute(id) === 'claude' : client.id === 'codex-cli' ? modelClientRoute(id) === 'codex' : id === client.id)
+    || (capturing && client.enabled));
   const series = bridge.traceStats?.series ?? [];
   const appearance = bridge.runtime?.traceAppearance;
   const skin = appearance?.skin ?? 'classic';
@@ -181,7 +184,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
   React.useEffect(() => {
     syncTimers();
     return () => {
-      if (statsTimerRef.current) clearInterval(statsTimerRef.current);
+      if (statsTimerRef.current) { clearInterval(statsTimerRef.current); statsTimerRef.current = null; }
     };
   }, [syncTimers]);
 
@@ -270,7 +273,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
     busyClientRef.current.add(id);
     setBusyClients(current => new Set(current).add(id));
     try {
-      const next = await bridge.api.toggleClient(id as 'claude-cli' | 'codex-cli');
+      const next = await (id === 'claude-cli' || id === 'codex-cli' ? bridge.api.toggleClient(id) : bridge.api.toggleGatewayClient!(id));
       bridge.patch({ runtime: next });
       clearLifecycleNotice();
       if (id === 'codex-cli'

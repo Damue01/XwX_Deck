@@ -65,6 +65,8 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
       bridge.patch({ runtime: next });
     } catch (error) {
       showErrorToast(t('无法保存 Trace 外观'), error);
+    } finally {
+      setPendingSaves(value => Math.max(0, value - 1));
     }
   }, [bridge.api, bridge.patch]);
 
@@ -211,9 +213,10 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
               <Toggle
                 id="throughputVisibilityToggle"
                 checked={showThroughput}
+                busy={pendingSaves > 0}
                 ariaLabel={t("显示流量图")}
                 title={showThroughput ? t('隐藏流量图') : t('显示流量图')}
-                onToggle={() => void commit({ showThroughput: !showThroughput })}
+                onToggle={() => commit({ showThroughput: !showThroughput })}
               />
             </div>
           </section>

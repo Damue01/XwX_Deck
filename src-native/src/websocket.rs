@@ -127,7 +127,8 @@ pub(super) async fn upgrade(
                                     let key=format!("codex-cli:{}",session.clone().unwrap_or_else(||format!("ws-{started}-{index}")));
                                     let mut record=json!({"id":format!("trace-{started}-{index}"),"startedAt":storage::iso(started),"startedAtMs":started as u64,"source":"codex-cli","clientConversationKey":key,"protocol":"openai-responses","captureMode":"reverse-proxy","provider":{"id":provider.id,"name":provider.display_name},"request":{"method":"WS","path":"/responses","headers":{},"body":body,"model":body["model"],"apiType":"responses"},"upstream":{"baseUrl":provider.base_url,"url":url.to_string()},"response":{"statusCode":200},"timings":{}});
                                     record["contextChanges"]=json!({"clientProtocol":"responses","upstreamProtocol":"responses","historyRestored":body.get("previous_response_id").is_some()&&continuation_body.as_ref().is_some_and(|b|b.get("previous_response_id").is_none()),"transformed":continuation_body.as_ref()!=Some(&body)});
-                                    capture=Some(storage::Capture{store:route.store.clone(),record,wire:"responses".into(),key,raw:vec![],overflow:false,done:false});
+                                    record["upstream"]["requestBody"] = continuation_body.clone().unwrap_or(Value::Null);
+                                    capture=Some(storage::Capture{store:route.store.clone(),record,wire:"responses".into(),key,raw:vec![],chunk_receipts:vec![],overflow:false,done:false});
                                 }
                             }
                             Up::Text(forwarded.into())

@@ -92,6 +92,10 @@ export async function testManagerIpc(): Promise<void> {
   for (const [, channel] of preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)) assert.ok(handlers.has(channel), channel);
   await api.validateProvider({ providerId: 'fixture' });
   assert.deepEqual(calls.pop(), { method: 'validateProvider', args: ['fixture'] });
+  await api.validateProvider({ providerId: 'fixture', model: 'test-model' });
+  assert.deepEqual(calls.pop(), { method: 'validateProvider', args: ['fixture', 'test-model'] });
+  assert.throws(() => api.validateProvider({ providerId: 'fixture', model: '' }), /无效模型/);
+  assert.throws(() => api.validateProvider({ providerId: 'fixture', model: 42 }), /无效模型/);
   await api.fetchProviderModels({ providerId: 'fixture', refresh: true });
   assert.deepEqual(calls.pop(), { method: 'fetchProviderModels', args: ['fixture', true] });
   await api.switchClientProvider({ client: 'codex', providerId: 'fixture', takeOverExternalConfig: true });

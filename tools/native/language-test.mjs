@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { nativeTestBinary } from './test-support.mjs';
 
-for (const [system, expected] of [['zh-Hant-TW', 'zh-CN'], ['en-GB', 'en'], ['ja-JP', 'en']]) {
+for (const [system, expected] of [['zh-Hant-TW', 'zh-TW'], ['zh_HK.UTF-8', 'zh-TW'], ['zh-Hans-SG', 'zh-CN'], ['en-GB', 'en'], ['ja-JP', 'ja'], ['ko-KR', 'ko'], ['fr-CA', 'fr'], ['de-DE', 'de'], ['es-MX', 'es'], ['pt_BR.UTF-8', 'pt-BR'], ['it-IT', 'en']]) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-native-language-'));
   let child, pending = [];
   const start = () => {
@@ -26,10 +26,17 @@ for (const [system, expected] of [['zh-Hant-TW', 'zh-CN'], ['en-GB', 'en'], ['ja
     const before = await rpc('getProviders');
     assert.equal((await rpc('setLanguage', 'en')).language, 'en');
     assert.equal((await call('setLanguage', 'system')).ok, false);
-    assert.equal((await call('setLanguage', 'de')).ok, false);
+    assert.equal((await call('setLanguage', 'it')).ok, false);
     assert.equal((await rpc('getState')).language, 'en');
     await stop(); start(); assert.equal((await rpc('getState')).language, 'en');
     assert.deepEqual(await rpc('getProviders'), before);
+    if (system === 'zh-Hant-TW') {
+      for (const locale of ['zh-CN', 'zh-TW', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'pt-BR']) {
+        assert.equal((await rpc('setLanguage', locale)).language, locale);
+        await stop(); start(); assert.equal((await rpc('getState')).language, locale);
+        assert.deepEqual(await rpc('getProviders'), before);
+      }
+    }
     await rpc('setLanguage', 'zh-CN'); await stop(); start();
     assert.equal((await rpc('getState')).language, 'zh-CN');
     // Preference updates are committed to disk, not just returned from an RPC.

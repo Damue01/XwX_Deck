@@ -5,7 +5,7 @@ import type { DownloadClientIcon } from '../../../shared/clientDownloads';
 import { CATALOG_BRAND_IMAGES } from './catalogBrandImages';
 
 export type ProviderIconKind = OfficialProviderId | DownloadClientIcon | 'copilot';
-const MONOCHROME_BRANDS = new Set(['kimi', 'groq', 'xai', 'openrouter', 'cerebras', 'zai', 'ollama', 'lmstudio', 'cursor', 'windsurf', 'zed', 'trae', 'opencode', 'cline', 'goose', 'copilot']);
+const MONOCHROME_BRANDS = new Set(['kimi', 'groq', 'xai', 'openrouter', 'cerebras', 'zai', 'ollama', 'lmstudio', 'cursor', 'windsurf', 'zed', 'trae', 'opencode', 'cline', 'goose', 'copilot', 'pi', 'omp', 'qoder', 'factory', 'mimocode', 'hermes', 'openchamber', 't3code']);
 const DARK_CONTRAST_BRANDS = new Set(['qwen', 'zhipu', 'minimax', 'tencent', 'fireworks', 'perplexity']);
 
 // Whale mark from https://www.deepseek.com/ (bundled, no runtime image request).

@@ -2538,7 +2538,8 @@ function sourceLabel(src){
   if(src === 'codex-cli') return 'ChatGPT';
   if(src === 'codex-vscode') return 'ChatGPT';
   if(src === 'unknown') return 'Unknown';
-  return 'Copilot';
+  if(src === 'github-copilot' || src === 'copilot') return 'Copilot';
+  return ({opencode:'OpenCode','gemini-cli':'Gemini CLI','qwen-code':'Qwen Code',cline:'Cline','cherry-studio':'Cherry Studio',pi:'Pi',goose:'Goose',vscode:'VS Code','api-client':'API 客户端'})[src] || src;
 }
 function sourceFamily(src){
   if(src === 'claude-vscode') return 'claude-cli';
@@ -3381,7 +3382,7 @@ function toggleAllSubagents(){
   groups.forEach(g => { const key = railGroupKey(g); if(anyOpen) subagentCollapsed[key] = true; else delete subagentCollapsed[key]; });
   renderList();
 }
-function isCompactTrace(t){ return !!(t && t.compact && t.routedBy !== 'compactResume'); }
+function isCompactTrace(t){ return !!(t && t.routedBy !== 'compactResume' && (t.compact || String(t.request && (t.request.path || t.request.url) || '').split('?')[0].endsWith('/responses/compact'))); }
 // count_tokens 404 = 网关没实现 Anthropic 的 count_tokens 端点（兼容服务 等兼容网关常见缺口）。
 // 不是请求失败：Claude Code 容忍它并回退到自己的估算。前端据此把它当「上游未实现」展示，
 // 不进 errorCount、不弹红色「请求异常」横幅。与后端 traceStore.traceHasError 保持一致。
@@ -3470,6 +3471,8 @@ function renderHead(t, usage){
   let h = '<div class="head" id="head">';
   h += '<span class="src-tag src-'+esc(src)+'">'+esc(sourceLabel(src))+'</span>';
   h += '<span class="seg"><span class="k">'+esc(method)+'</span>'+endpoint+'</span>';
+  const change = t.contextChanges || {};
+  if(change.clientProtocol && change.upstreamProtocol && change.clientProtocol !== change.upstreamProtocol) h += '<span class="seg" title="'+L('原请求、转换后请求和上游响应保留在日志中','Original request, converted request and upstream response are retained in Log')+'">'+esc(change.clientProtocol)+' → '+esc(change.upstreamProtocol)+'</span>';
   h += '</div>';
   return h;
 }
@@ -3733,6 +3736,7 @@ function getMessages(t){
     .filter(entry => !(entry.item && typeof entry.item === 'object' && entry.item.type === 'additional_tools'))
     .map(entry => mark(entry.item, normalizeMessage(entry.item), 'INPUT', 'body.input['+entry.sourceIndex+'].content'));
   if(Array.isArray(b.contents)) return b.contents.map(geminiMessage).filter(Boolean);
+  if(typeof b.input === 'string') return [{ role:'user', content:[{ type:'input_text', text:b.input }] }];
   return [];
 }
 /** Decode base64 to UTF-8 text without the escape()/unescape() mojibake trap. */
@@ -3803,10 +3807,10 @@ function normalizeMessage(m){
     const decoded = raw.indexOf('xwxc1:') === 0 ? b64Utf8(raw.slice(6)) : '';
     const text = decoded
       || '[上下文压缩摘要：由上游 provider 生成，本地无法解码（' + raw.length + ' 字符密文）]';
-    return { role:'system', content:[{ type:'text', text:text }] };
+    return { role:'system', content:[{ type:'text', text:text, compactionSource:decoded ? 'gateway-summary' : 'upstream-opaque', rawBlock:m }] };
   }
   if(m.type === 'compaction_trigger'){
-    return { role:'system', content:[{ type:'text', text:'[压缩触发点：XwX 在此处替客户端发起了一次上下文压缩摘要请求]' }] };
+    return { role:'system', content:[{ type:'text', text:'[压缩触发点：客户端提交的上下文压缩标记]', rawBlock:m }] };
   }
   if(m.role === 'tool') return Object.assign({}, m, { content:[{ type:'tool_result', tool_use_id:m.tool_call_id || '', content:m.content || '', rawBlock:m }] });
   const content = [];
@@ -3830,14 +3834,35 @@ function geminiMessage(item){
   if(!item || typeof item !== 'object') return null;
   const blocks = [];
   (item.parts || []).forEach(part => {
-    if(part.text) blocks.push({ type: part.thought ? 'thinking' : 'text', text: part.text, thinking: part.text });
+    if(typeof part.text === 'string') blocks.push({ type: part.thought ? 'thinking' : 'text', text: part.text, thinking: part.text, rawBlock:part });
     if(part.functionCall) blocks.push({ type:'tool_use', id:part.functionCall.id || '', name:part.functionCall.name || 'tool_use', input:part.functionCall.args || {}, rawBlock:part });
     if(part.functionResponse) blocks.push({ type:'tool_result', tool_use_id:part.functionResponse.id || part.functionResponse.name || '', content:part.functionResponse.response || '', rawBlock:part });
+    const inline = part.inlineData || part.inline_data;
+    const file = part.fileData || part.file_data;
+    const mime = inline && (inline.mimeType || inline.mime_type) || file && (file.mimeType || file.mime_type) || '';
+    if(inline || file){
+      if(mime.indexOf('image/') === 0) blocks.push({ type:'image', source:inline ? { type:'base64', media_type:mime, data:inline.data } : { type:'url', url:file.fileUri || file.file_uri }, rawBlock:part });
+      else blocks.push({ type:'raw', rawBlock:part, mimeType:mime, data:inline ? inline.data : file.fileUri || file.file_uri });
+    }
+    if(!('text' in part) && !part.functionCall && !part.functionResponse && !inline && !file) blocks.push({ type:'raw', rawBlock:part, value:part });
   });
   if(!blocks.length) return null;
   return { role:item.role === 'model' ? 'assistant' : (item.role || 'user'), content:blocks };
 }
-function responseSnapshot(t){ return t && t.sse && t.sse.snapshot || t && t.response && t.response.snapshot; }
+function responseSnapshot(t){
+  const saved=t && t.sse && t.sse.snapshot || t && t.response && t.response.snapshot;
+  if(saved) return saved;
+  const body=t && t.response && t.response.body;
+  if(!body || typeof body !== 'object') return undefined;
+  let content=[];
+  const add=message=>{const normalized=normalizeMessage(message);if(normalized && Array.isArray(normalized.content)) content.push(...normalized.content);};
+  if(Array.isArray(body.output)) body.output.forEach(add);
+  else if(Array.isArray(body.choices)) body.choices.forEach(choice=>add(choice.message));
+  else if(Array.isArray(body.candidates)) body.candidates.forEach(candidate=>{const message=geminiMessage(candidate.content);if(message && Array.isArray(message.content))content.push(...message.content);});
+  else if(Array.isArray(body.content)) content=body.content;
+  if(!content.length) return undefined;
+  return {content, stopReason:body.stop_reason || body.choices && body.choices[0] && body.choices[0].finish_reason || body.status, raw:body};
+}
 function renderResponse(t){
   const snap = responseSnapshot(t);
   const alert = responseStatusAlert(snap);
@@ -3886,7 +3911,8 @@ function renderResponseBlocks(t, blocks){
         h += '<div class="resp-think"><div class="resp-think-h">'+L('思考','Reasoning')+(tk?'<span class="tk">'+tk+'</span>':'')+'</div>'+inner+'</div>';
       } else if(ty === 'text' || ty === 'output_text'){
         hasText = true;
-        h += '<div class="resp-text"><div class="md txt-md">'+renderTextRich(b.text || '')+'</div>'+renderCitations(b.citations)+'</div>';
+        const checkpointLabel = b.compactionSource === 'gateway-summary' ? L('Gateway 兼容摘要','Gateway compatibility summary') : b.compactionSource === 'upstream-opaque' ? L('上游压缩项','Upstream compaction item') : '';
+        h += '<div class="resp-text">'+(checkpointLabel ? '<div class="thinking-label">'+checkpointLabel+'</div>' : '')+'<div class="md txt-md">'+renderTextRich(b.text || '')+'</div>'+renderCitations(b.citations)+'</div>';
       } else if(ty === 'refusal'){
         hasText = true;
         h += '<div class="resp-refusal"><div class="resp-refusal-k">'+L('模型拒绝','REFUSAL')+'</div><div class="pre-text">'+esc(b.text || b.refusal || '')+'</div></div>';
@@ -3992,7 +4018,10 @@ function renderBlocks(blocks, callNames){
     if(!b || typeof b !== 'object') return blockWrap('<pre class="codebox">'+esc(j(b))+'</pre>', many, b);
     const type = b.type || 'raw';
     const rawBlock = rawBlockValue(b);
-    if(type === 'text' || type === 'input_text' || type === 'output_text') return blockWrap('<div class="md txt-md">'+renderTextRich(textBlockValue(b))+'</div>'+renderCitations(b.citations), many, rawBlock, true);
+    if(type === 'text' || type === 'input_text' || type === 'output_text') {
+      const checkpointLabel = b.compactionSource === 'gateway-summary' ? L('Gateway 兼容摘要','Gateway compatibility summary') : b.compactionSource === 'upstream-opaque' ? L('上游压缩项','Upstream compaction item') : '';
+      return blockWrap((checkpointLabel ? '<div class="thinking-label">'+checkpointLabel+'</div>' : '')+'<div class="md txt-md">'+renderTextRich(textBlockValue(b))+'</div>'+renderCitations(b.citations), many, rawBlock, true);
+    }
     if(type === 'refusal') return blockWrap('<div class="resp-refusal"><div class="resp-refusal-k">'+L('模型拒绝','REFUSAL')+'</div><div class="pre-text">'+esc(b.text || b.refusal || '')+'</div></div>', many, rawBlock);
     if(type === 'thinking' || type === 'reasoning' || type === 'reasoning_text' || type === 'redacted_thinking'){
       const thinkText = b.thinking || b.text || (Array.isArray(b.summary) ? b.summary.map(s => s && s.text || '').join('\\n') : '') || '';
@@ -4027,7 +4056,7 @@ function renderBlocks(blocks, callNames){
       return blockWrap('<div class="tool-use-label"><span>'+esc(b.wireType || type)+((b.isError||b.is_error)?'&ensp;error':'')+'</span>'+linked+toolIdBadge(callId)+'</div><pre class="codebox">'+esc(toolResultText(b.content !== undefined ? b.content : b.output))+'</pre>', many, rawBlock);
     }
     if(type === 'image' || type === 'image_url' || type === 'input_image') return blockWrap(renderImageBlock(b), many, rawBlock);
-    return blockWrap('<pre class="codebox">'+esc(j(b))+'</pre>', many, rawBlock);
+    return blockWrap('<pre class="codebox">'+esc(j(rawBlock))+'</pre>', many, rawBlock);
   }).join('');
 }
 function toolIdBadge(id){
@@ -4048,7 +4077,7 @@ function coalesceTextBlocks(blocks){
   const out = [];
   for(const b of blocks){
     const prev = out.length ? out[out.length - 1] : undefined;
-    if(isText(b) && isText(prev) && prev.type === b.type && prev.choiceIndex === b.choiceIndex){
+    if(isText(b) && isText(prev) && !b.compactionSource && !prev.compactionSource && prev.type === b.type && prev.choiceIndex === b.choiceIndex){
       const merged = Object.assign({}, prev, { text: textBlockValue(prev) + textBlockValue(b) });
       const cites = (Array.isArray(prev.citations) ? prev.citations : []).concat(Array.isArray(b.citations) ? b.citations : []);
       if(cites.length) merged.citations = cites;
@@ -4741,7 +4770,11 @@ function renderSse(t){
 function renderSseRow(e, i, child){
   const data = sseEventData(e);
   const eventName = e.event || 'data';
-  return '<details class="sse-row'+(child?' sse-child':'')+'" data-sse="'+i+'"><summary class="sse-sum"><span class="tm">'+ms(e.timestampMs)+'</span><span class="ev" title="'+esc(eventName)+'">'+esc(eventName)+'</span><span class="sse-peek">'+esc(sseEventSummary(e, data))+'</span><span class="sse-size">'+esc(charLabel(data))+'</span></summary><pre class="sse-data">'+esc(data)+'</pre></details>';
+  return '<details class="sse-row'+(child?' sse-child':'')+'" data-sse="'+i+'"><summary class="sse-sum"><span class="tm">'+sseTimestamp(e)+'</span><span class="ev" title="'+esc(eventName)+'">'+esc(eventName)+'</span><span class="sse-peek">'+esc(sseEventSummary(e, data))+'</span><span class="sse-size">'+esc(charLabel(data))+'</span></summary><pre class="sse-data">'+esc(data)+'</pre></details>';
+}
+function sseTimestamp(event){
+  // Older native records stored an absolute end time, not event arrival time.
+  return typeof event.timestampMs === 'number' && event.timestampMs >= 0 && event.timestampMs < 1e11 ? ms(event.timestampMs) : '—';
 }
 function renderSseGroup(group){
   const first = group.items[0] && group.items[0].event || {};
@@ -4751,7 +4784,7 @@ function renderSseGroup(group){
   const preview = compactText(deltas, 220);
   const headline = group.items.length+' chunks'+(preview ? L('：',': ')+preview : '');
   const rows = group.items.map(item => renderSseRow(item.event, item.index, true)).join('');
-  return '<details class="sse-group" data-sse-group="'+esc(group.name)+'"><summary class="sse-group-sum"><span class="tm">'+ms(first.timestampMs)+'-'+ms(last.timestampMs)+'</span><span class="ev" title="'+esc(group.name)+'">'+esc(group.name)+'</span><span class="sse-peek">'+esc(headline)+'</span><span class="sse-size">'+esc(num(dataChars)+' chars')+'</span></summary><div class="sse-group-body">'+rows+'</div></details>';
+  return '<details class="sse-group" data-sse-group="'+esc(group.name)+'"><summary class="sse-group-sum"><span class="tm">'+sseTimestamp(first)+'-'+sseTimestamp(last)+'</span><span class="ev" title="'+esc(group.name)+'">'+esc(group.name)+'</span><span class="sse-peek">'+esc(headline)+'</span><span class="sse-size">'+esc(num(dataChars)+' chars')+'</span></summary><div class="sse-group-body">'+rows+'</div></details>';
 }
 function sseEventGroups(events){
   const out = [];
@@ -4861,12 +4894,16 @@ function jsonTree(value,key,depth,path){
   return '<div class="json-leaf">'+label+esc(String(value))+'</div>';
 }
 function traceToCurl(t){
+  if(t.request && t.request.method === 'WS' || t.upstream && t.upstream.transport === 'cursor-connect-protobuf') return '# '+L('此请求使用 WebSocket 或 Connect；不能作为 HTTP JSON cURL 重放','This request uses WebSocket or Connect and cannot be replayed as HTTP JSON cURL')+'\\n'+j(t.upstream && (t.upstream.transportRequest || t.upstream.requestBody) || t.request && t.request.body || {});
   const headers = t.request && t.request.headers || {};
   const parts = ['curl','-X',shellQuote(t.request && t.request.method || 'POST'),shellQuote(t.upstream && t.upstream.url || '')];
   Object.keys(headers).forEach(k => { const lower=k.toLowerCase(); if(lower === 'host' || lower === 'content-length') return; const v=Array.isArray(headers[k]) ? headers[k].join(', ') : headers[k]; parts.push('-H',shellQuote(k+': '+v)); });
-  const rawBody = t.request && t.request.rawBody || '';
-  const parsedBody = t.request && t.request.body;
-  const body = t.request && (rawBody || (parsedBody !== undefined ? JSON.stringify(parsedBody) : ''));
+  // The destination is upstream, so use the captured forwarded payload rather
+  // than mixing a client protocol body with a different upstream endpoint.
+  const forwarded = t.upstream && t.upstream.requestBody;
+  const rawBody = forwarded !== undefined && forwarded !== null ? '' : t.request && t.request.rawBody || '';
+  const parsedBody = forwarded !== undefined && forwarded !== null ? forwarded : t.request && t.request.body;
+  const body = rawBody || (parsedBody !== undefined ? JSON.stringify(parsedBody) : '');
   if(body) parts.push('--data-raw', shellQuote(body));
   return parts.join(' ');
 }
