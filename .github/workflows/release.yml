@@ -76,7 +76,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        id: native-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -86,6 +87,16 @@ jobs:
 
       - name: Build Windows portable package
         run: npm run build:win
+
+      - name: Save compiled Rust dependencies
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test-results/native-target
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Verify native backend and update integrity
         run: npm run test:rust:backend
@@ -141,7 +152,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        id: native-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -151,6 +163,16 @@ jobs:
 
       - name: Build unsigned macOS arm64 package
         run: npm run build:mac:arm64
+
+      - name: Save compiled Rust dependencies
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test-results/native-target
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Verify native backend and update integrity
         run: npm run test:rust:backend

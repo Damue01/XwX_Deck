@@ -51,7 +51,7 @@
     "test:rust:clients": "node tools/native/client-management-test.mjs",
     "start:rust": "node tools/native/launch.mjs --production",
     "build:rust:pilot": "npm run compile && node tools/native/build.mjs --pilot",
-    "test:rust:backend": "node tools/native/regressions.mjs && node tools/native/provider-presets-test.mjs && node tools/native/config-import-test.mjs && node tools/native/subscriptions-test.mjs && node tools/native/subscription-routing-test.mjs && node tools/native/subscription-usage-test.mjs && node tools/native/grok-subscriptions-test.mjs && node tools/native/copilot-subscriptions-test.mjs && node tools/native/claude-subscriptions-test.mjs && node tools/native/cursor-subscriptions-test.mjs && node tools/native/official-test.mjs && node tools/native/protocol-test.mjs && node tools/native/trace-index-repair-test.mjs && node tools/native/portability-test.mjs && node tools/native/preferences-test.mjs && node tools/native/update-test.mjs && node tools/native/migration-test.mjs && node tools/native/reasoning-test.mjs && node tools/native/client-management-test.mjs && node tools/native/language-test.mjs && node tools/native/portable-update-test.mjs",
+    "test:rust:backend": "node tools/native/run-backend-tests.mjs",
     "start:rust:isolated": "node tools/native/launch.mjs",
     "start:legacy": "electron .",
     "test:packaged:legacy": "node tools/run-packaged-smoke.mjs"

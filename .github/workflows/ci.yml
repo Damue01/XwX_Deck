@@ -72,7 +72,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        id: native-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -80,10 +81,21 @@ jobs:
             test-results/native-target
           key: ${{ runner.os }}-native-rust-${{ hashFiles('src-native/Cargo.lock') }}
 
-      - name: Compile native candidate and run isolated backend tests
-        run: |
-          npm run build:rust:pilot
-          npm run test:rust:backend
+      - name: Compile native candidate
+        run: npm run build:rust:pilot
+
+      - name: Save compiled Rust dependencies
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test-results/native-target
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Run isolated backend tests
+        run: npm run test:rust:backend
 
       - name: Verify native WebView interactions
         if: runner.os == 'macOS'
