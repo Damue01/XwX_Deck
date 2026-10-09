@@ -1,12 +1,9 @@
+import { t, isLanguage, type Language } from '@/lib/i18n';
 import type { ProviderSnapshot, ProviderConnection } from '../../shared/providers';
 import { DEFAULT_TRACE_LIMIT_GB, DEFAULT_TRACE_AUTO_CLEANUP } from '../../shared/traceDefaults';
 import type {
   ClientId,
   ClaudeModelSettings,
-  CodexConversationDetailRequest,
-  CodexConversationHealthReport,
-  CodexConversationPageRequest,
-  CodexConversationPageResponse,
   CodexAuthMode,
   CodexConfigSnapshot,
   CodexEnhancementsSnapshot,
@@ -21,6 +18,7 @@ import type {
 } from './types';
 import { detectProviderPreset } from '../../shared/providerProfiles';
 import { setupWebsiteUrl, setupWebsitesFor } from '../../shared/setupWebsites';
+import { normalizeModelClients } from '../../shared/clientDownloads';
 
 function previewCustomBackground(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
@@ -32,148 +30,18 @@ function previewCustomBackground(): string {
   return `data:image/svg+xml;base64,${btoa(svg)}`;
 }
 
-function expandConversationPreview(
-  rows: CodexConversationHealthReport['conversations'],
-  count: number
-): CodexConversationHealthReport['conversations'] {
-  if (count <= rows.length) return rows;
-  return Array.from({ length: count }, (_, index) => {
-    const source = rows[index % rows.length]!;
-    if (index < rows.length) return source;
-    return {
-      ...source,
-      threadId: `${source.threadId}-preview-${String(index + 1).padStart(3, '0')}`,
-      title: `${source.title || '未命名任务'} 样例 ${index + 1}`,
-      updatedAt: new Date(Date.now() - index * 60_000).toISOString()
-    };
-  });
-}
-
 export function createPreviewApi(): XwXDeckApi {
   const previewQuery = typeof location !== 'undefined' ? new URLSearchParams(location.search) : undefined;
   const setupPlatform = previewQuery?.get('setup-platform') ?? 'darwin';
   const setupArch = previewQuery?.get('setup-arch') ?? 'arm64';
+  document.documentElement.dataset.platform = setupPlatform;
   const hasTraceSkipped = previewQuery?.get('trace-skipped') === '1';
   const hasTraceLive = previewQuery?.get('trace-live') === '1' || previewQuery?.get('appearance') === '1';
   const chatGptRestartRecommended = previewQuery?.get('chatgpt-restart') === '1';
-  const conversationHealthPreview = (): CodexConversationHealthReport => {
-    const now = new Date().toISOString();
-    const databasePath = 'C:\\Users\\demo\\.codex\\state_5.sqlite';
-    const activePath = 'C:\\Users\\demo\\.codex\\sessions\\2026\\08\\26\\rollout-active.jsonl';
-    const missingPath = 'C:\\Users\\demo\\.codex\\sessions\\2026\\08\\25\\rollout-missing.jsonl';
-    const candidatePath = 'C:\\Users\\demo\\.codex\\archived_sessions\\rollout-recovered.jsonl';
-    return {
-      generatedAt: now,
-      codexHome: 'C:\\Users\\demo\\.codex',
-      configPath: 'C:\\Users\\demo\\.codex\\config.toml',
-      activeProvider: 'xwx_deck',
-      configuredProviders: ['openai', 'xwx_deck'],
-      databases: [{
-        path: databasePath,
-        exists: true,
-        readable: true,
-        quickCheck: 'ok',
-        threadCount: 24,
-        walPresent: true,
-        walBytes: 524_288
-      }],
-      scanScope: 'index-and-session-meta',
-      scanComplete: true,
-      scanIssues: [],
-      truncated: false,
-      summary: {
-        indexedThreads: 24,
-        discoveredRollouts: 25,
-        healthy: 23,
-        warnings: 0,
-        errors: 1,
-        orphanRollouts: 0,
-        missingRollouts: 1
-      },
-      conversations: [{
-        threadId: '11111111-1111-4111-8111-111111111111',
-        title: '检查模型配置',
-        preview: '',
-        workspaceKind: 'project',
-        workspaceName: 'XwX Deck',
-        projectId: 'project-xwx-deck',
-        projectName: 'XwX Deck',
-        projectRoots: ['D:\\Work\\XwX_Deck'],
-        cwd: 'D:\\Work\\XwX_Deck',
-        indexed: true,
-        databasePaths: [databasePath],
-        rolloutPath: activePath,
-        resolvedPath: activePath,
-        candidatePaths: [activePath],
-        fileExists: true,
-        fileSize: 287_420,
-        fileModifiedAt: now,
-        location: 'sessions',
-        archived: false,
-        sqliteProvider: 'xwx_deck',
-        sessionProvider: 'xwx_deck',
-        sessionId: '11111111-1111-4111-8111-111111111111',
-        sqliteFields: [
-          { key: 'id', value: '11111111-1111-4111-8111-111111111111' },
-          { key: 'rollout_path', value: activePath },
-          { key: 'model_provider', value: 'xwx_deck' },
-          { key: 'project_id', value: 'project-xwx-deck' }
-        ],
-        sessionFields: [
-          { key: 'id', value: '11111111-1111-4111-8111-111111111111' },
-          { key: 'model_provider', value: 'xwx_deck' },
-          { key: 'source', value: 'vscode' }
-        ],
-        status: 'healthy',
-        issues: []
-      }, {
-        threadId: '22222222-2222-4222-8222-222222222222',
-        title: '恢复缺失的会话索引',
-        preview: '',
-        workspaceKind: 'directory',
-        workspaceName: 'Workspace',
-        projectRoots: [],
-        cwd: 'D:\\Work\\Workspace',
-        indexed: true,
-        databasePaths: [databasePath],
-        rolloutPath: missingPath,
-        resolvedPath: candidatePath,
-        candidatePaths: [candidatePath],
-        fileExists: true,
-        fileSize: 91_844,
-        fileModifiedAt: new Date(Date.now() - 3_600_000).toISOString(),
-        location: 'archived_sessions',
-        archived: false,
-        sqliteProvider: 'xwx_deck',
-        sessionProvider: 'xwx_deck',
-        sessionId: '22222222-2222-4222-8222-222222222222',
-        sqliteFields: [
-          { key: 'id', value: '22222222-2222-4222-8222-222222222222' },
-          { key: 'rollout_path', value: missingPath },
-          { key: 'model_provider', value: 'xwx_deck' }
-        ],
-        sessionFields: [
-          { key: 'id', value: '22222222-2222-4222-8222-222222222222' },
-          { key: 'model_provider', value: 'xwx_deck' }
-        ],
-        status: 'error',
-        issues: [{
-          code: 'rollout_file_missing',
-          severity: 'error',
-          title: '索引指向的文件不存在',
-          detail: missingPath
-        }, {
-          code: 'recovery_candidate',
-          severity: 'warning',
-          title: '发现可恢复文件',
-          detail: candidatePath
-        }]
-      }]
-    };
-  };
   const state: {
     tracingEnabled: boolean;
     theme: 'day' | 'night';
+    language?: Language;
     traceAppearance: {
       skin: 'classic' | 'clean' | 'custom';
       showThroughput: boolean;
@@ -217,8 +85,8 @@ export function createPreviewApi(): XwXDeckApi {
     traceWarningGB: DEFAULT_TRACE_LIMIT_GB,
     traceAutoCleanup: DEFAULT_TRACE_AUTO_CLEANUP,
     clients: [
-      { id: 'claude-cli', label: 'Claude', enabled: true, status: 'idle', statusText: '待命', detail: '追踪未开启' },
-      { id: 'codex-cli', label: 'ChatGPT', enabled: true, status: 'idle', statusText: '待命', detail: '追踪未开启' }
+      { id: 'claude-cli', label: 'Claude', enabled: true, status: 'idle', statusText: t('待命'), detail: t('追踪未开启') },
+      { id: 'codex-cli', label: 'ChatGPT', enabled: true, status: 'idle', statusText: t('待命'), detail: t('追踪未开启') }
     ]
   };
   if (hasTraceSkipped || hasTraceLive) {
@@ -226,16 +94,16 @@ export function createPreviewApi(): XwXDeckApi {
     const codexClient = state.clients.find(client => client.id === 'codex-cli');
     if (claudeClient) {
       claudeClient.status = 'taken';
-      claudeClient.statusText = '追踪中';
+      claudeClient.statusText = t('追踪中');
       claudeClient.detail = 'api.anthropic.com';
     }
     if (codexClient && hasTraceSkipped) {
       codexClient.status = 'skipped';
-      codexClient.statusText = '未接入';
-      codexClient.detail = 'ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。';
+      codexClient.statusText = t('未接入');
+      codexClient.detail = t('ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。');
     } else if (codexClient) {
       codexClient.status = 'taken';
-      codexClient.statusText = '追踪中';
+      codexClient.statusText = t('追踪中');
       codexClient.detail = 'api.openai.com';
     }
   }
@@ -303,9 +171,9 @@ export function createPreviewApi(): XwXDeckApi {
         status: previewQuery?.get('update-ready') === '1' ? 'ready' : 'available',
         background: previewQuery?.get('update-background') === '1', currentVersion: '1.0.0', targetVersion: '1.0.1', channel: 'release',
         portable: false, installMode: hasMacUpdate ? 'manual-dmg' : 'automatic', supported: true, updateAvailable: true,
-        releaseNotes: '新增右下角版本更新提醒\n展示本次更新内容并支持立即下载\n优化 Windows 原地更新体验'
+        releaseNotes: t('新增右下角版本更新提醒\n展示本次更新内容并支持立即下载\n优化 Windows 原地更新体验')
       }
-    : { status: 'idle', currentVersion: '浏览器预览', channel: 'release', portable: false, installMode: 'automatic', supported: false, updateAvailable: false };
+    : { status: 'idle', currentVersion: t('浏览器预览'), channel: 'release', portable: false, installMode: 'automatic', supported: false, updateAvailable: false };
 
   let claude: ClaudeModelSettings = { fable: '', opus: '', sonnet: '', haiku: '' };
   let codex: CodexConfigSnapshot = {
@@ -320,7 +188,7 @@ export function createPreviewApi(): XwXDeckApi {
     historyRestorePending: false, hasHistoryBackup: false
   };
   let compatible: CompatibleServiceConfigSnapshot = {
-    displayName: '兼容服务',
+    displayName: t('兼容服务'),
     providerPreset: 'auto',
     baseUrl: 'https://gateway.example.com/v1',
     bearerToken: '',
@@ -336,14 +204,29 @@ export function createPreviewApi(): XwXDeckApi {
       traceManaged: false
     }
   };
+  const savedLanguage = localStorage.getItem('xwx-deck.preview.language');
+  if (isLanguage(savedLanguage)) state.language = savedLanguage;
   let providers: ProviderSnapshot = { version: 1, connections: [], selected: { codex: null, claude: null }, active: { codex: null, claude: null } };
+  let modelClients: import('../../shared/clientDownloads').DownloadClientId[] = [];
+  try { modelClients = JSON.parse(localStorage.getItem('xwx-deck.preview.model-clients') ?? '[]'); if (!Array.isArray(modelClients)) modelClients = []; } catch { /* Empty navigation on malformed preview preferences. */ }
+  modelClients = normalizeModelClients(localStorage.getItem('xwx-deck.preview.model-clients-version') === '2' ? modelClients : ['claude', 'codex', ...modelClients]);
+  const saveModelClients = () => { localStorage.setItem('xwx-deck.preview.model-clients', JSON.stringify(modelClients)); localStorage.setItem('xwx-deck.preview.model-clients-version', '2'); return [...modelClients]; };
   return {
+    detectClientInstallations: async () => ({ available: false, clients: [] }),
+    getModelClients: async () => [...modelClients],
+    addModelClient: async () => { throw new Error(t('浏览器预览无法检测本机安装，请在桌面应用中添加客户端')); },
+    removeModelClient: async id => { modelClients = modelClients.filter(client => client !== id); return saveModelClients(); },
     setupWebsites: setupWebsitesFor(setupPlatform, setupArch),
     openSetupWebsite: async site => { window.open(setupWebsiteUrl(site, setupPlatform, setupArch), '_blank', 'noopener,noreferrer'); },
     getState: async () => buildState(),
     setStartupEnabled: async (enabled) => {
       state.startup = { ...state.startup, enabled };
       return buildState();
+    },
+    setLanguage: async (language) => {
+      state.language = language;
+      localStorage.setItem('xwx-deck.preview.language', language);
+      return emitState();
     },
     setTheme: async (theme) => {
       state.theme = theme;
@@ -434,7 +317,7 @@ export function createPreviewApi(): XwXDeckApi {
     updateCodexConfig: async (value) => {
       const mode = value.mode === 'compatible' ? 'compatible' as const : 'official' as const;
       if (mode === 'compatible' && (!(value.compatibleBaseUrl as string)?.trim() || !(value.compatibleBearerToken as string)?.trim())) {
-        throw new Error(`先在设置中填写 ${compatible.displayName} 地址和密钥。`);
+        throw new Error(t("先在设置中填写 {0} 地址和密钥。", compatible.displayName));
       }
       codex = {
         ...codex, mode,
@@ -452,59 +335,10 @@ export function createPreviewApi(): XwXDeckApi {
       };
       return structuredClone(codex);
     },
-    diagnoseCodexConversations: async () => conversationHealthPreview(),
-    queryCodexConversations: async (request: CodexConversationPageRequest): Promise<CodexConversationPageResponse> => {
-      const report = conversationHealthPreview();
-      const needle = request.query.trim().toLocaleLowerCase();
-      const filtered = report.conversations.filter(row => (
-        (request.filter !== 'issues' || row.status !== 'healthy')
-        && (request.filter !== 'healthy' || row.status === 'healthy')
-        && (!needle || [row.threadId, row.title, row.cwd, row.rolloutPath]
-          .some(value => String(value || '').toLocaleLowerCase().includes(needle)))
-      ));
-      const pageSize = Math.max(20, Math.min(200, Math.floor(request.pageSize) || 120));
-      const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-      const page = Math.max(0, Math.min(pageCount - 1, Math.floor(request.page) || 0));
-      return {
-        requestId: request.requestId,
-        snapshotId: `${report.generatedAt}:preview`,
-        generatedAt: report.generatedAt,
-        codexHome: report.codexHome,
-        configPath: report.configPath,
-        activeProvider: report.activeProvider,
-        configuredProviders: report.configuredProviders,
-        databases: report.databases,
-        scanScope: report.scanScope,
-        scanComplete: report.scanComplete,
-        scanIssues: report.scanIssues,
-        truncated: report.truncated,
-        summary: report.summary,
-        page,
-        pageSize,
-        total: filtered.length,
-        rows: filtered.slice(page * pageSize, (page + 1) * pageSize).map(row => ({
-          threadId: row.threadId,
-          title: row.title,
-          status: row.status,
-          primaryIssueTitle: row.issues[0]?.title || '一致',
-          issueCount: row.issues.length,
-          ...(row.updatedAt ? { updatedAt: row.updatedAt } : {}),
-          ...(row.fileModifiedAt ? { fileModifiedAt: row.fileModifiedAt } : {})
-        })),
-        performance: { durationMs: 0, reusedRollouts: 0, inspectedRollouts: 0, reusedDatabases: 0, inspectedDatabases: 0 }
-      };
-    },
-    detailCodexConversation: async (request: CodexConversationDetailRequest) => {
-      const row = conversationHealthPreview().conversations.find(item => item.threadId === request.threadId);
-      if (!row) throw new Error('未找到该对话的诊断详情。');
-      return row;
-    },
-    setCodexConversationDiagnosticsActive: async () => undefined,
-    cancelCodexConversationScan: async () => false,
-    openCodexConversationPath: async () => undefined,
     copyText: async value => {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
     },
+    getSubscriptionAccounts: async () => ({ supported: false, accounts: [] }),
     getProviders: async () => structuredClone(providers),
     saveProvider: async input => {
       const existing = providers.connections.find(p => p.id === input.id);
@@ -516,13 +350,13 @@ export function createPreviewApi(): XwXDeckApi {
       return structuredClone(providers);
     },
     deleteProvider: async id => {
-      if (Object.values(providers.active).includes(id)) throw new Error('请先切换正在使用此连接的客户端。');
+      if (Object.values(providers.active).includes(id)) throw new Error(t('请先切换正在使用此连接的客户端。'));
       providers = { ...providers, connections: providers.connections.filter(p => p.id !== id), selected: { codex: providers.selected.codex === id ? null : providers.selected.codex, claude: providers.selected.claude === id ? null : providers.selected.claude } };
       return structuredClone(providers);
     },
     switchClientProvider: async ({ client, providerId }) => {
       const provider = providers.connections.find(p => p.id === providerId);
-      if (providerId && !provider) throw new Error('连接不存在。');
+      if (providerId && !provider) throw new Error(t('连接不存在。'));
       providers = { ...providers, selected: providerId ? { ...providers.selected, [client]: providerId } : providers.selected, active: { ...providers.active, [client]: providerId } };
       services = { ...services, [client]: !!providerId };
       if (client === 'codex') {
@@ -534,7 +368,7 @@ export function createPreviewApi(): XwXDeckApi {
     fetchProviderModels: async () => [],
     validateProvider: async ({ providerId }) => {
       const provider = providers.connections.find(item => item.id === providerId);
-      if (!provider) throw new Error('服务连接不存在。');
+      if (!provider) throw new Error(t('服务连接不存在。'));
       const match = provider.baseUrl.match(/^(.*)\/(responses|chat\/completions|messages)(?:\/v1)?\/?$/i);
       if (match) {
         return {
@@ -569,7 +403,7 @@ export function createPreviewApi(): XwXDeckApi {
     getModelServices: async () => ({ ...services }),
     setModelService: async (value) => {
       if (value.enabled && (!compatible.baseUrl?.trim() || !compatible.bearerToken?.trim())) {
-        throw new Error(`请先在设置中填写并保存 ${compatible.displayName} 地址和密钥。`);
+        throw new Error(t("请先在设置中填写并保存 {0} 地址和密钥。", compatible.displayName));
       }
       services = { ...services, [value.client]: value.enabled };
       if (value.client === 'claude') {
@@ -703,7 +537,10 @@ export function createPreviewApi(): XwXDeckApi {
       stateListeners.add(listener);
       return () => stateListeners.delete(listener);
     },
-    onWindowState: (_listener: (state: WindowState) => void) => () => undefined,
+    onWindowState: (listener: (state: WindowState) => void) => {
+      queueMicrotask(() => listener({ maximized: false, fullscreen: false, nativeFrame: setupPlatform === 'darwin' }));
+      return () => undefined;
+    },
     onUpdateState: (_listener: (state: XwXDeckUpdateState) => void) => () => undefined,
     onShowUpdateDetails: (_listener: () => void) => () => undefined,
     onNotice: (_listener) => () => undefined,

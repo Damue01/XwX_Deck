@@ -23,7 +23,7 @@ for (const file of await textFiles(root)) {
   if (relative === 'package-lock.json') content = content.replace(/"integrity"\s*:\s*"[^"]*"/g, '"integrity":"verified-by-package-manager"');
   for (const pattern of patterns) if (pattern.test(content)) failures.push(`${relative} contains forbidden pattern ${pattern}`);
 }
-for (const relative of ['src/renderer/features/sync/SyncPage.tsx','src/main/app/configSync.ts','src/main/app/excelMarkdown.ts']) {
+for (const relative of ['src/renderer/features/sync/SyncPage.tsx','src/main/app/configSync.ts','src/main/app/excelMarkdown.ts','src/renderer/features/tools/ToolsPage.tsx','src/main/app/codexConversationDoctor.ts','src/main/codexConversationWorker.ts']) {
   check(!await exists(path.join(root, relative)), `removed feature file still exists: ${relative}`);
 }
 const settings = await readFile(path.join(root, 'src/main/app/settings.ts'), 'utf8');
@@ -43,10 +43,10 @@ console.log('PASS standalone boundary: clean history policy, no internal default
 async function textFiles(directory) {
   const output = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.name.startsWith('.tmp-') || ['.git','node_modules','dist','release','test-results'].includes(entry.name)) continue;
+    if (entry.name.startsWith('.tmp-') || ['.git','node_modules','dist','release','release-native','target','gen','test-results'].includes(entry.name)) continue;
     const candidate = path.join(directory, entry.name);
     if (entry.isDirectory()) output.push(...await textFiles(candidate));
-    else if (entry.isFile() && /\.(?:c?js|mjs|ts|tsx|json|md|html|css|txt|yml|yaml|bat|ps1)$/iu.test(entry.name)) output.push(candidate);
+    else if (entry.isFile() && /\.(?:c?js|mjs|ts|tsx|rs|toml|json|md|html|css|txt|yml|yaml|bat|ps1)$/iu.test(entry.name)) output.push(candidate);
   }
   return output;
 }

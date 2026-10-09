@@ -1,0 +1,47 @@
+[package]
+name = "xwx-deck-native"
+version = "1.1.0"
+edition = "2021"
+publish = false
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", default-features = false, features = ["wry", "compression", "common-controls-v6", "tray-icon"] }
+tauri-runtime = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["net", "sync", "time", "io-util", "rt-multi-thread", "process"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws"] }
+reqwest = { version = "0.12", default-features = false, features = ["native-tls", "system-proxy", "stream", "json", "http2", "native-tls-alpn"] }
+toml_edit = "0.22"
+futures-util = "0.3"
+sha2 = "0.10"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-autostart = "2"
+base64 = "0.22"
+getrandom = "0.3"
+jsonwebtoken = { version = "9.3", default-features = false }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
+async-stream = "0.3"
+rusqlite = { version = "0.40", features = ["backup"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
+
+[target.'cfg(windows)'.dependencies]
+rusqlite = { version = "0.40", features = ["backup", "bundled"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

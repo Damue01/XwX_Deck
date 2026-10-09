@@ -1,0 +1,42 @@
+(async()=>{
+ const checks=[];const delay=ms=>new Promise(r=>setTimeout(r,ms));
+ const wait=async(test,label)=>{for(let i=0;i<100;i++){if(await test())return;await delay(100);}throw Error('Timed out: '+label);};
+ const check=(label,ok)=>{if(!ok)throw Error(label);checks.push(label);};
+ try{
+  await wait(()=>window.xwxDeck&&document.querySelector('#captureBtn'),'real production renderer');
+  document.querySelector('.rail [data-page="models"]').click();
+  await wait(()=>document.querySelector('[aria-label="ChatGPT 使用的模型服务"]'),'model service picker');
+  const picker=document.querySelector('[aria-label="ChatGPT 使用的模型服务"]');picker.click();
+  await wait(()=>document.querySelectorAll('.xwx-combobox-popup [role=option]').length>0,'subscription options');
+  check('multiple registrations show exactly one subscription model service', [...document.querySelectorAll('.xwx-combobox-popup [role=option]')].filter(option=>option.textContent.includes('ChatGPT 订阅')).length===1 && !document.querySelector('.xwx-combobox-popup').textContent.includes('Fixture A'));
+  document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+  document.querySelector('.rail [data-page="settings"]').click();
+  await wait(()=>document.querySelector('#provider-add'),'configuration entry');document.querySelector('#provider-add').click();
+  await wait(()=>document.querySelector('#configuration-accounts-tab'),'configuration tabs');document.querySelector('#configuration-accounts-tab').click();
+  await wait(()=>document.querySelectorAll('.subscription-account-row').length===2,'actual native account registry');
+  check('account strategies stay in the existing panel without another dialog',document.querySelectorAll('.configuration-dialog').length===1 && !document.querySelector('[role=alertdialog]') && document.querySelector('[role=radiogroup][aria-label="账号策略"]'));
+  check('quota strategies remain unavailable when official quota is unknown',[...document.querySelectorAll('.subscription-strategy')].filter(button=>['剩余额度最多','优先使用即将恢复'].includes(button.textContent.trim())).every(button=>button.disabled));
+  const select=async(label,id)=>{[...document.querySelectorAll('.subscription-strategy')].find(b=>b.textContent===label).click();await wait(async()=> (await window.xwxDeck.getSubscriptionAccounts()).routing.chatgpt.strategy===id,label+' persisted');await wait(()=>!document.querySelector('.subscription-strategy').disabled,'policy save complete');};
+  await select('平衡使用','balanced');await delay(1700);
+  check('background account polling retains the saved strategy',document.querySelector('.subscription-strategy[aria-checked=true]').textContent==='平衡使用');
+  await select('固定账号','fixed');document.querySelector('[aria-label="固定使用 Fixture B"]').click();
+  await wait(async()=> (await window.xwxDeck.getSubscriptionAccounts()).routing.chatgpt.fixedAccountId==='b','fixed account saved');
+  check('fixed account uses inline radios rather than a nested selector',document.querySelector('[aria-label="固定使用 Fixture B"]').checked&&document.querySelectorAll('.configuration-dialog').length===1 && !document.querySelector('[role=alertdialog]'));
+  await wait(()=>!document.querySelector('.subscription-strategy').disabled,'fixed save complete');await select('用完再换','exhaust');
+  check('connected accounts join by default without checkboxes or redundant login actions',!document.querySelector('.subscription-account-row input[type=checkbox]')&&![...document.querySelectorAll('.subscription-account-row button')].some(button=>['登录','重新登录'].includes(button.textContent.trim())));
+  await wait(()=>!document.querySelector('[aria-label="Fixture A 的更多操作"]').disabled,'account save settled');
+  document.querySelector('[aria-label="Fixture A 的更多操作"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+  document.querySelector('[aria-label="Fixture A 的更多操作"]').click();
+  await wait(()=>[...document.querySelectorAll('[role=menuitem]')].some(item=>item.textContent.trim()==='暂停使用'),'account actions');
+  [...document.querySelectorAll('[role=menuitem]')].find(item=>item.textContent.trim()==='暂停使用').click();
+  await wait(async()=> (await window.xwxDeck.getSubscriptionAccounts()).routing.chatgpt.excludedAccountIds.includes('a'),'pause saved');
+  check('pause persists without logging out', (await window.xwxDeck.getSubscriptionAccounts()).accounts.every(account=>account.status==='connected'));
+  await wait(()=>[...document.querySelectorAll('.subscription-account-row button')].some(button=>button.textContent.trim()==='恢复使用'&&!button.disabled),'inline recovery action');
+  [...document.querySelectorAll('.subscription-account-row button')].find(button=>button.textContent.trim()==='恢复使用').click();
+  await wait(async()=> !(await window.xwxDeck.getSubscriptionAccounts()).routing.chatgpt.excludedAccountIds.includes('a'),'resume saved');
+  check('account names preserve the dashed edit affordance',getComputedStyle(document.querySelector('.subscription-rename-trigger')).textDecorationStyle==='dashed');
+  check('routing panel adds no separator lines',getComputedStyle(document.querySelector('.subscription-routing')).borderBottomWidth==='0px'&&getComputedStyle(document.querySelector('.subscription-account-row')).borderBottomWidth==='0px');
+  check('real native backend has no active Gateway after UI configuration',!(await window.xwxDeck.getState()).tracingEnabled);
+  await window.__TAURI__.core.invoke('pilot_smoke_report',{report:{passed:true,checks,rendererErrors:window.__pilotErrors??[]}});
+ }catch(error){await window.__TAURI__.core.invoke('pilot_smoke_report',{report:{passed:false,checks,error:String(error),menuDiagnostics:[...document.querySelectorAll('[role=menuitem], .provider-menu-trigger')].map(node=>({text:node.textContent,disabled:node.disabled,expanded:node.getAttribute('aria-expanded')})),rendererErrors:window.__pilotErrors??[]}});}
+})();

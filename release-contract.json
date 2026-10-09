@@ -18,8 +18,8 @@
     "repairCenter": true,
     "safeExitRecovery": true,
     "configurationSync": false,
-    "toolsPage": true,
-    "conversationDiagnostics": true,
+    "toolsPage": false,
+    "conversationDiagnostics": false,
     "excelToMarkdown": false,
     "automaticTraceCleanup": true
   },
@@ -53,7 +53,7 @@
       "artifactName": "XwX Deck.exe",
       "installMode": "automatic",
       "publishedArtifactName": "XwX-Deck-windows-x64.exe",
-      "updateMetadata": "latest.yml"
+      "updateMetadata": "release.json"
     },
     "macosArm64": {
       "buildScript": "build:mac:arm64",
@@ -119,12 +119,12 @@
     ],
     "authenticationImplemented": [
       "bearer",
-      "anthropic-api-key"
+      "anthropic-api-key",
+      "oauth"
     ],
     "authenticationPlanned": [
       "google-api-key",
       "azure-api-key",
-      "oauth",
       "aws-sigv4",
       "custom-headers"
     ],
@@ -140,5 +140,13 @@
       "codex",
       "claude"
     ]
+  },
+  "runtime": {
+    "backend": "rust",
+    "shell": "tauri",
+    "frontend": "react",
+    "webview": "system",
+    "bundledNode": false,
+    "bundledChromium": false
   }
 }

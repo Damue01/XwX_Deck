@@ -1,3 +1,4 @@
+import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
 import type { ClientStateRow, ManagerTraceStats } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
@@ -29,6 +30,7 @@ interface TokenReadoutProps {
 }
 
 function TokenReadout({ stats, period }: TokenReadoutProps): React.ReactElement {
+  useLanguage();
   const [showCost, setShowCost] = React.useState(false);
   const slot = stats?.[period] ?? { tokens: 0, costUsd: 0, costComplete: true };
   const pres = tokenCostPresentation({ showCost, tokens: slot.tokens, costUsd: slot.costUsd });
@@ -42,9 +44,9 @@ function TokenReadout({ stats, period }: TokenReadoutProps): React.ReactElement 
   const nothingPriced = showCost && !slot.costComplete && slot.costUsd === 0;
   const partialCost = showCost && !slot.costComplete && !nothingPriced;
   const costHint = nothingPriced
-    ? '这段时间使用的模型都没有可信价格可用，因此不给出金额。按输入长度分档或分时段计费的模型需要落盘时记录的分桶才能计算，升级前抓取的用量没有这份分桶；清空 Trace 记录后重新抓取即可恢复完整计费。'
+    ? t('这段时间使用的模型都没有可信价格可用，因此不给出金额。按输入长度分档或分时段计费的模型需要落盘时记录的分桶才能计算，升级前抓取的用量没有这份分桶；清空 Trace 记录后重新抓取即可恢复完整计费。')
     : partialCost
-      ? '部分模型缺少可信价格或缺少缓存写 TTL 分档，未计入合计；显示的是已核验模型的下限。升级前记录的用量无法拆分缓存，清空 Trace 记录后重新抓取即可恢复完整计费。'
+      ? t('部分模型缺少可信价格或缺少缓存写 TTL 分档，未计入合计；显示的是已核验模型的下限。升级前记录的用量无法拆分缓存，清空 Trace 记录后重新抓取即可恢复完整计费。')
       : pres.toggleHint;
 
   return (
@@ -54,13 +56,13 @@ function TokenReadout({ stats, period }: TokenReadoutProps): React.ReactElement 
         id="tokenReadout"
         role="button"
         tabIndex={0}
-        aria-label="切换 Token 与费用"
+        aria-label={t("切换 Token 与费用")}
         title={costHint}
         onClick={() => setShowCost(c => !c)}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowCost(c => !c); } }}
       >
         <div className="readout-eyebrow">
-          <span className="readout-label" id="readoutLabel">{pres.label}{partialCost ? '（部分）' : nothingPriced ? '（无可信价格）' : ''}</span>
+          <span className="readout-label" id="readoutLabel">{pres.label}{partialCost ? t('（部分）') : nothingPriced ? t('（无可信价格）') : ''}</span>
         </div>
         <div className="readout-value" id="readoutValue" data-range={range}>
           <ReadoutDigits
@@ -86,6 +88,7 @@ interface ClientToggleProps {
 }
 
 function ClientToggle({ client, onToggle, variant, busy }: ClientToggleProps): React.ReactElement {
+  useLanguage();
   const uiId = client.id === 'claude-cli' ? 'claude' : 'codex';
   const label = client.id === 'claude-cli' ? 'Claude' : 'ChatGPT';
   return (
@@ -95,8 +98,8 @@ function ClientToggle({ client, onToggle, variant, busy }: ClientToggleProps): R
       data-client={`${uiId}-${variant}`}
       data-status={client.status}
       aria-pressed={client.enabled}
-      aria-label={`${label}：${client.statusText}，${client.detail}`}
-      title={client.detail || client.statusText || ''}
+      aria-label={`${label}：${t(client.statusText)}，${t(client.detail)}`}
+      title={t(client.detail || client.statusText || '')}
       disabled={busy}
       aria-busy={busy || undefined}
       onClick={() => onToggle(client.id)}
@@ -111,6 +114,7 @@ interface Props {
 }
 
 export function SignalPage({ active }: Props): React.ReactElement {
+  useLanguage();
   const bridge = useBridge();
   const confirm = useConfirm();
   const [period, setPeriod] = React.useState<PeriodKey>('total');
@@ -155,7 +159,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
     if (!bridge.booted || !bridge.runtime || initialRestartNoticeCheckedRef.current) return;
     initialRestartNoticeCheckedRef.current = true;
     if (!bridge.runtime?.chatGptRestartRecommended) return;
-    showToast('ChatGPT 连接已更新', 'info', CHATGPT_RESTART_TOAST_ID, {
+    showToast(t('ChatGPT 连接已更新'), 'info', CHATGPT_RESTART_TOAST_ID, {
       description: CHATGPT_RESTART_DESCRIPTION,
       timeout: 12_000
     });
@@ -199,13 +203,13 @@ export function SignalPage({ active }: Props): React.ReactElement {
       const next = await bridge.api.toggleTracing(!capturing);
       bridge.patch({ runtime: next });
       if (next.lastError) {
-        showLifecycleNotice(lifecycleFailure(next.lastError, next.tracingEnabled ? '接入 Trace' : '恢复客户端配置'));
+        showLifecycleNotice(lifecycleFailure(next.lastError, next.tracingEnabled ? t('接入 Trace') : t('恢复客户端配置')));
       } else if (next.tracingEnabled && next.clients.some(client => client.enabled && client.status === 'skipped')) {
         // The persistent connection notice explains which client did not join.
         clearLifecycleNotice();
       } else if (next.tracingEnabled) {
         showLifecycleNotice({
-          message: 'Trace 已开启',
+          message: t('Trace 已开启'),
           type: next.claudeDesktopRestart === 'local' ? 'info' : 'success',
           description: next.claudeDesktopRestart === 'local' ? claudeDesktopRestartNote('local') : TRACE_RESTART_DESCRIPTION
         }, TRACE_WAITING_TOAST_ID);
@@ -219,10 +223,10 @@ export function SignalPage({ active }: Props): React.ReactElement {
         // Trace is still on while the user decides, so the page shows it on.
         setPending(false);
         const force = await confirm({
-          title: '关闭 Trace？',
-          body: `${normalizeErrorMessage(e)}现在关闭会中断它们；继续等待则保持 Trace 开启。`,
-          cancelText: '继续等待',
-          confirmText: '强制停止',
+          title: t('关闭 Trace？'),
+          body: t("{0}现在关闭会中断它们；继续等待则保持 Trace 开启。", normalizeErrorMessage(e)),
+          cancelText: t('继续等待'),
+          confirmText: t('强制停止'),
           tone: 'danger'
         });
         if (!force) return;
@@ -231,14 +235,14 @@ export function SignalPage({ active }: Props): React.ReactElement {
           const next = await bridge.api.toggleTracing(false, true);
           bridge.patch({ runtime: next });
           showLifecycleNotice(next.lastError
-            ? lifecycleFailure(next.lastError, '恢复客户端配置')
+            ? lifecycleFailure(next.lastError, t('恢复客户端配置'))
             : traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart, next.connectionNotice));
         } catch (forceError) {
-          showLifecycleNotice(lifecycleFailure(forceError, '强制停止 Trace'));
+          showLifecycleNotice(lifecycleFailure(forceError, t('强制停止 Trace')));
         }
         return;
       }
-      showLifecycleNotice(lifecycleFailure(e, capturing ? '停止 Trace' : '开启 Trace'));
+      showLifecycleNotice(lifecycleFailure(e, capturing ? t('停止 Trace') : t('开启 Trace')));
     } finally {
       const left = SWITCH_MIN_HIDDEN_MS - (performance.now() - startedAt);
       if (left > 0) await new Promise(resolve => setTimeout(resolve, left));
@@ -272,13 +276,13 @@ export function SignalPage({ active }: Props): React.ReactElement {
       if (id === 'codex-cli'
         && next.chatGptRestartRecommended
         && next.clients.some(client => client.id === 'codex-cli' && client.enabled)) {
-        showToast('ChatGPT 连接已更新', 'info', CHATGPT_RESTART_TOAST_ID, {
+        showToast(t('ChatGPT 连接已更新'), 'info', CHATGPT_RESTART_TOAST_ID, {
           description: CHATGPT_RESTART_DESCRIPTION,
           timeout: 12_000
         });
       }
     } catch (e) {
-      showLifecycleNotice(lifecycleFailure(e, id === 'codex-cli' ? 'ChatGPT 接入' : 'Claude 接入'));
+      showLifecycleNotice(lifecycleFailure(e, id === 'codex-cli' ? t('ChatGPT 接入') : t('Claude 接入')));
     } finally {
       busyClientRef.current.delete(id);
       setBusyClients(current => {
@@ -324,7 +328,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
             className="capture-dial"
             id="captureBtn"
             aria-pressed={capturing}
-            aria-label="开启 Trace"
+            aria-label={t("开启 Trace")}
             onClick={handleDialClick}
           >
             <svg viewBox="0 0 30 30" aria-hidden="true">
@@ -332,7 +336,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
             </svg>
           </button>
           <div className="idle-sources">
-            <div className="srcs" role="group" aria-label="捕获来源">
+            <div className="srcs" role="group" aria-label={t("捕获来源")}>
               {clients.map(c => (
                 <ClientToggle key={c.id} client={c} onToggle={handleClientToggle} variant="idle" busy={busyClients.has(c.id)} />
               ))}
@@ -343,7 +347,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
         {/* Live board */}
         <div className="live-layout" id="liveBoard" inert={!capturing || hidden}>
           <div className="signal-top">
-            <div className="srcs" role="group" aria-label="捕获来源">
+            <div className="srcs" role="group" aria-label={t("捕获来源")}>
               {clients.map(c => (
                 <ClientToggle key={c.id} client={c} onToggle={handleClientToggle} variant="live" busy={busyClients.has(c.id)} />
               ))}
@@ -351,10 +355,10 @@ export function SignalPage({ active }: Props): React.ReactElement {
             <div className="signal-top-right">
               <AppearanceButton id="appearanceTriggerLive" onClick={() => setAppearanceOpen(true)} />
               <Tabs value={period} onValueChange={v => setPeriod(v as PeriodKey)}>
-                <TabsList aria-label="统计周期">
+                <TabsList aria-label={t("统计周期")}>
                   {(['total', 'today', 'week'] as PeriodKey[]).map(p => (
                     <TabsTab key={p} value={p} data-period={p}>
-                      {p === 'total' ? '总计' : p === 'today' ? '今日' : '本周'}
+                      {p === 'total' ? t('总计') : p === 'today' ? t('今日') : t('本周')}
                     </TabsTab>
                   ))}
                 </TabsList>
@@ -363,7 +367,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
                 type="button"
                 className="stop-dial"
                 id="stopCaptureBtn"
-                aria-label="关闭 Trace"
+                aria-label={t("关闭 Trace")}
                 onClick={handleDialClick}
               />
             </div>

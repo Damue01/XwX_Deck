@@ -1,4 +1,11 @@
+import { t, getLanguage, useLanguage } from '@/lib/i18n';
 import { ProviderPicker } from './ProviderPicker';
+import { SlidersHorizontal } from 'lucide-react';
+import { ManageClientsDialog } from './ManageClientsDialog';
+import { ProviderIcon } from '../settings/ProviderIcon';
+import { ClientDownloads } from '../settings/ProviderSetupShortcuts';
+import { CLIENT_DOWNLOADS, MODEL_CLIENT_ADDED_EVENT, modelClientRoute, normalizeModelClients, type DownloadClientId } from '../../../shared/clientDownloads';
+import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
 import * as React from 'react';
 import type {
   ClaudeModelSettings,
@@ -7,12 +14,11 @@ import type {
   ModelCatalogEntry,
 } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
-import { clearLifecycleNotice, closeToast, openProviderSettings, REPAIR_CODEX_CONFIG_EVENT, runNoticeAction, showErrorToast, showLifecycleNotice, showToast } from '@/lib/toast';
+import { clearLifecycleNotice, closeToast, openProviderSettings, REPAIR_CODEX_CONFIG_EVENT, RESTORE_CLIENT_CONFIG_EVENT, runNoticeAction, showErrorToast, showLifecycleNotice, showToast } from '@/lib/toast';
 import { lifecycleFailure } from '../../../shared/lifecycleNotice';
 import { normalizeErrorMessage } from '../../../shared/errors';
 import { modelCatalogFailureMessage } from '../../../shared/modelCatalogError';
 import { waitForModelCatalog } from '../../../shared/modelCatalogWait';
-import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ModelPicker, type ModelPickerNote } from './ModelPicker';
 import { isClaudeDesktopCompatibleModelId } from '../../../shared/claudeDesktopModelId';
@@ -43,16 +49,46 @@ const CLAUDE_ROLES: Array<{ key: ClaudeRole; label: string }> = [
 const EXTERNAL_CODEX_CATALOG_DESCRIPTION = '检测到其他工具留下的模型配置。请确认原工具已经退出，再重新接管。';
 
 function providerFailureAction(error: unknown, providerId: string | null, retryLabel: string, retry: () => void): React.ComponentPropsWithoutRef<'button'> {
-  if (providerId && normalizeErrorMessage(error).includes('请先保存服务地址和密钥')) {
-    return { type: 'button', children: '去配置', onClick: () => openProviderSettings(providerId) };
+  if (providerId && normalizeErrorMessage(error).includes(t('请先保存服务地址和密钥'))) {
+    return { type: 'button', children: t('去配置'), onClick: () => openProviderSettings(providerId) };
   }
   return { type: 'button', children: retryLabel, onClick: retry };
 }
 
 export function ModelsPage({ active }: Props): React.ReactElement {
+  useLanguage();
   const bridge = useBridge();
   const confirm = useConfirm();
-  const [activeTab, setActiveTab] = React.useState<ClientTab>('claude');
+  const [selectedClient, setSelectedClient] = React.useState<DownloadClientId>('claude');
+  const [managingClients, setManagingClients] = React.useState(false);
+  const clientTabsList = React.useRef<HTMLDivElement | null>(null);
+  const shownClients = normalizeModelClients(bridge.modelClients);
+  const clientRoute = modelClientRoute(selectedClient);
+  const activeTab: ClientTab = clientRoute ?? 'claude';
+  const clientActive = active && clientRoute !== null && shownClients.includes(selectedClient);
+  const addedClients = shownClients.filter(id => modelClientRoute(id) === null);
+  React.useEffect(() => {
+    if (!shownClients.includes(selectedClient) && shownClients.length) setSelectedClient(shownClients[0]);
+  }, [bridge.modelClients, selectedClient]);
+  React.useEffect(() => {
+    if (!active || !clientTabsList.current) return;
+    const reveal = () => document.getElementById(`client-tab-${selectedClient}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    reveal();
+    const resize = new ResizeObserver(reveal);
+    resize.observe(clientTabsList.current);
+    return () => resize.disconnect();
+  }, [active, selectedClient, bridge.modelClients]);
+  React.useEffect(() => {
+    const added = (event: Event) => {
+      const id = (event as CustomEvent<DownloadClientId>).detail;
+      if (!CLIENT_DOWNLOADS.some(client => client.id === id)) return;
+      setSelectedClient(modelClientRoute(id) ?? id);
+      window.dispatchEvent(new CustomEvent('xwxdeck:navigate', { detail: 'models' }));
+    };
+    window.addEventListener(MODEL_CLIENT_ADDED_EVENT, added);
+    return () => window.removeEventListener(MODEL_CLIENT_ADDED_EVENT, added);
+  }, []);
+  const clientManagerTrigger = React.useRef<HTMLButtonElement | null>(null);
   const [claudeModels, setClaudeModels] = React.useState<ClaudeModelSettings | null>(bridge.claudeModels);
   const [codexConfig, setCodexConfig] = React.useState<CodexConfigSnapshot | null>(bridge.codexConfig);
   const [enhancements, setEnhancements] = React.useState<CodexEnhancementsSnapshot | null>(bridge.codexEnhancements);
@@ -73,7 +109,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   const codexCatalogRequest = React.useRef(0);
   const repairingCodexRef = React.useRef(false);
   const visibleClient = React.useRef<ClientTab | null>(null);
-  visibleClient.current = active ? activeTab : null;
+  visibleClient.current = clientActive ? activeTab : null;
   const currentProviderIds = React.useRef({ codex: codexProviderId, claude: claudeProviderId });
   currentProviderIds.current = { codex: codexProviderId, claude: claudeProviderId };
   const selectionReadRequest = React.useRef({ codex: 0, claude: 0 });
@@ -86,7 +122,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   // A failed bootstrap read must recover on page entry or after config repair.
   // Keep this independent of provider writes and their foreground wait budget.
   React.useEffect(() => {
-    if (!active || activeTab !== 'codex' || enhancements) return;
+    if (!clientActive || activeTab !== 'codex' || enhancements) return;
     let current = true;
     setEnhancementsLoadFailed(false);
     void bridge.api.getCodexEnhancements().then(value => {
@@ -95,7 +131,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       bridge.patch({ codexEnhancements: value });
     }).catch(() => { if (current) setEnhancementsLoadFailed(true); });
     return () => { current = false; };
-  }, [active, activeTab, enhancements, enhancementsRetry, bridge.api, bridge.patch, bridge.codexConfig]);
+  }, [clientActive, activeTab, enhancements, enhancementsRetry, bridge.api, bridge.patch, bridge.codexConfig]);
 
   // Re-entering the page reads current settings, without allowing a read that
   // started before a user action to replace that action's result.
@@ -115,8 +151,8 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       }
       return isCurrent();
     } catch (error) {
-      if (isCurrent() && visibleClient.current === client) showErrorToast('模型配置暂未读取，服务选择保留', error, undefined, {
-        actionProps: { type: 'button', children: '重试', onClick: () => {
+      if (isCurrent() && visibleClient.current === client) showErrorToast(t('模型配置暂未读取，服务选择保留'), error, undefined, {
+        actionProps: { type: 'button', children: t('重试'), onClick: () => {
           if (isCurrent()) void refreshModelSelection(client, providerId);
         } }
       });
@@ -127,25 +163,25 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const client = activeTab;
     const providerId = client === 'claude' ? claudeProviderId : codexProviderId;
     const writing = client === 'claude' ? claudeOperationRef.current : codexOperationRef.current;
-    if (active && !writing && bridge.providers?.active[client] === providerId) {
+    if (clientActive && !writing && bridge.providers?.active[client] === providerId) {
       void refreshModelSelection(client, providerId);
     }
-  }, [active, activeTab, claudeProviderId, codexProviderId, bridge.providers, refreshModelSelection]);
+  }, [clientActive, activeTab, claudeProviderId, codexProviderId, bridge.providers, refreshModelSelection]);
 
   const repairCodexConfig = React.useCallback(async () => {
     if (repairingCodexRef.current) return;
     const requestedAt = providerSwitchGeneration.current.codex;
     if (!await confirm({
-      title: '修复 ChatGPT 配置？',
-      body: '会先备份原 config.toml，再根据模型页已保存的服务和模型生成最小可用配置，并验证修复结果。',
-      confirmText: '备份并修复'
+      title: t('修复 ChatGPT 配置？'),
+      body: t('会先备份原 config.toml，再根据模型页已保存的服务和模型生成最小可用配置，并验证修复结果。'),
+      confirmText: t('备份并修复')
     }) || requestedAt !== providerSwitchGeneration.current.codex) return;
     const generation = ++providerSwitchGeneration.current.codex;
     const isCurrent = () => generation === providerSwitchGeneration.current.codex;
     repairingCodexRef.current = true;
     codexOperationRef.current = true;
     setBusyCodex(true);
-    showToast('正在修复 ChatGPT 配置…', 'info');
+    showToast(t('正在修复 ChatGPT 配置…'), 'info');
     let result: Awaited<ReturnType<typeof bridge.api.repairInvalidCodexConfiguration>> | undefined;
     try {
       result = await bridge.api.repairInvalidCodexConfiguration();
@@ -161,25 +197,25 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       bridge.patch({ codexConfig: config, providers, modelServices: services, runtime });
       clearLifecycleNotice();
       if (result.conflicts.length) {
-        showToast('ChatGPT 配置已修复，部分选择未恢复', 'warning', undefined, {
+        showToast(t('ChatGPT 配置已修复，部分选择未恢复'), 'warning', undefined, {
           description: result.conflicts.join('；')
         });
       } else {
         showToast(runtime.chatGptRestartRecommended
-          ? 'ChatGPT 配置已修复，重启后生效'
-          : result.mode === 'compatible' ? 'ChatGPT 配置已修复' : 'ChatGPT 官方配置已修复', 'success');
+          ? t('ChatGPT 配置已修复，重启后生效')
+          : result.mode === 'compatible' ? t('ChatGPT 配置已修复') : t('ChatGPT 官方配置已修复'), 'success');
       }
     } catch (error) {
       if (!isCurrent()) return;
       if (result) {
-        showToast('ChatGPT 配置已写入并验证，页面状态暂未刷新', 'warning', undefined, {
+        showToast(t('ChatGPT 配置已写入并验证，页面状态暂未刷新'), 'warning', undefined, {
           description: result.conflicts.length
             ? result.conflicts.join('；')
-            : '重新打开模型页查看；正在运行的 ChatGPT 可能需要重启。'
+            : t('重新打开模型页查看；正在运行的 ChatGPT 可能需要重启。')
         });
       } else {
-        showErrorToast('修复 ChatGPT 配置失败', error, undefined, {
-          actionProps: { type: 'button', children: '修复', onClick: () => void repairCodexConfig() }
+        showErrorToast(t('修复 ChatGPT 配置失败'), error, undefined, {
+          actionProps: { type: 'button', children: t('修复'), onClick: () => void repairCodexConfig() }
         });
       }
     } finally {
@@ -190,9 +226,9 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   const repairProviderSwitch = async (client: ClientTab, providerId: string | null) => {
     const requestedAt = providerSwitchGeneration.current[client];
     if (!await confirm({
-      title: `修复 ${client === 'codex' ? 'ChatGPT' : 'Claude'} 服务切换？`,
-      body: '会备份当前最新配置，保留无关设置，再写入选择的目标服务。',
-      confirmText: '备份并修复'
+      title: t("修复 {0} 服务切换？", client === 'codex' ? 'ChatGPT' : 'Claude'),
+      body: t('会备份当前最新配置，保留无关设置，再写入选择的目标服务。'),
+      confirmText: t('备份并修复')
     }) || requestedAt !== providerSwitchGeneration.current[client]) return;
     const generation = ++providerSwitchGeneration.current[client];
     const isCurrent = () => generation === providerSwitchGeneration.current[client];
@@ -206,7 +242,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const timer = setTimeout(() => {
       if (!isCurrent()) return;
       lock.current = false; setBusy(false);
-      if (!written) showToast('仍在写入，可继续操作', 'info');
+      if (!written) showToast(t('仍在写入，可继续操作'), 'info');
     }, 2_000);
     try {
       const providers = await bridge.api.repairClientProviderSwitch({ client, providerId });
@@ -218,12 +254,12 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       const result = await waitForModelCatalog(client === 'codex'
         ? loadCodexCatalog(false, true, providerId)
         : loadClaudeCatalog(providerId, true), startedAt);
-      if (isCurrent() && result !== 'failed' && !modelReadFailed) showToast('模型服务配置已修复', result === 'ready' ? 'success' : 'info', undefined, {
-        description: result === 'timeout' ? '列表仍在加载，服务配置已保存，可继续操作。' : undefined
+      if (isCurrent() && result !== 'failed' && !modelReadFailed) showToast(t('模型服务配置已修复'), result === 'ready' ? 'success' : 'info', undefined, {
+        description: result === 'timeout' ? t('列表仍在加载，服务配置已保存，可继续操作。') : undefined
       });
     } catch (error) {
-      if (isCurrent()) showErrorToast('目标选择保留，配置修复未完成', error, undefined, {
-        actionProps: providerFailureAction(error, providerId, '重试', () => void repairProviderSwitch(client, providerId))
+      if (isCurrent()) showErrorToast(t('目标选择保留，配置修复未完成'), error, undefined, {
+        actionProps: providerFailureAction(error, providerId, t('重试'), () => void repairProviderSwitch(client, providerId))
       });
     } finally {
       clearTimeout(timer);
@@ -248,9 +284,9 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const reportFailure = (error: unknown, background = false) => {
       if (!isCurrent() || /服务连接已变化/.test(normalizeErrorMessage(error))) return;
       if (notify && visibleClient.current === 'codex') showToast(
-        background ? '模型列表刷新失败，已保留原列表' : '模型列表未加载', 'warning', undefined, {
+        background ? t('模型列表刷新失败，已保留原列表') : t('模型列表未加载'), 'warning', undefined, {
           description: modelCatalogFailureMessage(error),
-          actionProps: providerFailureAction(error, providerId, '重试列表', () => {
+          actionProps: providerFailureAction(error, providerId, t('重试列表'), () => {
             if (!isCurrent()) return;
             closeToast();
             void loadCodexCatalog(true, true, providerId);
@@ -288,9 +324,9 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const reportFailure = (error: unknown, background = false) => {
       if (!isCurrent()) return;
       if (notify && visibleClient.current === 'claude') showToast(
-        background ? '模型列表刷新失败，已保留原列表' : '模型列表未加载', 'warning', undefined, {
+        background ? t('模型列表刷新失败，已保留原列表') : t('模型列表未加载'), 'warning', undefined, {
           description: modelCatalogFailureMessage(error),
-          actionProps: providerFailureAction(error, providerId, '重试列表', () => {
+          actionProps: providerFailureAction(error, providerId, t('重试列表'), () => {
             if (!isCurrent()) return;
             closeToast();
             void loadClaudeCatalog(providerId, true, true);
@@ -318,12 +354,12 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   // A tab change does not change the target service. Keep its pending request
   // alive; otherwise returning during a switch can leave the list empty.
   React.useEffect(() => {
-    if (active && activeTab === 'codex' && !codexOperationRef.current) void loadCodexCatalog(false, true);
-  }, [loadCodexCatalog, active, activeTab]);
+    if (clientActive && activeTab === 'codex' && !codexOperationRef.current) void loadCodexCatalog(false, true);
+  }, [loadCodexCatalog, clientActive, activeTab]);
 
   React.useEffect(() => {
-    if (active && activeTab === 'claude' && !claudeOperationRef.current) void loadClaudeCatalog(claudeProviderId, true);
-  }, [loadClaudeCatalog, claudeProviderId, active, activeTab]);
+    if (clientActive && activeTab === 'claude' && !claudeOperationRef.current) void loadClaudeCatalog(claudeProviderId, true);
+  }, [loadClaudeCatalog, claudeProviderId, clientActive, activeTab]);
   React.useEffect(() => () => {
     codexCatalogRequest.current += 1;
     claudeCatalogRequest.current += 1;
@@ -343,10 +379,10 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const byId = new Map<string, ModelCatalogEntry>();
     for (const m of catalog) byId.set(m.id, m);
     for (const id of configuredIds) {
-      if (!byId.has(id)) byId.set(id, { id, vendor: '已配置', protocols: [], clients: [] });
+      if (!byId.has(id)) byId.set(id, { id, vendor: t('已配置'), protocols: [], clients: [] });
     }
     return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
-  }, [catalog, configuredIds]);
+  }, [catalog, configuredIds, getLanguage()]);
 
   // Live CompatibleService verification on 2026-07-28: all 31 models returned by the
   // Anthropic directory accepted Messages, while all 29 extra name-matched
@@ -364,11 +400,11 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     ).map(model => [model.id, model]));
     for (const id of Object.values(claudeModels ?? {})) {
       if (id && !isKnownNonConversationalModel(id) && !byId.has(id)) {
-        byId.set(id, { id, vendor: '已配置', protocols: [], clients: [] });
+        byId.set(id, { id, vendor: t('已配置'), protocols: [], clients: [] });
       }
     }
     return [...byId.values()];
-  }, [claudeProviderCatalog, claudeProviderAdapter, claudeModels]);
+  }, [claudeProviderCatalog, claudeProviderAdapter, claudeModels, getLanguage()]);
   const codexCatalog = mergedCatalog.filter(m =>
     !isKnownNonConversationalModel(m.id)
     && (m.clients.includes('codex') || m.vendor === '已配置'));
@@ -432,22 +468,22 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       setClaudeModels({ ...updated, ...unsavedClaudeModels.current });
       bridge.patch({ claudeModels: updated });
       if (!claudeTraceEnabled && claudeBridgedIds.has(modelId)) {
-        showToast('Claude 模型已保存', 'info', CLAUDE_DESKTOP_TRACE_TOAST_ID, {
-          description: '此模型需要协议转换，开启 Trace 后 Claude CLI 和 Claude Desktop 才能使用。',
-          actionProps: { type: 'button', children: '开启 Trace', onClick: () => runNoticeAction('start-trace') }
+        showToast(t('Claude 模型已保存'), 'info', CLAUDE_DESKTOP_TRACE_TOAST_ID, {
+          description: t('此模型需要协议转换，开启 Trace 后 Claude CLI 和 Claude Desktop 才能使用。'),
+          actionProps: { type: 'button', children: t('开启 Trace'), onClick: () => runNoticeAction('start-trace') }
         });
       } else if (claudeDesktopSyncEnabled && !claudeTraceEnabled && !isClaudeDesktopCompatibleModelId(modelId)) {
         // CLI uses the saved model now; Desktop lists it only while Trace forwards.
-        showToast('Claude 模型已保存', 'info', CLAUDE_DESKTOP_TRACE_TOAST_ID, {
-          description: 'Claude CLI 立即生效；Claude Desktop 在 Trace 开启后才会显示此模型。',
-          actionProps: { type: 'button', children: '开启 Trace', onClick: () => runNoticeAction('start-trace') }
+        showToast(t('Claude 模型已保存'), 'info', CLAUDE_DESKTOP_TRACE_TOAST_ID, {
+          description: t('Claude CLI 立即生效；Claude Desktop 在 Trace 开启后才会显示此模型。'),
+          actionProps: { type: 'button', children: t('开启 Trace'), onClick: () => runNoticeAction('start-trace') }
         });
       } else {
-        showToast('Claude 模型已保存', 'success');
+        showToast(t('Claude 模型已保存'), 'success');
       }
     } catch (error) {
-      if (generation === providerSwitchGeneration.current.claude) showErrorToast('Claude 模型未完全写入，选择已保留', error, undefined, {
-        actionProps: { type: 'button', children: '重试', onClick: () => {
+      if (generation === providerSwitchGeneration.current.claude) showErrorToast(t('Claude 模型未完全写入，选择已保留'), error, undefined, {
+        actionProps: { type: 'button', children: t('重试'), onClick: () => {
           if (generation === providerSwitchGeneration.current.claude) void handleClaudeModelChange(role, modelId);
         } }
       });
@@ -457,9 +493,9 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   }, [bridge.api, bridge.patch, claudeProviderId, claudeDesktopSyncEnabled, claudeTraceEnabled, claudeBridgedIds]);
   const claudeModelNote = React.useCallback((modelId: string): ModelPickerNote | undefined => (
     claudeBridgedIds.has(modelId)
-      ? { label: '需 Trace', hint: '需要协议转换：Claude CLI 和 Claude Desktop 都需要开启 Trace。' }
+      ? { label: t('需 Trace'), hint: t('需要协议转换：Claude CLI 和 Claude Desktop 都需要开启 Trace。') }
       : claudeDesktopSyncEnabled && !isClaudeDesktopCompatibleModelId(modelId)
-        ? { label: '需 Trace', hint: 'Claude CLI 可直接使用；Claude Desktop 需要开启 Trace。' }
+        ? { label: t('需 Trace'), hint: t('Claude CLI 可直接使用；Claude Desktop 需要开启 Trace。') }
         : undefined
   ), [claudeDesktopSyncEnabled, claudeBridgedIds]);
 
@@ -493,10 +529,10 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     try {
       if (client === 'codex' && !takeOverExternalConfig && codexConfig?.configOwnership === 'external') {
         const accepted = await confirm({
-          title: '接管 ChatGPT 配置？',
-          body: '会备份当前配置，保留无关设置，再写入你选择的服务。官方登录文件保持不变。',
-          confirmText: '备份并切换',
-          cancelText: '取消'
+          title: t('接管 ChatGPT 配置？'),
+          body: t('会备份当前配置，保留无关设置，再写入你选择的服务。官方登录文件保持不变。'),
+          confirmText: t('备份并切换'),
+          cancelText: t('取消')
         });
         if (!isCurrent()) return;
         if (!accepted) {
@@ -512,7 +548,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       timer = setTimeout(() => {
         if (!isCurrent()) return;
         lock.current = false; setBusy(false);
-        if (!written) showToast('仍在写入，可继续操作', 'info');
+        if (!written) showToast(t('仍在写入，可继续操作'), 'info');
       }, 2_000);
       const providers = await bridge.api.switchClientProvider({ client, providerId,
         takeOverExternalConfig: client === 'codex' && takeOverExternalConfig ? true : undefined });
@@ -525,7 +561,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       if (client === 'claude') {
         void bridge.api.getClaudeEnvironmentOverrides().then(environment => {
           if (!isCurrent() || !environment.overrides.length) return;
-          showToast('Claude 服务已保存，但环境变量可能覆盖它', 'info', undefined, {
+          showToast(t('Claude 服务已保存，但环境变量可能覆盖它'), 'info', undefined, {
             description: environment.overrides.map(item => item.name).join('、')
           });
         }).catch(() => undefined);
@@ -537,24 +573,33 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       if (!isCurrent()) return;
       // The loader already offered a specific retry/configuration action.
       if (modelReadFailed || (catalogResult === 'failed' && !providers.warning)) return;
-      showToast('模型服务已切换', providers.warning || catalogResult !== 'ready' ? 'info' : 'success', undefined, {
+      showToast(providerId === null ? t('已恢复客户端连接') : t('模型服务已切换'), providers.warning || catalogResult !== 'ready' ? 'info' : 'success', undefined, {
         description: providers.warning ?? (catalogResult === 'timeout'
-          ? '列表仍在加载，服务配置已保存，可继续操作。'
-          : catalogResult === 'failed' ? '模型列表暂未加载，可稍后重试。' : undefined),
-        actionProps: providers.warning?.includes('需要开启 Trace') ? {
-          type: 'button', children: '开启 Trace', onClick: () => runNoticeAction('start-trace')
+          ? t('列表仍在加载，服务配置已保存，可继续操作。')
+          : catalogResult === 'failed' ? t('模型列表暂未加载，可稍后重试。') : bridge.runtime?.tracingEnabled ? t('新请求使用所选服务，正在进行的回答继续完成。') : undefined),
+        actionProps: providers.warning?.includes(t('需要开启 Trace')) ? {
+          type: 'button', children: t('开启 Trace'), onClick: () => runNoticeAction('start-trace')
         } : undefined
       });
     } catch (error) {
       if (!isCurrent()) return;
-      showErrorToast('目标服务未完全写入，选择已保留', error, undefined, {
-        actionProps: providerFailureAction(error, providerId, '重试并修复', () => void repairProviderSwitch(client, providerId))
+      showErrorToast(t('目标服务未完全写入，选择已保留'), error, undefined, {
+        actionProps: providerFailureAction(error, providerId, t('重试并修复'), () => void repairProviderSwitch(client, providerId))
       });
     } finally {
       if (timer) clearTimeout(timer);
       if (isCurrent()) { lock.current = false; setBusy(false); }
     }
   };
+
+  React.useEffect(() => {
+    const restore = (event: Event) => {
+      const client = (event as CustomEvent<string>).detail;
+      if (client === 'claude' || client === 'codex') void handleProviderChange(client, null);
+    };
+    window.addEventListener(RESTORE_CLIENT_CONFIG_EVENT, restore);
+    return () => window.removeEventListener(RESTORE_CLIENT_CONFIG_EVENT, restore);
+  }, [handleProviderChange]);
 
   const handleCodexModelChange = React.useCallback(async (selection: string) => {
     if (codexOperationRef.current || !codexConfig) return;
@@ -585,18 +630,18 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       bridge.patch({ codexConfig: saved });
       clearLifecycleNotice();
       if (saved.warning) {
-        showToast('模型选择已保存', 'info', undefined, { description: saved.warning,
-          actionProps: saved.warning.includes('需要开启 Trace') ? { type: 'button', children: '开启 Trace', onClick: () => runNoticeAction('start-trace') } : undefined });
+        showToast(t('模型选择已保存'), 'info', undefined, { description: saved.warning,
+          actionProps: saved.warning.includes(t('需要开启 Trace')) ? { type: 'button', children: t('开启 Trace'), onClick: () => runNoticeAction('start-trace') } : undefined });
       } else if (saved.modelCatalogSource === 'external') {
-        showToast('ChatGPT 模型可能未更新', 'info', undefined, {
+        showToast(t('ChatGPT 模型可能未更新'), 'info', undefined, {
           description: EXTERNAL_CODEX_CATALOG_DESCRIPTION,
           timeout: 12_000
         });
       } else {
-        showToast(`已选择 ${choice.label}；协议由 XwX Deck 自动适配。`, 'success');
+        showToast(t("已选择 {0}；协议由 XwX Deck 自动适配。", choice.label), 'success');
       }
     } catch (error) {
-      if (generation === providerSwitchGeneration.current.codex) showLifecycleNotice(lifecycleFailure(error, '保存 ChatGPT 配置'));
+      if (generation === providerSwitchGeneration.current.codex) showLifecycleNotice(lifecycleFailure(error, t('保存 ChatGPT 配置')));
     } finally {
       if (generation === providerSwitchGeneration.current.codex) {
         codexOperationRef.current = false;
@@ -637,16 +682,17 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const catalogEntry = activeCodexCatalog.find(item => item.id === modelId);
     if (catalogEntry?.vendor === '已配置') {
       return {
-        label: '不在目录',
-        hint: '这是上次选择的模型，当前服务目录未提供。可继续保留，或改选当前服务的模型。'
+        label: t('不在目录'),
+        hint: t('这是上次选择的模型，当前服务目录未提供。可继续保留，或改选当前服务的模型。')
       };
     }
     if (!providerRequiresTrace(selectedCodexProvider ?? bridge.compatibleServiceConfig ?? undefined, modelId, activeCodexCatalog)) return undefined;
+    if (selectedCodexProvider?.subscriptionAccountId) return { label: t('需 Trace'), hint: traceEnabled ? t('订阅账号通过 Trace 调用，授权凭证保留在本机。') : t('选择已保存；使用订阅账号时请开启 Trace。') };
     return traceEnabled
-      ? { label: '需 Trace', hint: `${modelId} 需要协议转换。Trace 已开启，可直接使用。` }
+      ? { label: t('需 Trace'), hint: t("{0} 需要协议转换。Trace 已开启，可直接使用。", modelId) }
       : {
-        label: '需 Trace',
-        hint: `${modelId} 需要协议转换。选择会直接保存；调用时请开启 Trace。`
+        label: t('需 Trace'),
+        hint: t("{0} 需要协议转换。选择会直接保存；调用时请开启 Trace。", modelId)
       };
   }, [codexConfig?.mode, codexChoiceByLabel, selectedCodexProvider, bridge.compatibleServiceConfig, activeCodexCatalog, traceEnabled]);
   const codexModelValue = React.useMemo(() => {
@@ -663,33 +709,29 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     <section
       className={`page${active ? ' current' : ''}`}
       id="page-models"
-      aria-label="模型"
+      aria-label={t("模型")}
       inert={active ? undefined : true}
     >
       <div className="page-inner">
-        <div className="page-head"><h1>模型配置</h1></div>
+        <div className="page-head"><h1>{t("模型配置")}</h1></div>
 
-        <Tabs
-          value={activeTab}
-          onValueChange={v => setActiveTab(v as ClientTab)}
-        >
+        <Tabs value={shownClients.includes(selectedClient) ? selectedClient : null} onValueChange={value => { if (value) setSelectedClient(value as DownloadClientId); }}>
           <div className="models-switch">
-            <TabsList aria-label="选择客户端">
-              <TabsTab value="claude" id="client-tab-claude" data-client-tab="claude">Claude</TabsTab>
-              <TabsTab value="codex" id="client-tab-codex" data-client-tab="codex">ChatGPT</TabsTab>
+            <TabsList ref={clientTabsList} aria-label={t("选择客户端")}>
+              {shownClients.map(id => <TabsTab key={id} value={id} id={`client-tab-${id}`} data-client-tab={id}>{CLIENT_DOWNLOADS.find(client => client.id === id)?.label}</TabsTab>)}
             </TabsList>
+            <button ref={clientManagerTrigger} type="button" className="txt-action models-manage-clients" onClick={() => setManagingClients(true)}><SlidersHorizontal size={15} aria-hidden="true" />{t("管理客户端")}</button>
           </div>
+          {!shownClients.length && <p className="model-client-status">{t("从「管理客户端」添加已安装的客户端")}</p>}
 
           {/* Claude panel */}
-          <TabsPanel
-            value="claude"
-            keepMounted
+          <TabsPanel value={clientRoute === 'claude' ? selectedClient : 'claude'} keepMounted
             className="config-block"
             id="client-panel-claude"
             data-client-panel="claude"
           >
             <div className="field-row" data-tour="models-proxy">
-              <span className="fr-label">模型服务</span>
+              <span className="fr-label">{t("模型服务")}</span>
               <div className="fr-value"><ProviderPicker registry={bridge.providers} client="claude" value={claudeProviderId} onChange={id => void handleProviderChange('claude', id)} /></div>
             </div>
             {CLAUDE_ROLES.map(({ key, label }) => (
@@ -717,19 +759,17 @@ export function ModelsPage({ active }: Props): React.ReactElement {
           </TabsPanel>
 
           {/* ChatGPT panel */}
-          <TabsPanel
-            value="codex"
-            keepMounted
+          <TabsPanel value={clientRoute === 'codex' ? selectedClient : 'codex'} keepMounted
             className="config-block"
             id="client-panel-codex"
             data-client-panel="codex"
           >
             <div className="field-row">
-              <span className="fr-label">模型服务</span>
+              <span className="fr-label">{t("模型服务")}</span>
               <div className="fr-value"><ProviderPicker registry={bridge.providers} client="codex" value={codexProviderId} onChange={id => void handleProviderChange('codex', id)} /></div>
             </div>
             <div className="field-row">
-              <span className="fr-label">默认模型</span>
+              <span className="fr-label">{t("默认模型")}</span>
               <div className="fr-value">
                     <ModelPicker
                       value={codexModelValue}
@@ -760,15 +800,20 @@ export function ModelsPage({ active }: Props): React.ReactElement {
               />
             ) : (
               <div className="group">
-                <div className="group-label"><span className="eyebrow">ChatGPT 应用增强</span></div>
+                <div className="group-label"><span className="eyebrow">{t("ChatGPT 应用增强")}</span></div>
                 <div className="field-row">
-                  <span className="fr-label" role="status">{enhancementsLoadFailed ? '增强设置暂未加载' : '正在加载增强设置…'}</span>
-                  <div className="fr-value"><button type="button" className="btn" onClick={retryEnhancements}>重新加载</button></div>
+                  <span className="fr-label" role="status">{enhancementsLoadFailed ? t('增强设置暂未加载') : t('正在加载增强设置…')}</span>
+                  <div className="fr-value"><button type="button" className="btn" onClick={retryEnhancements}>{t("重新加载")}</button></div>
                 </div>
               </div>
             )}
           </TabsPanel>
+          {addedClients.filter(id => modelClientRoute(id) === null).map(id => <TabsPanel key={id} value={id} keepMounted className="config-block model-client-setup" id={`client-panel-${id}`} data-client-panel={id}>
+            <div className="model-client-status"><ProviderIcon kind={CLIENT_DOWNLOADS.find(client => client.id === id)?.icon} /><span>{t("模型连接请在客户端中配置")}</span></div>
+            <ClientDownloads client={id} />
+          </TabsPanel>)}
         </Tabs>
+        <ManageClientsDialog open={managingClients} onOpenChange={setManagingClients} finalFocus={clientManagerTrigger} onSelect={setSelectedClient} />
       </div>
     </section>
   );

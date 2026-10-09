@@ -1,0 +1,17 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "XwX Deck",
+        "width": 1040,
+        "height": 560,
+        "minWidth": 780,
+        "minHeight": 480,
+        "decorations": true,
+        "backgroundColor": "#f5f5f7",
+        "titleBarStyle": "Visible"
+      }
+    ]
+  }
+}

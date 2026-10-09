@@ -97,7 +97,7 @@ export class ManagerWindow {
       // system's native behavior and animation. Windows keeps the established
       // custom frame used by the portable build.
       ...(nativeMacWindow
-        ? { frame: true, titleBarStyle: 'hiddenInset' as const }
+        ? { frame: true, titleBarStyle: 'default' as const }
         : { frame: false }),
       transparent: false,
       resizable: true,

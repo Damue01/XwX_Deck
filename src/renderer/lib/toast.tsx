@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n';
 import type React from 'react';
 import { ToastProvider, toastManager } from '@/components/ui/toast';
 import { isPersistentLifecycleNotice, type LifecycleNotice } from '../../shared/lifecycleNotice';
@@ -10,11 +11,22 @@ let activeToastKey: string | undefined;
 let lastDiagnosticNotice: LifecycleNotice | undefined;
 export const DIAGNOSTIC_NOTICE_EVENT = 'xwxdeck:diagnostic-notice';
 export const OPEN_REPAIR_EVENT = 'xwxdeck:open-repair';
+export const RESTORE_CLIENT_CONFIG_EVENT = 'xwxdeck:restore-client-config';
 export const LIFECYCLE_NOTICE_EVENT = 'xwxdeck:lifecycle-notice';
 export const TRACE_ACTION_EVENT = 'xwxdeck:trace-action';
 export const REPAIR_SETTINGS_EVENT = 'xwxdeck:repair-settings';
 export const REPAIR_CODEX_CONFIG_EVENT = 'xwxdeck:repair-codex-config';
 export const OPEN_PROVIDER_SETTINGS_EVENT = 'xwxdeck:open-provider-settings';
+export const OPEN_CONFIGURATION_EVENT = 'xwxdeck:open-configuration';
+
+export interface ConfigurationEntry {
+  trigger: HTMLButtonElement;
+  tab: 'services' | 'accounts' | 'clients';
+}
+
+export function openConfiguration(trigger: HTMLButtonElement, tab: ConfigurationEntry['tab'] = 'services'): void {
+  window.dispatchEvent(new CustomEvent<ConfigurationEntry>(OPEN_CONFIGURATION_EVENT, { detail: { trigger, tab } }));
+}
 
 export function openProviderSettings(providerId: string): void {
   closeToast();
@@ -24,8 +36,8 @@ export function openProviderSettings(providerId: string): void {
 
 export function noticeActionLabel(action: LifecycleNotice['action'] | undefined): string {
   if (!action) return '';
-  return action === 'start-trace' ? '开启 Trace' : action === 'stop-trace' ? '重试关闭'
-    : action === 'models' ? '检查模型配置' : action === 'repair-settings' || action === 'repair-codex-config' ? '修复' : '查看处理建议';
+  return action === 'start-trace' ? t('开启 Trace') : action === 'stop-trace' ? t('重试关闭')
+    : action === 'models' ? t('检查模型配置') : action === 'repair-settings' || action === 'repair-codex-config' ? t('修复') : t('查看处理建议');
 }
 
 export function runNoticeAction(action: LifecycleNotice['action']): void {
@@ -107,7 +119,7 @@ export function showToast(
   options: ShowToastOptions = {}
 ): void {
   if (type === 'error') {
-    lastDiagnosticNotice = { message, description: options.description, type };
+    lastDiagnosticNotice = { message, description: options.description ? t(options.description) : undefined, type };
     window.dispatchEvent(new Event(DIAGNOSTIC_NOTICE_EVENT));
   }
   const toastKey = key ?? `${type}:${message}`;
@@ -122,13 +134,13 @@ export function showToast(
     // Base UI merges stable-id updates. Always publish optional fields so a
     // short follow-up notice cannot inherit the previous description, action,
     // or extended timeout.
-    description: options.description,
+    description: options.description ? t(options.description) : undefined,
     timeout: Math.min(options.timeout ?? defaultTimeout, maxTimeout),
     actionProps: options.actionProps,
     onRemove: () => {
       if (activeToastKey === toastKey) activeToastKey = undefined;
     },
-    title: message,
+    title: t(message),
     type
   });
 }
@@ -143,7 +155,7 @@ export function showErrorToast(title: string, error: unknown, key?: string, opti
   showToast(title, 'error', key, {
     ...options,
     description: userErrorMessage(error, options.description
-      ?? '操作未完成。请检查相关地址、权限或配置后重试；如果仍失败，再打开“诊断与修复”查看详细信息。'),
+      ?? t('操作未完成。请检查相关地址、权限或配置后重试；如果仍失败，再打开“诊断与修复”查看详细信息。')),
     timeout: options.timeout
   });
 }

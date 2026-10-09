@@ -2,14 +2,16 @@
 
 ## 主链路
 
-`Renderer -> preload IPC -> XwXDeckController -> Gateway helper -> upstream`
+`React Renderer -> Tauri 原生桥接 -> Rust 后端 -> upstream`
 
-- Renderer 只通过 preload 暴露的窄 API 操作主进程。
-- Controller 管理客户端配置、Trace 状态、模型目录和 Gateway 生命周期。
-- 独立 Gateway helper 在管理窗口隐藏后仍可继续转发，并通过构建 ID 与协议版本拒绝错误附着。
-- TraceStore 保存本地请求、响应和会话索引。
-- `applicationReset.ts` 负责有边界的缓存修复和应用重置；`codexDirectRestore.ts` 保存字段所有权并执行三方恢复；`exitRecovery.ts` 的独立恢复入口同样先验证客户端脱离本地端口，再终止进程。恢复失败时保留代理，不强制覆盖外部配置。
-- 价格与用量链路在请求落盘时记录分档、峰谷时段和实际服务模型名，Viewer 只聚合这些可验证数据，不对缺失分桶静默猜价。
+- 原有 React 页面通过窄 API 调用 `src-native/src/main.rs`，远端 Viewer 窗口不能调用配置写入接口。
+- `core.rs` 与 `clients.rs` 管理客户端配置、明确选择、字段恢复账本和 Gateway 生命周期。
+- `protocol.rs`、`reasoning.rs`、`live.rs`、`websocket.rs` 和 `continuation.rs` 管理协议、SSE、WebSocket 与续接。
+- `storage.rs` 保存 Trace 和索引，按实际用量分桶估价；`history.rs` 只在用户发起时归并和恢复历史元数据；`desktop.rs` 管理 Claude Desktop。
+- `updates.rs` 校验不可变更新清单、下载大小及 SHA-256，`portable_update.rs` 执行 Windows 原生文件替换。Mac 使用手动 DMG。
+- 关闭窗口后 Gateway 留在原生进程中，托盘和 macOS Dock 可重新打开。退出前恢复直连；冲突保留外部修改及账本，崩溃后重试恢复。
+- macOS 使用原生标题栏、红黄绿按钮、系统 WebKit / TLS / SQLite。包内没有 Electron、Node 或 Chromium。
+- 旧 `src/main` 实现保留为迁移回归对照及构建时资源生成来源，不进入原生发行包。
 
 ## 独立版边界
 
@@ -19,12 +21,13 @@
 | userData | `xwx-deck` |
 | Gateway 端口 | `45233-45242` |
 | 配置同步 | 不包含 |
-| 工具页 | 仅本地只读的 ChatGPT 对话诊断 |
+| 工具页与对话诊断 | 已移除 |
 | 默认更新服务 | 独立 GitHub Releases；元数据推送默认关闭 |
 
 ## 改动检查
 
-1. 修改 IPC 时同步更新 preload、共享类型、预览 API 和 smoke。
-2. 修改 Gateway 时验证 helper 升级、活动请求、续接、配置恢复和客户端重新附着。
-3. 修改 Renderer 时运行真实浏览器/Electron 交互检查，并确认控制台无错误。
-4. 公共构建前运行 `npm run check:public-boundary`。
+1. 修改原生 API 时同步更新桥接、共享类型、预览 API 和 smoke。
+2. 修改 Gateway 时验证活动请求、续接、配置恢复、崩溃恢复和客户端重新附着。
+3. 修改 Renderer 时运行实际系统 WebView 交互检查，并确认控制台无错误。
+4. 运行 `npm run build:rust:pilot`、`npm run test:rust`；Windows 系统集成需要原生 Windows 主机验证。
+5. 公共构建前运行 `npm run check:public-boundary`。

@@ -11,12 +11,12 @@ import { XwXDeckSettingsStore } from '../src/main/app/settings';
 
 /** Local requests validate preset protocol conversion and version-root joining; no vendor credentials. */
 export async function testOfficialProviders(root: string): Promise<void> {
-  const received: Array<{ url: string; authorization: string | undefined; body: any }> = [];
+  const received: Array<{ url: string; authorization: string | undefined; apiKey?: string | string[]; body: any }> = [];
   const upstream = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString());
-    received.push({ url: req.url!, authorization: req.headers.authorization, body });
+    received.push({ url: req.url!, authorization: req.headers.authorization, apiKey: req.headers['x-api-key'], body });
     const switchModels = req.url?.includes('/switch/deepseek/') ? ['deepseek-v4-pro', 'deepseek-flash']
       : req.url?.includes('/switch/ark/') ? ['deepseek-v4-pro-260425']
       : req.url?.includes('/switch/official/') ? ['gpt-6.1-sol', 'gpt-6-luna'] : undefined;
@@ -30,6 +30,10 @@ export async function testOfficialProviders(root: string): Promise<void> {
       id: 'chatcmpl-preset', object: 'chat.completion', model: body.model,
       choices: [{ index: 0, message: { role: 'assistant', content: 'preset route ok' }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 }
+    } : req.url?.endsWith('/messages') ? {
+      id: 'msg-preset', type: 'message', role: 'assistant', model: body.model,
+      content: [{ type: 'text', text: 'preset route ok' }], stop_reason: 'end_turn',
+      usage: { input_tokens: 3, output_tokens: 2 }
     } : {
       id: 'resp_preset', object: 'response', status: 'completed', model: body.model,
       output: [{ id: 'msg_preset', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'preset route ok' }] }],
@@ -57,7 +61,7 @@ export async function testOfficialProviders(root: string): Promise<void> {
       proxy.setClientRoutes([{
         source: 'codex-cli', path: '/v1/responses', apiType: 'responses', transform: 'responses-to-chat-auto',
         upstreamBaseUrl: `http://127.0.0.1:${address.port}${pathname}`,
-        defaultProtocol: preset.adapter, compatibleServiceGateway: true,
+        defaultProtocol: preset.adapter, providerAdapter: preset.adapter, compatibleServiceGateway: true,
         upstreamBearerToken: 'local-preset-test-key'
       }]);
       const response = await fetch(`${gateway}/v1/responses`, {
@@ -68,8 +72,9 @@ export async function testOfficialProviders(root: string): Promise<void> {
       assert.equal(response.status, 200, `${preset.id}: ${result}`);
       assert.match(result, /preset route ok/);
       const request = received.at(-1)!;
-      assert.equal(request.url, `${pathname || '/v1'}/${preset.adapter === 'responses' ? 'responses' : 'chat/completions'}`, preset.id);
-      assert.equal(request.authorization, 'Bearer local-preset-test-key');
+      assert.equal(request.url, `${pathname}/${preset.adapter === 'responses' ? 'responses' : preset.adapter === 'anthropic-messages' ? 'messages' : 'chat/completions'}`, preset.id);
+      if (preset.adapter === 'anthropic-messages') assert.equal(request.apiKey, 'local-preset-test-key');
+      else assert.equal(request.authorization, 'Bearer local-preset-test-key');
       assert.equal(request.body.model, 'preset-test-model');
       assert.ok(preset.adapter === 'responses' ? request.body.input : request.body.messages);
     }

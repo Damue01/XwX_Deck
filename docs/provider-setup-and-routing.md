@@ -41,7 +41,7 @@
 | `tools/core-smoke.ts` | WebSocket 别名转发、退出冲突保留配置与 Gateway、Trace 默认策略和索引修复 |
 | `tools/provider-selection-regressions.ts` | 两客户端独立选择、A-B-A 模型恢复、仅模型变化的重启提示 |
 | `tools/manager-ipc-regressions.ts` | 服务保存、Trace 策略 IPC 与参数校验 |
-| `src/main/smoke/packagedSmoke.ts` | 打包后的真实界面、九个客户端/服务入口、自定义表单、分页诊断、配置与 Trace 请求 |
+| `src/main/smoke/packagedSmoke.ts` | 打包后的真实界面、九个客户端/服务入口、自定义表单、配置与 Trace 请求 |
 | `tools/run-packaged-background-gateway-smoke.mjs` | 管理器退出窗口后后台 Gateway 的实际请求和重新附着 |
 
 运行完整源码回归：
@@ -57,10 +57,52 @@ npm run docs:build
 
 构建后运行 `npm run test:packaged` 和 `npm run test:packaged-gateway`。测试使用临时客户端目录与本地服务；通过这些测试不代表已测试所有真实服务商账户。
 
-界面可用 `npm run preview:web` 预览。预览数据适合检查布局与交互，真实 IPC 和请求以 Electron 打包回归为准。
+界面可用 `npm run preview:web` 预览。预览数据适合检查布局与交互，真实 IPC 和请求以 Rust 原生打包回归为准。
 
 ## 按能力吸收时的边界
 
 移植时可按界面入口、官方模型路由、切换别名、Trace 策略和退出保护分别审查，并带上相应回归。图标、共享注册表、IPC、主进程和 helper 的配套修改需要一起核对，不能只复制渲染组件。
 
-本仓库保持独立应用身份、空初始连接和公开发布渠道；不引入配置同步、Excel、内部默认服务或历史别名。对话诊断继续只读取 SQLite 元数据与首条 `session_meta`。这些改动尚不表示已移植到任何其他仓库。
+本仓库保持独立应用身份、空初始连接和公开发布渠道；不引入配置同步、Excel、内部默认服务或历史别名。工具页与对话诊断已移除；会话历史管理仍保留。这些改动尚不表示已移植到任何其他仓库。
+
+## 添加配置与 Coding Plan
+
+设置 → 模型配置 → 添加配置，默认选择 API 服务；同一窗口可切换订阅账号或客户端下载。选中服务商后在同一页面预填名称、URL 和协议，Key 由用户填写，右侧「获取 Key」打开官方管理页。切换与关闭保留未保存草稿，保存不会替客户端选择连接或模型。
+
+百炼 Coding Plan 使用独立 `sk-sp-` 密钥和 `https://coding.dashscope.aliyuncs.com/v1`（Chat Completions），参考[百炼官方说明](https://help.aliyun.com/zh/model-studio/coding-plan)。智谱 Coding Plan 的 Codex 专用入口为 `https://open.bigmodel.cn/api/v1`（Responses），参考[智谱 Codex 文档](https://docs.bigmodel.cn/cn/coding-plan/tool/codex)。套餐身份随配置保存，即使用户经由自定义代理修改地址，也不触发自动模型测试。套餐 Key 与普通 API Key 不混用，使用范围及额度以服务商条款为准。
+
+保存仅确认本地配置写入；真实鉴权、套餐额度、所选模型权限需要在对应编程客户端发起新任务验证。协议转换继续通过本地 Trace Gateway，不能把「模型目录可访问」当成真实任务成功。
+
+
+## ChatGPT 订阅账号
+
+「订阅账号」支持添加多个 ChatGPT 注册账号，包括同一邮箱的不同工作区注册。系统浏览器登录使用 OpenAI 官方开源工具授权流程；只有身份签名和套餐使用权限都验证通过，才保存登录凭证。原有客户端登录不被导入或覆盖。新安装账号列表为空。
+
+账号添加后出现在原有模型页面的服务列表，ChatGPT 与 Claude 可独立选择账号和模型。登录不会自动切换已有选择；目录离线或账号授权过期也不会替换用户选定的账号、模型。模型目录按所选账号读取，并过滤服务端标记隐藏的模型。
+
+套餐请求必须开启 Trace：Rust Gateway 使用本机账号凭证调用公共 Responses 接口，并转换 Claude Messages 请求。OAuth 凭证不会写入网页、普通连接设置或客户端配置；按账号保存于应用目录的 `subscription-accounts.json`，Unix 权限为 `0600`，刷新令牌轮转采用串行与原子写入。停止 Trace 或崩溃恢复后还原启动前的客户端路由，不留下本地 Gateway 地址。
+
+账号页面显示本机连接/需登录状态；「查看套餐用量」打开平台官方用量页面。未获得官方可读取的额度数据时，不显示推测的套餐名称、剩余额度或重置倒计时。退出登录会尝试撤销远端授权；远端无法确认时清除本机凭证并明确提示。账号注册身份及客户端选择保留，之后可重新登录。
+
+已实现 ChatGPT 官方授权和 Grok 官方 CLI 独立账号路径。同时已实现 Copilot 设备授权、Claude Code 隔离登录和 Cursor 浏览器授权。Gemini 等其他账号适配尚未实现。独立 Responses compact 和 WebSocket 套餐调用暂不支持，客户端应使用 HTTP 流式请求。
+
+参考 [OpenAI 注册与登录](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[账号与会话](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)、[模型与调用](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)。`tools/native/subscriptions-test.mjs` 用隔离账号目录、本地 OAuth/JWKS 服务和实际 Gateway 请求覆盖登录、身份校验、多账号、刷新、跨客户端转换、退出与恢复。测试通过不代表已经完成用户真实账号的授权或验证其套餐额度。 Rust HTTP 请求沿用系统代理与环境代理设置；macOS/Windows 构建必须保留 reqwest 的 `system-proxy` 功能。登录失败页和应用内显示失败阶段及安全的错误原因，最近失败原因随账号凭证文件保留，但不保存授权码、PKCE、回调 URL 或远端错误正文。公开网络连通性可用 `auth-network-probe` 示例验证。
+
+## Grok 与扩展目录
+
+Grok 订阅登录通过用户安装的官方 Grok Build `grok login --device-auth` 完成。本产品为每个账号创建独立的 `grok-accounts/grok-*/`，不读取或覆盖 `~/.grok` 的账号；官方 CLI 拥有刷新凭证，本产品只为该账号的请求读取对应的短期访问凭证。重新登录先使用暂存目录，身份匹配后才替换原凭证；取消或失败清理暂存目录。账号元数据不含令牌。请求固定发往 `https://cli-chat-proxy.grok.com/v1`，版本由实际已安装 CLI 读取，不使用固定伪造版本。没有安装 CLI 时只显示官方安装入口。macOS 手动 HTTP/HTTPS 系统代理传给 CLI，显式环境代理优先；隔离测试不使用主机代理。
+
+`tools/native/grok-subscriptions-test.mjs` 用隔离 CLI、本地授权服务和实际 HTTP 请求验证多账号、错账号重登、刷新、名称修改、Responses / Messages 转换、Codex custom / namespace 工具映射、秘密与请求头隔离、Trace 停止恢复。测试不是用户真实 Grok 套餐授权的证明。携带需转换工具的 Grok Responses 流目前在上游完成后生成客户端 SSE；普通文本流保持透传。
+
+API 目录包含 33 个预设，其中 5 个为本机服务；客户端下载目录包含 25 个官方页面入口。国内外普通 API、套餐 Key 与账号授权保持各自明确身份。服务扩充不会创建连接或改变原有模型选择；中转继续使用自定义。每个 API 预设保留官方来源链接，所有新增预设在本地测试服务验证最终路径、协议和认证；不把这些回归视为每家服务商付费 Key 的线上验证。
+
+
+## 订阅入口与 Magpie 对照
+
+「订阅账号」只用于不填写 API Key 的账号授权。百炼、智谱、Kimi、MiniMax、Z.AI 的套餐 Key 只归「API 服务」，不在订阅页提供同名跳转。当前该页只列已实现的 ChatGPT 与 Grok。
+
+[Magpie 的实现](https://github.com/yetone/magpie#sign-in-once-use-it-everywhere)将账号授权作为订阅来源：Claude 通过本机 Claude Code 与 MCP 工具桥接；其他账号通过各自的授权、刷新与请求适配接入。Claude、Copilot、Gemini 的完整接入在本产品仍未完成，不使用 API 表单或官网跳转代替登录。
+
+官方用量快捷入口已逐一核对：ChatGPT 使用 `chatgpt.com/settings/usage`（与 Magpie 的开源应用授权入口一致），Claude 使用 `claude.ai/settings/usage`，Grok 进入 Settings > Usage，Copilot 进入账号设置中的 Usage，Cursor 进入 `cursor.com/dashboard`。这些是官网快捷入口，不会自动切换浏览器当前账号，也不代表 XwX Deck 已读取每个订阅账号的实时额度。来源：[Magpie](https://github.com/yetone/magpie/blob/main/internal/provider/chatgpt_api.go)、[Claude](https://support.claude.com/en/articles/9797557-usage-limit-best-practices)、[Grok](https://docs.x.ai/grok/faq)、[Copilot](https://docs.github.com/en/copilot/how-tos/manage-and-track-spending/monitor-ai-usage)、[Cursor](https://prod.cursor.com/help/account-and-billing/overages)。
+
+CLI 镜像采用 [Agents CLI Mirror](https://github.com/Wangnov/agents-cli-mirror) 的 Codex / Claude 安装脚本，分别提供 Windows PowerShell 和 Mac / Linux shell；安装脚本读取当前版本清单并校验 SHA256。Gemini CLI、Qwen Code、OpenCode 使用 [npmmirror](https://npmmirror.com/) 的原厂 npm 包，命令仅为这一次安装指定 registry，不修改全局配置。镜像源为第三方；官方下载仍跳转原厂下载或安装页面。镜像可访问和元数据一致不代表已经在本机安装、验证所有系统或能登录服务。

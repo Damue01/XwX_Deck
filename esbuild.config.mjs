@@ -19,8 +19,7 @@ await esbuild.build({
     'gateway-helper': 'src/main/gatewayHelper.ts',
     'exit-recovery': 'src/main/exitRecovery.ts',
     'portable-update-worker': 'src/main/portableUpdateWorker.ts',
-    'application-reset-worker': 'src/main/applicationResetWorker.ts',
-    'codex-conversation-worker': 'src/main/codexConversationWorker.ts'
+    'application-reset-worker': 'src/main/applicationResetWorker.ts'
   },
   bundle: true,
   platform: 'node',
@@ -42,7 +41,7 @@ await esbuild.build({
   entryPoints: { app: 'src/renderer/main.tsx' },
   bundle: true,
   platform: 'browser',
-  target: 'chrome120',
+  target: ['safari15', 'chrome120'],
   format: 'esm',
   outdir: 'dist/renderer',
   jsx: 'automatic',

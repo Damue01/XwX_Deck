@@ -40,3 +40,8 @@ test-results/
 /tmp-*.py
 /tmp-*.mjs
 /tmp-*.cjs
+
+# Native local build candidates and generated Tauri schemas.
+/release-native/
+/src-native/gen/
+/src-native/target/

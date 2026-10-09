@@ -1,0 +1,103 @@
+import { nativeTestBinary } from './test-support.mjs';
+import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { once } from 'node:events';
+import { mkdtemp, realpath, mkdir, writeFile, readFile, stat, readdir, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+const root=await mkdtemp(join(await realpath(tmpdir()),'xwx-config-import-'));
+const binary=nativeTestBinary;
+const checks=[], requests=[];
+const check=(label,value)=>{assert.ok(value,label);checks.push(label);};
+const digest=async path=>createHash('sha256').update(await readFile(path)).digest('hex');
+const server=createServer(async(req,res)=>{let raw='';for await(const c of req)raw+=c;requests.push({url:req.url,auth:req.headers.authorization,key:req.headers['x-api-key'],body:raw});res.setHeader('content-type','application/json');if(req.url.endsWith('/models')){res.statusCode=503;res.end('{}');}else{res.end(JSON.stringify({id:'r-fixture',object:'response',status:'completed',model:'explicit-model',output:[{id:'m',type:'message',role:'assistant',content:[{type:'output_text',text:'fixture'}]}],usage:{input_tokens:1,output_tokens:1}}));}});
+server.listen(0,'127.0.0.1');await once(server,'listening');const base=`http://127.0.0.1:${server.address().port}`;
+let child,queue=[];
+function start(){child=spawn(binary,['--rpc','--pilot-root',root]);createInterface({input:child.stdout}).on('line',line=>queue.shift()?.(JSON.parse(line)));child.stderr.on('data',c=>process.stderr.write(c));}
+function call(method,...args){return new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error(method+' timeout')),20000);queue.push(r=>{clearTimeout(timer);resolve(r);});child.stdin.write(JSON.stringify({method,args})+'\n');});}
+async function rpc(method,...args){const r=await call(method,...args);assert.equal(r.ok,true,r.error);return r.result;}
+async function stop(){const done=once(child,'exit');child.stdin.end();assert.equal((await done)[0],0);}
+const magpie=join(root,'import-sources/.config/magpie/providers.json'),cc=join(root,'import-sources/.cc-switch/cc-switch.db'),legacy=join(root,'legacy.json');
+start();await rpc('getState');const initial=await rpc('previewConfigurationImport');check('fresh installs only discover empty sources without creating connections',initial.sources.every(s=>!s.found)&&(await rpc('getProviders')).connections.length===0);await stop();
+await mkdir(resolve(magpie,'..'),{recursive:true});await mkdir(resolve(cc,'..'),{recursive:true});
+const providers=[{id:'relay',name:'现有中转',responses:base+'/v1',anthropic:base+'/anthropic',key:'fixture-key-a',models:['old-model'],keys:[{name:'备用',key:'fixture-key-b',protocol:'responses',off:true}]},{id:'codex',models:['plan-model']},{name:'Loop',chat:'http://localhost:3425/v1',key:'fixture-loop-key'},{name:'Headers',chat:base+'/v1',key:'fixture-header-key',headers:{'x-required':'fixture'}},{name:'Keeper',responses:base+'/keeper',key:'fixture-keeper-key'}];
+await writeFile(magpie,JSON.stringify({providers}));
+const db=new DatabaseSync(cc);db.exec("CREATE TABLE providers(id TEXT,app_type TEXT,name TEXT,settings_config TEXT,meta TEXT); CREATE TABLE proxy_config(listen_port INTEGER); INSERT INTO proxy_config VALUES(15888)");
+const insert=db.prepare('INSERT INTO providers VALUES(?,?,?,?,?)');
+insert.run('c','claude','GLM Plan',JSON.stringify({env:{ANTHROPIC_BASE_URL:base+'/coding',ANTHROPIC_AUTH_TOKEN:'sk-sp-fixture',ANTHROPIC_DEFAULT_SONNET_MODEL:'plan-model'}}),'{}');
+insert.run('x','codex','Codex Relay',JSON.stringify({auth:{OPENAI_API_KEY:'fixture-codex-key'},config:`model = "explicit-model"\nmodel_provider = "provider with space"\n[model_providers."provider with space"]\nbase_url = "${base}/v1"\nwire_api = "responses"\n`}), '{}');
+insert.run('oauth','codex','Subscription',JSON.stringify({config:'',auth:{}}),JSON.stringify({providerType:'codex_oauth'}));
+insert.run('invalid','codex','Broken TOML',JSON.stringify({config:'not valid= [',auth:{OPENAI_API_KEY:'fixture-broken-key'}}),'{}');
+insert.run('g','gemini','Gemini',JSON.stringify({env:{GEMINI_API_KEY:'fixture-gemini-key'}}),'{}');
+insert.run('loop','claude','CC Proxy',JSON.stringify({env:{ANTHROPIC_BASE_URL:'http://127.0.0.1:15888',ANTHROPIC_API_KEY:'fixture-proxy-key'}}),'{}');db.close();
+await writeFile(legacy,JSON.stringify({claude:{providers:{old:{name:'Legacy',settingsConfig:{env:{ANTHROPIC_BASE_URL:base+'/legacy',ANTHROPIC_API_KEY:'fixture-legacy-key',ANTHROPIC_MODEL:'legacy-model'}}}}}}));
+start();
+try{
+ await rpc('getState');await rpc('saveProvider',{displayName:'Keeper',baseUrl:base+'/keeper',bearerToken:'fixture-keeper-key',adapter:'responses',codexModel:'kept-model'});await rpc('switchClientProvider',{client:'codex',providerId:'Keeper'});
+ const before=await rpc('getProviders'),clientBefore=await readFile(join(root,'codex/config.toml'),'utf8');
+ const hashes=[await digest(magpie),await digest(cc)];const count=requests.length;
+ const preview=await rpc('previewConfigurationImport');const items=preview.sources.filter(s=>s.source==='magpie'||s.source==='cc-switch').flatMap(s=>s.items);
+ check('discovery is read-only and never calls a vendor',requests.length===count&&hashes[0]===await digest(magpie)&&hashes[1]===await digest(cc));
+ check('metadata preview contains no API keys',!JSON.stringify(preview).includes('fixture-key-')&&!JSON.stringify(preview).includes('sk-sp-fixture')&&!JSON.stringify(preview).includes('fixture-codex-key'));
+ check('Magpie multi-protocol and protocol-specific spare keys are separate',items.filter(i=>i.name.startsWith('现有中转')).length===3&&items.filter(i=>i.status==='paused').length===1);
+ check('OAuth, malformed TOML, unsupported headers and local proxy loops are explicit skips',items.filter(i=>i.status==='unsupported').length===7);
+ check('existing connections are recognized without replacement',items.find(i=>i.name==='Keeper').status==='existing');
+ const chosen=items.filter(i=>i.status==='new').map(i=>i.fingerprint);
+ await mkdir(join(root,'settings.pilot-tmp'));const refused=await call('importConfigurations',{sources:preview.sources.map(({source,path})=>({source,path})),targetDigest:preview.targetDigest,fingerprints:chosen});check('write failure rolls back memory without partially adding providers',!refused.ok&&JSON.stringify(await rpc('getProviders'))===JSON.stringify(before));await rm(join(root,'settings.pilot-tmp'),{recursive:true});
+ await rpc('toggleTracing',true);const live=await rpc('getState');const liveClient=await readFile(join(root,'codex/config.toml'),'utf8');
+ const result=await rpc('importConfigurations',{sources:preview.sources.map(({source,path})=>({source,path})),targetDigest:preview.targetDigest,fingerprints:chosen});
+ check('import adds four API configurations while retaining existing selection',result.added.length===4&&JSON.stringify(result.providers.selected)===JSON.stringify(before.selected)&&result.providers.connections.find(p=>p.id==='Keeper').codexModel==='kept-model');
+ check('import does not stop a live Gateway or rewrite client files',(await rpc('getState')).localBaseUrl===live.localBaseUrl&&await readFile(join(root,'codex/config.toml'),'utf8')===liveClient);
+ check('source files remain byte-identical after import',hashes[0]===await digest(magpie)&&hashes[1]===await digest(cc));
+ const plan=result.providers.connections.find(p=>p.displayName==='GLM Plan');check('Coding Plan URL key and explicit model are preserved',plan.baseUrl===base+'/coding'&&plan.bearerToken==='sk-sp-fixture'&&plan.claudeModels.sonnet==='plan-model');
+ await rpc('toggleTracing',false);
+ const imported=result.providers.connections.find(p=>p.displayName==='Codex Relay');await rpc('switchClientProvider',{client:'codex',providerId:imported.id});await rpc('toggleTracing',true);const state=await rpc('getState');
+ const response=await fetch(state.localBaseUrl+'/responses',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'explicit-model',input:'fixture'})});check('imported Responses endpoint credentials and explicit model route through a real request',response.status===200&&(await response.json()).status==='completed'&&requests.some(r=>r.auth==='Bearer fixture-codex-key'&&JSON.parse(r.body||'{}').model==='explicit-model'));
+ await rpc('toggleTracing',false);
+ const catalog=await rpc('fetchProviderModels',{providerId:imported.id});check('offline vendor catalog retains imported models',catalog.some(m=>m.id==='explicit-model'&&m.vendor==='导入配置'));
+ const backup=(await readdir(root)).find(n=>n.startsWith('settings-before-import-'));check('pre-import backup is private and retains original selection',!!backup&&(process.platform==='win32'||((await stat(join(root,backup))).mode&0o777)===0o600));
+ let again=await rpc('previewConfigurationImport');const existing=again.sources.flatMap(s=>s.items).filter(i=>i.status==='existing');const repeat=await rpc('importConfigurations',{sources:again.sources.map(({source,path})=>({source,path})),targetDigest:again.targetDigest,fingerprints:existing.map(i=>i.fingerprint)});check('repeated import is idempotent',repeat.added.length===0);
+ const legacyPreview=await rpc('previewConfigurationImport',{sources:[{source:'cc-switch',path:legacy}]});await rpc('setTheme','night');let failed=await call('importConfigurations',{sources:[{source:'cc-switch',path:legacy}],targetDigest:legacyPreview.targetDigest,fingerprints:[legacyPreview.sources[0].items[0].fingerprint]});check('target changes after preview block writes',!failed.ok);
+ let fresh=await rpc('previewConfigurationImport',{sources:[{source:'cc-switch',path:legacy}]});await writeFile(legacy,JSON.stringify({claude:{providers:{old:{name:'Legacy',settingsConfig:{env:{ANTHROPIC_BASE_URL:base+'/legacy',ANTHROPIC_API_KEY:'changed-fixture-key'}}}}}}));failed=await call('importConfigurations',{sources:[{source:'cc-switch',path:legacy}],targetDigest:fresh.targetDigest,fingerprints:[fresh.sources[0].items[0].fingerprint]});check('source changes after preview block the whole import',!failed.ok&&!((await rpc('getProviders')).connections.some(p=>p.displayName==='Legacy')));
+ fresh=await rpc('previewConfigurationImport',{sources:[{source:'cc-switch',path:legacy}]});const legacyResult=await rpc('importConfigurations',{sources:[{source:'cc-switch',path:legacy}],targetDigest:fresh.targetDigest,fingerprints:[fresh.sources[0].items[0].fingerprint]});check('legacy CC Switch JSON imports successfully',legacyResult.added[0]==='Legacy');
+ await writeFile(legacy,JSON.stringify({claude:{providers:{collision:{name:'Keeper',settingsConfig:{env:{ANTHROPIC_BASE_URL:base+'/collision',ANTHROPIC_API_KEY:'collision-fixture-key'}}}}}}));fresh=await rpc('previewConfigurationImport',{sources:[{source:'cc-switch',path:legacy}]});const collision=await rpc('importConfigurations',{sources:[{source:'cc-switch',path:legacy}],targetDigest:fresh.targetDigest,fingerprints:[fresh.sources[0].items[0].fingerprint]});check('name collisions get a suffix without overwriting the existing service',collision.added[0]==='Keeper-2'&&collision.providers.connections.find(p=>p.id==='Keeper').bearerToken==='fixture-keeper-key');
+ if(process.platform!=='win32'){await symlink('/etc/hosts',join(root,'outside.json'));check('isolated import cannot follow a symlink to real user data',!(await call('previewConfigurationImport',{sources:[{source:'magpie',path:join(root,'outside.json')}]})).ok);}
+ const clientDir=join(root,'client-import-fixtures');await mkdir(clientDir,{recursive:true});
+ const claudeFile=join(clientDir,'settings.json'),codexFile=join(clientDir,'config.toml'),authFile=join(clientDir,'auth.json');
+ await writeFile(claudeFile,JSON.stringify({env:{ANTHROPIC_BASE_URL:'https://open.bigmodel.cn/api/anthropic',ANTHROPIC_API_KEY:'fixture-cli-plan-key',ANTHROPIC_DEFAULT_OPUS_MODEL:'glm-opus',ANTHROPIC_DEFAULT_SONNET_MODEL:'glm-sonnet'},permissions:{allow:['Read']},externalSentinel:'keep'}));
+ const codexConfig=`model = "exact-model"\nmodel_provider = "relay"\nmodel_context_window = 321000\n[model_providers.relay]\nbase_url = "${base}/cli"\nwire_api = "responses"\n`;
+ await writeFile(codexFile,codexConfig);await writeFile(authFile,JSON.stringify({OPENAI_API_KEY:'fixture-cli-api-key',tokens:{access_token:'fixture-oauth-never-import',refresh_token:'fixture-oauth-refresh'}}));
+ const clientSpecs=[{source:'claude',path:claudeFile},{source:'codex',path:codexFile}];
+ const clientHashes=await Promise.all([claudeFile,codexFile,authFile].map(digest));
+ let clientPreview=await rpc('previewConfigurationImport',{sources:clientSpecs});
+ check('standalone Claude and Codex API configs are discovered with masked metadata',clientPreview.sources.every(s=>s.items[0].status==='new')&&!JSON.stringify(clientPreview).includes('fixture-cli')&&!JSON.stringify(clientPreview).includes('fixture-oauth'));
+ const selectedBeforeClients=(await rpc('getProviders')).selected;
+ let clientResult=await rpc('importConfigurations',{sources:clientSpecs,targetDigest:clientPreview.targetDigest,fingerprints:clientPreview.sources.map(s=>s.items[0].fingerprint)});
+ check('CLI import retains exact model role mappings context and protocol',clientResult.providers.connections.some(p=>p.displayName==='Claude'&&p.claudeModels.opus==='glm-opus'&&p.claudeModels.sonnet==='glm-sonnet'&&p.providerPreset==='zhipu-coding-plan')&&clientResult.providers.connections.some(p=>p.displayName==='Codex'&&p.codexModel==='exact-model'&&p.codexContextWindow===321000&&p.adapter==='responses'));
+ check('CLI import preserves client and auth files and does not activate imported services',JSON.stringify(clientHashes)===JSON.stringify(await Promise.all([claudeFile,codexFile,authFile].map(digest)))&&JSON.stringify(selectedBeforeClients)===JSON.stringify(clientResult.providers.selected));
+ check('OAuth tokens never enter Deck settings or pre-import backups',!(await readFile(join(root,'settings.json'),'utf8')).includes('fixture-oauth')&&!(await Promise.all((await readdir(root)).filter(n=>n.startsWith('settings-before-import-')).map(n=>readFile(join(root,n),'utf8')))).some(s=>s.includes('fixture-oauth')));
+ await writeFile(authFile,JSON.stringify({tokens:{access_token:'fixture-oauth-never-import'}}));clientPreview=await rpc('previewConfigurationImport',{sources:[clientSpecs[1]]});
+ check('OAuth-only CLI configs require reauthorization rather than importing a broken API service',clientPreview.sources[0].items[0].status==='unsupported'&&clientPreview.sources[0].items[0].reason.includes('订阅'));
+ await writeFile(codexFile,codexConfig+'experimental_bearer_token = "fixture-inline-key"\n');await writeFile(authFile,'broken stale auth JSON');clientPreview=await rpc('previewConfigurationImport',{sources:[clientSpecs[1]]});
+ check('explicit Codex provider key takes precedence over stale unrelated auth files',clientPreview.sources[0].items[0].status==='new');
+ await writeFile(codexFile,codexConfig+'env_key = "FIXTURE_IMPORT_API_KEY"\n');clientPreview=await rpc('previewConfigurationImport',{sources:[clientSpecs[1]]});
+ check('environment credentials are not silently substituted with another account key',clientPreview.sources[0].items[0].status==='unsupported'&&clientPreview.sources[0].items[0].reason.includes('环境变量'));
+ await writeFile(codexFile,codexConfig+'experimental_bearer_token = "fixture-inline-key"\n');clientPreview=await rpc('previewConfigurationImport',{sources:[clientSpecs[1]]});await writeFile(codexFile,codexConfig+'experimental_bearer_token = "fixture-changed-inline-key"\n');
+ check('CLI source changes after preview block import without changing the active service',!(await call('importConfigurations',{sources:[clientSpecs[1]],targetDigest:clientPreview.targetDigest,fingerprints:[clientPreview.sources[0].items[0].fingerprint]})).ok&&JSON.stringify((await rpc('getProviders')).selected)===JSON.stringify(selectedBeforeClients));
+ await writeFile(codexFile,'invalid = [');clientPreview=await rpc('previewConfigurationImport',{sources:[clientSpecs[1]]});check('malformed standalone TOML is reported with the original retained',!!clientPreview.sources[0].error&&await readFile(codexFile,'utf8')==='invalid = [');
+ await writeFile(codexFile,codexConfig);await rm(authFile);if(process.platform!=='win32'){await symlink('/etc/hosts',authFile);clientPreview=await rpc('previewConfigurationImport',{sources:[clientSpecs[1]]});check('isolated auth sibling cannot escape through a symlink',clientPreview.sources[0].error.includes('隔离'));await rm(authFile);}
+ const defaultClaude=join(root,'claude/settings.json');await mkdir(join(root,'claude'),{recursive:true});await writeFile(defaultClaude,await readFile(claudeFile));clientPreview=await rpc('previewConfigurationImport');check('startup scan discovers the native Claude CLI configuration',clientPreview.sources.find(s=>s.source==='claude').found);await rm(defaultClaude);
+ if(process.platform!=='win32'){await symlink('/etc/hosts',defaultClaude);check('default discovery also rejects a symlink outside the isolated root',!(await call('previewConfigurationImport')).ok);await rm(defaultClaude);}
+ const codePlanSource=join(clientDir,'plans.json');await writeFile(codePlanSource,JSON.stringify({providers:[{name:'Kimi dedicated',responses:'https://api.kimi.com/coding/v1',key:'fixture-kimi'},{name:'MiniMax named plan',chat:'https://api.minimax.io/v1',key:'fixture-minimax'}]}));
+ clientPreview=await rpc('previewConfigurationImport',{sources:[{source:'magpie',path:codePlanSource}]});clientResult=await rpc('importConfigurations',{sources:[{source:'magpie',path:codePlanSource}],targetDigest:clientPreview.targetDigest,fingerprints:clientPreview.sources[0].items.map(i=>i.fingerprint)});
+ check('dedicated Coding Plan URLs retain their category without guessing ambiguous plan billing',clientResult.providers.connections.some(p=>p.displayName==='Kimi dedicated'&&p.providerPreset==='kimi-coding-plan')&&clientResult.providers.connections.some(p=>p.displayName==='MiniMax named plan'&&p.providerPreset==='custom'));
+ const chinese=(await rpc('getProviders')).connections.find(p=>p.displayName==='现有中转 (responses)');await rpc('saveProvider',{id:chinese.id,displayName:chinese.displayName,baseUrl:chinese.baseUrl,bearerToken:chinese.bearerToken,adapter:chinese.adapter});check('imported non-ASCII names can be edited without forced rename',true);
+ await stop();start();check('imported names models and choices survive restart',(await rpc('getProviders')).connections.some(p=>p.displayName==='Legacy')&&(await rpc('getProviders')).active.codex===imported.id);
+ fresh=await rpc('previewConfigurationImport');const settingsPath=join(root,'settings.json'),disk=JSON.parse(await readFile(settingsPath,'utf8'));disk.externalSentinel='preserve';await writeFile(settingsPath,JSON.stringify(disk));failed=await call('previewConfigurationImport');check('external target changes before preview are retained and reported',!failed.ok&&JSON.parse(await readFile(settingsPath,'utf8')).externalSentinel==='preserve');
+ await stop();start();await rpc('getState');fresh=await rpc('previewConfigurationImport');check('external metadata remains after restart',fresh.sources.length===4);
+ await stop();console.log(JSON.stringify({passed:true,checks,requestCount:requests.length,root}));
+}finally{if(child?.exitCode===null)child.kill('SIGTERM');server.closeAllConnections();server.close();}

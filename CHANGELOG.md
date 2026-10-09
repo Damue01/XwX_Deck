@@ -4,6 +4,34 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-09
+
+### Added
+
+- Rust / Tauri 原生运行时，保留 React 页面，使用系统 WebView、TLS 和 macOS SQLite，发行包不包含 Node 或 Chromium。
+- API、Coding Plan 与本机服务预设；统一添加配置、订阅账号和客户端下载入口。
+- ChatGPT、Claude、GitHub Copilot、Grok、Cursor 多账号授权、一个订阅类别对应一个模型服务、会话亲和与账号轮换策略。
+- Magpie、CC Switch、Claude CLI、Codex CLI API 配置的只读预览导入；首次引导先检测已有配置。
+- 应用设置新增简体中文 / English，首次按系统语言选择，手动选择立即生效并持久化。
+
+### Changed
+
+- 模型页合并 Desktop / CLI 客户端标签，显式添加已安装客户端，按钮式服务与模型选择不再带搜索框。
+- 统一诊断与修复的按钮、短文案和排版；Trace 索引检查放入修复入口。
+- macOS 原生标题栏只显示 XwX Deck；恢复容量虚线编辑提示、客户端检测反馈和流畅主题切换。
+- 协议转换、同端口服务热切换、活跃请求快照、透明续接、退出直连恢复和外部配置冲突保护均增加隔离真实请求回归。
+- Windows 原生更新校验后替换并保留旧版备份；新文件启动失败时保留新文件和恢复备份，提示手动处理。
+
+### Removed
+
+- 工具页和 ChatGPT 对话诊断；独立 Trace 索引设置区、冗余说明、分割线与订阅账号参与勾选。
+
+### Compatibility
+
+- 已有明确的服务、模型、Trace 容量与清理选择保留；导入不会覆盖来源文件或自动接管客户端。
+- 未读取到可信官方额度时显示未知，额度策略不猜测。订阅与跨协议转换使用 HTTP SSE；转换 WebSocket 暂不支持。
+- macOS 包为 ad-hoc 签名，未公证，更新仍由用户手动替换 DMG。
+
 ## [1.0.0] - 2026-10-08
 
 ### Added

@@ -3,13 +3,6 @@ import type { SetupWebsite, SetupWebsites } from '../../shared/setupWebsites';
 // Shared data shapes for the window.xwxDeck bridge surface.
 // All types are plain serialisable objects; nothing from Electron is imported here.
 import type { ProviderPresetId } from '../../shared/providerProfiles';
-import type {
-  CodexConversationDetailRequest,
-  CodexConversationHealthReport,
-  CodexConversationHealthRow,
-  CodexConversationPageRequest,
-  CodexConversationPageResponse
-} from '../../shared/codexConversationHealth';
 export interface TraceIndexRepairCandidate {
   readonly id: string;
   readonly jsonlPath: string;
@@ -23,6 +16,9 @@ export interface TraceIndexRepairPlan {
   readonly indexStatus: 'valid' | 'missing' | 'invalid';
   readonly indexSha256: string;
   readonly indexedSessions: number;
+  readonly needsRepair?: boolean;
+  readonly unindexedFiles?: readonly string[];
+  readonly staleIndexedFiles?: readonly string[];
   readonly jsonlFiles: number;
   readonly missingIndexedFiles: readonly string[];
   readonly candidates: readonly TraceIndexRepairCandidate[];
@@ -33,22 +29,6 @@ export interface AppliedTraceIndexRepair extends TraceIndexRepairPlan {
   readonly backupIndexPath?: string;
   readonly recoveredSessions: number;
 }
-export type {
-  CodexConversationFilter,
-  CodexConversationHealthSummaryRow,
-  CodexConversationSortKey,
-  CodexConversationSortDirection,
-  CodexConversationDetailRequest,
-  CodexConversationDatabaseHealth,
-  CodexConversationHealthReport,
-  CodexConversationHealthRow,
-  CodexConversationHealthStatus,
-  CodexConversationIssue,
-  CodexConversationIssueCode,
-  CodexConversationPageRequest,
-  CodexConversationPageResponse,
-  CodexRolloutLocation
-} from '../../shared/codexConversationHealth';
 
 export type ClientId = 'claude-cli' | 'codex-cli';
 
@@ -162,6 +142,7 @@ export interface XwXDeckRuntimeState {
   readonly clients: readonly ClientStateRow[];
   readonly lastError?: string;
   readonly theme: AppTheme;
+  readonly language?: import('@/lib/i18n').Language | null;
   readonly traceAppearance: TraceAppearanceSnapshot;
   readonly startup?: StartupSettingsSnapshot;
   readonly update?: XwXDeckUpdateState;
@@ -362,6 +343,22 @@ export interface TraceRetentionRepairResult {
 // ---- XwXDeck API surface -------------------------------------------------
 
 export interface XwXDeckApi {
+  previewConfigurationImport?(input?: import('../../shared/configImport').ConfigurationImportInput): Promise<import('../../shared/configImport').ConfigurationImportPreview>;
+  importConfigurations?(input: import('../../shared/configImport').ConfigurationImportInput & { targetDigest: string; fingerprints: readonly string[] }): Promise<import('../../shared/configImport').AppliedConfigurationImport>;
+  chooseConfigurationImportFile?(): Promise<string | null>;
+  detectClientInstallations?(): Promise<import('../../shared/clientDownloads').ClientInstallationSnapshot>;
+  getModelClients?(): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
+  addModelClient?(id: import('../../shared/clientDownloads').DownloadClientId): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
+  removeModelClient?(id: import('../../shared/clientDownloads').DownloadClientId): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
+  setSubscriptionRouting?(input: { platform: import('../../shared/subscriptionAccounts').SubscriptionPlatform; policy: import('../../shared/subscriptionAccounts').SubscriptionRoutingPolicy }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
+  refreshSubscriptionUsage?(input: { platform: import('../../shared/subscriptionAccounts').SubscriptionPlatform }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
+  getSubscriptionAccounts?(): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
+  beginSubscriptionSignIn?(input: { accountId?: string; platform?: 'chatgpt' | 'grok' | 'copilot' | 'claude' | 'cursor' }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
+  renameSubscriptionAccount?(input: { accountId: string; label: string }): Promise<ProviderSnapshot>;
+  cancelSubscriptionSignIn?(): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
+  connectSubscriptionAccount?(id: string): Promise<ProviderSnapshot>;
+  signOutSubscriptionAccount?(id: string): Promise<{ revoked: boolean; warning?: string }>;
+  openSubscriptionUsage?(platform?: 'chatgpt' | 'grok' | 'copilot' | 'claude' | 'cursor'): Promise<void>;
   readonly setupWebsites: SetupWebsites;
   openSetupWebsite(site: SetupWebsite): Promise<void>;
   getProviders(): Promise<ProviderSnapshot>;
@@ -384,6 +381,7 @@ export interface XwXDeckApi {
   restartAndInstall(): Promise<XwXDeckUpdateState>;
   cancelUpdate(): Promise<XwXDeckUpdateState>;
   setStartupEnabled(enabled: boolean): Promise<XwXDeckRuntimeState>;
+  setLanguage?(language: import('@/lib/i18n').Language): Promise<XwXDeckRuntimeState>;
   setTheme(theme: AppTheme): Promise<XwXDeckRuntimeState>;
   setTraceAppearance(payload: Partial<Omit<TraceAppearanceSnapshot, 'customImageUrl'>>): Promise<XwXDeckRuntimeState>;
   chooseTraceBackground(): Promise<XwXDeckRuntimeState | undefined>;
@@ -412,12 +410,6 @@ export interface XwXDeckApi {
   getCodexEnhancements(): Promise<CodexEnhancementsSnapshot>;
   updateCodexEnhancements(payload: Record<string, unknown>): Promise<CodexEnhancementsSnapshot>;
   updateCodexConfig(payload: Record<string, unknown>): Promise<CodexConfigSnapshot>;
-  diagnoseCodexConversations(): Promise<CodexConversationHealthReport>;
-  queryCodexConversations(request: CodexConversationPageRequest): Promise<CodexConversationPageResponse>;
-  detailCodexConversation(request: CodexConversationDetailRequest): Promise<CodexConversationHealthRow>;
-  setCodexConversationDiagnosticsActive(active: boolean): Promise<void>;
-  cancelCodexConversationScan(requestId: string): Promise<boolean>;
-  openCodexConversationPath(filePath: string): Promise<void>;
   copyText(value: string): Promise<void>;
 
   // 兼容服务

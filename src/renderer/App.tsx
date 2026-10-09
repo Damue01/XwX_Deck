@@ -8,18 +8,20 @@ import { Titlebar } from '@/features/shell/Titlebar';
 import { Rail, type PageId } from '@/features/shell/Rail';
 import { SignalPage, TRACE_TOGGLE_REQUEST_EVENT } from '@/features/trace/SignalPage';
 import { ModelsPage } from '@/features/models/ModelsPage';
-import { ToolsPage } from '@/features/tools/ToolsPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { OnboardingTour } from '@/features/onboarding/OnboardingTour';
 import { UpdateNotification } from '@/features/shell/UpdateNotification';
 import { ConnectionNotice } from '@/features/shell/ConnectionNotice';
+import { restoreLanguage, useLanguage, t } from '@/lib/i18n';
 import { applyTheme } from '@/lib/theme';
 import { userErrorMessage } from '@/lib/errors';
 
 function Shell(): React.ReactElement {
+  useLanguage();
   const bridge = useBridge();
+  React.useLayoutEffect(() => { if (bridge.runtime) restoreLanguage(bridge.runtime.language ?? undefined); }, [bridge.runtime?.language, bridge.booted]);
   const [activePage, setActivePage] = React.useState<PageId>('signal');
-  const [windowState, setWindowState] = React.useState({ maximized: false, fullscreen: false, nativeFrame: false });
+  const [windowState, setWindowState] = React.useState({ maximized: false, fullscreen: false, nativeFrame: document.documentElement.dataset.platform === 'darwin' });
   const notifiedMissingProviders = React.useRef('');
   const notifiedRuntimeIssue = React.useRef('');
   const notifiedLoadIssues = React.useRef('');
@@ -71,11 +73,11 @@ function Shell(): React.ReactElement {
     const signature = `${bridge.runtime.traceRoot}:${traceWarningGB}`;
     if (notifiedTraceWarning.current === signature) return;
     notifiedTraceWarning.current = signature;
-    showToast('Trace 记录需要清理', 'info', id, {
-      description: `已使用 ${traceStorageText}，超过 ${traceWarningGB} GB。可调整上限或开启自动清理。`,
+    showToast(t('Trace 记录需要清理'), 'info', id, {
+      description: t("已使用 {0}，超过 {1} GB。可调整上限或开启自动清理。", traceStorageText, traceWarningGB),
       actionProps: {
         type: 'button',
-        children: '查看设置',
+        children: t('查看设置'),
         onClick: () => {
           setActivePage('settings');
           window.dispatchEvent(new Event('xwxdeck:open-trace-settings'));
@@ -85,7 +87,7 @@ function Shell(): React.ReactElement {
   }, [bridge.booted, bridge.runtime?.traceRoot, bridge.runtime?.traceAutoCleanup, traceStorageBytes, traceWarningGB, traceStorageText]);
   React.useEffect(() => {
     if (!bridge.booted) return;
-    const notice = runtimeError ? lifecycleFailure(runtimeError, '恢复运行状态') : recoveryNotice;
+    const notice = runtimeError ? lifecycleFailure(runtimeError, t('恢复运行状态')) : recoveryNotice;
     const signature = notice ? `${notice.message}\n${notice.description ?? ''}` : '';
     if (signature === notifiedRuntimeIssue.current) return;
     const previousSignature = notifiedRuntimeIssue.current;
@@ -132,15 +134,15 @@ function Shell(): React.ReactElement {
     if (retryingInitialData) return;
     if (notifiedLoadIssues.current === signature) return;
     notifiedLoadIssues.current = signature;
-    showToast('部分数据仍在加载', 'warning', key, {
-      description: '已加载内容仍可继续使用。需要时可以重新加载未就绪的数据。',
+    showToast(t('部分数据仍在加载'), 'warning', key, {
+      description: t('已加载内容仍可继续使用。需要时可以重新加载未就绪的数据。'),
       actionProps: {
         type: 'button',
-        children: '重试',
+        children: t('重试'),
         onClick: () => {
           notifiedLoadIssues.current = '';
           setRetryingInitialData(true);
-          showToast('正在重新加载…', 'info', key, { timeout: 3000 });
+          showToast(t('正在重新加载…'), 'info', key, { timeout: 3000 });
           bridge.retryInitialData();
           window.setTimeout(() => setRetryingInitialData(false), 1000);
         }
@@ -178,20 +180,20 @@ function Shell(): React.ReactElement {
       xwx_deck: 'XwX Deck',
     };
     const missing = missingProviders.map(provider => labels[provider] ?? provider);
-    showToast('ChatGPT 历史连接配置缺失', 'warning', id, {
-      description: `历史对话仍引用 ${missing.join('、')}，但该连接已不在 ChatGPT 配置中。当前新对话不受影响；如需继续使用旧对话，请从可信备份恢复原连接。`,
+    showToast(t('ChatGPT 历史连接配置缺失'), 'warning', id, {
+      description: t("历史对话仍引用 {0}，但该连接已不在 ChatGPT 配置中。当前新对话不受影响；如需继续使用旧对话，请从可信备份恢复原连接。", missing.join('、')),
       timeout: 12_000,
       actionProps: {
         type: 'button',
-        children: '不再提醒',
-        'aria-label': '不再提醒这些已删除的 ChatGPT 历史连接',
+        children: t('不再提醒'),
+        'aria-label': t('不再提醒这些已删除的 ChatGPT 历史连接'),
         onClick: () => {
           try {
             localStorage.setItem(storageKey, JSON.stringify([...new Set([...ignored, ...missingProviders])]));
             closeToast(id);
           } catch {
-            showToast('无法保存“不再提醒”', 'warning', id, {
-              description: '应用本地存储不可用，下次启动仍可能出现此提醒。'
+            showToast(t('无法保存“不再提醒”'), 'warning', id, {
+              description: t('应用本地存储不可用，下次启动仍可能出现此提醒。')
             });
           }
         }
@@ -223,21 +225,21 @@ function Shell(): React.ReactElement {
 
   if (!bridge.booted) {
     return (
-      <div className="app">
+      <div className={`app${windowState.nativeFrame ? ' native-frame' : ''}`}>
         <Titlebar isMaximized={windowState.maximized} nativeFrame={windowState.nativeFrame} />
         {/* Quiet skeleton of the rail so the shell doesn't jump when data arrives. */}
         <div className="body boot-body" aria-busy="true">
           <aside className="rail" aria-hidden="true">
             {[0, 1, 2, 3].map(i => <span key={i} className="boot-row"><i /><b /></span>)}
           </aside>
-          <main className="stage"><span className="sr-only">加载中…</span></main>
+          <main className="stage"><span className="sr-only">{t("加载中…")}</span></main>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="app">
+    <div className={`app${windowState.nativeFrame ? ' native-frame' : ''}`}>
       <Titlebar isMaximized={windowState.maximized} nativeFrame={windowState.nativeFrame} />
       <div className="body">
         <Rail activePage={activePage} onNavigate={setActivePage} updateState={bridge.updateState} />
@@ -246,7 +248,6 @@ function Shell(): React.ReactElement {
           <div className="stage">
           <SignalPage active={activePage === 'signal'} />
           <ModelsPage active={activePage === 'models'} />
-          <ToolsPage active={activePage === 'tools'} />
           <SettingsPage active={activePage === 'settings'} />
           </div>
         </div>
@@ -258,6 +259,7 @@ function Shell(): React.ReactElement {
 }
 
 export function App(): React.ReactElement {
+  useLanguage();
   return (
     <ToastProvider position="bottom-right" timeout={3000} limit={1}>
       <BridgeProvider>

@@ -27,6 +27,7 @@ function fixture({ hasHistoryBackup = false, enabled = true, confirmed = true, c
     require(id) {
       if (id === 'react') return {
         useState: initial => [initial, () => {}],
+        useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
         useCallback: fn => fn
       };
       if (id === '@/components/ui/confirm-dialog') return {

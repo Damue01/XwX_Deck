@@ -1,3 +1,4 @@
+import { t, useLanguage } from '@/lib/i18n';
 import type { ProviderSnapshot } from '../../shared/providers';
 import * as React from 'react';
 import { getApi, isDesktop } from './api';
@@ -18,6 +19,7 @@ import type {
 import { operationError } from '@/lib/errors';
 
 export interface BridgeState {
+  readonly modelClients: readonly import('../../shared/clientDownloads').DownloadClientId[];
   readonly providers: ProviderSnapshot | null;
   readonly api: ReturnType<typeof getApi>;
   readonly runtime: XwXDeckRuntimeState | null;
@@ -57,8 +59,10 @@ interface Props {
 const BOOT_REQUEST_TIMEOUT_MS = 8_000;
 
 export function BridgeProvider({ children }: Props): React.ReactElement {
+  useLanguage();
   const api = React.useMemo(() => getApi(), []);
   const [state, setState] = React.useState<BridgeData>({
+    modelClients: ['claude', 'codex'],
     providers: null,
     runtime: null,
     traceStats: null,
@@ -108,7 +112,7 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
         generations.set(label, generation);
         setIssue(label, null);
         const timer = setTimeout(() => {
-          if (generations.get(label) === generation) setIssue(label, '仍在加载，可继续使用其他功能或重试');
+          if (generations.get(label) === generation) setIssue(label, t('仍在加载，可继续使用其他功能或重试'));
         }, BOOT_REQUEST_TIMEOUT_MS);
         void request().then(value => {
           if (alive && generations.get(label) === generation) {
@@ -117,7 +121,7 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
           }
         }).catch(error => {
           if (generations.get(label) !== generation) return;
-          setIssue(label, '加载失败，可重试');
+          setIssue(label, t('加载失败，可重试'));
           if (label === '加载应用状态') showLifecycleNotice(lifecycleFailure(error, label));
         }).finally(() => clearTimeout(timer));
       };
@@ -128,16 +132,17 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
       for (const issue of stateIssuesRef.current) jobs.get(issue.split('：', 1)[0])?.();
     };
     update({ booted: true });
-    load(() => api.getState(), '加载应用状态', runtime => update({ runtime }));
-    load(() => api.getTraceStats(), '加载 Trace 统计', traceStats => update({ traceStats }));
-    load(() => api.getUpdateState(), '加载更新状态', updateState => update({ updateState }));
-    load(() => api.getClaudeModels(), '加载 Claude 模型', claudeModels => update({ claudeModels }));
-    load(() => api.getClaudeDesktopSync(), '加载 Claude Desktop 设置', claudeDesktopSync => update({ claudeDesktopSync }));
-    load(() => api.getCodexConfig(), '加载 ChatGPT 配置', codexConfig => update({ codexConfig }));
-    load(() => api.getCodexEnhancements(), '加载 ChatGPT 增强设置', codexEnhancements => update({ codexEnhancements }));
-    load(() => api.getCompatibleServiceConfig(), '加载模型服务配置', compatibleServiceConfig => update({ compatibleServiceConfig }));
-    load(() => api.getModelServices(), '加载模型服务', modelServices => update({ modelServices }));
-    load(() => api.getProviders(), '加载模型服务列表', providers => update({ providers }));
+    load(() => api.getState(), t('加载应用状态'), runtime => update({ runtime }));
+    load(() => api.getTraceStats(), t('加载 Trace 统计'), traceStats => update({ traceStats }));
+    load(() => api.getUpdateState(), t('加载更新状态'), updateState => update({ updateState }));
+    load(() => api.getClaudeModels(), t('加载 Claude 模型'), claudeModels => update({ claudeModels }));
+    load(() => api.getClaudeDesktopSync(), t('加载 Claude Desktop 设置'), claudeDesktopSync => update({ claudeDesktopSync }));
+    load(() => api.getCodexConfig(), t('加载 ChatGPT 配置'), codexConfig => update({ codexConfig }));
+    load(() => api.getCodexEnhancements(), t('加载 ChatGPT 增强设置'), codexEnhancements => update({ codexEnhancements }));
+    load(() => api.getCompatibleServiceConfig(), t('加载模型服务配置'), compatibleServiceConfig => update({ compatibleServiceConfig }));
+    load(() => api.getModelServices(), t('加载模型服务'), modelServices => update({ modelServices }));
+    if (api.getModelClients) load(() => api.getModelClients!(), t('加载客户端'), modelClients => update({ modelClients }));
+    load(() => api.getProviders(), t('加载模型服务列表'), providers => update({ providers }));
 
     // Subscriptions
     const unsubState = api.onState(async (incoming) => {

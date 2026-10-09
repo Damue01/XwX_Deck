@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "XwX Deck",
+  "version": "1.1.0",
+  "identifier": "app.xwxdeck.desktop",
+  "build": {
+    "frontendDist": "../test-results/native-frontend"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "XwX Deck",
+        "width": 1040,
+        "height": 560,
+        "minWidth": 780,
+        "minHeight": 480,
+        "decorations": false,
+        "backgroundColor": "#f5f5f7"
+      }
+    ],
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "pilot-main",
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "core:event:default"
+          ]
+        }
+      ],
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "../assets/icon.png",
+      "../assets/icon.icns",
+      "../assets/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}

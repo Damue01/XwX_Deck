@@ -39,14 +39,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## Official setup entry marks
+## Official Ark mark
 
-Bundled site icons identify their respective official services. All marks remain the property of their owners; no endorsement is implied. Retrieved on 2026-10-07:
+The Ark SVG is bundled from https://res.gcloudcache.com/volc-fe/console-ark/ark-new-main/arkIcon.svg. The mark remains the property of its owner; no endorsement is implied.
 
-- claude: https://assets.claude.com/95a868946ac8a31e5ff832e2899f294aa368b836.png?w=64&h=64
-- qwen: https://img.alicdn.com/imgextra/i1/O1CN01Es0c28049TL083Vo_!!6000000002263-2-tps-64-64.png
-- ark: https://res.gcloudcache.com/volc-fe/console-ark/ark-new-main/arkIcon.svg
-- zhipu: https://docs.bigmodel.cn/mintlify-assets/_mintlify/favicons/zhipu-ef7018ed/uX_6lYCPLvdOcSdM/_generated/favicon/favicon-32x32.png
-- kimi: https://platform.kimi.com/docs/_mintlify/favicons/moonshotcn/T8-4VFDdIJ9zZmvG/_generated/favicon/favicon-32x32.png
-- minimax: https://platform.minimax.cn/docs/_mintlify/favicons/minimax-zh/DMz0Zpj7JInghPSs/_generated/favicon/favicon-32x32.png
-- tencent: https://cloudcache.tencent-cloud.com/qcloud/favicon.ico
+## Additional catalog icons
+
+Except for the VS Code mark below, the bundled provider and catalog SVG marks in `providerBrandImages.ts` and `catalogBrandImages.ts` come from [yetone/magpie](https://github.com/yetone/magpie/tree/main/internal/gui/assets/icons), MIT License, Copyright (c) 2026 yetone. The complete MIT notice is retained in `docs/licenses/magpie-MIT.txt`. Brand marks remain the property of their respective owners.
+
+## magpie-community Cursor protocol adapter
+
+The native Cursor Connect/protobuf adapter was informed by the MIT-licensed Cursor provider at https://github.com/magpie-community/plugins/tree/main/packages/cursor. Copyright (c) 2026 magpie-community contributors. The complete notice is retained in `docs/licenses/magpie-community-MIT.txt`.
+
+The VS Code mark is the unmodified blue stable SVG from [Microsoft’s official brand assets](https://code.visualstudio.com/brand). Visual Studio Code, VS Code, and the icon are trademarks of Microsoft Corporation. All rights reserved.

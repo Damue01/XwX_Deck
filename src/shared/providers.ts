@@ -5,6 +5,8 @@ export type ProviderAdapter = 'auto' | 'responses' | 'chat-completions' | 'anthr
 export type ProviderClient = 'codex' | 'claude';
 export interface ProviderConnection {
   readonly id: string;
+  readonly subscriptionAccountId?: string;
+  readonly accountLabel?: string;
   readonly codexProviderId?: string;
   readonly displayName: string;
   readonly providerPreset: ProviderPresetId;
@@ -54,7 +56,7 @@ export function supportsProviderClient(provider: ProviderConnection, client: Pro
 export function providerNameError(name: string, previousName?: string): string | undefined {
   if (name === previousName && name.length > 0) return undefined;
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(name)) return '名称只能包含英文字母、数字、下划线和连字符，长度为 1–80 个字符。';
-  if (['openai', 'xwx_deck'].includes(name.toLowerCase())) return '此名称由官方订阅或会话归并使用，请换一个名称。';
+  if (['openai', 'xwx_deck'].includes(name.toLowerCase())) return '此名称由客户端登录或会话归并使用，请换一个名称。';
   return undefined;
 }
 

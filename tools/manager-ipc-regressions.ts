@@ -5,6 +5,7 @@ import * as vm from 'node:vm';
 import ts from 'typescript';
 import * as setupWebsites from '../src/shared/setupWebsites';
 import { OFFICIAL_PROVIDER_WEBSITES } from '../src/shared/officialProviders';
+import { SUBSCRIPTION_USAGE_WEBSITES } from '../src/shared/subscriptionAccounts';
 
 /** Execute both sides of the IPC contract, including payload validation. */
 export async function testManagerIpc(): Promise<void> {
@@ -48,14 +49,14 @@ export async function testManagerIpc(): Promise<void> {
       }
     } })
   });
-  assert.equal(api.setupWebsites.codex, 'https://persistent.oaistatic.com/codex-app-prod/Codex.dmg');
+  assert.equal(api.setupWebsites.codex, 'https://learn.chatgpt.com/docs/app');
   for (const [platform, arch, mirror] of [['darwin', 'arm64', 'mac-arm64'], ['darwin', 'x64', 'mac-intel'],
     ['win32', 'x64', 'win-x64'], ['win32', 'arm64', 'win-arm64']]) {
     host.platform = platform; host.arch = arch;
     await api.openSetupWebsite('codex-mirror');
     assert.equal(opened.at(-1), `https://codexapp.agentsmirror.com/latest/${mirror}`);
     await api.openSetupWebsite('codex');
-    assert.ok(platform === 'darwin' ? opened.at(-1)?.endsWith('.dmg') : opened.at(-1) === 'https://apps.microsoft.com/detail/9PLM9XGG6VKS');
+    assert.equal(opened.at(-1), 'https://learn.chatgpt.com/docs/app');
   }
   const openedCount = opened.length;
   for (const value of ['https://example.com', '__proto__', 'constructor', null]) assert.throws(() => api.openSetupWebsite(value), /无效/);
@@ -63,7 +64,7 @@ export async function testManagerIpc(): Promise<void> {
   assert.throws(() => api.openSetupWebsite('codex-mirror'), /暂无/);
   assert.equal(opened.length, openedCount);
   await api.openSetupWebsite('codex');
-  assert.equal(opened.at(-1), 'https://learn.chatgpt.com/docs/linux/linux-app');
+  assert.equal(opened.at(-1), 'https://learn.chatgpt.com/docs/app');
   for (const [site, url] of [
     ['codex-downloads', 'https://learn.chatgpt.com/docs/app'],
     ['codex-mirror-list', 'https://codexapp.agentsmirror.com/#mirror'],
@@ -76,7 +77,7 @@ export async function testManagerIpc(): Promise<void> {
   // Explicit platform choices must not be rewritten to the running host's OS.
   for (const [platform, arch] of [['darwin', 'arm64'], ['win32', 'x64'], ['linux', 'arm64']]) {
     host.platform = platform; host.arch = arch;
-    for (const [site, url] of Object.entries(setupWebsites.CLIENT_DOWNLOAD_WEBSITES)) {
+    for (const [site, url] of Object.entries({ ...setupWebsites.CLIENT_DOWNLOAD_WEBSITES, ...SUBSCRIPTION_USAGE_WEBSITES })) {
       await api.openSetupWebsite(site);
       assert.equal(opened.at(-1), url);
       assert.equal(api.setupWebsites[site], url);
@@ -104,8 +105,8 @@ export async function testManagerIpc(): Promise<void> {
   await api.setTraceStoragePolicy({ limitGB: 0, autoCleanup: true });
   assert.equal(calls.at(-1)?.method, 'setTraceStoragePolicy');
   assert.deepEqual(JSON.parse(JSON.stringify(calls.pop()?.args)), [{ limitGB: 0, autoCleanup: true }]);
-  for (const channel of handlers.keys()) assert.doesNotMatch(channel, /excel|config-sync|update-channel/);
-  for (const required of ['queryCodexConversations', 'detailCodexConversation', 'inspectTraceIndexRepair',
+  for (const channel of handlers.keys()) assert.doesNotMatch(channel, /excel|config-sync|update-channel|codex-conversation/);
+  for (const required of ['inspectTraceIndexRepair',
     'applyTraceIndexRepair', 'repairClientProviderSwitch', 'getClaudeDesktopSync', 'cancelUpdate']) {
     assert.equal(typeof api[required], 'function', required);
   }

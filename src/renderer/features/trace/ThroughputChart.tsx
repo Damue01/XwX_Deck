@@ -1,3 +1,4 @@
+import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
 import type { TraceStatsPoint } from '@/bridge/types';
 import { formatNumber, formatTime } from '@/lib/format';
@@ -154,6 +155,7 @@ interface Props {
 }
 
 export function ThroughputChart({ series, active }: Props): React.ReactElement {
+  useLanguage();
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const seriesRef = React.useRef(series);
   seriesRef.current = series;
@@ -245,7 +247,7 @@ export function ThroughputChart({ series, active }: Props): React.ReactElement {
 
   return (
     <div className="chart" id="throughputChart">
-      <div className="chart-now" id="chartNow">最新请求 {formatNumber(lastVal)} tokens</div>
+      <div className="chart-now" id="chartNow">{t("最新请求")}{formatNumber(lastVal)} tokens</div>
       {hover && (
         <div
           className="chart-tip"
@@ -264,7 +266,7 @@ export function ThroughputChart({ series, active }: Props): React.ReactElement {
       <canvas
         ref={canvasRef}
         className="chart-canvas"
-        aria-label="吞吐量点阵图"
+        aria-label={t("吞吐量点阵图")}
         onPointerMove={onPointerMove}
         onPointerLeave={() => setHover(null)}
       />

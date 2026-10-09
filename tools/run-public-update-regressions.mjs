@@ -120,13 +120,15 @@ try {
   }
   const releaseDir = path.join(fixture, 'release'); await mkdir(releaseDir);
   for (const name of names) await writeFile(path.join(releaseDir, name), bytes);
+  const releaseVersion = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version;
   execFileSync(process.execPath, ['tools/write-public-release-manifest.mjs', releaseDir], {
-    cwd: root, env: { ...process.env, RELEASE_VERSION: '0.2.0', RELEASE_TAG: 'v0.2.0', GITHUB_REPOSITORY: 'Damue01/XwX_Deck' }
+    cwd: root, env: { ...process.env, RELEASE_VERSION: releaseVersion, RELEASE_TAG: `v${releaseVersion}`, GITHUB_REPOSITORY: 'Damue01/XwX_Deck' }
   });
   const published = JSON.parse(await readFile(path.join(releaseDir, 'release.json'), 'utf8'));
   const feed = parse(await readFile(path.join(releaseDir, 'latest.yml'), 'utf8'));
   assert.equal(published.files.length, 2);
-  assert.equal(feed.files[0].url, 'https://github.com/Damue01/XwX_Deck/releases/download/v0.2.0/XwX-Deck-windows-x64.exe');
+  assert.equal(feed.files[0].url, `https://github.com/Damue01/XwX_Deck/releases/download/v${releaseVersion}/XwX-Deck-windows-x64.exe`);
+  assert.ok(published.changelog.includes(`## [${releaseVersion}]`), 'release uses the actual version changelog');
   assert.equal(feed.files[0].sha512, sha512);
   assert.equal(published.files[0].sha256, sha256);
   assert.ok(!(await readdir(releaseDir)).some(name => /zip$|latest-mac/.test(name)));

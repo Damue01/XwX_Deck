@@ -1,4 +1,8 @@
+import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
+import { Dialog } from '@base-ui/react/dialog';
+import { X } from 'lucide-react';
+import { ImportConfigurations } from '../settings/ImportConfigurations';
 import type { PageId } from '@/features/shell/Rail';
 
 /** 一步导览：切到哪页、高亮哪个真实元素、气泡文案。 */
@@ -13,15 +17,21 @@ interface TourStep {
   readonly points?: readonly React.ReactNode[];
 }
 
-const STEPS: readonly TourStep[] = [
+function tourSteps(): readonly TourStep[] { return [
+  {
+    page: 'models',
+    selector: '[data-tour="models-proxy"]',
+    title: '选择客户端使用的模型服务',
+    lead: '选择已保存的服务和模型；未选择时保留客户端原有连接。',
+  },
   {
     page: 'signal',
     selector: '#captureBtn',
     title: '开始一次请求追踪',
     lead: '开启后，在客户端发一条新消息，就能在这里看到记录。',
     points: [
-      <>再次点击停止记录，模型服务设置保持不变。</>,
-      <>点中间的数字，可在 <b>Token</b> 与 <b>费用</b> 之间切换。</>
+      <>{t("再次点击停止记录，模型服务设置保持不变。")}</>,
+      <>{t("点中间的数字，可在")}<b>Token</b>{t("与")}<b>{t("费用")}</b>{t("之间切换。")}</>
     ]
   },
   {
@@ -30,20 +40,11 @@ const STEPS: readonly TourStep[] = [
     title: '仪表盘看每条详情',
     lead: '在浏览器中打开完整仪表盘，逐条查看请求。',
     points: [
-      <>可看模型、Token、耗时与内容，并按会话或客户端筛选。</>
+      <>{t("可看模型、Token、耗时与内容，并按会话或客户端筛选。")}</>
     ]
   },
-  {
-    page: 'models',
-    selector: '[data-tour="models-proxy"]',
-    title: '选择客户端使用的模型服务',
-    lead: '为 Claude 或 ChatGPT 选择官方订阅，或在设置页保存的模型服务。',
-    points: [
-      <>Claude 可为 Fable / Opus / Sonnet / Haiku 分别指定模型。</>,
-      <>ChatGPT 选一个默认模型即可。</>
-    ]
-  }
-];
+
+]; }
 
 const STORAGE_KEY = 'xwx-deck.onboardingSeen';
 const PAD = 8; // 高亮框外扩
@@ -55,6 +56,7 @@ function navigateTo(page: PageId): void {
 }
 
 export function OnboardingTour(): React.ReactElement | null {
+  const language = useLanguage();
   const [active, setActive] = React.useState<boolean>(() => {
     try {
       const query = new URLSearchParams(location.search);
@@ -64,9 +66,12 @@ export function OnboardingTour(): React.ReactElement | null {
       return localStorage.getItem(STORAGE_KEY) !== 'true';
     } catch { return true; }
   });
+  const [preparing, setPreparing] = React.useState(true);
+  const [importBusy, setImportBusy] = React.useState(false);
   const [index, setIndex] = React.useState(0);
   const [rect, setRect] = React.useState<Rect | null>(null);
 
+  const STEPS = React.useMemo(tourSteps, [language]);
   const step = STEPS[index];
 
   const finish = React.useCallback(() => {
@@ -75,11 +80,11 @@ export function OnboardingTour(): React.ReactElement | null {
   }, []);
 
   React.useEffect(() => {
-    if (!active) return;
+    if (!active || preparing) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') finish(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [active, finish]);
+  }, [active, preparing, finish]);
 
   React.useEffect(() => {
     if (active) document.body.dataset.tourActive = 'true';
@@ -92,12 +97,12 @@ export function OnboardingTour(): React.ReactElement | null {
   // instead of exposing an intermediate faded/scaled page.
   React.useLayoutEffect(() => {
     if (!active || !step) return;
-    navigateTo(step.page);
-  }, [active, step]);
+    navigateTo(preparing ? 'settings' : step.page);
+  }, [active, preparing, step]);
 
   // 定位目标元素（等切页后渲染出来，轮询一小段时间直到量到）
   React.useLayoutEffect(() => {
-    if (!active || !step) return;
+    if (!active || preparing || !step) return;
     let raf = 0;
     let tries = 0;
     let observedTarget: HTMLElement | null = null;
@@ -143,9 +148,19 @@ export function OnboardingTour(): React.ReactElement | null {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('scroll', onResize, true);
     };
-  }, [active, step]);
+  }, [active, preparing, step]);
 
   if (!active || !step) return null;
+
+  if (preparing) return <Dialog.Root open={active} onOpenChange={open => { if (!open && !importBusy) finish(); }}>
+    <Dialog.Portal>
+      <Dialog.Backdrop className="setup-card-backdrop" />
+      <Dialog.Popup className="configuration-dialog onboarding-import-dialog" id="onboarding-import-dialog">
+        <header className="configuration-header"><Dialog.Title>{t("导入已有配置")}</Dialog.Title><Dialog.Description className="sr-only">{t("检测已有配置，选择后导入，或跳过后继续新手引导。")}</Dialog.Description><Dialog.Close className="configuration-close" aria-label={t("跳过新手引导")} disabled={importBusy}><X size={17} aria-hidden="true" /></Dialog.Close></header>
+        <ImportConfigurations visible={active} onboarding onBack={() => setPreparing(false)} onBusyChange={setImportBusy} />
+      </Dialog.Popup>
+    </Dialog.Portal>
+  </Dialog.Root>;
 
   const last = index === STEPS.length - 1;
 
@@ -166,7 +181,7 @@ export function OnboardingTour(): React.ReactElement | null {
     : { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', maxHeight: window.innerHeight - 2 * MARGIN };
 
   return (
-    <div className="tour-root" role="dialog" aria-modal="true" aria-label="新手引导" data-tour-index={index}>
+    <div className="tour-root" role="dialog" aria-modal="true" aria-label={t("新手引导")} data-tour-index={index}>
       {/* 四块遮罩围出高亮洞；无 rect 时整屏遮罩 */}
       {rect ? (
         <div
@@ -184,8 +199,8 @@ export function OnboardingTour(): React.ReactElement | null {
 
       <div className="tour-bubble" style={bubbleStyle}>
         <div className="tour-content">
-          <h3 className="tour-title">{step.title}</h3>
-          <p className="tour-body">{step.lead}</p>
+          <h3 className="tour-title">{t(step.title)}</h3>
+          <p className="tour-body">{t(step.lead)}</p>
           {step.points && step.points.length > 0 && (
             <ul className="tour-points">
               {step.points.map((p, i) => <li key={i}>{p}</li>)}
@@ -198,14 +213,14 @@ export function OnboardingTour(): React.ReactElement | null {
           </div>
           <div className="tour-actions">
             {index === 0
-              ? <button type="button" className="tour-skip" onClick={finish}>跳过</button>
-              : <button type="button" className="tour-back" onClick={() => setIndex(index - 1)}>上一步</button>}
+              ? <button type="button" className="tour-skip" onClick={finish}>{t("跳过")}</button>
+              : <button type="button" className="tour-back" onClick={() => setIndex(index - 1)}>{t("上一步")}</button>}
             <button
               type="button"
               className="tour-next"
               onClick={() => (last ? finish() : setIndex(index + 1))}
             >
-              {last ? '开始使用' : '下一步'}
+              {last ? t('开始使用') : t('下一步')}
             </button>
           </div>
         </div>

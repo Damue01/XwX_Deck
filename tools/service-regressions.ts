@@ -1,3 +1,4 @@
+import { t } from '../src/renderer/lib/i18n';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -124,7 +125,7 @@ async function testModelActionConcurrency(): Promise<void> {
     modelCatalogSource: 'none', compatible: { model: 'gpt-5.6-sol' } };
   const pending = new Map<string, ReturnType<typeof deferred<any>>>();
   const context: any = vm.createContext({
-    Date, setTimeout, clearTimeout,
+    t, Date, setTimeout, clearTimeout,
     waitForModelCatalog: async (request: Promise<boolean>) => await request ? 'ready' : 'failed',
     React: { createElement: (...args: unknown[]) => ({ args }) },
     codexOperationRef: { current: false }, claudeOperationRef: { current: false },

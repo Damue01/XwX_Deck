@@ -2,7 +2,7 @@ import type { ModelCatalogEntry } from './modelCatalog';
 import type { ProviderConnection } from '../../shared/providers';
 
 export type CodexProtocol = 'responses' | 'chat-completions' | 'anthropic-messages';
-type ProtocolConnection = Pick<ProviderConnection, 'codexApiFormat'> & Partial<Pick<ProviderConnection, 'adapter'>>;
+type ProtocolConnection = Pick<ProviderConnection, 'codexApiFormat'> & Partial<Pick<ProviderConnection, 'adapter' | 'subscriptionAccountId'>>;
 
 /** Use the same precedence as the Gateway's model route, including automatic providers. */
 export function providerRequiresTrace(
@@ -10,7 +10,7 @@ export function providerRequiresTrace(
   modelId: string,
   catalog: readonly ModelCatalogEntry[] = []
 ): boolean {
-  return resolveProviderCodexProtocol(provider, modelId, catalog) !== 'responses';
+  return !!provider?.subscriptionAccountId || resolveProviderCodexProtocol(provider, modelId, catalog) !== 'responses';
 }
 
 export function resolveProviderCodexProtocol(

@@ -1,20 +1,27 @@
 import { OFFICIAL_PROVIDER_WEBSITES, type OfficialProviderId } from './officialProviders';
+import { ADDITIONAL_CLIENT_WEBSITES } from './clientDownloads';
+import { SUBSCRIPTION_USAGE_WEBSITES } from './subscriptionAccounts';
 
 export const CLIENT_DOWNLOAD_WEBSITES = {
-  'chatgpt-windows-official': 'https://apps.microsoft.com/detail/9PLM9XGG6VKS',
+  'chatgpt-windows-official': 'https://learn.chatgpt.com/docs/app',
   'chatgpt-windows-x64-mirror': 'https://codexapp.agentsmirror.com/latest/win-x64',
   'chatgpt-windows-arm64-mirror': 'https://codexapp.agentsmirror.com/latest/win-arm64',
-  'chatgpt-mac-arm64-official': 'https://persistent.oaistatic.com/codex-app-prod/Codex.dmg',
-  'chatgpt-mac-x64-official': 'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-26.1002.52244-x64.dmg',
+  'chatgpt-mac-arm64-official': 'https://learn.chatgpt.com/docs/app',
+  'chatgpt-mac-x64-official': 'https://learn.chatgpt.com/docs/app',
   'chatgpt-mac-arm64-mirror': 'https://codexapp.agentsmirror.com/latest/mac-arm64',
   'chatgpt-mac-x64-mirror': 'https://codexapp.agentsmirror.com/latest/mac-intel',
   'claude-windows-x64-mirror': 'https://claudeapp.agentsmirror.com/latest/win-x64',
   'claude-windows-arm64-mirror': 'https://claudeapp.agentsmirror.com/latest/win-arm64',
-  'claude-mac-mirror': 'https://claudeapp.agentsmirror.com/latest/mac'
+  'claude-mac-mirror': 'https://claudeapp.agentsmirror.com/latest/mac',
+  'codex-cli-unix-mirror': 'https://install.agentsmirror.com/codex/install.sh',
+  'codex-cli-windows-mirror': 'https://install.agentsmirror.com/codex/install.ps1',
+  'claude-code-unix-mirror': 'https://install.agentsmirror.com/claude/install.sh',
+  'claude-code-windows-mirror': 'https://install.agentsmirror.com/claude/install.ps1',
+  'npm-mirror': 'https://npmmirror.com/'
 } as const;
 
 export type SetupWebsite = keyof SetupWebsites;
-export interface SetupWebsites extends Readonly<typeof CLIENT_DOWNLOAD_WEBSITES>, Readonly<Record<OfficialProviderId, string>> {
+export interface SetupWebsites extends Readonly<typeof CLIENT_DOWNLOAD_WEBSITES>, Readonly<typeof ADDITIONAL_CLIENT_WEBSITES>, Readonly<typeof SUBSCRIPTION_USAGE_WEBSITES>, Readonly<Record<OfficialProviderId, string>> {
   readonly claude: string;
   readonly codex: string;
   readonly 'codex-mirror'?: string;
@@ -23,8 +30,7 @@ export interface SetupWebsites extends Readonly<typeof CLIENT_DOWNLOAD_WEBSITES>
   readonly 'codex-linux': string;
 }
 
-// Verified vendor downloads and the user's chosen mirror's permanent short links.
-// Intel's vendor download is versioned: refresh it when reviewing setup links.
+// Vendor pages let the user choose the current platform/version themselves.
 export function setupWebsitesFor(platform: string, arch: string): SetupWebsites {
   const mirrorTarget = platform === 'darwin'
     ? arch === 'arm64' ? 'mac-arm64' : arch === 'x64' ? 'mac-intel' : undefined
@@ -33,17 +39,11 @@ export function setupWebsitesFor(platform: string, arch: string): SetupWebsites 
       : undefined;
   return {
     ...CLIENT_DOWNLOAD_WEBSITES,
+    ...ADDITIONAL_CLIENT_WEBSITES,
+    ...SUBSCRIPTION_USAGE_WEBSITES,
     ...OFFICIAL_PROVIDER_WEBSITES,
     claude: 'https://claude.com/download',
-    codex: platform === 'darwin' && arch === 'arm64'
-      ? CLIENT_DOWNLOAD_WEBSITES['chatgpt-mac-arm64-official']
-      : platform === 'darwin' && arch === 'x64'
-        ? CLIENT_DOWNLOAD_WEBSITES['chatgpt-mac-x64-official']
-        : platform === 'win32'
-          ? CLIENT_DOWNLOAD_WEBSITES['chatgpt-windows-official']
-          : platform === 'linux'
-            ? 'https://learn.chatgpt.com/docs/linux/linux-app'
-            : 'https://learn.chatgpt.com/docs/app',
+    codex: 'https://learn.chatgpt.com/docs/app',
     'codex-mirror': mirrorTarget ? `https://codexapp.agentsmirror.com/latest/${mirrorTarget}` : undefined,
     'codex-downloads': 'https://learn.chatgpt.com/docs/app',
     'codex-mirror-list': 'https://codexapp.agentsmirror.com/#mirror',

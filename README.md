@@ -4,7 +4,7 @@ XwX Deck 是一个独立的本地 Claude / ChatGPT 请求追踪与模型网关�
 
 项目使用 [Apache License 2.0](LICENSE) 开源。
 
-当前源码版本：`1.0.0`。
+当前源码版本：`1.1.0`。
 
 本仓库按能力吸收上游修复，维护独立 Git 历史、应用身份和发布渠道。具体范围见 [技术吸收记录](docs/upstream-port.md)。当前独立版包含：
 
@@ -12,14 +12,14 @@ XwX Deck 是一个独立的本地 Claude / ChatGPT 请求追踪与模型网关�
 - Claude / ChatGPT 客户端接入；
 - 模型服务配置、模型选择与协议适配；
 - 本地 Gateway、会话归并与上下文续接；
-- ChatGPT 对话诊断，可检查索引与 Session 元数据；
 - 用量与分档/时段计费估算、模型能力注册表；
 - 经当前 Gateway 实测的推理能力层与模型档位诊断工具；
 - 当前问题与最近失败诊断、手动 Trace 索引修复、安全重置和退出恢复；
-- 外观、数据目录、开机启动等基础设置。
+- 外观、中英文语言、数据目录、开机启动等基础设置。
 
 独立版不包含：
 
+- 工具页与 ChatGPT 对话诊断；
 - 客户端配置同步；
 - Excel / CSV 转 Markdown。
 
@@ -34,15 +34,15 @@ XwX Deck 是一个独立的本地 Claude / ChatGPT 请求追踪与模型网关�
 
 当前没有 Intel Mac、Windows ARM64 或 Linux 安装包。Mac 安装包没有 Apple Developer ID 签名和公证，首次打开请参照 [安装说明](docs/macos-first-run.md)。[版本记录与文件校验](https://github.com/Damue01/XwX_Deck/releases/latest) 集中在 Release 页面。
 
-新安装没有 API 连接。进入「设置 → 模型配置」，可以查看 ChatGPT / Claude 的下载入口，或选择七个官方模型服务预设。客户端和官方模型服务图标分别可折叠、默认收起。服务预设栏支持左右滚动；右上角固定的「自定义」按钮可直接添加其他连接。预设只填入名称、API 地址与接口类型，密钥需要自己填写，保存前不会创建连接。
+新安装没有 API 连接。首次引导可检测并导入 Magpie、CC Switch 或客户端的已有配置；源文件保留，不自动切换连接。“设置 → 添加配置”提供 API 服务、订阅账号和客户端下载三个入口。服务预设默认只显示名称、URL、Key，高级协议设置按需展开。ChatGPT、Claude、GitHub Copilot、Grok、Cursor 订阅分别合并为一个模型服务，可管理多个账号和轮换策略；不支持的官方额度显示未知。
 
 在模型页为 ChatGPT 和 Claude 分别选择服务和模型。每个连接独立记住选择，目录离线不会撤销已保存的配置。需要协议转换的模型会显示「需 Trace」；运行中的客户端可能缓存旧连接，切换后未生效时需完整退出并重新打开客户端。
 
-Trace 新配置默认上限为 1 GB，默认开启超出上限自动清理；已有用户保存的容量与清理选择保留。可在设置中调整容量或关闭自动清理。手动删除和索引修复由用户发起。Trace 可能包含提示词、工具结果和响应正文，共享前请检查内容；只读对话诊断只检查索引与 Session 元数据。
+Trace 新配置默认上限为 1 GB，默认开启超出上限自动清理；已有用户保存的容量与清理选择保留。可在设置中调整容量或关闭自动清理。手动删除和索引修复由用户发起。Trace 可能包含提示词、工具结果和响应正文，共享前请检查内容。
 
 ## 开发与预览
 
-需要 Node.js 22.12+ 与 npm 11：
+需要 Node.js 22.12+、npm 11 和 Rust stable；Mac 需要 Command Line Tools，Windows 需要 MSVC 与 WebView2：
 
 ```bash
 npm ci
@@ -52,13 +52,13 @@ npm run docs:build
 npm run preview:web
 ```
 
-Electron 开发模式：
+Rust 原生开发模式（隔离配置）：
 
 ```bash
 npm run dev
 ```
 
-`preview:web` 提供带演示数据的设置界面预览；它不能证明真实客户端路由或 API 凭据有效。Electron 和 Gateway 回归使用隔离的配置目录与本地测试服务。
+`preview:web` 提供带演示数据的设置界面预览；它不能证明真实客户端路由或 API 凭据有效。Rust 原生回归和旧实现对照回归使用隔离的配置目录与本地测试服务。默认启动与发行构建已使用 Rust / Tauri，保留现有 React 页面。旧 TypeScript 后端只用于回归对照和构建时生成资源，不进入原生包。详见 [原生运行时](tools/native/README.md)。
 
 提交前的常规检查：
 
@@ -78,7 +78,7 @@ npm run docs:build
 - 应用 ID：`app.xwxdeck.desktop`
 - 数据目录命名空间：`xwx-deck`
 - Gateway 默认端口段：`45233-45242`
-- 当前版本：`1.0.0`
+- 当前版本：`1.1.0`
 - 自动更新：默认读取 GitHub Releases；可用 `XWX_DECK_UPDATE_SERVER_URL` 覆盖
 
 这些设置用于避免与内部 XwX Deck 安装共享配置、Trace 数据、单实例身份和 Gateway 端口。
@@ -95,8 +95,8 @@ Windows 制品必须在原生 Windows x64 主机验证；macOS 制品的签名�
 打包后验证真实安装包中的界面、Trace 请求和后台 Gateway：
 
 ```bash
-npm run test:packaged
-npm run test:packaged-gateway
+npm run build:rust:pilot
+npm run test:rust
 ```
 
 可用 `XWX_DECK_RELEASE_DIR` 指向另外的制品目录。上述命令使用隔离数据，不替换已安装应用。

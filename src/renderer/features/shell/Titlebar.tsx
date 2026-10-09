@@ -1,3 +1,4 @@
+import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
 import { Minus, Maximize2, Minimize2, X } from 'lucide-react';
 import { getApi } from '@/bridge/api';
@@ -7,7 +8,8 @@ interface Props {
   readonly nativeFrame: boolean;
 }
 
-export function Titlebar({ isMaximized, nativeFrame }: Props): React.ReactElement {
+export function Titlebar({ isMaximized, nativeFrame }: Props): React.ReactElement | null {
+  useLanguage();
   const api = getApi();
 
   const onPointerDown = React.useCallback((e: React.PointerEvent<HTMLElement>) => {
@@ -24,17 +26,19 @@ export function Titlebar({ isMaximized, nativeFrame }: Props): React.ReactElemen
     window.addEventListener('pointerup', onUp);
   }, [api, nativeFrame]);
 
+  if (nativeFrame) return null;
+
   return (
     <header
-      className={`titlebar${nativeFrame ? ' native-frame' : ''}`}
+      className="titlebar"
       onPointerDown={onPointerDown}
     >
       <div className="brand">XwX Deck</div>
-      {!nativeFrame && <div className="win" aria-label="窗口控制">
+      <div className="win" aria-label={t("窗口控制")}>
         <button
           type="button"
           className="wc"
-          aria-label="最小化"
+          aria-label={t("最小化")}
           onClick={() => void api.minimizeWindow()}
         >
           <Minus size={16} />
@@ -42,7 +46,7 @@ export function Titlebar({ isMaximized, nativeFrame }: Props): React.ReactElemen
         <button
           type="button"
           className="wc"
-          aria-label={isMaximized ? '还原' : '最大化'}
+          aria-label={isMaximized ? t('还原') : t('最大化')}
           onClick={() => void api.toggleMaximize()}
         >
           {isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -50,12 +54,12 @@ export function Titlebar({ isMaximized, nativeFrame }: Props): React.ReactElemen
         <button
           type="button"
           className="wc close"
-          aria-label="关闭"
+          aria-label={t("关闭")}
           onClick={() => void api.closeWindow()}
         >
           <X size={16} />
         </button>
-      </div>}
+      </div>
     </header>
   );
 }

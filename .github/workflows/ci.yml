@@ -68,5 +68,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Compile
-        run: npm run compile
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Compile native candidate and run isolated backend tests
+        run: |
+          npm run build:rust:pilot
+          npm run test:rust:backend
+
+      - name: Verify native WebView interactions
+        if: runner.os == 'macOS'
+        run: node tools/native/native-test.mjs

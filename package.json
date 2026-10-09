@@ -3,7 +3,7 @@
   "displayName": "XwX Deck",
   "description": "XwX Deck: local request tracing and model gateway management for Claude and ChatGPT.",
   "author": "XwX Deck",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "packageManager": "npm@11.6.2",
   "engines": {
@@ -35,17 +35,26 @@
     "test:gateway-upgrade": "node tools/run-gateway-helper-upgrade-smoke.mjs",
     "test:background-controller": "node tools/run-background-controller-smoke.mjs",
     "diagnose:trace": "node tools/trace-integrity.mjs",
-    "test:packaged": "node tools/run-packaged-smoke.mjs",
-    "test:packaged-gateway": "node tools/run-packaged-background-gateway-smoke.mjs",
-    "dev": "npm run check-types && node esbuild.config.mjs --development && electron .",
-    "start": "electron .",
+    "test:packaged": "npm run build:rust:pilot && node tools/native/native-test.mjs",
+    "test:packaged-gateway": "npm run test:rust:backend",
+    "dev": "npm run build:rust:pilot && npm run start:rust:isolated",
+    "start": "npm run start:rust",
     "preview:web": "node tools/serve-manager-preview.mjs",
     "update:pricing": "node tools/update-model-pricing.mjs",
-    "build:win": "npm run clean && npm run generate:icons:win && npm run test && electron-builder --win portable --publish never",
-    "build:mac:arm64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg --arm64 --publish never",
-    "build:mac:x64": "npm run clean && npm run generate:icons:mac && npm run test && electron-builder --mac dmg --x64 --publish never",
+    "build:win": "npm run clean && npm run generate:icons:win && npm run test && node tools/native/build.mjs",
+    "build:mac:arm64": "npm run clean && npm run generate:icons:mac && npm run test && node tools/native/build.mjs",
+    "build:mac:x64": "node tools/native/build.mjs --require-arch=x64",
     "repair:trace-index": "node tools/run-trace-index-repair.mjs",
-    "test:upstream": "node tools/run-provider-selection-regressions.mjs && node tools/run-claude-desktop-effort-regressions.mjs && node tools/test-application-reset-worker.mjs && node tools/run-theme-regressions.mjs && node tools/run-history-confirm-regressions.mjs && node tools/run-macos-installer-cleanup-smoke.mjs && node tools/run-public-update-regressions.mjs"
+    "test:upstream": "node tools/run-provider-selection-regressions.mjs && node tools/run-claude-desktop-effort-regressions.mjs && node tools/test-application-reset-worker.mjs && node tools/run-theme-regressions.mjs && node tools/run-history-confirm-regressions.mjs && node tools/run-macos-installer-cleanup-smoke.mjs && node tools/run-public-update-regressions.mjs",
+    "build:rust": "npm run compile && node tools/native/build.mjs",
+    "test:rust": "npm run test:rust:backend && node tools/native/native-test.mjs",
+    "test:rust:clients": "node tools/native/client-management-test.mjs",
+    "start:rust": "node tools/native/launch.mjs --production",
+    "build:rust:pilot": "npm run compile && node tools/native/build.mjs --pilot",
+    "test:rust:backend": "node tools/native/regressions.mjs && node tools/native/provider-presets-test.mjs && node tools/native/config-import-test.mjs && node tools/native/subscriptions-test.mjs && node tools/native/subscription-routing-test.mjs && node tools/native/subscription-usage-test.mjs && node tools/native/grok-subscriptions-test.mjs && node tools/native/copilot-subscriptions-test.mjs && node tools/native/claude-subscriptions-test.mjs && node tools/native/cursor-subscriptions-test.mjs && node tools/native/official-test.mjs && node tools/native/protocol-test.mjs && node tools/native/trace-index-repair-test.mjs && node tools/native/portability-test.mjs && node tools/native/preferences-test.mjs && node tools/native/update-test.mjs && node tools/native/migration-test.mjs && node tools/native/reasoning-test.mjs && node tools/native/client-management-test.mjs && node tools/native/language-test.mjs && node tools/native/portable-update-test.mjs",
+    "start:rust:isolated": "node tools/native/launch.mjs",
+    "start:legacy": "electron .",
+    "test:packaged:legacy": "node tools/run-packaged-smoke.mjs"
   },
   "build": {
     "appId": "app.xwxdeck.desktop",
@@ -175,11 +184,12 @@
     "url": "https://github.com/Damue01/XwX_Deck/issues"
   },
   "keywords": [
-    "electron",
     "claude",
     "chatgpt",
     "trace",
     "ai-gateway",
-    "openai-compatible"
+    "openai-compatible",
+    "rust",
+    "tauri"
   ]
 }

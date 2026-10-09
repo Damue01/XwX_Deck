@@ -1,3 +1,4 @@
+import { t, useLanguage } from '@/lib/i18n';
 "use client";
 
 import { Toast } from "@base-ui/react/toast";
@@ -31,6 +32,7 @@ function Toasts({
   position: ToastPosition;
   portalProps?: React.ComponentProps<typeof Toast.Portal>;
 }): React.ReactElement {
+  useLanguage();
   const { toasts } = Toast.useToastManager();
   const swipeDirection = getSwipeDirection(position);
 
@@ -85,8 +87,8 @@ function Toasts({
                 <div className="absolute right-2 top-2 flex shrink-0 items-center">
                   <Toast.Close
                     type="button"
-                    aria-label="关闭通知"
-                    title="关闭"
+                    aria-label={t("关闭通知")}
+                    title={t("关闭")}
                     className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                     data-slot="toast-close"
                   >
@@ -115,6 +117,7 @@ export function ToastProvider({
   portalProps,
   ...props
 }: ToastProviderProps): React.ReactElement {
+  useLanguage();
   return (
     <Toast.Provider toastManager={toastManager} {...props}>
       {children}

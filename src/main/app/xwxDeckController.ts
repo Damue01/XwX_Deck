@@ -1,6 +1,5 @@
-import { CodexConversationDoctor } from './codexConversationDoctor';
+
 import { DEFAULT_TRACE_LIMIT_GB, DEFAULT_TRACE_AUTO_CLEANUP } from '../../shared/traceDefaults';
-import type { CodexConversationHealthReport } from '../../shared/codexConversationHealth';
 import { validateProviderConnection } from './providerValidation';
 import type { ProviderValidationResult } from '../../shared/providers';
 import { applyTraceIndexRepair, inspectTraceIndexRepair, type AppliedTraceIndexRepair, type TraceIndexRepairPlan } from '../trace/traceIndexRepair';
@@ -61,13 +60,6 @@ import {
 } from '../trace/codexPreferredDirect';
 import { CodexModelCatalogManager } from '../trace/codexModelCatalogManager';
 import { CodexThreadTitleReader } from '../trace/codexThreadTitles';
-import { CodexConversationWorkerClient } from './codexConversationWorkerClient';
-import type {
-  CodexConversationDetailRequest,
-  CodexConversationHealthRow,
-  CodexConversationPageRequest,
-  CodexConversationPageResponse
-} from '../../shared/codexConversationHealth';
 import {
   CODEX_MAX_CONTEXT_WINDOW,
   CODEX_MIN_CONTEXT_WINDOW,
@@ -376,7 +368,6 @@ async function advisoryRead<T>(read: Promise<T>, client: string): Promise<T> {
 
 export class XwXDeckController {
   private readonly events = new EventEmitter();
-  private readonly codexConversationWorker = new CodexConversationWorkerClient();
   private traceStore!: TraceStore;
   private proxy!: TraceProxy;
   private readonly settingsStore: XwXDeckSettingsStore;
@@ -1025,7 +1016,6 @@ export class XwXDeckController {
     if (this.emergencyExitOperation) return this.emergencyExitOperation;
     this.shutdownRequested = true;
     const operation = (async () => {
-      await this.codexConversationWorker.dispose().catch(() => undefined);
       if (this.codexHistoryTimer) clearTimeout(this.codexHistoryTimer);
       this.codexHistoryTimer = undefined;
       const managedLocalBaseUrls = await this.managedLocalBaseUrls();
@@ -1279,7 +1269,6 @@ export class XwXDeckController {
   }
 
   private async shutdownUnlocked(options: XwXDeckShutdownOptions = {}): Promise<void> {
-    await this.codexConversationWorker.dispose().catch(() => undefined);
     const previousSettings = this.settings ?? await this.settingsStore.read();
     const returnToExternalConnection = options.disableTrace && await this.codexLocalProxy.hasPendingOriginalRestore();
     const managedLocalBaseUrls = await this.managedLocalBaseUrls();
@@ -2912,19 +2901,6 @@ export class XwXDeckController {
     await fs.promises.mkdir(this.traceStore.rootPath(), { recursive: true });
     const { shell } = await import('electron');
     await shell.openPath(this.traceStore.rootPath());
-  }
-
-  async readCodexConversationDetail(request: CodexConversationDetailRequest): Promise<CodexConversationHealthRow> {
-    return this.codexConversationWorker.detail(request);
-  }
-
-  cancelCodexConversationScan(requestId: string): boolean {
-    return this.codexConversationWorker.cancel(requestId);
-  }
-
-  setCodexConversationDiagnosticsActive(active: boolean): boolean {
-    this.codexConversationWorker.setActive(active);
-    return true;
   }
 
   async openLogFolder(): Promise<void> {
@@ -5375,21 +5351,6 @@ export class XwXDeckController {
     this.providerValidationControllers.get(id)?.abort();
     this.providerValidationControllers.delete(id);
     this.providerValidationGenerations.set(id, ++this.providerValidationSequence);
-  }
-
-
-  async diagnoseCodexConversations(): Promise<CodexConversationHealthReport> {
-    return new CodexConversationDoctor().diagnose();
-  }
-
-
-  async queryCodexConversations(request: CodexConversationPageRequest): Promise<CodexConversationPageResponse> {
-    return this.codexConversationWorker.query(request);
-  }
-
-
-  async detailCodexConversation(request: CodexConversationDetailRequest): Promise<CodexConversationHealthRow> {
-    return this.codexConversationWorker.detail(request);
   }
 
 

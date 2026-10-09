@@ -71,7 +71,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       'getState', 'getTraceStats', 'getUpdateState', 'checkForUpdates', 'setStartupEnabled', 'setTheme', 'setTraceAppearance', 'chooseTraceBackground', 'clearTraceBackground', 'repairApplication', 'resetApplication', 'toggleTracing', 'toggleClient',
       'getCodexConfig', 'getCodexEnhancements', 'updateCodexEnhancements',
       'getProviders', 'saveProvider', 'deleteProvider', 'switchClientProvider', 'fetchProviderModels', 'validateProvider', 'openSetupWebsite',
-      'diagnoseCodexConversations', 'queryCodexConversations', 'detailCodexConversation', 'cancelCodexConversationScan', 'setCodexConversationDiagnosticsActive', 'openCodexConversationPath', 'copyText',
+      'copyText',
       'inspectTraceIndexRepair', 'applyTraceIndexRepair',
       'getCompatibleServiceConfig', 'updateCompatibleServiceConfig', 'getModelServices', 'setModelService', 'isChatGptRunning',
       'getClaudeModels', 'updateClaudeModels', 'clearHistory', 'setTraceStoragePolicy', 'refresh', 'toggleMaximize', 'setManagerView', 'fetchModels',
@@ -119,13 +119,13 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     }
     const settingsButton = document.querySelector('.rail-btn[data-page="settings"]');
     const modelsButton = document.querySelector('.rail-btn[data-page="models"]');
-    const toolsButton = document.querySelector('.rail-btn[data-page="tools"]');
     const signalButton = document.querySelector('.rail-btn[data-page="signal"]');
     const fieldCanvas = document.querySelector('canvas.field');
     const appearanceTrigger = document.querySelector('[data-appearance-trigger]');
     const captureButton = document.getElementById('captureBtn');
     const stopCaptureButton = document.getElementById('stopCaptureBtn');
     const codexTab = document.querySelector('[data-client-tab="codex"]');
+    const selectCodexClient = () => codexTab.click();
     const codexPanel = document.querySelector('[data-client-panel="codex"]');
     const startupToggle = document.getElementById('startupToggle');
     const clearHistoryButton = document.getElementById('clearHistory');
@@ -135,7 +135,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     const codexAuthToggle = document.getElementById('codexAuthToggle');
     const codexHistoryToggle = document.getElementById('codexHistoryToggle');
     const codexServicePicker = document.querySelector('input[aria-label="ChatGPT 使用的模型服务"]');
-    if (!settingsButton || !modelsButton || !toolsButton || !signalButton || !fieldCanvas || !appearanceTrigger || !captureButton || !stopCaptureButton || !codexTab || !codexPanel) {
+    if (!settingsButton || !modelsButton || !signalButton || !fieldCanvas || !appearanceTrigger || !captureButton || !stopCaptureButton || !codexTab || !codexPanel) {
       throw new Error('manager interaction controls are missing');
     }
     if (!startupToggle || !document.getElementById('page-settings')?.contains(startupToggle)) {
@@ -199,7 +199,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       }
     };
     modelsButton.click();
-    codexTab.click();
+    selectCodexClient();
     await waitFor(
       () => document.getElementById('page-models')?.classList.contains('current') && !codexPanel.hasAttribute('hidden'),
       'ChatGPT model panel did not become visible'
@@ -256,7 +256,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     providerEdit.click();
     await waitFor(() => document.getElementById('provider-url')?.value === compatibleServiceBaseUrl, 'saved connection could not be edited');
     [...document.querySelectorAll('#provider-editor button')].find(button => button.textContent.trim() === '取消').click();
-    modelsButton.click(); codexTab.click();
+    modelsButton.click(); selectCodexClient();
     await selectCodexProvider('Fixture_API');
     settingsButton.click();
     await waitFor(() => document.getElementById('page-settings')?.classList.contains('current'), 'settings did not reopen');
@@ -318,58 +318,8 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     }
     repairClose.click();
     await waitFor(() => !document.getElementById('repairCenterSheet'), 'repair center sheet did not close');
-    toolsButton.click();
-    await waitFor(
-      () => document.getElementById('page-tools')?.classList.contains('current'),
-      'tools navigation click was not handled'
-    );
-    await waitFor(
-      () => document.querySelector('#conversationDoctor .conversation-table'),
-      'conversation diagnosis did not finish its initial scan'
-    );
-    const diagnosisHeaders = [...document.querySelectorAll('#conversationDoctor thead th')].map(th => th.textContent.trim());
-    if (JSON.stringify(diagnosisHeaders) !== JSON.stringify(['对话', '检查结果', '更新时间'])) {
-      throw new Error('diagnosis table must expose exactly the three upstream columns: ' + diagnosisHeaders.join(', '));
-    }
-    const paginationRect = document.querySelector('.conversation-pagination').getBoundingClientRect();
-    if (paginationRect.top < 0 || paginationRect.bottom > innerHeight) throw new Error('diagnosis pagination is outside the default window viewport');
-    const diagnosisRows = () => [...document.querySelectorAll('#conversationDoctor .conversation-table-row')];
-    const diagnosisNext = () => [...document.querySelectorAll('.conversation-pagination button')].find(button => button.textContent.trim() === '下一页');
-    await waitFor(() => diagnosisRows().length === 120 && diagnosisNext() && !diagnosisNext().disabled, 'diagnosis did not render the first bounded page');
-    diagnosisNext().click();
-    await waitFor(() => diagnosisRows().length === diagnosisFixtureRowCount - 120 && diagnosisNext().disabled, 'diagnosis next page did not load from the worker');
-    diagnosisRows()[0].click();
-    await waitFor(() => document.querySelector('.conversation-table-detail .conversation-file-table'), 'diagnosis row detail did not load on demand');
-    if (document.querySelector('.conversation-table-detail td')?.colSpan !== 3) throw new Error('diagnosis detail uses stale column span');
-    const rawMetadata = document.querySelector('.conversation-table-detail .conversation-raw');
-    if (!rawMetadata || rawMetadata.open) throw new Error('diagnosis raw fields must remain collapsed initially');
-    rawMetadata.querySelector('summary').click();
-    await waitFor(() => rawMetadata.open && rawMetadata.textContent.includes('session_meta'), 'diagnosis raw metadata disclosure did not open');
-    if (document.querySelector('#conversationDoctor').textContent.includes('packaged history body')) throw new Error('diagnosis exposed conversation body');
-    const searchInput = document.querySelector('input[aria-label="搜索对话"]');
-    const searchDiagnosis = value => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(searchInput, value);
-      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-    };
-    searchDiagnosis('Fixture 124');
-    await waitFor(() => diagnosisRows().length === 1 && diagnosisRows()[0].textContent.includes('Fixture 124'), 'diagnosis search did not reset to the first filtered page');
-    searchDiagnosis('');
-    await waitFor(() => diagnosisRows().length === 120 && !diagnosisNext().disabled, 'diagnosis search did not restore the first page');
-    document.querySelector('button[aria-label="对话列，排序"]').click();
-    await waitFor(() => [...document.querySelectorAll('.conversation-header-menu-item')].some(item => item.textContent.trim() === '标题 A 到 Z'), 'diagnosis sort menu did not open');
-    [...document.querySelectorAll('.conversation-header-menu-item')].find(item => item.textContent.trim() === '标题 A 到 Z').click();
-    await waitFor(() => diagnosisRows()[0]?.textContent.includes('Fixture 000'), 'diagnosis title sorting did not reach the worker');
-    document.querySelector('#conversationDoctorScan').click();
-    signalButton.click();
-    await waitFor(() => document.getElementById('page-signal')?.classList.contains('current'), 'diagnosis could not leave during refresh');
-    toolsButton.click();
-    await waitFor(() => diagnosisRows().length === 120 && !document.querySelector('#conversationDoctorScan').disabled, 'diagnosis did not recover after cancellation and reopening');
-    const removedSpreadsheetDropzoneId = ['excel', 'Dropzone'].join('');
-    const removedSpreadsheetPanelId = ['tool-panel-', 'excel'].join('');
-    if (document.getElementById(removedSpreadsheetDropzoneId) || document.getElementById(removedSpreadsheetPanelId)) {
-      throw new Error('removed Excel conversion UI returned with the conversation diagnosis page');
-    }
-    assertStableViewport('tools');
+    if (document.querySelector('.rail-btn[data-page="tools"]') || document.querySelector('#conversationDoctor')) throw new Error('removed tools UI returned');
+
     signalButton.click();
     await waitFor(
       () => document.getElementById('page-signal')?.classList.contains('current'),
@@ -543,7 +493,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       throw new Error('unexpected initial ChatGPT enhancement state');
     }
     modelsButton.click();
-    codexTab.click();
+    selectCodexClient();
     const enhancementsOn = await api.updateCodexEnhancements({ unifySessionHistory: true, migrateExisting: true });
     if (!enhancementsOn.unifySessionHistory || enhancementsOn.history?.migratedJsonlFiles !== 1 || enhancementsOn.history?.migratedStateRows !== diagnosisFixtureRowCount) {
       throw new Error('ChatGPT history migration did not update JSONL and SQLite');
@@ -631,7 +581,7 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
       afterStatus: capturedClaude.statusText
     };
     modelsButton.click();
-    codexTab.click();
+    selectCodexClient();
     await selectCodexProvider('官方订阅');
     if ((await api.getModelServices()).codex) throw new Error('ChatGPT did not switch to official service during Trace');
     if ((await api.getCodexConfig()).mode !== 'official') throw new Error('ChatGPT underlying config was not official during Trace');
@@ -741,9 +691,6 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
         themePersisted: themeExpected,
         themeRestored: themeBefore,
         initialViewport,
-        diagnosisHeaders,
-        diagnosisPagedRows: diagnosisFixtureRowCount,
-        diagnosisDetailLoaded: true,
         fieldPausedOffPage: true,
         fieldRenderer: fieldCanvas.dataset.renderer,
       },
@@ -787,9 +734,9 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
   const screenshotDir = process.env.XWX_DECK_SMOKE_SCREENSHOTS;
   if (screenshotDir) {
     await fs.mkdir(screenshotDir, { recursive: true });
-    for (const page of ['settings', 'models', 'tools', 'signal']) {
+    for (const page of ['settings', 'models', 'signal']) {
       await managerWindow.webContents.executeJavaScript(`document.querySelector('.rail-btn[data-page="${page}"]').click()`);
-      if (page === 'models') await managerWindow.webContents.executeJavaScript(`document.querySelector('[data-client-tab="codex"]').click()`);
+      if (page === 'models') await managerWindow.webContents.executeJavaScript(`document.querySelector('[data-client-tab="codex"]').click();`);
       await new Promise(resolve => setTimeout(resolve, 500));
       const obstructed = await managerWindow.webContents.executeJavaScript(`!!document.querySelector('.tour-root, [role="alertdialog"]')`);
       if (obstructed) throw new Error(`UI capture for ${page} is obstructed by a modal`);

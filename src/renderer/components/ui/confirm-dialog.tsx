@@ -1,3 +1,4 @@
+import { t, useLanguage } from '@/lib/i18n';
 "use client";
 
 import { AlertDialog } from "@base-ui/react/alert-dialog";
@@ -52,6 +53,7 @@ interface DialogState extends ConfirmOptions {
 const CLOSED: DialogState = { open: false, title: "" };
 
 export function ConfirmDialogProvider({ children }: { children: React.ReactNode }): React.ReactElement {
+  useLanguage();
   const [state, setState] = React.useState<DialogState>(CLOSED);
   const [checked, setChecked] = React.useState(false);
   const resolverRef = React.useRef<((value: ConfirmCheckedResult) => void) | null>(null);
@@ -136,14 +138,14 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
                 className="btn"
                 onClick={() => settle(false)}
               >
-                {state.cancelText ?? "取消"}
+                {state.cancelText ?? t("取消")}
               </button>
               <button
                 type="button"
                 className={cn("btn", tone === "danger" ? "danger" : "primary")}
                 onClick={() => settle(true)}
               >
-                {state.confirmText ?? "确定"}
+                {state.confirmText ?? t("确定")}
               </button>
             </div>
           </AlertDialog.Popup>

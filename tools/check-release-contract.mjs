@@ -1,99 +1,30 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-
-const root = path.resolve(import.meta.dirname, '..');
-const [contract, packageJson, license, runtime, esbuild, applicationReset, ports, updater, updateServer, app, rail, preload, handlers, workflows] = await Promise.all([
-  readJson('release-contract.json'), readJson('package.json'), readText('LICENSE'),
-  readText('src/main/runtime.ts'),
-  readText('esbuild.config.mjs'), readText('src/main/app/applicationReset.ts'),
-  readText('src/main/trace/tapPortLock.ts'), readText('src/main/update/xwxDeckUpdater.ts'),
-  readText('src/main/update/updateServer.ts'), readText('src/renderer/App.tsx'),
-  readText('src/renderer/features/shell/Rail.tsx'), readText('src/main/preload.ts'),
-  readText('src/main/ipc/registerHandlers.ts'),
-  Promise.all([
-    readText('.github/workflows/ci.yml'),
-    readText('.github/workflows/pages.yml'),
-    readText('.github/workflows/release.yml')
-  ]).then(values => values.join('\n'))
+const root=path.resolve(import.meta.dirname,'..');
+const read=file=>readFile(path.join(root,file),'utf8');
+const [contract,pkg,config,cargo,main,core,clients,updates,build,bridge,app,rail,license,workflows]=await Promise.all([
+  read('release-contract.json').then(JSON.parse),read('package.json').then(JSON.parse),read('src-native/tauri.conf.json').then(JSON.parse),read('src-native/Cargo.toml'),read('src-native/src/main.rs'),read('src-native/src/core.rs'),read('src-native/src/clients.rs'),read('src-native/src/updates.rs'),read('tools/native/build.mjs'),read('tools/native/bridge.ts'),read('src/renderer/App.tsx'),read('src/renderer/features/shell/Rail.tsx'),read('LICENSE'),Promise.all(['ci','pages','release'].map(n=>read(`.github/workflows/${n}.yml`))).then(v=>v.join('\n'))
 ]);
-const failures = [];
-check(contract.schemaVersion === 1, 'release contract schemaVersion must be 1');
-check(contract.product === 'XwX Deck', 'release contract product mismatch');
-check(contract.edition === 'standalone', 'release contract must describe the standalone edition');
-check(packageJson.name === contract.identity.packageName, 'package name does not match the release contract');
-check(packageJson.build?.appId === contract.identity.appId, 'appId does not match the release contract');
-check(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(packageJson.version),
-  'package version must be semantic');
-check(packageJson.license === contract.openSource.license, 'package license must match the release contract');
-check(license.includes('Apache License') && license.includes('Version 2.0'),
-  'Apache License 2.0 text is required');
-check(runtime.includes(`path.join(app.getPath('appData'), '${contract.identity.dataNamespace}')`), 'runtime userData namespace mismatch');
-check(runtime.includes(`app.setAppUserModelId('${contract.identity.appId}')`), 'Windows app identity mismatch');
-check(ports.includes(`PRIMARY_TAP_PORT = ${contract.identity.gatewayPortRange[0]}`), 'Gateway port range mismatch');
-check(packageJson.build?.publish?.[0]?.url === contract.updates.defaultServer,
-  'electron-builder update metadata must point to GitHub Releases');
-check(updateServer.includes(`DEFAULT_UPDATE_SERVER = '${contract.updates.defaultServer}'`),
-  'default updater must point to GitHub Releases');
-check(updateServer.includes("DEFAULT_METADATA_PUSH_SERVER = ''"), 'metadata push must be disabled by default');
-check(updater.includes('Boolean(updateServerUrl())'), 'updater must require explicit server configuration');
-check(updater.includes('return this.serverUrl();'), 'updater feed must use the GitHub release download root directly');
-check(JSON.stringify(contract.providerFramework?.userFields) === JSON.stringify(['displayName', 'baseUrl', 'key', 'adapter', 'codexModel']),
-  'provider settings must expose the standalone connection fields');
-check(contract.providerFramework?.discovery === 'automatic-or-explicit-adapter',
-  'provider model discovery must remain automatic');
-check(contract.providerFramework?.protocolSelection === 'explicit-adapter-or-per-model-metadata',
-  'provider protocol selection must be driven by model metadata');
-check(contract.providerFramework?.defaultConnections?.length === 0, 'no default providers');
-check(contract.features?.automaticTraceCleanup === true
-  && contract.traceRetention?.unlimitedByDefault === false
-  && contract.traceRetention?.defaultStorageLimitGB === 1
-  && contract.traceRetention?.automaticCleanupEnabledByDefault === true
-  && contract.traceRetention?.preservesExplicitUserSettings === true,
-  'Trace must default to 1 GB automatic cleanup and preserve explicit user settings');
-check(contract.features?.repairCenter === true, 'repair center must remain enabled');
-check(contract.features?.safeExitRecovery === true, 'safe exit recovery must remain enabled');
-check(contract.features?.toolsPage === true && contract.features?.conversationDiagnostics === true,
-  'conversation diagnostics tools page must remain enabled');
-check(contract.features?.configurationSync === false && contract.features?.excelToMarkdown === false,
-  'configuration sync and Excel conversion must remain disabled');
-check(preload.includes('repairApplication') && preload.includes('resetApplication'),
-  'preload must expose the repair center actions');
-check(handlers.includes('xwxdeck:repair-application') && handlers.includes('xwxdeck:reset-application'),
-  'main process must register the repair center IPC');
-check(runtime.includes('launchApplicationResetWorker') && esbuild.includes("'application-reset-worker': 'src/main/applicationResetWorker.ts'") && runtime.includes('shutdownControllerWithConfirmation') && runtime.includes('cancelShutdown'),
-  'runtime must retain reset and cancellable configuration recovery');
-check(esbuild.includes("'exit-recovery': 'src/main/exitRecovery.ts'"),
-  'build must include the detached exit recovery entrypoint');
-check(applicationReset.includes('assertSafeResetDirectory'),
-  'application reset must keep its destructive-operation safety gate');
-check(workflows.includes('npm run docs:build'), 'GitHub workflows must build the VitePress documentation');
-check(workflows.includes('write-public-release-manifest.mjs'), 'release workflow must create public update manifests');
-check(workflows.includes('--draft'), 'release workflow must create a draft before public release');
-for (const [label, content] of Object.entries({ app, rail, preload, handlers })) {
-  check(!/SyncPage|config-sync|excel-progress|convert-excel|choose-excel|open-excel|read-excel/.test(content), `${label} still exposes a removed feature`);
-}
-check(contract.platforms.windows.installMode === 'automatic', 'Windows update mode must remain automatic');
-check(contract.platforms.macosArm64.installMode === 'manual-dmg' && contract.platforms.macosArm64.automaticInstall === false,
-  'unsigned macOS must use manual DMG installation');
-check(!updater.includes('MacUpdater'), 'unsigned macOS must not instantiate MacUpdater');
-check(packageJson.build.mac.target.length === 1 && packageJson.build.mac.target[0] === 'dmg'
-  && !packageJson.scripts['build:mac:arm64'].includes('dmg zip'), 'public macOS build must ship DMG only');
-check(!workflows.includes('latest-mac.yml') && !workflows.includes('mac-arm64.zip'), 'public workflow cannot publish a Mac auto-update feed');
-check(esbuild.includes("'portable-update-worker': 'src/main/portableUpdateWorker.ts'"), 'portable update worker must be bundled');
-check(workflows.includes('npm run test:upstream'), 'CI/release must run update and interaction regressions');
-const nightly = await readText('src/main/update/nightlyUpdate.ts');
-check(JSON.stringify(contract.updates.nightly.windowLocalHours) === JSON.stringify([2, 5])
-  && nightly.includes('NIGHTLY_WINDOW_START_HOUR = 2') && nightly.includes('NIGHTLY_WINDOW_END_HOUR = 5')
-  && contract.updates.nightly.idleThresholdSeconds === 900 && nightly.includes('NIGHTLY_IDLE_THRESHOLD_SECONDS = 15 * 60'),
-  'nightly update schedule must match the release contract');
-check(updater.includes('saveDeclinedVersion(cancelledVersion)') && updater.includes('confirmReleaseSelection'),
-  'update cancellation must persist and installation must revalidate the release');
-if (failures.length) {
-  console.error('Release contract check failed:');
-  for (const failure of failures) console.error(`- ${failure}`);
-  process.exit(1);
-}
-console.log('PASS standalone XwX Deck release contract');
-function check(condition, message) { if (!condition) failures.push(message); }
-async function readText(file) { return readFile(path.join(root, file), 'utf8'); }
-async function readJson(file) { return JSON.parse(await readText(file)); }
+const failures=[];const check=(v,m)=>{if(!v)failures.push(m);};
+check(contract.schemaVersion===1&&contract.edition==='standalone'&&contract.product==='XwX Deck','standalone contract identity');
+check(pkg.name===contract.identity.packageName&&config.identifier===contract.identity.appId,'native/package app identity');
+check(config.version===pkg.version&&cargo.includes(`version = "${pkg.version}"`),'native/package versions');
+check(core.includes('45233..=45242')||core.includes('45233u16..=45242'),'Gateway range');
+check(main.includes('Application Support/xwx-deck')&&main.includes('.join("xwx-deck")'),'native data namespace');
+check(pkg.license==='Apache-2.0'&&license.includes('Apache License'),'Apache license');
+check(pkg.scripts.start==='npm run start:rust'&&pkg.scripts['build:mac:arm64'].includes('tools/native/build.mjs')&&pkg.scripts['build:win'].includes('tools/native/build.mjs'),'default runtime and packaging must use Rust');
+check(!build.includes('electron-builder')&&build.includes('licenses.html')&&main.includes('licenses.html')&&build.includes('meta charset="utf-8"')&&build.includes('Applications')&&build.includes('首次打开说明'),'native packaging and licenses');
+check(cargo.includes('opt-level = "z"')&&cargo.includes('lto = true')&&cargo.includes('strip = true'),'release size optimization');
+check(config.app.security.capabilities.every(c=>c.windows.length===1&&c.windows[0]==='main')&&/caller\.label\(\)\s*!\s*=\s*"main"/.test(main),'remote Viewer cannot invoke client configuration commands');
+check(main.includes('tauri_plugin_autostart')&&main.includes('TrayIconBuilder')&&main.includes('api.prevent_exit()')&&clients.includes('gateway-recovery.json'),'startup, background reopen, safe exit and crash recovery');
+check(core.includes('connections: vec![]')&&core.includes('trace_warning_gb: 1.0')&&core.includes('trace_auto_cleanup: true'),'empty install and 1GB automatic retention');
+check(contract.traceRetention.preservesExplicitUserSettings&&core.includes('default)]')&&core.includes('settings-before-native-migration.json'),'explicit settings preserved on native migration');
+check(contract.features.repairCenter&&contract.features.safeExitRecovery&&!contract.features.toolsPage&&!contract.features.conversationDiagnostics&&!contract.features.configurationSync&&!contract.features.excelToMarkdown,'retained and removed feature contract');
+for(const[label,text]of Object.entries({app,rail,bridge,main,core}))check(!/ToolsPage|diagnoseCodexConversations|queryCodexConversations|SyncPage|convert-excel/.test(text),`${label}: removed feature still exposed`);
+check(JSON.stringify(contract.providerFramework.userFields)===JSON.stringify(['displayName','baseUrl','key','adapter','codexModel'])&&contract.providerFramework.defaultConnections.length===0,'provider fields and no defaults');
+check(updates.includes(contract.updates.defaultServer)&&updates.includes('XWX_DECK_UPDATE_SERVER_URL')&&updates.includes('declined-update.json')&&/latest\s*!=\s*selected/.test(updates)&&updates.includes('SHA-256'),'native updates validate immutable release, persist cancellation and verify package');
+check(contract.platforms.macosArm64.installMode==='manual-dmg'&&!contract.platforms.macosArm64.automaticInstall&&main.includes('open_path(path'),'unsigned Mac manual DMG');
+check(contract.platforms.windows.installMode==='automatic'&&main.includes('portable_update::spawn'),'Windows native portable replacement');
+check(workflows.includes('npm run docs:build')&&workflows.includes('write-public-release-manifest.mjs')&&workflows.includes('--draft')&&workflows.includes('npm run test:upstream'),'documentation, regression and draft release gates');
+check(workflows.includes('npm run test:rust:backend')&&workflows.includes('Set up Rust'),'CI must compile and regress native backend');
+if(failures.length){console.error(failures.map(f=>`- ${f}`).join('\n'));process.exit(1);}console.log('PASS standalone native XwX Deck release contract');

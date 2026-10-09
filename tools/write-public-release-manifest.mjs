@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { readdir, stat, writeFile } from 'node:fs/promises';
+import { readdir, stat, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const directory = path.resolve(process.argv[2] || 'release-assets');
@@ -52,6 +52,12 @@ for (const definition of artifactDefinitions) {
   }
 }
 
+const changelogSource = await readFile(path.resolve(import.meta.dirname, '../CHANGELOG.md'), 'utf8');
+const heading = `## [${version}]`;
+const start = changelogSource.indexOf(heading);
+if (start < 0) throw new Error(`Missing changelog for ${version}`);
+const next = changelogSource.indexOf('\n## [', start + heading.length);
+const releaseChanges = changelogSource.slice(start, next < 0 ? undefined : next).trim();
 const publishedAt = new Date().toISOString();
 await writeFile(path.join(directory, 'release.json'), `${JSON.stringify({
   schemaVersion: 1,
@@ -59,12 +65,14 @@ await writeFile(path.join(directory, 'release.json'), `${JSON.stringify({
   version,
   tag,
   publishedAt,
-  changelog: `XwX Deck ${version}`,
+  changelog: releaseChanges,
   files
 }, null, 2)}\n`, 'utf8');
 await writeFile(path.join(directory, 'checksums.txt'), `${checksumLines.join('\n')}\n`, 'utf8');
 await writeFile(path.join(directory, 'release-notes.md'), [
   `# XwX Deck ${version}`,
+  '',
+  releaseChanges,
   '',
   '本版本提供 Windows x64 便携版和 Apple Silicon Mac 安装包。',
   '',

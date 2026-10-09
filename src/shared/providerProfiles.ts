@@ -3,6 +3,10 @@ export type ProviderPresetId =
   | 'openai-compatible'
   | 'compatible'
   | 'volcengine-ark'
+  | 'qwen-coding-plan'
+  | 'zhipu-coding-plan'
+  | 'kimi-coding-plan' | 'minimax-coding-plan' | 'zai-coding-plan'
+  | 'local-ollama' | 'local-lmstudio' | 'local-llamacpp' | 'local-vllm' | 'local-localai'
   | 'custom';
 
 export type ProviderModelCatalogMode = 'auto' | 'openai' | 'multi-protocol' | 'manual';
@@ -59,6 +63,24 @@ export const PROVIDER_PROFILES: readonly ProviderProfile[] = [
     imageGenerationPolicy: 'allow',
     description: '自动尝试方舟模型目录；若账户不公开目录，再降级为手动填写 Endpoint ID。'
   },
+  {
+    id: 'qwen-coding-plan', label: '百炼 Coding Plan', defaultDisplayName: 'Bailian_Coding',
+    defaultBaseUrl: 'https://coding.dashscope.aliyuncs.com/v1', modelCatalogMode: 'auto', supportsClaude: true,
+    imageGenerationPolicy: 'block', description: '编程套餐的独立地址与密钥，保存后由客户端新任务验证，不自动发送测试消息。'
+  },
+  {
+    id: 'zhipu-coding-plan', label: '智谱 Coding Plan', defaultDisplayName: 'GLM_Coding',
+    defaultBaseUrl: 'https://open.bigmodel.cn/api/v1', modelCatalogMode: 'auto', supportsClaude: true,
+    imageGenerationPolicy: 'block', description: '智谱编程套餐的 Codex Responses 入口，不混用普通按量 API。'
+  },
+  { id: 'kimi-coding-plan', label: 'Kimi Code', defaultDisplayName: 'Kimi_Code', defaultBaseUrl: 'https://api.kimi.com/coding/v1', modelCatalogMode: 'openai', supportsClaude: true, imageGenerationPolicy: 'block', description: '编程套餐的独立配置。' },
+  { id: 'minimax-coding-plan', label: 'MiniMax M Plan', defaultDisplayName: 'MiniMax_M_Plan', defaultBaseUrl: 'https://api.minimax.io/v1', modelCatalogMode: 'openai', supportsClaude: true, imageGenerationPolicy: 'block', description: '编程套餐的独立配置。' },
+  { id: 'zai-coding-plan', label: 'Z.AI Coding Plan', defaultDisplayName: 'ZAI_Coding', defaultBaseUrl: 'https://api.z.ai/api/v1', modelCatalogMode: 'openai', supportsClaude: true, imageGenerationPolicy: 'block', description: '编程套餐的独立配置。' },
+  { id: 'local-ollama', label: 'Ollama', defaultDisplayName: 'Ollama', defaultBaseUrl: 'http://127.0.0.1:11434/v1', modelCatalogMode: 'openai', supportsClaude: true, imageGenerationPolicy: 'allow', description: '本机 OpenAI 兼容服务。' },
+  { id: 'local-lmstudio', label: 'LM Studio', defaultDisplayName: 'LM_Studio', defaultBaseUrl: 'http://127.0.0.1:1234/v1', modelCatalogMode: 'openai', supportsClaude: true, imageGenerationPolicy: 'allow', description: '本机 OpenAI 兼容服务。' },
+  { id: 'local-llamacpp', label: 'llama.cpp', defaultDisplayName: 'llama_cpp', defaultBaseUrl: 'http://127.0.0.1:8080/v1', modelCatalogMode: 'openai', supportsClaude: true, imageGenerationPolicy: 'allow', description: '本机 OpenAI 兼容服务。' },
+  { id: 'local-vllm', label: 'vLLM', defaultDisplayName: 'vLLM', defaultBaseUrl: 'http://127.0.0.1:8000/v1', modelCatalogMode: 'openai', supportsClaude: true, imageGenerationPolicy: 'allow', description: '本机 OpenAI 兼容服务。' },
+  { id: 'local-localai', label: 'LocalAI', defaultDisplayName: 'LocalAI', defaultBaseUrl: 'http://127.0.0.1:8080/v1', modelCatalogMode: 'openai', supportsClaude: true, imageGenerationPolicy: 'allow', description: '本机 OpenAI 兼容服务。' },
   {
     id: 'custom',
     label: '自定义',

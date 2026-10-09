@@ -5,7 +5,9 @@
   "sourceCommit": "9b2f522d272681651cc1175eb5bcfd46ae4465db",
   "removedFeatures": [
     "configuration-sync",
-    "excel-to-markdown"
+    "excel-to-markdown",
+    "tools-page",
+    "conversation-diagnostics"
   ],
   "forbiddenPatterns": [
     "10\\.10\\.114\\.104",

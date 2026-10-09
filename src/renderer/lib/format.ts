@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n';
 // Pure formatting helpers ported from src/main/trace/webview/common.ts.
 // No DOM manipulation here — all functions are stateless and browser-environment-agnostic.
 
@@ -56,7 +57,7 @@ export function tokenCostPresentation(options: {
       label: 'USD',
       value: Number(options.costUsd || 0).toFixed(2),
       unit: '$',
-      toggleHint: english ? 'Show Token usage' : '点击查看 Token 使用量'
+      toggleHint: english ? 'Show Token usage' : t('点击查看 Token 使用量')
     };
   }
   const n = options.compact ? compactNumber(options.tokens) : { value: formatNumber(options.tokens), unit: '' };
@@ -64,7 +65,7 @@ export function tokenCostPresentation(options: {
     label: 'TOKENS',
     value: n.value,
     unit: n.unit,
-    toggleHint: english ? 'Show estimated cost' : '点击查看费用'
+    toggleHint: english ? 'Show estimated cost' : t('点击查看费用')
   };
 }
 

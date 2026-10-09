@@ -89,7 +89,7 @@ for (const entry of lockedWindowsAssets) {
   check(actualSha256 !== '' && actualSha256 === entry?.sha256,
     `${entry?.path || 'Windows icon asset'} does not match design/windows-icon-assets.json`);
 }
-check(managerWindow.includes("titleBarStyle: 'hiddenInset'"), 'macOS manager window must use an AppKit native hidden-inset title bar');
+check(managerWindow.includes("titleBarStyle: 'default'"), 'macOS manager window must use the visible AppKit native title bar');
 check(managerWindow.includes("nativeMacWindow\n        ? { frame: true"), 'macOS manager window must retain its native frame');
 
 for (const file of [

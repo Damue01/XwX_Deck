@@ -1,12 +1,13 @@
+import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
 import { Menu } from '@base-ui/react/menu';
-import { ChevronDown, Ellipsis, Eye, EyeOff, Plus } from 'lucide-react';
+import { ChevronDown, Ellipsis, Eye, EyeOff } from 'lucide-react';
 import { ProviderIcon, providerIconKind } from './ProviderIcon';
-import { ProviderSetupShortcuts } from './ProviderSetupShortcuts';
-import { newProviderDraft, type OfficialProviderId } from '../../../shared/officialProviders';
+import { AddConfigurationDialog, type ConfigurationTab } from './AddConfigurationDialog';
+import { isCodingPlanConnection, isLocalProvider, newProviderDraft, officialProviderForUrl, type OfficialProviderId } from '../../../shared/officialProviders';
 import { useBridge } from '@/bridge/store';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { OPEN_PROVIDER_SETTINGS_EVENT, showErrorToast, showToast } from '@/lib/toast';
+import { OPEN_CONFIGURATION_EVENT, OPEN_PROVIDER_SETTINGS_EVENT, showErrorToast, showToast, type ConfigurationEntry } from '@/lib/toast';
 import { modelCatalogFailureMessage } from '../../../shared/modelCatalogError';
 import {
   providerNameError,
@@ -26,45 +27,48 @@ function adapterLabel(adapter: ProviderValidationResult['suggestedAdapter']): st
 function showValidationResult(result: ProviderValidationResult): void {
   if (result.status === 'stale') return;
   if (result.status === 'valid') {
-    showToast(`${result.providerName} 连接验证成功`, 'success', VALIDATION_TOAST_ID);
+    showToast(t("{0} 连接验证成功", result.providerName), 'success', VALIDATION_TOAST_ID);
     return;
   }
   if (result.status === 'suggestion' && result.suggestedBaseUrl && result.suggestedAdapter) {
     const protocolOnly = result.suggestionReason === 'protocol';
-    showToast(`${result.providerName} 的${protocolOnly ? '接口类型' : '接口地址'}可能有误`, 'info', VALIDATION_TOAST_ID, {
+    showToast(t("{0} 的{1}可能有误", result.providerName, t(protocolOnly ? '接口类型' : '接口地址')), 'info', VALIDATION_TOAST_ID, {
       description: protocolOnly
-        ? `当前模型通过 ${adapterLabel(result.suggestedAdapter)} 验证。建议在连接中选择该接口；当前配置未更改。`
-        : `建议将 API 地址改为 ${result.suggestedBaseUrl}，接口选择 ${adapterLabel(result.suggestedAdapter)}。当前配置未更改。`,
+        ? t("当前模型通过 {0} 验证。建议在连接中选择该接口；当前配置未更改。", adapterLabel(result.suggestedAdapter))
+        : t("建议将 API 地址改为 {0}，接口选择 {1}。当前配置未更改。", result.suggestedBaseUrl, adapterLabel(result.suggestedAdapter)),
       timeout: 12_000
     });
     return;
   }
   if (result.status === 'authentication-error') {
-    showToast(`${result.providerName} 地址可达，但密钥无效或权限不足`, 'error', VALIDATION_TOAST_ID, { timeout: 8_000 });
+    showToast(t("{0} 地址可达，但密钥无效或权限不足", result.providerName), 'error', VALIDATION_TOAST_ID, { timeout: 8_000 });
     return;
   }
   if (result.status === 'model-error') {
-    showToast(`${result.providerName} 地址可达，但模型 ID 不可用`, 'info', VALIDATION_TOAST_ID, { timeout: 8_000 });
+    showToast(t("{0} 地址可达，但模型 ID 不可用", result.providerName), 'info', VALIDATION_TOAST_ID, { timeout: 8_000 });
     return;
   }
   if (result.status === 'reachable') {
-    showToast(`${result.providerName} 接口可达，但未能完成模型验证`, 'info', VALIDATION_TOAST_ID, { timeout: 8_000 });
+    showToast(t("{0} 接口可达，但未能完成模型验证", result.providerName), 'info', VALIDATION_TOAST_ID, { timeout: 8_000 });
     return;
   }
-  showToast(`${result.providerName} 暂时无法完成连接验证`, 'error', VALIDATION_TOAST_ID, {
-    description: '配置已保存且未自动更改，请检查地址或稍后重试。',
+  showToast(t("{0} 暂时无法完成连接验证", result.providerName), 'error', VALIDATION_TOAST_ID, {
+    description: t('配置已保存且未自动更改，请检查地址或稍后重试。'),
     timeout: 8_000
   });
 }
 
 export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void }): React.ReactElement {
+  useLanguage();
   const bridge = useBridge();
   const confirm = useConfirm();
   const [drafts, setDrafts] = React.useState<Record<string, ProviderInput>>({});
   const [draftKey, setDraftKey] = React.useState('new');
   const [editorOpen, setEditorOpen] = React.useState(false);
-  const [setupProvider, setSetupProvider] = React.useState<OfficialProviderId | null>(null);
-  const [serviceShortcutsOpen, setServiceShortcutsOpen] = React.useState(false);
+  const [setupProvider, setSetupProvider] = React.useState<OfficialProviderId | 'custom' | null>(null);
+  const [configurationTab, setConfigurationTab] = React.useState<ConfigurationTab>('services');
+  const [subscriptionPlatform, setSubscriptionPlatform] = React.useState<'chatgpt' | 'grok' | 'copilot' | 'claude' | 'cursor'>('chatgpt');
+  const [dialogOpen, setDialogOpen] = React.useState(false);
   const draft = drafts[draftKey] ?? null;
   const setDraft = (value: ProviderInput | null) => setDrafts(current => {
     const next = { ...current };
@@ -76,14 +80,29 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
   const [busy, setBusy] = React.useState(false);
   const previousName = bridge.providers?.connections.find(provider => provider.id === draft?.id)?.displayName;
   const nameError = draft ? providerNameError(draft.displayName, previousName)
-    || (draft.displayName !== previousName && bridge.providers?.connections.some(provider => provider.id !== draft.id && (provider.displayName === draft.displayName || provider.codexProviderId === draft.displayName)) ? '此名称已被其他连接使用。' : undefined) : undefined;
+    || (draft.displayName !== previousName && bridge.providers?.connections.some(provider => provider.id !== draft.id && (provider.displayName === draft.displayName || provider.codexProviderId === draft.displayName)) ? t('此名称已被其他连接使用。') : undefined) : undefined;
   const lock = React.useRef(false);
   const refreshGeneration = React.useRef(0);
   const editorTrigger = React.useRef<HTMLButtonElement | null>(null);
-  const addButton = React.useRef<HTMLButtonElement | null>(null);
+  React.useEffect(() => {
+    const open = (event: Event) => {
+      if (lock.current) return;
+      const { trigger, tab } = (event as CustomEvent<ConfigurationEntry>).detail;
+      editorTrigger.current = trigger;
+      setConfigurationTab(tab);
+      setSubscriptionPlatform('chatgpt');
+      setSetupProvider(null);
+      setEditorOpen(false);
+      setDialogOpen(true);
+    };
+    window.addEventListener(OPEN_CONFIGURATION_EVENT, open);
+    return () => window.removeEventListener(OPEN_CONFIGURATION_EVENT, open);
+  }, []);
   const closeEditor = () => {
     setShowBearerToken(false);
     setEditorOpen(false);
+    setDialogOpen(false);
+    setSetupProvider(null);
     setDraft(null);
     requestAnimationFrame(() => editorTrigger.current?.focus());
   };
@@ -110,6 +129,9 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
   };
   const edit = React.useCallback((p: ProviderConnection, trigger: HTMLButtonElement | null) => {
     editorTrigger.current = trigger;
+    if (p.subscriptionAccountId) { setSubscriptionPlatform(p.subscriptionAccountId.startsWith('cursor-') ? 'cursor' : p.subscriptionAccountId.startsWith('claude-subscription-') ? 'claude' : p.subscriptionAccountId.startsWith('copilot-') ? 'copilot' : p.subscriptionAccountId.startsWith('grok-') ? 'grok' : 'chatgpt'); setConfigurationTab('accounts'); setDialogOpen(true); setEditorOpen(false); return; }
+
+    setDialogOpen(false);
     setShowBearerToken(false);
     setDraftKey(p.id);
     setEditorOpen(true);
@@ -117,9 +139,9 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
   }, []);
   const add = (preset: OfficialProviderId | 'custom') => {
     const key = `new:${preset}`;
-    editorTrigger.current = addButton.current;
     setShowBearerToken(false);
     setDraftKey(key);
+    setSetupProvider(preset);
     setEditorOpen(true);
     setDrafts(current => current[key] ? current : { ...current, [key]: newProviderDraft(bridge.providers?.connections, preset) });
   };
@@ -138,59 +160,56 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
     window.addEventListener(OPEN_PROVIDER_SETTINGS_EVENT, open);
     return () => window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, open);
   }, [bridge.providers, edit, onRequestOpen]);
-  const editor = draft && <form key={draft.id ?? draftKey} id="provider-editor" className="provider-editor" hidden={!editorOpen} aria-label={draft.id ? '编辑模型服务' : '添加模型服务'} aria-busy={busy} onSubmit={e => {
+  const editor = draft && <form key={draft.id ?? draftKey} id="provider-editor" className="provider-editor" hidden={!editorOpen} aria-label={draft.id ? t('编辑模型服务') : t('添加模型服务')} aria-busy={busy} onSubmit={e => {
     e.preventDefault();
     if (nameError) return;
-    void run('保存模型服务失败', async () => {
+    void run(t('保存模型服务失败'), async () => {
       const providers = await bridge.api.saveProvider(draft);
       bridge.patch({ providers });
       refresh();
       closeEditor();
       const endpointIncluded = /\/(?:responses(?:\/compact)?|chat\/completions|messages)\/?$/i.test(new URL(draft.baseUrl).pathname);
-      showToast('模型服务已保存', 'success');
+      showToast(t('模型服务已保存'), 'success');
       const saved = draft.id ? providers.connections.find(p => p.id === draft.id) : providers.connections.at(-1);
-      if (saved) void bridge.api.validateProvider({ providerId: saved.id }).then(showValidationResult).catch(error => showErrorToast('连接验证未完成', error, VALIDATION_TOAST_ID));
+      if (saved && !isCodingPlanConnection(saved)) void bridge.api.validateProvider({ providerId: saved.id }).then(showValidationResult).catch(error => showErrorToast(t('连接验证未完成'), error, VALIDATION_TOAST_ID));
       if (endpointIncluded) {
-        showToast('请核对 API 地址路径', 'info', undefined, {
-          description: '地址包含完整接口路径。请按服务商文档确认是否应去掉末尾的 responses、chat/completions 或 messages。'
+        showToast(t('请核对 API 地址路径'), 'info', undefined, {
+          description: t('地址包含完整接口路径。请按服务商文档确认是否应去掉末尾的 responses、chat/completions 或 messages。')
         });
       }
     });
   }}>
       <div className="field-row">
-        <label className="fr-label" htmlFor="provider-name">名称</label>
+        <label className="fr-label" htmlFor="provider-name">{t("名称")}</label>
         <div className="fr-value"><div className="provider-name-field">
-          <input id="provider-name" type="text" autoFocus={!!draft.id} className="txt-input" required maxLength={80}
-            value={draft.displayName} placeholder="仅支持英文字母、数字、下划线和连字符"
+          <input id="provider-name" type="text" className="txt-input" required maxLength={80}
+            value={draft.displayName} placeholder={t("仅支持英文字母、数字、下划线和连字符")}
             disabled={busy} aria-invalid={!!nameError && draft.displayName.length > 0}
             aria-describedby={nameError && draft.displayName.length > 0 ? 'provider-name-feedback' : undefined}
             onChange={e => setDraft({ ...draft, displayName: e.target.value })} />
           {nameError && draft.displayName.length > 0 && <small id="provider-name-feedback" className="provider-field-error" aria-live="polite">{nameError}</small>}
         </div></div>
       </div>
-      <div className="field-row"><label className="fr-label" htmlFor="provider-url">API 地址</label><div className="fr-value"><input id="provider-url" className="txt-input" type="url" required value={draft.baseUrl} placeholder="https://api.example.com/v1" disabled={busy} onChange={e => setDraft({ ...draft, baseUrl: e.target.value, ...(!draft.id ? { adapter: 'auto' as const } : {}) })} /></div></div>
-      <div className="field-row"><label className="fr-label" htmlFor="provider-key">访问密钥</label><div className="fr-value"><div className="provider-key-control"><input id="provider-key" className="txt-input" type={showBearerToken ? 'text' : 'password'} autoFocus={!draft.id} autoComplete="off" required value={draft.bearerToken} disabled={busy} onChange={e => setDraft({ ...draft, bearerToken: e.target.value })} /><button type="button" className="provider-key-visibility" aria-label={showBearerToken ? '隐藏访问密钥' : '显示访问密钥'} aria-pressed={showBearerToken} aria-controls="provider-key" title={showBearerToken ? '隐藏访问密钥' : '显示访问密钥'} disabled={busy} onClick={() => setShowBearerToken(value => !value)}><Eye className="provider-key-icon-show" aria-hidden="true" /><EyeOff className="provider-key-icon-hide" aria-hidden="true" /></button></div></div></div>
-      <div className="prov-save-bar"><button type="button" className="provider-text-action" disabled={busy} onClick={closeEditor}>取消</button><button type="submit" className="btn primary" disabled={busy || !!nameError}>保存</button></div>
+      <div className="field-row"><label className="fr-label" htmlFor="provider-url">URL</label><div className="fr-value"><input id="provider-url" className="txt-input" type="url" required value={draft.baseUrl} placeholder="https://api.example.com/v1" disabled={busy} onChange={e => setDraft({ ...draft, baseUrl: e.target.value, ...(!draft.id && setupProvider === 'custom' ? { adapter: officialProviderForUrl(e.target.value)?.adapter ?? 'auto' as const } : {}) })} /></div></div>
+      <div className="field-row"><label className="fr-label" htmlFor="provider-key">Key</label><div className="fr-value"><div className="provider-key-control"><input id="provider-key" className="txt-input" type={showBearerToken ? 'text' : 'password'} autoFocus={!draft.id} autoComplete="off" required={!isLocalProvider(draft)} placeholder={isLocalProvider(draft) ? t("可留空") : undefined} value={draft.bearerToken} disabled={busy} onChange={e => setDraft({ ...draft, bearerToken: e.target.value })} /><button type="button" className="provider-key-visibility" aria-label={showBearerToken ? t('隐藏访问密钥') : t('显示访问密钥')} aria-pressed={showBearerToken} aria-controls="provider-key" title={showBearerToken ? t('隐藏访问密钥') : t('显示访问密钥')} disabled={busy} onClick={() => setShowBearerToken(value => !value)}><Eye className="provider-key-icon-show" aria-hidden="true" /><EyeOff className="provider-key-icon-hide" aria-hidden="true" /></button></div></div></div>
+      {(draft.id || setupProvider === 'custom') && <details className="provider-advanced">
+        <summary>{t("高级设置")}</summary>
+        <div className="field-row"><label className="fr-label" htmlFor="provider-adapter">{t("接口协议")}</label><div className="fr-value"><select id="provider-adapter" className="txt-input" value={draft.adapter} disabled={busy} onChange={e => setDraft({ ...draft, adapter: e.target.value as ProviderInput['adapter'] })}>
+          <option value="auto">{t("自动识别")}</option><option value="responses">OpenAI Responses</option><option value="chat-completions">OpenAI Chat Completions</option><option value="anthropic-messages">Anthropic Messages</option>
+        </select></div></div>
+      </details>}
+      <div className="prov-save-bar"><button type="button" className="provider-text-action" disabled={busy} onClick={closeEditor}>{t("取消")}</button><button type="submit" className="btn primary" disabled={busy || !!nameError}>{t("保存")}</button></div>
     </form>;
   return <div id="providerList" aria-busy={busy}>
-    <div className="group-label provider-heading">
-      <h3 className="model-config-subheading">
-        <button type="button" className="trace-section-trigger model-config-section-trigger"
-          aria-expanded={serviceShortcutsOpen} aria-controls="service-setup-shortcuts"
-          onClick={() => setServiceShortcutsOpen(open => !open)}>
-          模型服务<ChevronDown size={15} className="trace-section-chevron" aria-hidden="true" />
-        </button>
-      </h3>
-      <button ref={addButton} id="provider-add" type="button" className="provider-text-action" aria-label="添加自定义模型服务" disabled={busy} onClick={() => add('custom')}><Plus aria-hidden="true" />自定义</button>
-    </div>
-    <div id="service-setup-shortcuts" hidden={!serviceShortcutsOpen}>
-      <ProviderSetupShortcuts kind="service" disabled={busy} selectedProvider={setupProvider} onSelectProvider={setSetupProvider} onConfigure={add} />
-    </div>
+    <AddConfigurationDialog clientsOnly={configurationTab === 'clients'} initialTab={configurationTab} initialSubscriptionPlatform={subscriptionPlatform} open={dialogOpen} busy={busy} selected={setupProvider} onSelect={add}
+      onBack={() => setSetupProvider(null)} editor={draft?.id ? null : editor} finalFocus={editorTrigger}
+      onOpenChange={open => { setDialogOpen(open); if (!open) { setEditorOpen(false); setShowBearerToken(false); } }} />
     {(bridge.providers?.connections ?? []).map(p => <div className="provider" key={p.id}>
       <div className="provider-list-row">
-        <button id={`provider-edit-${p.id}`} type="button" className="provider-disclosure" disabled={busy} aria-label={`编辑模型服务 ${p.displayName}`} aria-expanded={draft?.id === p.id && editorOpen} aria-controls={draft?.id === p.id ? 'provider-editor' : undefined} onClick={e => {
+        <button id={`provider-edit-${p.id}`} type="button" className="provider-disclosure" disabled={busy} aria-label={t("编辑模型服务 {0}", p.displayName)} aria-expanded={draft?.id === p.id && editorOpen} aria-controls={draft?.id === p.id ? 'provider-editor' : undefined} onClick={e => {
           setShowBearerToken(false);
-          if (draft?.id === p.id) setEditorOpen(open => !open);
+          if (p.subscriptionAccountId) edit(p, e.currentTarget);
+          else if (draft?.id === p.id) setEditorOpen(open => !open);
           else edit(p, e.currentTarget);
         }}>
           <ProviderIcon kind={providerIconKind(drafts[p.id]?.baseUrl ?? p.baseUrl)} />
@@ -199,63 +218,49 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
         </button>
         <div className="provider-row-actions">
         <Menu.Root>
-          <Menu.Trigger type="button" className="provider-menu-trigger" aria-label={`${p.displayName} 的更多操作`} disabled={busy}><Ellipsis aria-hidden="true" /></Menu.Trigger>
+          <Menu.Trigger type="button" className="provider-menu-trigger" aria-label={t("{0} 的更多操作", p.displayName)} disabled={busy}><Ellipsis aria-hidden="true" /></Menu.Trigger>
           <Menu.Portal><Menu.Positioner className="conversation-header-menu-positioner" side="bottom" align="end" sideOffset={4}>
             <Menu.Popup className="conversation-header-menu provider-menu">
               <Menu.Item className="conversation-header-menu-item" closeOnClick onClick={() => void (async () => {
                 try {
-                showToast('正在检查模型目录…');
+                showToast(t('正在检查模型目录…'));
                 const models = await bridge.api.fetchProviderModels({ providerId: p.id, refresh: true });
                 const discovered = models;
                 showToast(discovered.length
-                  ? `${p.displayName} 模型目录可访问，共 ${discovered.length} 个模型`
-                  : `${p.displayName} 未公开模型目录`, 'info', undefined, {
-                      description: '此检查只读取模型目录。目录缺失不代表对话服务不可用；目录可访问也不代表密钥有权使用所选模型，请发送新消息验证。',
+                  ? t("{0} 模型目录可访问，共 {1} 个模型", p.displayName, discovered.length)
+                  : t("{0} 未公开模型目录", p.displayName), 'info', undefined, {
+                      description: t('此检查只读取模型目录。目录缺失不代表对话服务不可用；目录可访问也不代表密钥有权使用所选模型，请发送新消息验证。'),
                       timeout: 12_000
                     });
                 } catch (error) {
-                  showToast('模型目录加载失败', 'error', undefined, {
+                  showToast(t('模型目录加载失败'), 'error', undefined, {
                     description: modelCatalogFailureMessage(error)
                   });
                 }
-              })()}>检查模型目录</Menu.Item>
+              })()}>{t("检查模型目录")}</Menu.Item>
               <Menu.Item className="conversation-header-menu-item" closeOnClick onClick={() => void (async () => {
                 const ok = await confirm({
-                  title: `删除模型服务「${p.displayName}」？`,
-                  body: '使用它的客户端需要重新选择模型服务。',
-                  confirmText: '删除',
+                  title: t("删除模型服务「{0}」？", p.displayName),
+                  body: t('使用它的客户端需要重新选择模型服务。'),
+                  confirmText: t('删除'),
                   tone: 'danger'
                 });
                 if (!ok) return;
-                await run('删除模型服务失败', async () => {
+                await run(t('删除模型服务失败'), async () => {
                 const providers = await bridge.api.deleteProvider(p.id);
                 bridge.patch({ providers });
                 setDrafts(current => { const next = { ...current }; delete next[p.id]; return next; });
                 refresh();
-                showToast('模型服务已删除');
-                requestAnimationFrame(() => addButton.current?.focus());
+                showToast(t('模型服务已删除'));
+                requestAnimationFrame(() => document.getElementById('provider-add')?.focus());
                 });
-              })()}>删除</Menu.Item>
+              })()}>{t("删除")}</Menu.Item>
             </Menu.Popup>
           </Menu.Positioner></Menu.Portal>
         </Menu.Root>
         </div>
       </div>
       {draft?.id === p.id && editor}
-    </div>)}
-    {Object.entries(drafts).filter(([, pending]) => !pending.id).map(([key, pending]) => <div className="provider" key={key}>
-      <div className="provider-list-row">
-        <button type="button" className="provider-disclosure" disabled={busy} aria-label={`展开新模型服务 ${pending.displayName || '未命名'}`} aria-expanded={draftKey === key && editorOpen} aria-controls={draftKey === key ? 'provider-editor' : undefined} onClick={() => {
-          setDraftKey(key);
-          setEditorOpen(draftKey !== key || !editorOpen);
-          setShowBearerToken(false);
-        }}>
-          <ProviderIcon kind={providerIconKind(pending.baseUrl)} />
-          <span className="provider-name">{pending.displayName || '未命名'}</span>
-          <ChevronDown className="trace-section-chevron" aria-hidden="true" />
-        </button>
-      </div>
-      {draftKey === key && editor}
     </div>)}
   </div>;
 }

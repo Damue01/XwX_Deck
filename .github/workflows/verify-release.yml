@@ -5,7 +5,7 @@ on:
       tag:
         description: Published release tag to verify (must be latest)
         required: true
-        default: v1.0.0
+        default: v1.1.0
 permissions:
   contents: read
 jobs:
@@ -28,22 +28,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run compile
-      - name: Build older test executable
-        run: node tools/build-update-baseline.mjs
-      - name: Download public assets anonymously
-        shell: bash
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify anonymous native artifacts and physical updater
         env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          mkdir -p release
-          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            curl --fail --location --retry 3 "$BASE/XwX-Deck-windows-x64.exe" -o 'release/XwX Deck.exe'
-          else
-            curl --fail --location --retry 3 "$BASE/XwX-Deck-mac-arm64.dmg" -o release/XwX-Deck-mac-arm64.dmg
-          fi
-      - name: Verify anonymous production update feed end to end
-        run: node tools/run-packaged-update-smoke.mjs --github
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node tools/native/published-artifact-test.mjs
       - name: Save actual update evidence
         if: always()
         uses: actions/upload-artifact@v4

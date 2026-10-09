@@ -3,16 +3,15 @@
 //
 // Main-process settings restore the theme at startup. After a local selection,
 // that selection owns the current window; delayed runtime snapshots must not
-// repaint it, including before the transition captures the old theme.
+// repaint it, including while preferences are being saved.
 // localStorage is only an early-paint hint, never the live UI state.
 import * as React from 'react';
 
 export type Theme = 'day' | 'night';
 
 const STORAGE_KEY = 'xwx-deck.theme';
-type ThemeViewTransition = { ready: Promise<void>; finished: Promise<void>; skipTransition: () => void };
-let activeTransition: ThemeViewTransition | null = null;
 let themeChangeId = 0;
+let pendingPersistence: Promise<unknown> = Promise.resolve();
 let requestedTheme: Theme | undefined;
 let currentTheme: Theme | undefined;
 
@@ -44,69 +43,16 @@ export function initTheme(): void {
   applyTheme(getStoredTheme());
 }
 
-function changeTheme(theme: Theme, origin: HTMLElement | null | undefined, persist: (theme: Theme) => Promise<unknown>): void {
+function changeTheme(theme: Theme, persist: (theme: Theme) => Promise<unknown>): void {
   const changeId = ++themeChangeId;
   requestedTheme = theme;
-  activeTransition?.skipTransition();
-  const root = document.documentElement;
-  const status = (value: string) => {
-    if (changeId === themeChangeId) root.dataset.themeTransitionStatus = value;
-  };
-
-  let committed = false;
-  const commit = () => {
-    if (changeId !== themeChangeId || committed) return;
-    committed = true;
-    paintTheme(theme);
-    void persist(theme).catch(error => console.warn('[theme] Could not save the selected theme', error));
-  };
-
-  const skipReason = !origin ? 'missing-origin'
-    : window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced-motion'
-    : !document.startViewTransition ? 'unsupported'
-    : undefined;
-  if (!origin || skipReason) {
-    status(skipReason ?? 'missing-origin');
-    commit();
-    return;
-  }
-
-  const bounds = origin.getBoundingClientRect();
-  const x = bounds.left + bounds.width / 2;
-  const y = bounds.top + bounds.height / 2;
-  const radius = Math.max(
-    Math.hypot(x, y),
-    Math.hypot(window.innerWidth - x, y),
-    Math.hypot(x, window.innerHeight - y),
-    Math.hypot(window.innerWidth - x, window.innerHeight - y),
-  );
-  root.style.setProperty('--theme-reveal-x', `${x}px`);
-  root.style.setProperty('--theme-reveal-y', `${y}px`);
-  root.style.setProperty('--theme-reveal-radius', `${Math.ceil(radius) + 2}px`);
-  root.dataset.themeTransition = 'circle';
-  status('capturing');
-
-  try {
-    const transition = document.startViewTransition(commit);
-    activeTransition = transition;
-    void transition.ready.then(() => status('animating'), error => {
-      if (changeId !== themeChangeId) return; // A newer click deliberately cancelled it.
-      status('snapshot-failed');
-      console.warn('[theme] Circular snapshot failed', error);
-    });
-    const cleanup = () => {
-      if (activeTransition !== transition) return;
-      activeTransition = null;
-      delete root.dataset.themeTransition;
-      if (root.dataset.themeTransitionStatus === 'animating') status('finished');
-    };
-    void transition.finished.then(cleanup, cleanup);
-  } catch (error) {
-    delete root.dataset.themeTransition;
-    status('snapshot-failed');
-    console.warn('[theme] Circular snapshot failed', error);
-    commit();
-  }
+  // Whole-page snapshots can swallow rapid clicks. Paint immediately and keep
+  // only the local switch motion; saving must never block an interaction.
+  paintTheme(theme);
+  pendingPersistence = pendingPersistence.then(() => {
+    if (changeId !== themeChangeId) return;
+    return persist(theme);
+  }).catch(error => console.warn('[theme] Could not save the selected theme', error));
 }
 
 /**
@@ -117,7 +63,7 @@ function changeTheme(theme: Theme, origin: HTMLElement | null | undefined, persi
 export function useTheme(
   authoritative: Theme | undefined,
   persist: (theme: Theme) => Promise<unknown>,
-): [Theme, (t: Theme, origin?: HTMLElement | null) => void] {
+): [Theme, (t: Theme) => void] {
   const [theme, setThemeState] = React.useState<Theme>(() => currentTheme ?? getStoredTheme());
 
   React.useEffect(() => {
@@ -131,9 +77,9 @@ export function useTheme(
     return () => document.removeEventListener('xwx:themechange', onChange);
   }, []);
 
-  const setTheme = React.useCallback((t: Theme, origin?: HTMLElement | null) => {
+  const setTheme = React.useCallback((t: Theme) => {
     setThemeState(t);
-    changeTheme(t, origin, persist);
+    changeTheme(t, persist);
   }, [persist]);
 
   return [theme, setTheme];

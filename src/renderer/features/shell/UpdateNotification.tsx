@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n';
 import * as React from 'react';
 import { useBridge } from '@/bridge/store';
 import type { XwXDeckUpdateState } from '@/bridge/types';
@@ -15,24 +16,24 @@ export function announceAvailableUpdate(
   const version = update.targetVersion;
   if (update?.background || !version || !update.updateAvailable || update.status !== 'available') return;
   const id = `xwxdeck-update-${version}`;
-  showToast(`XwX Deck ${version} 可更新`, 'info', id, {
+  showToast(t("XwX Deck {0} 可更新", version), 'info', id, {
     description: conciseReleaseNotes(update.releaseNotes, update.installMode),
     timeout: 5_000,
     actionProps: {
       type: 'button',
-      children: '立即下载',
-      'aria-label': `下载 XwX Deck ${version}`,
+      children: t('立即下载'),
+      'aria-label': t("下载 XwX Deck {0}", version),
       onClick: () => {
         closeToast(id);
         void download()
           .then(next => {
             onDownloaded(next);
-            if (next.status === 'error') showToast('更新下载失败', 'error', undefined, {
+            if (next.status === 'error') showToast(t('更新下载失败'), 'error', undefined, {
               description: updateFailureDescription(next.error),
               timeout: 12_000
             });
           })
-          .catch(error => showToast('更新下载失败', 'error', undefined, {
+          .catch(error => showToast(t('更新下载失败'), 'error', undefined, {
             description: updateFailureDescription(error),
             timeout: 12_000
           }));
@@ -68,7 +69,7 @@ export function UpdateNotification(): null {
 }
 
 function conciseReleaseNotes(value: string | undefined, installMode?: string): string {
-  const fallback = installMode === 'manual-dmg' ? '下载并校验后，打开 DMG 完成安装。' : '下载完成后重启即可更新。';
+  const fallback = installMode === 'manual-dmg' ? t('下载并校验后，打开 DMG 完成安装。') : t('下载完成后重启即可更新。');
   if (!value?.trim()) return fallback;
   const lines = value
     .split(/\r?\n/)

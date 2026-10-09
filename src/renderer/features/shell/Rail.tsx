@@ -1,11 +1,12 @@
+import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
-import { Gauge, Box, Wrench, Settings, LayoutDashboard, PanelLeft, ArrowDownToLine, Check, LoaderCircle } from 'lucide-react';
+import { Gauge, Box, Settings, LayoutDashboard, PanelLeft, ArrowDownToLine, Check, LoaderCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getApi } from '@/bridge/api';
 import { showErrorToast } from '@/lib/toast';
 import type { XwXDeckUpdateState } from '@/bridge/types';
 
-export type PageId = 'signal' | 'models' | 'tools' | 'settings';
+export type PageId = 'signal' | 'models' | 'settings';
 
 interface Props {
   readonly activePage: PageId;
@@ -16,23 +17,23 @@ interface Props {
 const NAV_ITEMS: Array<{ id: PageId; label: string; tip: string; Icon: React.ElementType }> = [
   { id: 'signal',   label: 'Trace', tip: 'Trace', Icon: Gauge },
   { id: 'models',   label: '模型',      tip: '模型',      Icon: Box },
-  { id: 'tools',    label: '工具',      tip: '工具',      Icon: Wrench },
 ];
 
 export function Rail({ activePage, onNavigate, updateState }: Props): React.ReactElement {
+  useLanguage();
   const api = getApi();
   const hasUpdateCue = updateState?.updateAvailable === true;
   const isDownloading = updateState?.status === 'downloading';
   const downloadPercent = Math.round(updateState?.percent || 0);
   const updateTip = isDownloading
-    ? `设置，正在下载 XwX Deck ${updateState?.targetVersion || ''}，${downloadPercent}%`
+    ? t("设置，正在下载 XwX Deck {0}，{1}%", updateState?.targetVersion || '', downloadPercent)
     : updateState?.status === 'ready'
       ? updateState.installMode === 'manual-dmg'
-        ? `设置，XwX Deck ${updateState.targetVersion || ''} 已下载，点击打开安装包`
-        : `设置，XwX Deck ${updateState.targetVersion || ''} 已准备好，点击重启更新`
+        ? t("设置，XwX Deck {0} 已下载，点击打开安装包", updateState.targetVersion || '')
+        : t("设置，XwX Deck {0} 已准备好，点击重启更新", updateState.targetVersion || '')
       : hasUpdateCue
-        ? `设置，发现新版本 ${updateState?.targetVersion || ''}`
-        : '设置';
+        ? t("设置，发现新版本 {0}", updateState?.targetVersion || '')
+        : t('设置');
   const [collapsed, setCollapsed] = React.useState<boolean>(() => {
     try { return localStorage.getItem('xwx-deck.sidebar') === 'collapsed'; } catch { return false; }
   });
@@ -51,17 +52,17 @@ export function Rail({ activePage, onNavigate, updateState }: Props): React.Reac
   }, [collapsed]);
 
   return (
-    <nav className="rail" aria-label="主要功能">
+    <nav className="rail" aria-label={t("主要功能")}>
       <button
         type="button"
         className="rail-btn rail-toggle"
         id="railToggle"
-        data-tip={collapsed ? '展开侧栏' : '收起侧栏'}
-        aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+        data-tip={collapsed ? t('展开侧栏') : t('收起侧栏')}
+        aria-label={collapsed ? t('展开侧栏') : t('收起侧栏')}
         onClick={toggleCollapsed}
       >
         <PanelLeft size={20} />
-        <span className="rail-label">收起侧栏</span>
+        <span className="rail-label">{t("收起侧栏")}</span>
       </button>
 
       {NAV_ITEMS.map(({ id, label, tip, Icon }) => (
@@ -70,29 +71,28 @@ export function Rail({ activePage, onNavigate, updateState }: Props): React.Reac
           type="button"
           className={cn('rail-btn', activePage === id && 'current')}
           data-page={id}
-          data-tip={tip}
+          data-tip={t(tip)}
           aria-current={activePage === id ? 'page' : undefined}
-          aria-label={label}
+          aria-label={t(label)}
           onClick={() => onNavigate(id)}
         >
           <Icon size={20} />
-          <span className="rail-label">{label}</span>
+          <span className="rail-label">{t(label)}</span>
         </button>
       ))}
 
       <span className="rail-spring" />
-      <span className="rail-sep" aria-hidden="true" />
 
       <button
         type="button"
         className="rail-btn"
         id="dashBtn"
-        data-tip="仪表盘"
-        aria-label="仪表盘"
-        onClick={() => void api.openDashboard().catch(error => showErrorToast('打开仪表盘失败', error))}
+        data-tip={t("仪表盘")}
+        aria-label={t("仪表盘")}
+        onClick={() => void api.openDashboard().catch(error => showErrorToast(t('打开仪表盘失败'), error))}
       >
         <LayoutDashboard size={20} />
-        <span className="rail-label">仪表盘</span>
+        <span className="rail-label">{t("仪表盘")}</span>
       </button>
 
       <button
@@ -106,7 +106,7 @@ export function Rail({ activePage, onNavigate, updateState }: Props): React.Reac
         onClick={() => onNavigate('settings')}
       >
         <Settings size={20} aria-hidden="true" />
-        <span className="rail-label">设置</span>
+        <span className="rail-label">{t("设置")}</span>
         {hasUpdateCue && (
           <span
             className={cn('rail-update-status', isDownloading && 'is-downloading')}
