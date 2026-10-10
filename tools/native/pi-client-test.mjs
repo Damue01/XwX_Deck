@@ -43,7 +43,7 @@ const upstream = createServer(async (req, res) => {
     res.end('data: [DONE]\n\n');
   }
 });
-upstream.on('connect', (_req,socket) => socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'));
+upstream.on('connect', (_req,socket) => { socket.on('error', () => {}); socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); });
 upstream.listen(0,'127.0.0.1'); await once(upstream,'listening');
 const base = `http://127.0.0.1:${upstream.address().port}`;
 // Allowlist environment: no normal credentials, extension discovery or account directories.
