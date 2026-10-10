@@ -20,6 +20,7 @@ const suites = [
   "protocol-test.mjs",
   "universal-gateway-test.mjs",
   "expanded-clients-test.mjs",
+  "client-models-renderer-test.mjs",
   "trace-index-repair-test.mjs",
   "portability-test.mjs",
   "preferences-test.mjs",
@@ -31,6 +32,7 @@ const suites = [
   "language-renderer-test.mjs",
   "portable-update-test.mjs"
 ];
+if (process.env.XWX_INSTALLED_PI) suites.push('pi-client-test.mjs');
 const results = [];
 for (const suite of suites) {
   console.log(`\nNative suite: ${suite}`);

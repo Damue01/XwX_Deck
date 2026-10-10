@@ -11,7 +11,7 @@ const initialized=spawnSync(nativeTestBinary,['--rpc','--pilot-root',root],{inpu
 assert.equal(initialized.status,0,initialized.stderr);assert.equal(JSON.parse(initialized.stdout).result.connections.length,0);
 const home=join(root,'client-home');const config=join(home,'.config/opencode/opencode.json');
 await mkdir(resolve(config,'..'),{recursive:true});await writeFile(config,'{"theme":"system"}\n');
-await mkdir(join(home,'.local/bin'),{recursive:true});await writeCliFixture(join(home,'.local/bin/opencode'),'process.exit(0);');
+await mkdir(join(home,'.local/bin'),{recursive:true});for(const cli of ['opencode','omp'])await writeCliFixture(join(home,'.local/bin',cli),'process.exit(0);');
 const requests=[];const server=createServer(async(req,res)=>{
   if(req.url==='/v1/models'){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'gpt-4.1'}]}));return;}
   let body='';for await(const part of req)body+=part;requests.push({path:req.url,body:JSON.parse(body),authorization:req.headers.authorization});

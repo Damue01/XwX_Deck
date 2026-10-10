@@ -69,6 +69,15 @@
     await wait(async () => !(await api.getClientRoute('opencode')).enabled, 'source paused');
     check('pausing one source preserves other routes', (await api.getClientRoute('cline')).enabled && (await api.getState()).tracingEnabled);
     await api.toggleTracing(false);
+    document.querySelector('[data-page="models"]').click();
+    document.querySelector('.models-manage-clients').click();
+    await wait(()=>document.querySelector('[data-client-download="oh-my-pi"]'),'independent CLI in manager');
+    document.querySelector('[data-client-download="oh-my-pi"]').click();
+    await wait(()=>[...document.querySelectorAll('.configuration-client-actions button')].some(button=>button.textContent==='添加到模型页'&&!button.disabled),'manual CLI can be added');
+    [...document.querySelectorAll('.configuration-client-actions button')].find(button=>button.textContent==='添加到模型页').click();
+    await wait(()=>!document.querySelector('#add-configuration-dialog')&&document.querySelector('[data-client-tab="oh-my-pi"][aria-selected="true"]'),'new CLI tab selected');
+    await wait(()=>document.querySelector('#client-panel-oh-my-pi .gateway-client-connection'),'manual connection settings');
+    check('manual CLI has an independent model panel and does not claim automatic configuration',(await api.getClientRoute('oh-my-pi')).automatic===false&&!!document.querySelector('[data-client-tab="opencode"]')&&!!document.querySelector('button[aria-label="oh-my-pi 使用的模型服务"]'));
     check('no framework overlay or console errors', !document.querySelector('vite-error-overlay') && window.__pilotErrors.length === 0);
     await window.__TAURI__.core.invoke('pilot_smoke_report', {report:{passed:true,checks,viewport:{width:innerWidth,height:innerHeight},errors:window.__pilotErrors,userAgent:navigator.userAgent}});
   } catch(error) {

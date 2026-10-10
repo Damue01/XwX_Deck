@@ -12,7 +12,7 @@ import { SubscriptionAccountsPanel } from './SubscriptionAccountsPanel';
 import { ImportConfigurations } from './ImportConfigurations';
 import { ClientDownloads } from './ProviderSetupShortcuts';
 import { useClientInstallations } from '../models/useClientInstallations';
-import { CLIENT_DOWNLOADS, MODEL_CLIENT_CATALOG, clientCatalogLabel, MODEL_CLIENT_ADDED_EVENT, canonicalModelClient, supportsManagedModels, type DownloadClientId } from '../../../shared/clientDownloads';
+import { CLIENT_DOWNLOADS, MODEL_CLIENT_CATALOG, clientCatalogLabel, MODEL_CLIENT_ADDED_EVENT, canonicalModelClient, supportsModelManagement, type DownloadClientId } from '../../../shared/clientDownloads';
 
 type Service = OfficialProviderId | 'custom';
 const TABS = ['services', 'accounts', 'saved', 'clients'] as const;
@@ -113,7 +113,7 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
     {api.previewConfigurationImport && <button ref={importEntry} type="button" className="configuration-choice configuration-import-entry" disabled={busy} onClick={() => setImportOpen(true)}><FileUp className="provider-brand-icon" aria-hidden="true" /><span>{t('导入已有配置')}</span></button>}
   </>;
   const clientInfo = CLIENT_DOWNLOADS.find(item => item.id === client);
-  const manageable = (id: DownloadClientId) => supportsManagedModels(id) || modelClients.includes(canonicalModelClient(id));
+  const manageable = (id: DownloadClientId) => supportsModelManagement(id) || modelClients.includes(canonicalModelClient(id));
   const clients = MODEL_CLIENT_CATALOG.map(item => {
     const uninstalled = manageClients && installation.snapshot?.available === true
       && installation.snapshot.clients.some(entry => entry.id === (canonicalModelClient(item.id)) && !entry.installed);

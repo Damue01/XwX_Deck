@@ -1,3 +1,5 @@
+import { CLIENT_GATEWAY_HELP } from './clientGatewaySetup';
+
 /** Download / installation pages only; this catalog does not imply Trace support. */
 export const CLIENT_DOWNLOADS = [
   { id: 'codex', label: 'ChatGPT', downloadLabel: 'ChatGPT Desktop', icon: 'chatgpt', url: 'https://learn.chatgpt.com/docs/app' },
@@ -27,7 +29,7 @@ export const CLIENT_DOWNLOADS = [
   { id: 'copilot-cli', label: 'GitHub Copilot', downloadLabel: 'GitHub Copilot CLI', icon: 'copilot', url: 'https://docs.github.com/en/copilot/get-started/cli-quickstart' },
   { id: 'cursor-cli', label: 'Cursor CLI', icon: 'cursor', url: 'https://cursor.com/docs/cli/installation' },
   { id: 'mimo-code', label: 'MiMo Code', downloadLabel: 'MiMo Code CLI', icon: 'mimocode', url: 'https://github.com/XiaomiMiMo/MiMo-Code#installation' },
-  { id: 'workbuddy', label: 'WorkBuddy', downloadLabel: 'WorkBuddy Desktop', icon: 'workbuddy', url: 'https://www.codebuddy.cn/app/' },
+  { id: 'workbuddy', label: 'WorkBuddy', downloadLabel: 'WorkBuddy Desktop', icon: 'workbuddy', url: 'https://www.workbuddy.cn/' },
   { id: 'codebuddy-code', label: 'CodeBuddy Code', downloadLabel: 'CodeBuddy Code CLI', icon: 'codebuddy', url: 'https://www.codebuddy.ai/docs/cli/quickstart' },
   { id: 'hermes-agent', label: 'Hermes Agent', downloadLabel: 'Hermes Agent CLI', icon: 'hermes', url: 'https://github.com/NousResearch/hermes-agent#installation' },
   { id: 'antigravity-cli', label: 'Antigravity', downloadLabel: 'Antigravity CLI', icon: 'antigravity', url: 'https://www.antigravity.google/docs/cli/install/' },
@@ -66,6 +68,12 @@ export const MODEL_CLIENT_CATALOG = CLIENT_DOWNLOADS.filter(client => !['codex-c
 const MANAGED_MODEL_CLIENTS: readonly DownloadClientId[] = ['claude', 'codex', 'opencode', 'gemini-cli', 'qwen-code', 'pi', 'mimo-code', 'crush', 'qoder', 'droid', 'codebuddy-code', 'workbuddy'];
 export function supportsManagedModels(client: DownloadClientId): boolean {
   return MANAGED_MODEL_CLIENTS.includes(canonicalModelClient(client));
+}
+
+/** Manual Gateway connections also belong in the model panel, without claiming automatic setup. */
+export function supportsModelManagement(client: DownloadClientId): boolean {
+  const product = canonicalModelClient(client);
+  return supportsManagedModels(product) || `gateway-help-${product}` in CLIENT_GATEWAY_HELP;
 }
 
 export interface ClientInstallationSnapshot {

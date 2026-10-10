@@ -26,3 +26,9 @@ Rust release 使用 `opt-level=z`、LTO、单个 codegen unit、panic abort 和 
 `test:rust:backend` 覆盖本地真实请求、协议转换、官方登录路由、WebSocket、续接、配置恢复与冲突、崩溃恢复、目录、历史元数据、Desktop 和更新下载。`native-test.mjs` 在实际系统 WebView 中验证原有表单、侧栏、主题、Trace 按钮、实时仪表盘与详情交互和窗口隐藏后的请求。旧 Trace 索引的累计与每日用量直接沿用；缺少可靠计费信息时标记费用不完整。原生菜单可查看压缩嵌入的第三方许可证。Windows 的编译、WebView2、便携更新和系统登录项仍需要原生 Windows 主机验证；Mac 的隔离验证不会修改真实登录项。
 
 `portability-test.mjs` 使用隔离目录和本地 HTTP 服务验证同端口热切换、两个客户端的请求快照、增量转换、残缺工具拒绝、图片和推理往返、会话续接、原生响应缓存与压缩来源恢复。转换流不盲目重试，已知不能恢复的外来压缩会明确失败。转换和订阅路由的 WebSocket 仍不支持，客户端需走 HTTP SSE；已有会话但没有本地来源记录的不透明状态无法保证跨服务续接。这里的回归不等同于真实服务商套餐额度或所有私有协议的验证。
+
+## 独立客户端回归
+
+`node tools/native/client-models-renderer-test.mjs [仓库目录]` 用真实 React/Base UI 选择框验证迟到回读、目录失败、导航、保存失败重试和运行状态竞态，桥接层为合成夹具。
+
+真实 Pi 可临时安装官方 `@earendil-works/pi-coding-agent`，无需全局安装。设置 `XWX_INSTALLED_PI` 为其 JavaScript CLI 入口后运行 `node tools/native/pi-client-test.mjs`，或在完整后端测试中自动加入此套件。测试使用独立 HOME、关闭扩展/工具/遥测和启动联网、本地拒绝外网的代理及合成授权，验证实际 CLI 读取生成配置、切换 Provider/模型、协议转换、Trace 停止直连和外部编辑保留。不设置该变量时，不宣称已验证真实 Pi。运行中的交互会话是否自动重载及真实平台授权仍须单列。
