@@ -18,7 +18,27 @@ import type {
 } from './types';
 import { detectProviderPreset } from '../../shared/providerProfiles';
 import { setupWebsiteUrl, setupWebsitesFor } from '../../shared/setupWebsites';
-import { normalizeModelClients } from '../../shared/clientDownloads';
+import { CLIENT_DOWNLOADS, canonicalModelClient, normalizeModelClients } from '../../shared/clientDownloads';
+import type { ConfigurationImportItem, ConfigurationImportSource } from '../../shared/configImport';
+type PreviewImportEntry = readonly [string, string, string, string, ('new' | 'paused' | 'existing' | 'unsupported' | 'duplicate')?, string?];
+const PREVIEW_IMPORT_SOURCES: readonly { source: ConfigurationImportSource; path: string; name: string; found: boolean; error: string; items: readonly PreviewImportEntry[] }[] = [
+  { source: 'cc-switch', path: '~/.cc-switch/cc-switch.db', name: 'CC Switch', found: true, error: '', items: [
+    ['ccs-deepseek', 'DeepSeek', 'https://api.deepseek.com/anthropic', 'anthropic-messages'],
+    ['ccs-kimi', 'Kimi', 'https://api.moonshot.cn/anthropic', 'anthropic-messages'],
+    ['ccs-openrouter', 'OpenRouter', 'https://openrouter.ai/api/v1', 'chat-completions']
+  ] },
+  { source: 'magpie', path: '~/.config/magpie/providers.json', name: 'Magpie', found: true, error: '', items: [
+    ['magpie-glm', 'GLM', 'https://open.bigmodel.cn/api/anthropic', 'anthropic-messages'],
+    ['magpie-deepseek', 'DeepSeek', 'https://api.deepseek.com/anthropic', 'anthropic-messages', 'duplicate']
+  ] },
+  { source: 'xwx-deck', path: 'settings-before-native-migration.json', name: '旧版 XwX Deck', found: true, error: '', items: [
+    ['deck-qwen', 'Qwen', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'chat-completions']
+  ] },
+  { source: 'codex', path: '~/.codex/config.toml', name: 'ChatGPT / Codex', found: true, error: '', items: [
+    ['codex-chatgpt', 'ChatGPT', 'https://chatgpt.com/backend-api/codex', 'responses', 'unsupported', '订阅账号需要重新登录']
+  ] }
+];
+
 
 function previewCustomBackground(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
@@ -212,7 +232,30 @@ export function createPreviewApi(): XwXDeckApi {
   modelClients = normalizeModelClients(localStorage.getItem('xwx-deck.preview.model-clients-version') === '2' ? modelClients : ['claude', 'codex', ...modelClients]);
   const saveModelClients = () => { localStorage.setItem('xwx-deck.preview.model-clients', JSON.stringify(modelClients)); localStorage.setItem('xwx-deck.preview.model-clients-version', '2'); return [...modelClients]; };
   return {
-    detectClientInstallations: async () => ({ available: false, clients: [] }),
+    // Sample machine for the browser preview: ChatGPT and a few tools present, Claude missing.
+    detectClientInstallations: async () => {
+      await new Promise(resolve => setTimeout(resolve, 700));
+      const present = new Set(['codex', 'cursor', 'vscode', 'gemini-cli', 'opencode']);
+      return { available: true, clients: CLIENT_DOWNLOADS.map(client => ({ id: client.id, installed: present.has(canonicalModelClient(client.id)) })) };
+    },
+    previewConfigurationImport: async () => {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const existing = new Set(providers.connections.map(connection => connection.baseUrl));
+      const item = (fingerprint: string, name: string, baseUrl: string, adapter: string, status: ConfigurationImportItem['status'] = 'new', reason = ''): ConfigurationImportItem =>
+        ({ fingerprint, name, baseUrl, adapter, status: status === 'new' && existing.has(baseUrl) ? 'existing' : status, reason });
+      return { targetDigest: 'preview', sources: PREVIEW_IMPORT_SOURCES.map(source => ({ ...source, items: source.items.map(entry => item(...entry)) })) };
+    },
+    importConfigurations: async input => {
+      const all = PREVIEW_IMPORT_SOURCES.flatMap(source => source.items);
+      const added: string[] = [];
+      for (const [fingerprint, name, baseUrl, adapter] of all) {
+        if (!input.fingerprints.includes(fingerprint) || providers.connections.some(connection => connection.baseUrl === baseUrl)) continue;
+        const protocol = adapter as ProviderConnection['adapter'];
+        providers = { ...providers, connections: [...providers.connections, { id: `import-${fingerprint}`, displayName: name, baseUrl, bearerToken: 'preview', adapter: protocol, providerPreset: 'auto', codexApiFormat: protocol === 'auto' ? 'responses' : protocol, codexModel: '', codexContextWindow: 0, claudeModels: { fable: '', opus: '', sonnet: '', haiku: '' } }] };
+        added.push(name);
+      }
+      return { providers: structuredClone(providers), added };
+    },
     getModelClients: async () => [...modelClients],
     addModelClient: async () => { throw new Error(t('浏览器预览无法检测本机安装，请在桌面应用中添加客户端')); },
     removeModelClient: async id => { modelClients = modelClients.filter(client => client !== id); return saveModelClients(); },

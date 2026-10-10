@@ -8,11 +8,14 @@
   const check = (label, value) => { if (!value) throw new Error(label); checks.push(label); };
   try {
     await wait(() => document.querySelector('#captureBtn') && window.xwxDeck, 'production renderer');
-    await wait(() => document.querySelector('#onboarding-import-dialog .configuration-import-actions .btn.primary')?.disabled === false, 'onboarding import scan');
-    check('fresh onboarding checks local configuration before client setup', document.querySelector('#onboarding-import-dialog').textContent.includes('导入已有配置'));
-    document.querySelector('#onboarding-import-dialog .configuration-import-actions .btn.primary').click();
-    await wait(() => document.querySelector('.tour-root') && !document.querySelector('#onboarding-import-dialog'), 'continue to model guide');
-    check('onboarding proceeds to model configuration without automatically activating a service', document.querySelector('.tour-root').textContent.includes('选择客户端使用的模型服务') && (await window.xwxDeck.getProviders()).connections.length === 0);
+    await wait(() => document.querySelector('#onboarding-setup'), 'onboarding setup');
+    check('fresh onboarding starts with client detection', document.querySelector('#onboarding-setup').textContent.includes('欢迎使用 XwX Deck'));
+    for (const label of ['download step', 'import step']) { document.querySelector('#onboarding-setup .onboarding-foot .btn.primary').click(); await delay(150); check(`onboarding reaches ${label}`, !!document.querySelector('#onboarding-setup')); }
+    await wait(() => document.querySelector('#onboarding-setup .configuration-import-actions .btn.primary')?.disabled === false, 'onboarding import scan');
+    check('fresh onboarding checks local configuration before the feature guide', document.querySelector('#onboarding-setup').textContent.includes('导入已有配置'));
+    document.querySelector('#onboarding-setup .configuration-import-actions .btn.primary').click();
+    await wait(() => document.querySelector('.tour-root') && !document.querySelector('#onboarding-setup'), 'continue to model guide');
+    check('onboarding proceeds to model configuration without automatically activating a service', document.querySelector('.tour-root').textContent.includes('一步切换模型服务') && (await window.xwxDeck.getProviders()).connections.length === 0);
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await delay(300);
     check('page identity', document.title === 'XwX Deck');

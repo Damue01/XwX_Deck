@@ -3,6 +3,8 @@ import { isDesktop } from '@/bridge/api';
 
 interface Props {
   readonly scale?: number;
+  /** Extra drift for surfaces that want a visibly flowing field (onboarding). 0 keeps the Trace look. */
+  readonly flow?: number;
 }
 
 const RIPPLE_EVENT = 'xwx:field-ripple';
@@ -54,7 +56,8 @@ function isDay(): boolean {
 }
 
 function pageIsActive(canvas: HTMLCanvasElement): boolean {
-  return !document.hidden && !!canvas.closest('.page.current');
+  // The onboarding surface hosts its own field outside the page stack.
+  return !document.hidden && !!canvas.closest('.page.current, [data-field-host]');
 }
 
 function animate(
@@ -105,7 +108,7 @@ function observeCanvasResize(canvas: HTMLCanvasElement, onResize: () => void): (
   return () => window.removeEventListener('resize', onResize);
 }
 
-function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: number): (() => void) | undefined {
+function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: number, flow: number): (() => void) | undefined {
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const OFF = 83.0;
   const VS = [
@@ -121,6 +124,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     'uniform float u_live;',
     'uniform vec4 u_rip[4];',
     'uniform float u_ripScale;',
+    'uniform float u_flow;',
     'float hash(vec2 p){float n=dot(p,vec2(127.1,311.7));return fract(sin(n)*43758.5453);}',
     'float noise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);vec2 u=f*f*(3.0-2.0*f);',
     'return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);}',
@@ -135,6 +139,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     '  float aspect=u_resolution.x/u_resolution.y;',
     '  vec2 grid=vec2(uv.x*aspect,uv.y)*u_resolution.y/u_scale;',
     '  float t=u_time*0.40;',
+    '  grid+=vec2(t*u_flow*3.0,t*u_flow*0.9);',
     '  vec2 warp=vec2(fbm(grid*0.038+vec2(t*0.22,4.1))-0.5,fbm(grid*0.038+vec2(8.2,-t*0.17))-0.5);',
     '  float n1=fbm(grid*0.058+warp*0.92+vec2(t*0.52,t*0.13));',
     '  float n2=fbm(grid*0.030+vec2(-t*0.10,t*0.18));',
@@ -184,6 +189,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
   const uLive = gl.getUniformLocation(p, 'u_live');
   const uRip = gl.getUniformLocation(p, 'u_rip');
   const uRipScale = gl.getUniformLocation(p, 'u_ripScale');
+  const uFlow = gl.getUniformLocation(p, 'u_flow');
   const ripples = trackRipples(canvas);
   const ripData = new Float32Array(MAX_RIPPLES * 4);
 
@@ -205,7 +211,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     live += (liveTarget() - live) * 0.03;
     const dt = lastT === null ? 16 : Math.min(64, time - lastT);
     lastT = time;
-    simTime += dt * 0.001 * (1 + live * 0.35) * motionFactor;
+    simTime += dt * 0.001 * (1 + live * 0.35) * (1 + flow) * motionFactor;
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(p); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
@@ -214,6 +220,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     gl.uniform1f(uTheme, isDay() ? 1 : 0);
     gl.uniform1f(uScale, scale);
     gl.uniform1f(uLive, live);
+    gl.uniform1f(uFlow, flow);
     // Ripple centres in device pixels (GL origin is bottom-left); age in
     // seconds, travel speed scales with the canvas diagonal.
     const rect = canvas.getBoundingClientRect();
@@ -242,7 +249,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
   };
 }
 
-function init2D(canvas: HTMLCanvasElement, density: number): (() => void) | undefined {
+function init2D(canvas: HTMLCanvasElement, density: number, flow: number): (() => void) | undefined {
   const rawCtx = canvas.getContext('2d') as CanvasRenderingContext2D | null;
   if (!rawCtx) return undefined;
   const ctx: CanvasRenderingContext2D = rawCtx;
@@ -250,7 +257,8 @@ function init2D(canvas: HTMLCanvasElement, density: number): (() => void) | unde
   // sessions report prefers-reduced-motion=reduce, and fully throttling the
   // loop there made the field look frozen. Slow it down instead of stopping it.
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const fps = reduce ? 15 : 15;
+  // A flowing field needs smoother frames than the idle Trace field.
+  const fps = flow > 0 && !reduce ? 30 : 15;
   const speed = reduce ? 0.65 : 1;
   const OFF = 83.0;
   let w = 1, h = 1, dpr = 1, needsResize = true;
@@ -295,8 +303,10 @@ function init2D(canvas: HTMLCanvasElement, density: number): (() => void) | unde
     live += (liveTarget() - live) * 0.09;
     const dt = lastT === null ? 16 : Math.min(80, time - lastT);
     lastT = time;
-    simTime += dt * 0.001 * (1 + live * 0.35) * speed;
+    simTime += dt * 0.001 * (1 + live * 0.35) * (1 + flow) * speed;
     const t = simTime * 0.40;
+    // Translate the noise under the fixed dot grid so the pattern travels across the surface.
+    const driftX = t * flow * 3.0, driftY = t * flow * 0.9;
     const step = Math.max(6, h / density);
     const strength = 0.78 * (1 + live * 0.18);
     // A ripple is a travelling ring with a crest and a softer trough behind
@@ -310,7 +320,7 @@ function init2D(canvas: HTMLCanvasElement, density: number): (() => void) | unde
     });
     for (let y = -step; y < h + step; y += step) {
       for (let x = -step; x < w + step; x += step) {
-        const gx = x / step, gy = y / step;
+        const gx = x / step + driftX, gy = y / step + driftY;
         const warpX = fbm(gx * 0.038 + t * 0.22, gy * 0.038 + 4.1) - 0.5;
         const warpY = fbm(gx * 0.038 + 8.2, gy * 0.038 - t * 0.17) - 0.5;
         const n1 = fbm(gx * 0.058 + warpX * 0.92 + t * 0.52, gy * 0.058 + warpY * 0.92 + t * 0.13);
@@ -349,7 +359,7 @@ function init2D(canvas: HTMLCanvasElement, density: number): (() => void) | unde
   };
 }
 
-export const ParticleField = React.memo(function ParticleField({ scale = 60 }: Props): React.ReactElement {
+export const ParticleField = React.memo(function ParticleField({ scale = 60, flow = 0 }: Props): React.ReactElement {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
 
   React.useEffect(() => {
@@ -357,15 +367,15 @@ export const ParticleField = React.memo(function ParticleField({ scale = 60 }: P
     if (!canvas) return;
     // Desktop packaged app: disable hardware WebGL (can crash renderer during live-state changes).
     const gl = isDesktop() ? null : canvas.getContext('webgl', { alpha: true, antialias: false, premultipliedAlpha: false });
-    const glCleanup = gl ? initGL(canvas, gl, scale) : undefined;
+    const glCleanup = gl ? initGL(canvas, gl, scale, flow) : undefined;
     if (glCleanup) {
       canvas.dataset.renderer = 'webgl';
       return glCleanup;
     } else {
       canvas.dataset.renderer = '2d';
-      return init2D(canvas, scale);
+      return init2D(canvas, scale, flow);
     }
-  }, [scale]);
+  }, [scale, flow]);
 
   return (
     <canvas

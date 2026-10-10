@@ -1643,22 +1643,22 @@ html[data-theme="night"] .repair-sheet-backdrop { background: rgba(0,0,0,.5); }
 .tour-spotlight {
   position: fixed;
   border-radius: 12px;
-  box-shadow: 0 0 0 9999px rgba(20, 20, 18, 0.55);
-  outline: 2px solid var(--slate);
+  box-shadow: 0 0 0 9999px color-mix(in srgb, var(--paper) 80%, transparent);
+  outline: 1.5px solid var(--ink);
   outline-offset: 2px;
   pointer-events: none;
   transition: top var(--dur-panel) var(--ease), left var(--dur-panel) var(--ease), width var(--dur-panel) var(--ease), height var(--dur-panel) var(--ease);
 }
-.tour-backdrop-full { position: fixed; inset: 0; background: rgba(20, 20, 18, 0.55); }
+.tour-backdrop-full { position: fixed; inset: 0; background: color-mix(in srgb, var(--paper) 80%, transparent); }
 .tour-bubble {
   position: fixed;
   width: 400px;
   max-width: calc(100vw - 32px);
   background: var(--surface);
-  border: 1px solid var(--control-border);
+  border: 0;
   border-radius: var(--radius-lg, 12px);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
-  padding: 14px 22px 12px;
+  box-shadow: var(--shadow-key);
+  padding: 18px 22px 14px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1668,13 +1668,13 @@ html[data-theme="night"] .repair-sheet-backdrop { background: rgba(0,0,0,.5); }
 .tour-body { margin: 0; font-size: 14px; line-height: 1.6; color: var(--ink); }
 .tour-points { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
 .tour-points li { position: relative; padding-left: 18px; font-size: 13px; line-height: 1.55; color: var(--graphite); }
-.tour-points li::before { content: ""; position: absolute; left: 4px; top: 8px; width: 5px; height: 5px; border-radius: 999px; background: var(--slate); }
+.tour-points li::before { content: ""; position: absolute; left: 4px; top: 8px; width: 5px; height: 5px; border-radius: 999px; background: var(--faint); }
 .tour-points b { color: var(--ink); font-weight: 600; }
 .tour-points code { font-family: var(--mono); background: var(--sunk); border-radius: 4px; padding: .06em .32em; font-size: .92em; }
 .tour-foot { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; margin-top: 14px; background: var(--surface); padding-top: 8px; }
 .tour-dots { display: flex; gap: 6px; }
 .tour-dots i { width: 6px; height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 20%, transparent); transition: width var(--dur-state), background var(--dur-state); }
-.tour-dots i.on { width: 18px; background: var(--slate); }
+.tour-dots i.on { width: 18px; background: var(--ink); }
 .tour-actions { display: flex; align-items: center; gap: 8px; }
 .tour-skip { border: 0; background: none; color: var(--quiet); font-size: 13px; cursor: pointer; padding: 7px 6px; }
 .tour-skip:hover { color: var(--graphite); }
@@ -1685,6 +1685,68 @@ html[data-theme="night"] .repair-sheet-backdrop { background: rgba(0,0,0,.5); }
 html[data-theme="night"] .tour-spotlight { box-shadow: 0 0 0 9999px rgba(0,0,0,.7); }
 html[data-theme="night"] .tour-backdrop-full { background: rgba(0,0,0,.7); }
 @media (prefers-reduced-motion: reduce) { .tour-spotlight { transition: none; } }
+
+/* ── 新手引导：首次设置（整窗覆盖） ──
+   White paper with the Trace dot field flowing across the whole window. The
+   field thins out under the reading column through a soft mask rather than a
+   solid white cut-out, so it stays continuous. */
+.onboarding-setup { position: fixed; inset: 36px 0 0; z-index: 8900; display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center; overflow: hidden; background: var(--paper); color: var(--ink); transition: opacity 420ms var(--ease); }
+.app.native-frame .onboarding-setup { top: 0; }
+.onboarding-setup.leaving { opacity: 0; pointer-events: none; }
+.onboarding-field { position: absolute; inset: 0; pointer-events: none;
+  -webkit-mask-image: radial-gradient(closest-side at 50% 50%, transparent 52%, rgba(0,0,0,.35) 78%, #000 100%);
+  mask-image: radial-gradient(closest-side at 50% 50%, transparent 52%, rgba(0,0,0,.35) 78%, #000 100%);
+  -webkit-mask-size: 100% 100%; mask-size: 100% 100%; }
+.onboarding-field canvas.field { opacity: .26; }
+/* One column, three rows: progress / content / actions. Every row shares the
+   same left and right edges; text buttons pull in by their own padding so their
+   glyphs, not their hit areas, sit on those edges. */
+/* Content column stays fixed; progress, skip and the step actions anchor to the window edges. */
+.onboarding-panel { --ob-edge: clamp(24px, 3.2vw, 44px); --ob-column: min(680px, calc(100% - 2 * var(--ob-edge))); position: relative; align-self: stretch; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) var(--ob-column) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; padding: 20px var(--ob-edge) 24px; }
+.onboarding-top, .onboarding-foot { grid-column: 1 / -1; }
+.onboarding-step { grid-column: 2; }
+.onboarding-top { display: flex; align-items: center; justify-content: space-between; min-height: 36px; }
+.onboarding-top .tour-skip { margin-right: -6px; }
+.onboarding-step { min-height: 0; display: flex; flex-direction: column; padding-top: clamp(24px, 10vh, 96px); }
+.onboarding-step h1 { margin: 0; font-size: 32px; line-height: 1.15; font-weight: 650; letter-spacing: -.025em; outline: none; }
+.onboarding-lead { margin: 12px 0 0; max-width: 40em; color: var(--graphite); font-size: 15px; line-height: 1.6; }
+.onboarding-body { flex: 1; min-height: 0; margin-top: 40px; overflow-y: auto; overscroll-behavior: contain; }
+.onboarding-status { margin: 0; color: var(--quiet); font-size: 13px; line-height: 1.6; }
+.onboarding-recheck { margin: 24px 0 0 -8px; gap: 8px; color: var(--quiet); }
+.onboarding-clients { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 24px; }
+.onboarding-clients li { display: flex; align-items: center; gap: 12px; min-height: 40px; font-size: 14px; color: var(--ink); }
+.onboarding-apps { display: flex; flex-direction: column; gap: 32px; }
+.onboarding-app header { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 36px; }
+.onboarding-app header .provider-brand-icon { width: 24px; height: 24px; }
+.onboarding-app h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.onboarding-ready, .onboarding-missing { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--quiet); }
+.onboarding-ready { color: var(--accent-green); }
+/* Download rows start on the product name's edge (icon 24 + gap 12). */
+.onboarding-app .setup-card-download-versions { margin: 8px 0 0 36px; gap: 16px; }
+.onboarding-import .configuration-import { padding: 0; max-height: none; height: 100%; }
+.onboarding-import .configuration-import-toolbar { margin-bottom: 8px; }
+.onboarding-import .configuration-import-toolbar > .provider-text-action { margin-left: -8px; }
+.onboarding-import .configuration-import-refresh { margin-right: -8px; }
+.onboarding-import .configuration-import-item { padding-inline: 0; }
+.onboarding-import .configuration-import-item:not(.configuration-import-item-disabled):hover { background: none; }
+/* Import keeps its own actions; they take the right slot of the action row. */
+.onboarding-panel[data-step="2"] .configuration-import-actions { position: absolute; right: var(--ob-edge); bottom: 24px; margin: 0; }
+.onboarding-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding-top: 24px; }
+.onboarding-foot .btn { min-width: 96px; }
+.onboarding-panel[data-step="2"] .configuration-import-actions .btn { min-width: 96px; }
+@media (max-width: 720px) { .onboarding-clients { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-height: 560px) { .onboarding-panel { padding-block: 14px 18px; } .onboarding-step { padding-top: 16px; } .onboarding-body { margin-top: 24px; } .onboarding-panel[data-step="2"] .configuration-import-actions { bottom: 18px; } }
+
+@media (prefers-reduced-motion: no-preference) {
+  .onboarding-step { animation: onboarding-step-in 560ms var(--ease) both; }
+  .onboarding-step .onboarding-lead { animation: onboarding-step-in 560ms 70ms var(--ease) both; }
+  .onboarding-step .onboarding-body { animation: onboarding-step-in 560ms 140ms var(--ease) both; }
+  .onboarding-clients li { animation: onboarding-item-in 420ms calc(var(--i, 0) * 55ms) var(--ease) both; }
+  .tour-root { animation: onboarding-fade 320ms var(--ease) both; }
+}
+@keyframes onboarding-step-in { from { opacity: 0; transform: translateY(12px); filter: blur(6px); } }
+@keyframes onboarding-item-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes onboarding-fade { from { opacity: 0; } }
 
 /* ── Toast 规范预览 ── */
 .quota-preview-page {

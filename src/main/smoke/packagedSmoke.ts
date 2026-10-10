@@ -91,10 +91,10 @@ export async function runPackagedSmokeTest(managerWindow: BrowserWindow): Promis
     // React may still be committing the first render when loadFile resolves;
     // wait for the rail to exist before querying controls.
     await waitFor(() => document.querySelector('.rail-btn[data-page="signal"]'), 'manager UI did not render (root html length=' + (document.getElementById('root') ? document.getElementById('root').innerHTML.length : -1) + ')');
-    const tourSkip = document.querySelector('.tour-skip');
+    const tourSkip = document.querySelector('#onboarding-setup .tour-skip, .tour-skip');
     if (tourSkip) {
       tourSkip.click();
-      await waitFor(() => !document.querySelector('.tour-root'), 'onboarding could not be dismissed');
+      await waitFor(() => !document.querySelector('.tour-root, #onboarding-setup'), 'onboarding could not be dismissed');
     }
     const expectedPlatform = ${JSON.stringify(process.platform)};
     if (document.documentElement.dataset.platform !== expectedPlatform) {

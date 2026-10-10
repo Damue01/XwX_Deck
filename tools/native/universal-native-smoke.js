@@ -11,8 +11,8 @@
   try {
     await wait(() => window.xwxDeck && document.querySelector('[data-page="models"]'), 'production renderer');
     await delay(300);
-    document.querySelector('[aria-label="跳过新手引导"]')?.click();
-    await wait(() => !document.querySelector('#onboarding-import-dialog'), 'initial onboarding dismissed');
+    document.querySelector('#onboarding-setup .tour-skip')?.click();
+    await wait(() => !document.querySelector('#onboarding-setup, .tour-root'), 'initial onboarding dismissed');
     const api = window.xwxDeck;
     if (!localStorage.getItem('xwx-universal-ui-seeded')) {
       const context = await invoke('smokeContext');

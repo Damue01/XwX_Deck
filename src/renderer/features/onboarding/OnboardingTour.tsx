@@ -1,8 +1,6 @@
 import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
-import { Dialog } from '@base-ui/react/dialog';
-import { X } from 'lucide-react';
-import { ImportConfigurations } from '../settings/ImportConfigurations';
+import { OnboardingSetup } from './OnboardingSetup';
 import type { PageId } from '@/features/shell/Rail';
 
 /** 一步导览：切到哪页、高亮哪个真实元素、气泡文案。 */
@@ -21,14 +19,17 @@ function tourSteps(): readonly TourStep[] { return [
   {
     page: 'models',
     selector: '[data-tour="models-proxy"]',
-    title: '选择客户端使用的模型服务',
-    lead: '选择已保存的服务和模型；未选择时保留客户端原有连接。',
+    title: '一步切换模型服务',
+    lead: '为 Claude 或 ChatGPT 选择已保存的服务和模型，XwX Deck 会替你写好客户端配置。',
+    points: [
+      <>{t("未选择时保留客户端原有的登录和连接。")}</>
+    ]
   },
   {
     page: 'signal',
     selector: '#captureBtn',
-    title: '开始一次请求追踪',
-    lead: '开启后，在客户端发一条新消息，就能在这里看到记录。',
+    title: '开始 Trace',
+    lead: '点击开始记录，然后在客户端发一条新消息，这里就会出现记录。',
     points: [
       <>{t("再次点击停止记录，模型服务设置保持不变。")}</>,
       <>{t("点中间的数字，可在")}<b>Token</b>{t("与")}<b>{t("费用")}</b>{t("之间切换。")}</>
@@ -37,19 +38,18 @@ function tourSteps(): readonly TourStep[] { return [
   {
     page: 'signal',
     selector: '#dashBtn',
-    title: '仪表盘看每条详情',
-    lead: '在浏览器中打开完整仪表盘，逐条查看请求。',
+    title: '查看每次请求',
+    lead: '在仪表盘逐条查看请求的模型、Token、耗时和原始内容。',
     points: [
-      <>{t("可看模型、Token、耗时与内容，并按会话或客户端筛选。")}</>
+      <>{t("可以按会话或客户端筛选。")}</>
     ]
-  },
-
+  }
 ]; }
 
 const STORAGE_KEY = 'xwx-deck.onboardingSeen';
 const PAD = 8; // 高亮框外扩
 
-interface Rect { top: number; left: number; width: number; height: number; }
+interface Rect { top: number; left: number; width: number; height: number; round: boolean; }
 
 function navigateTo(page: PageId): void {
   window.dispatchEvent(new CustomEvent('xwxdeck:navigate', { detail: page }));
@@ -67,7 +67,6 @@ export function OnboardingTour(): React.ReactElement | null {
     } catch { return true; }
   });
   const [preparing, setPreparing] = React.useState(true);
-  const [importBusy, setImportBusy] = React.useState(false);
   const [index, setIndex] = React.useState(0);
   const [rect, setRect] = React.useState<Rect | null>(null);
 
@@ -77,6 +76,7 @@ export function OnboardingTour(): React.ReactElement | null {
   const finish = React.useCallback(() => {
     try { localStorage.setItem(STORAGE_KEY, 'true'); } catch { /* ignore */ }
     setActive(false);
+    navigateTo('signal');
   }, []);
 
   React.useEffect(() => {
@@ -97,7 +97,7 @@ export function OnboardingTour(): React.ReactElement | null {
   // instead of exposing an intermediate faded/scaled page.
   React.useLayoutEffect(() => {
     if (!active || !step) return;
-    navigateTo(preparing ? 'settings' : step.page);
+    navigateTo(step.page);
   }, [active, preparing, step]);
 
   // 定位目标元素（等切页后渲染出来，轮询一小段时间直到量到）
@@ -126,7 +126,7 @@ export function OnboardingTour(): React.ReactElement | null {
           || (page.classList.contains('current') && getComputedStyle(page).transform === 'none');
         const r = el.getBoundingClientRect();
         if (pageReady && r.width > 0 && r.height > 0) {
-          setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+          setRect({ top: r.top, left: r.left, width: r.width, height: r.height, round: (parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0) >= Math.min(r.width, r.height) / 2 - 1 });
           observeLayout(el);
           return;
         }
@@ -152,15 +152,7 @@ export function OnboardingTour(): React.ReactElement | null {
 
   if (!active || !step) return null;
 
-  if (preparing) return <Dialog.Root open={active} onOpenChange={open => { if (!open && !importBusy) finish(); }}>
-    <Dialog.Portal>
-      <Dialog.Backdrop className="setup-card-backdrop" />
-      <Dialog.Popup className="configuration-dialog onboarding-import-dialog" id="onboarding-import-dialog">
-        <header className="configuration-header"><Dialog.Title>{t("导入已有配置")}</Dialog.Title><Dialog.Description className="sr-only">{t("检测已有配置，选择后导入，或跳过后继续新手引导。")}</Dialog.Description><Dialog.Close className="configuration-close" aria-label={t("跳过新手引导")} disabled={importBusy}><X size={17} aria-hidden="true" /></Dialog.Close></header>
-        <ImportConfigurations visible={active} onboarding onBack={() => setPreparing(false)} onBusyChange={setImportBusy} />
-      </Dialog.Popup>
-    </Dialog.Portal>
-  </Dialog.Root>;
+  if (preparing) return <OnboardingSetup onDone={() => setPreparing(false)} onSkip={finish} />;
 
   const last = index === STEPS.length - 1;
 
@@ -190,7 +182,8 @@ export function OnboardingTour(): React.ReactElement | null {
             top: rect.top - PAD,
             left: rect.left - PAD,
             width: rect.width + PAD * 2,
-            height: rect.height + PAD * 2
+            height: rect.height + PAD * 2,
+            borderRadius: rect.round ? 999 : undefined
           }}
         />
       ) : (
