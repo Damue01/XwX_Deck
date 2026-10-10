@@ -49,9 +49,13 @@ try {
   assert.notEqual(replacement.id, first.id);
   assert.deepEqual(reused.connections.find(p => p.id === first.id), renamed.connections.find(p => p.id === first.id));
   assert.deepEqual(reused.connections.find(p => p.displayName === 'Custom-2'), original.connections.find(p => p.displayName === 'Custom-2'));
-  await assert.rejects(rpc('saveProvider', input('DeepSeek', 'deepseek', 'overwrite')), /连接名称已存在/);
-  assert.deepEqual(await rpc('getProviders'), reused, 'duplicate creation must not change any configuration');
-  for (const provider of reused.connections) {
+  const sameName = await rpc('saveProvider', input('DeepSeek', 'deepseek', 'same-name'));
+  assert.equal(sameName.connections.length, 6);
+  assert.equal(new Set(sameName.connections.filter(p=>p.displayName==='DeepSeek').map(p=>p.id)).size, 2);
+  assert.deepEqual(sameName.connections.slice(0,5),reused.connections);
+  await rpc('saveProvider',input('中文连接 名称','custom','unicode'));
+  assert.ok((await rpc('getProviders')).connections.some(p=>p.displayName==='中文连接 名称'));
+  for (const provider of sameName.connections) {
     await rpc('switchClientProvider', { client: 'codex', providerId: provider.id });
     assert.equal((await rpc('getProviders')).selected.codex, provider.id);
     assert.equal((await rpc('validateProvider', { providerId: provider.id })).status, 'valid');
@@ -61,7 +65,7 @@ try {
   const persisted = await rpc('getProviders'); await stop(); start();
   assert.deepEqual(await rpc('getProviders'), persisted, 'identities, names and selection survive restart');
   await stop();
-  console.log('PASS multiple Custom/DeepSeek configurations, live identities across rename, old-name reuse, duplicate rejection, five actual requests and restart persistence');
+  console.log('PASS multiple Custom/DeepSeek configurations, live identities across rename, old-name reuse, same-name and Unicode names, six actual requests and restart persistence');
 } finally {
   if (child?.exitCode === null) child.kill('SIGKILL');
   await new Promise(resolve => server.close(resolve));

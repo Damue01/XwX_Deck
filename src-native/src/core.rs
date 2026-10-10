@@ -1469,15 +1469,8 @@ impl Pilot {
                     return Err("修改连接前请先停止 Trace".into());
                 }
                 let name = text(&input, "displayName");
-                let retained_name=self.settings.connections.iter().any(|p|p.id==text(&input,"id")&&p.display_name==name);
-                if !retained_name && (name.is_empty()
-                    || name.len() > 80
-                    || !name
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
-                    || ["openai", "xwx_deck"].contains(&name.to_lowercase().as_str()))
-                {
-                    return Err("名称只能包含 1–80 位英文字母、数字、下划线和连字符".into());
+                if name.trim().is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
+                    return Err("名称需为 1–80 个字符，不能包含控制字符".into());
                 }
                 let base = text(&input, "baseUrl").trim_end_matches('/');
                 let url = reqwest::Url::parse(base).map_err(err)?;
@@ -1502,28 +1495,18 @@ impl Pilot {
                 }
                 // A new connection must never reuse a renamed connection's identity.
                 let supplied_id = text(&input, "id");
-                if supplied_id.is_empty() && self.settings.connections.iter().any(|p| p.display_name == name) {
-                    return Err("连接名称已存在".into());
-                }
                 let id = if supplied_id.is_empty() {
-                    let mut candidate = name.to_string();
+                    let stem = if name.bytes().all(|c|c.is_ascii_alphanumeric() || c==b'_' || c==b'-') && !["openai","xwx_deck"].contains(&name.to_lowercase().as_str()) {name.to_string()} else {format!("provider-{}",&storage::digest(name.as_bytes())[..12])};
+                    let mut candidate = stem.clone();
                     let mut suffix = 2;
                     while self.settings.connections.iter().any(|p| p.id == candidate) {
-                        candidate = format!("{}-{}", name, suffix);
+                        candidate = format!("{}-{}", stem, suffix);
                         suffix += 1;
                     }
                     candidate
                 } else {
                     supplied_id.to_string()
                 };
-                if self
-                    .settings
-                    .connections
-                    .iter()
-                    .any(|p| p.display_name == name && p.id != id)
-                {
-                    return Err("连接名称已存在".into());
-                }
                 let old = self.settings.connections.iter().find(|p| p.id == id);
                 if old.is_some_and(|p| !p.subscription_account_id.is_empty()) { return Err("订阅账号请在订阅账号页面管理".into()); }
                 let provider = Provider {

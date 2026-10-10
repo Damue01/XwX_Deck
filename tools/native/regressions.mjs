@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
-const binary = resolve(import.meta.dirname, '../../test-results/native-target/release/xwx-deck-native'+(process.platform==='win32'?'.exe':''));
+import {nativeTestBinary as binary} from './test-support.mjs';
 // macOS tmpdir can be /var, whose physical path is /private/var.
 const { realpath } = await import('node:fs/promises');
 const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-rust-pilot-regression-'));

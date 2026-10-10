@@ -31,4 +31,4 @@ Rust release 使用 `opt-level=z`、LTO、单个 codegen unit、panic abort 和 
 
 `node tools/native/client-models-renderer-test.mjs [仓库目录]` 用真实 React/Base UI 选择框验证迟到回读、目录失败、导航、保存失败重试和运行状态竞态，桥接层为合成夹具。
 
-真实 Pi 可临时安装官方 `@earendil-works/pi-coding-agent`，无需全局安装。设置 `XWX_INSTALLED_PI` 为其 JavaScript CLI 入口后运行 `node tools/native/pi-client-test.mjs`，或在完整后端测试中自动加入此套件。测试使用独立 HOME、关闭扩展/工具/遥测和启动联网、本地拒绝外网的代理及合成授权，验证实际 CLI 读取生成配置、切换 Provider/模型、协议转换、Trace 停止直连和外部编辑保留。不设置该变量时，不宣称已验证真实 Pi。运行中的交互会话是否自动重载及真实平台授权仍须单列。
+真实 Pi 可临时安装官方 `@earendil-works/pi-coding-agent`，无需全局安装。设置 `XWX_INSTALLED_PI` 为其 JavaScript CLI 入口后运行 `node tools/native/gateway-clients-test.mjs`，或在完整后端测试中自动加入此套件。测试使用独立 HOME、关闭扩展/工具/遥测和启动联网、本地拒绝外网的代理及合成授权，验证实际 CLI 读取生成配置、切换 Provider/模型、协议转换、Trace 停止直连和外部编辑保留。还可设置 `XWX_INSTALLED_OPENCODE` 为官方 OpenCode 可执行文件，同一套件顺序验证两个客户端，不重复维护请求服务与生命周期断言。不设置相应变量时，不宣称已验证该客户端。运行中的交互会话是否自动重载及真实平台授权仍须单列。

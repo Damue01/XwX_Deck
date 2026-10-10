@@ -32,7 +32,7 @@ const suites = [
   "language-renderer-test.mjs",
   "portable-update-test.mjs"
 ];
-if (process.env.XWX_INSTALLED_PI) suites.push('pi-client-test.mjs');
+if (process.env.XWX_INSTALLED_PI || process.env.XWX_INSTALLED_OPENCODE) suites.push('gateway-clients-test.mjs');
 const results = [];
 for (const suite of suites) {
   console.log(`\nNative suite: ${suite}`);
