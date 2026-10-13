@@ -3,7 +3,7 @@ import path from 'node:path';
 const root=path.resolve(import.meta.dirname,'..');
 const read=file=>readFile(path.join(root,file),'utf8');
 const [contract,pkg,config,cargo,main,core,clients,updates,build,bridge,app,rail,license,workflows]=await Promise.all([
-  read('release-contract.json').then(JSON.parse),read('package.json').then(JSON.parse),read('src-native/tauri.conf.json').then(JSON.parse),read('src-native/Cargo.toml'),read('src-native/src/main.rs'),read('src-native/src/core.rs'),read('src-native/src/clients.rs'),read('src-native/src/updates.rs'),read('tools/native/build.mjs'),read('tools/native/bridge.ts'),read('src/renderer/App.tsx'),read('src/renderer/features/shell/Rail.tsx'),read('LICENSE'),Promise.all(['ci','pages','release'].map(n=>read(`.github/workflows/${n}.yml`))).then(v=>v.join('\n'))
+  read('release-contract.json').then(JSON.parse),read('package.json').then(JSON.parse),read('src-native/tauri.conf.json').then(JSON.parse),read('src-native/Cargo.toml'),read('src-native/src/main.rs'),Promise.all(['core','settings'].map(n=>read(`src-native/src/${n}.rs`))).then(v=>v.join('\n')),read('src-native/src/clients.rs'),read('src-native/src/updates.rs'),read('tools/native/build.mjs'),read('tools/native/bridge.ts'),read('src/renderer/App.tsx'),read('src/renderer/features/shell/Rail.tsx'),read('LICENSE'),Promise.all(['ci','pages','release'].map(n=>read(`.github/workflows/${n}.yml`))).then(v=>v.join('\n'))
 ]);
 const failures=[];const check=(v,m)=>{if(!v)failures.push(m);};
 check(contract.schemaVersion===1&&contract.edition==='standalone'&&contract.product==='XwX Deck','standalone contract identity');
@@ -12,8 +12,8 @@ check(config.version===pkg.version&&cargo.includes(`version = "${pkg.version}"`)
 check(core.includes('45233..=45242')||core.includes('45233u16..=45242'),'Gateway range');
 check(main.includes('Application Support/xwx-deck')&&main.includes('.join("xwx-deck")'),'native data namespace');
 check(pkg.license==='Apache-2.0'&&license.includes('Apache License'),'Apache license');
-check(pkg.scripts.start==='npm run start:rust'&&pkg.scripts['build:mac:arm64'].includes('tools/native/build.mjs')&&pkg.scripts['build:win'].includes('tools/native/build.mjs'),'default runtime and packaging must use Rust');
-check(!build.includes('electron-builder')&&build.includes('licenses.html')&&main.includes('licenses.html')&&build.includes('meta charset="utf-8"')&&build.includes('Applications')&&build.includes('首次打开说明'),'native packaging and licenses');
+check(pkg.scripts.start==='npm run start:native:isolated'&&pkg.scripts['build:mac:arm64'].includes('tools/native/build.mjs')&&pkg.scripts['build:win'].includes('tools/native/build.mjs'),'default runtime and packaging must use Rust');
+check(!build.includes('electron-builder')&&build.includes('licenses.html')&&main.includes('licenses.html')&&build.includes('meta charset="utf-8"')&&pkg.nativePackaging.dmg.contents.some(item=>item.type==='link'&&item.path==='/Applications'),'native packaging and licenses');
 check(cargo.includes('opt-level = "z"')&&cargo.includes('lto = true')&&cargo.includes('strip = true'),'release size optimization');
 check(config.app.security.capabilities.every(c=>c.windows.length===1&&c.windows[0]==='main')&&/caller\.label\(\)\s*!\s*=\s*"main"/.test(main),'remote Viewer cannot invoke client configuration commands');
 check(main.includes('tauri_plugin_autostart')&&main.includes('TrayIconBuilder')&&main.includes('api.prevent_exit()')&&clients.includes('gateway-recovery.json'),'startup, background reopen, safe exit and crash recovery');
@@ -23,8 +23,8 @@ check(contract.features.repairCenter&&contract.features.safeExitRecovery&&!contr
 for(const[label,text]of Object.entries({app,rail,bridge,main,core}))check(!/ToolsPage|diagnoseCodexConversations|queryCodexConversations|SyncPage|convert-excel/.test(text),`${label}: removed feature still exposed`);
 check(JSON.stringify(contract.providerFramework.userFields)===JSON.stringify(['displayName','baseUrl','key','adapter','codexModel'])&&contract.providerFramework.defaultConnections.length===0,'provider fields and no defaults');
 check(updates.includes(contract.updates.defaultServer)&&updates.includes('XWX_DECK_UPDATE_SERVER_URL')&&updates.includes('declined-update.json')&&/latest\s*!=\s*selected/.test(updates)&&updates.includes('SHA-256'),'native updates validate immutable release, persist cancellation and verify package');
-check(contract.platforms.macosArm64.installMode==='manual-dmg'&&!contract.platforms.macosArm64.automaticInstall&&main.includes('open_path(path'),'unsigned Mac manual DMG');
+check(contract.platforms.macosArm64.installMode==='manual-dmg'&&!contract.platforms.macosArm64.automaticInstall&&main.includes('open_path'),'unsigned Mac manual DMG');
 check(contract.platforms.windows.installMode==='automatic'&&main.includes('portable_update::spawn'),'Windows native portable replacement');
-check(workflows.includes('npm run docs:build')&&workflows.includes('write-public-release-manifest.mjs')&&workflows.includes('--draft')&&workflows.includes('npm run test:upstream'),'documentation, regression and draft release gates');
+check(workflows.includes('npm run docs:build')&&workflows.includes('write-public-release-manifest.mjs')&&workflows.includes('--draft')&&workflows.includes('npm run check:test-plan'),'documentation, regression and draft release gates');
 check(workflows.includes('npm run test:rust:backend')&&workflows.includes('Set up Rust'),'CI must compile and regress native backend');
 if(failures.length){console.error(failures.map(f=>`- ${f}`).join('\n'));process.exit(1);}console.log('PASS standalone native XwX Deck release contract');

@@ -1,4 +1,3 @@
-import { t } from '@/lib/i18n';
 import * as React from 'react';
 import { useBridge } from '@/bridge/store';
 import type { XwXDeckUpdateState } from '@/bridge/types';
@@ -14,26 +13,26 @@ export function announceAvailableUpdate(
   onDownloaded: (next: XwXDeckUpdateState) => void
 ): void {
   const version = update.targetVersion;
-  if (update?.background || !version || !update.updateAvailable || update.status !== 'available') return;
-  const id = `xwxdeck-update-${version}`;
-  showToast(t("XwX Deck {0} 可更新", version), 'info', id, {
-    description: conciseReleaseNotes(update.releaseNotes, update.installMode),
+  if (!version || !update.updateAvailable || update.status !== 'available') return;
+  const id = `xwx-deck-update-${version}`;
+  showToast(`XwX Deck ${version} 可更新`, 'info', id, {
+    description: conciseReleaseNotes(update.releaseNotes),
     timeout: 5_000,
     actionProps: {
       type: 'button',
-      children: t('立即下载'),
-      'aria-label': t("下载 XwX Deck {0}", version),
+      children: '立即下载',
+      'aria-label': `下载 XwX Deck ${version}`,
       onClick: () => {
         closeToast(id);
         void download()
           .then(next => {
             onDownloaded(next);
-            if (next.status === 'error') showToast(t('更新下载失败'), 'error', undefined, {
+            if (next.status === 'error') showToast('更新下载失败', 'error', undefined, {
               description: updateFailureDescription(next.error),
               timeout: 12_000
             });
           })
-          .catch(error => showToast(t('更新下载失败'), 'error', undefined, {
+          .catch(error => showToast('更新下载失败', 'error', undefined, {
             description: updateFailureDescription(error),
             timeout: 12_000
           }));
@@ -49,27 +48,27 @@ export function UpdateNotification(): null {
 
   React.useEffect(() => {
     const version = update?.targetVersion;
-    if (update?.background || !version || !update.updateAvailable || update.status !== 'available') return;
+    if (!version || !update.updateAvailable || update.status !== 'available') return;
 
-    const description = conciseReleaseNotes(update.releaseNotes, update.installMode);
+    const description = conciseReleaseNotes(update.releaseNotes);
     const signature = `${version}\u0000${description}`;
     if (notifiedSignature.current === signature) return;
     notifiedSignature.current = signature;
 
     announceAvailableUpdate(update, () => bridge.api.downloadUpdate(), next => bridge.patch({ updateState: next }));
-  }, [bridge.api, bridge.patch, update?.background, update?.releaseNotes, update?.status, update?.targetVersion, update?.updateAvailable]);
+  }, [bridge.api, bridge.patch, update?.releaseNotes, update?.status, update?.targetVersion, update?.updateAvailable]);
 
   React.useEffect(() => {
     const version = update?.targetVersion;
     if (!version || update.status === 'available') return;
-    closeToast(`xwxdeck-update-${version}`);
+    closeToast(`xwx-deck-update-${version}`);
   }, [update?.status, update?.targetVersion]);
 
   return null;
 }
 
-function conciseReleaseNotes(value: string | undefined, installMode?: string): string {
-  const fallback = installMode === 'manual-dmg' ? t('下载并校验后，打开 DMG 完成安装。') : t('下载完成后重启即可更新。');
+function conciseReleaseNotes(value: string | undefined): string {
+  const fallback = '下载完成后重启即可更新。';
   if (!value?.trim()) return fallback;
   const lines = value
     .split(/\r?\n/)

@@ -17,32 +17,31 @@ interface TourStep {
 
 function tourSteps(): readonly TourStep[] { return [
   {
+    page: 'settings',
+    selector: '#provider-add',
+    title: '添加配置',
+    lead: '在我的配置中添加模型服务，填写服务地址和 API Key，也可以导入已有配置'
+  },
+  {
     page: 'models',
     selector: '[data-tour="models-proxy"]',
-    title: '一步切换模型服务',
-    lead: '为 Claude 或 ChatGPT 选择已保存的服务和模型，XwX Deck 会替你写好客户端配置。',
-    points: [
-      <>{t("未选择时保留客户端原有的登录和连接。")}</>
-    ]
+    title: '切换模型',
+    lead: '为客户端选择已添加的配置和模型，XwX Deck 会写入对应的客户端配置'
   },
   {
     page: 'signal',
     selector: '#captureBtn',
-    title: '开始 Trace',
-    lead: '点击开始记录，然后在客户端发一条新消息，这里就会出现记录。',
+    title: '按需开启 Trace',
+    lead: '在本地转换协议，完整记录每一次请求',
     points: [
-      <>{t("再次点击停止记录，模型服务设置保持不变。")}</>,
-      <>{t("点中间的数字，可在")}<b>Token</b>{t("与")}<b>{t("费用")}</b>{t("之间切换。")}</>
+      <>{t('标为“需 Trace”的模型需要开启 Trace 才能使用')}</>
     ]
   },
   {
     page: 'signal',
     selector: '#dashBtn',
-    title: '查看每次请求',
-    lead: '在仪表盘逐条查看请求的模型、Token、耗时和原始内容。',
-    points: [
-      <>{t("可以按会话或客户端筛选。")}</>
-    ]
+    title: '在仪表盘查看详情',
+    lead: '打开仪表盘，查看已记录请求的模型、Token、耗时和详细内容'
   }
 ]; }
 
@@ -213,7 +212,7 @@ export function OnboardingTour(): React.ReactElement | null {
               className="tour-next"
               onClick={() => (last ? finish() : setIndex(index + 1))}
             >
-              {last ? t('开始使用') : t('下一步')}
+              {last ? t('完成') : t('下一步')}
             </button>
           </div>
         </div>

@@ -1,14 +1,16 @@
-import { nativeTestBinary, writeCliFixture } from './test-support.mjs';
+import { clearFreshCompatibleFixture } from './test-support.mjs';
+import { nativeTestBinary, writeCliFixture, stopUnexecutedToolFixtures } from './test-support.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { mkdtemp, realpath, readFile, writeFile, stat, readdir } from 'node:fs/promises';
+import { mkdtemp, realpath, readFile, writeFile, stat, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), 'xwx-grok-subscriptions-'));
 const root=join(fixtureRoot,'pilot');
+const secure=process.env.XWX_DECK_TEST_SECURE_STORE==='1';
 const homes = new Map(), requests = []; let origin, serial = 0, nextEmail, refreshes = 0;
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, origin); res.setHeader('content-type', 'application/json');
@@ -58,9 +60,10 @@ start();
 try {
  assert.deepEqual((await rpc('getSubscriptionAccounts')).accounts,[]);
  const first=await complete();assert.equal(first.flow.status,'complete');const a=first.accounts[0];assert.equal(a.platform,'grok');assert.equal(a.status,'connected');
- const second=await complete();assert.equal(second.accounts.length,2);const b=second.accounts.find(x=>x.id!==a.id);assert.notEqual(a.id,b.id);
+ const second=await complete();assert.equal(second.flow.status,'complete',JSON.stringify(second.flow));assert.equal(second.accounts.length,2);const b=second.accounts.find(x=>x.id!==a.id);assert.notEqual(a.id,b.id);
+ if(secure){for(const account of [a,b]){const source=await readFile(join(root,'grok-accounts',account.id,'auth.json'),'utf8');assert.equal(JSON.parse(source).nativeEncryptedDocument,1);assert.ok(!source.includes('grok-secret'));}pass('official CLI credentials are sealed before account publication');}
  pass('official CLI device flow uses separate owned homes for multiple Grok accounts');
- const pa=(await rpc('connectSubscriptionAccount',a.id)).connections[0], pb=(await rpc('connectSubscriptionAccount',b.id)).connections[1];
+ await clearFreshCompatibleFixture(rpc); const pa=(await rpc('connectSubscriptionAccount',a.id)).connections[0], pb=(await rpc('connectSubscriptionAccount',b.id)).connections[1];
  await rpc('switchClientProvider',{client:'codex',providerId:pa.id}); await rpc('updateCodexConfig',{expectedProviderId:pa.id,compatibleModel:'grok-fixture'});
  await rpc('switchClientProvider',{client:'claude',providerId:pb.id});await rpc('updateClaudeModels',{fable:'grok-fixture',opus:'grok-fixture',sonnet:'grok-fixture',haiku:'grok-fixture'});
  const choices=(await rpc('getProviders')).selected;await rpc('renameSubscriptionAccount',{accountId:a.id,label:'Grok 工作'});assert.deepEqual((await rpc('getProviders')).selected,choices);
@@ -76,15 +79,15 @@ try {
  const tools=[{type:'custom',name:'apply_patch',format:{type:'text'}},{type:'namespace',name:'workspace',tools:[{type:'function',name:'read_file',parameters:{type:'object',properties:{path:{type:'string'}}}}]}];
  const toolReply=await fetch(running.localBaseUrl+'/v1/responses',{method:'POST',headers,body:JSON.stringify({model:'grok-fixture',input:[{type:'custom_tool_call',call_id:'previous',name:'apply_patch',input:'previous patch'}],tools,stream:false})});assert.equal(toolReply.status,200,await toolReply.clone().text());const toolBody=await toolReply.json();assert.equal(toolBody.output[0].type,'custom_tool_call');assert.equal(toolBody.output[0].input,'fixture patch');assert.equal(toolBody.output[1].name,'read_file');assert.equal(toolBody.output[1].namespace,'workspace');assert.equal(JSON.parse(requests.at(-1).body.input[0].arguments).input,'previous patch');
  const toolStream=await fetch(running.localBaseUrl+'/v1/responses',{method:'POST',headers,body:JSON.stringify({model:'grok-fixture',input:'fixture',tools,stream:true})});assert.equal(toolStream.status,200);assert.match(await toolStream.text(),/custom_tool_call/);pass('Codex namespace and custom tools round-trip through flat Grok functions in JSON and SSE');
- await rpc('toggleTracing',false);assert.equal(await readFile(codex,'utf8'),beforeCodex);assert.deepEqual(JSON.parse(await readFile(claude,'utf8')),JSON.parse(beforeClaude));await assert.rejects(fetch(running.localBaseUrl+'/v1/responses'));
+ await stopUnexecutedToolFixtures(rpc,4);assert.equal(await readFile(codex,'utf8'),beforeCodex);assert.deepEqual(JSON.parse(await readFile(claude,'utf8')),JSON.parse(beforeClaude));await assert.rejects(fetch(running.localBaseUrl+'/v1/responses'));
  pass('Responses and Claude Messages reach each account; secret/header isolation and Trace restoration hold');
  nextEmail='wrong@example.test';const wrong=await complete(a.id);assert.equal(wrong.flow.status,'failed');assert.match(wrong.flow.error,/不一致/);assert.equal(wrong.accounts.length,2);assert.equal(wrong.accounts.find(x=>x.id===a.id).label,'Grok 工作');nextEmail=undefined;
  pass('wrong-account re-login preserves prior identity and credentials');
  await rpc('beginSubscriptionSignIn',{platform:'grok'});await rpc('cancelSubscriptionSignIn');await new Promise(r=>setTimeout(r,150));assert.equal((await rpc('getSubscriptionAccounts')).accounts.length,2);assert.equal((await readdir(join(root,'grok-accounts'))).filter(n=>n.startsWith('grok-')).length,2);
  pass('cancelling device authorization removes only the staged home');
- await stop();const authPath=join(root,'grok-accounts',a.id,'auth.json');const auth=JSON.parse(await readFile(authPath,'utf8'));auth.grok.expires_at=new Date(0).toISOString();await writeFile(authPath,JSON.stringify(auth));start();await rpc('fetchProviderModels',{providerId:pa.id});assert.equal(refreshes,1);if(process.platform!=='win32')assert.equal((await stat(authPath)).mode&0o777,0o600);
+ await stop();const authPath=join(root,'grok-accounts',a.id,'auth.json');let source=await readFile(authPath,'utf8');if(secure){const destination=join(fixtureRoot,'export');const exported=spawnSync(binary,['--export-credential-backup',root,'--export-destination',destination,'--export-isolated-test'],{env:process.env,encoding:'utf8'});assert.equal(exported.status,0,exported.stderr);source=await readFile(join(destination,'grok-accounts',a.id,'auth.json'),'utf8');await rm(destination,{recursive:true,force:true});}const auth=JSON.parse(source);auth.grok.expires_at=new Date(0).toISOString();await writeFile(authPath,JSON.stringify(auth));start();await rpc('fetchProviderModels',{providerId:pa.id});assert.equal(refreshes,1);assert.deepEqual(JSON.parse(await readFile(join(root,'native-cli-work.json'),'utf8')),[]);if(secure){const encrypted=await readFile(authPath,'utf8');assert.equal(JSON.parse(encrypted).nativeEncryptedDocument,1);assert.ok(!encrypted.includes('grok-secret'));}if(process.platform!=='win32')assert.equal((await stat(authPath)).mode&0o777,0o600);
  assert.equal((await rpc('getProviders')).selected.codex,pa.id);assert.equal((await rpc('getSubscriptionAccounts')).accounts.find(x=>x.id===a.id).label,'Grok 工作');
  await rpc('signOutSubscriptionAccount',a.id);const signedOut=await rpc('getSubscriptionAccounts');assert.equal(signedOut.accounts.find(x=>x.id===a.id).status,'signed-out');assert.equal(signedOut.accounts.find(x=>x.id===b.id).status,'connected');assert.equal((await rpc('getProviders')).selected.codex,pa.id);
  pass('restart, CLI refresh, private permissions and single-account logout retain explicit choices');
  await stop();console.log(JSON.stringify({ok:true,root}));
-} finally {if(child.exitCode===null)child.kill('SIGTERM');server.close();}
+} finally {if(child.exitCode===null)child.kill('SIGTERM');server.close();await rm(fixtureRoot,{recursive:true,force:true});}

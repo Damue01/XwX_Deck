@@ -8,10 +8,16 @@ import {once} from 'node:events';
 import {nativeTestBinary,writeCliFixture} from './test-support.mjs';
 const root=await mkdtemp(join(await realpath(tmpdir()),'xwx-universal-native-ui-'));
 const initialized=spawnSync(nativeTestBinary,['--rpc','--pilot-root',root],{input:JSON.stringify({method:'getProviders',args:[]})+'\n',encoding:'utf8'});
-assert.equal(initialized.status,0,initialized.stderr);assert.equal(JSON.parse(initialized.stdout).result.connections.length,0);
+assert.equal(initialized.status,0,initialized.stderr);
+const initial=JSON.parse(initialized.stdout).result.connections;
+if(initial.length){
+  assert.equal(initial.length,1);assert.equal(initial[0].id,'initial-provider');assert.equal(initial[0].adapter,'compatible');assert.equal(initial[0].bearerToken,'');
+  const cleared=spawnSync(nativeTestBinary,['--rpc','--pilot-root',root],{input:JSON.stringify({method:'deleteProvider',args:['initial-provider']})+'\n',encoding:'utf8'});
+  assert.equal(cleared.status,0,cleared.stderr);assert.equal(JSON.parse(cleared.stdout).ok,true);
+}
 const home=join(root,'client-home');const config=join(home,'.config/opencode/opencode.json');
 await mkdir(resolve(config,'..'),{recursive:true});await writeFile(config,'{"theme":"system"}\n');
-await mkdir(join(home,'.local/bin'),{recursive:true});await writeCliFixture(join(home,'.local/bin/opencode'),'process.exit(0);');
+await mkdir(join(home,'.local/bin'),{recursive:true});for(const cli of ['opencode','omp'])await writeCliFixture(join(home,'.local/bin',cli),'process.exit(0);');
 const requests=[];const server=createServer(async(req,res)=>{
   if(req.url==='/v1/models'){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'gpt-4.1'}]}));return;}
   let body='';for await(const part of req)body+=part;requests.push({path:req.url,body:JSON.parse(body),authorization:req.headers.authorization});

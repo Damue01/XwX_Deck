@@ -3,8 +3,13 @@
     windows_subsystem = "windows"
 )]
 mod core;
+mod isolated_webview;
 mod language;
 mod portable_update;
+mod renderer_preferences;
+#[cfg(target_os = "macos")]
+mod webcrypto_store;
+mod webview_cache;
 use core::{Pilot, Shared};
 use serde_json::{json, Value};
 use std::{
@@ -15,6 +20,52 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+// Menu IDs carry a direction: a stale Stop click must never start Trace.
+fn request_trace_from_tray(app: &tauri::AppHandle, enabled: bool) {
+    show_main(app);
+    let _ = app.emit("pilot-trace-action", enabled);
+}
+
+fn sync_trace_tray(app: &tauri::AppHandle, state: &Value, pending: bool) {
+    use tauri::menu::{Menu, MenuItem};
+    static LAST_STATE: std::sync::Mutex<Option<(bool, bool)>> = std::sync::Mutex::new(None);
+    let Some(tray) = app.tray_by_id("xwx-deck") else {
+        return;
+    };
+    let enabled = state["tracingEnabled"].as_bool().unwrap_or(false);
+    let busy = pending || state["traceTransition"].as_str().is_some();
+    let Ok(mut last) = LAST_STATE.lock() else {
+        return;
+    };
+    if *last == Some((enabled, busy)) {
+        return;
+    }
+    let result = (|| -> tauri::Result<()> {
+        let show = MenuItem::with_id(app, "show", "打开 XwX Deck", true, None::<&str>)?;
+        let trace = MenuItem::with_id(
+            app,
+            if enabled { "trace-stop" } else { "trace-start" },
+            if enabled {
+                "关闭 Trace"
+            } else {
+                "开启 Trace"
+            },
+            !busy,
+            None::<&str>,
+        )?;
+        let licenses = MenuItem::with_id(app, "licenses", "开源许可证", true, None::<&str>)?;
+        let quit = MenuItem::with_id(app, "quit", "退出 XwX Deck", !busy, None::<&str>)?;
+        tray.set_menu(Some(Menu::with_items(
+            app,
+            &[&show, &trace, &licenses, &quit],
+        )?))?;
+        Ok(())
+    })();
+    if result.is_ok() {
+        *last = Some((enabled, busy));
+    }
+}
 
 #[tauri::command]
 async fn pilot_rpc(
@@ -27,17 +78,128 @@ async fn pilot_rpc(
     if caller.label() != "main" {
         return Err("操作只允许在主窗口发起".into());
     }
+    let _rpc = core::admit_rpc(&method)?;
     let window = app.get_webview_window("main").ok_or("主窗口不存在")?;
     match method.as_str() {
+        #[cfg(target_os = "macos")]
+        "migrateWebCryptoKey" => {
+            let root = pilot.lock().await.root.clone();
+            let isolated = argument("--pilot-root").is_some();
+            app.state::<webcrypto_store::Store>()
+                .migrate(&app, &root, isolated)?;
+            let mut state = pilot.lock().await.state();
+            state["webCryptoStorage"] = app.state::<webcrypto_store::Store>().status();
+            Ok(state)
+        }
+        "validateProvider" => {
+            let job = pilot
+                .lock()
+                .await
+                .validation_job(args.first().unwrap_or(&Value::Null))?;
+            Pilot::execute_validation(job).await
+        }
+
+        "refreshMetadata" => {
+            let metadata = pilot.lock().await.metadata_context();
+            metadata
+                .refresh(
+                    pilot.inner().clone(),
+                    args.first().cloned().unwrap_or(
+                        json!({"topics":["models","capabilities","pricing"],"reason":"manual"}),
+                    ),
+                )
+                .await
+        }
+        "fetchProviderModels" | "fetchModels" => {
+            let job = pilot.lock().await.catalog_job(&method, &args)?;
+            if let Some(job) = job {
+                let entries = job.execute().await?;
+                pilot.lock().await.finish_catalog(&job, entries)
+            } else {
+                pilot.lock().await.call(&method, &args).await
+            }
+        }
+        "smokeResizeWindow" if std::env::args().any(|arg| arg == "--smoke") => {
+            let input = args.first().ok_or("缺少测试窗口尺寸")?;
+            let width = input["width"].as_f64().ok_or("缺少宽度")?;
+            let height = input["height"].as_f64().ok_or("缺少高度")?;
+            app.get_webview_window("main")
+                .ok_or("窗口不存在")?
+                .set_size(tauri::LogicalSize::new(width, height))
+                .map_err(|_| "无法调整测试窗口")?;
+            Ok(Value::Null)
+        }
+        "getOfficialChatgptResetCredits" => {
+            let accounts = pilot.lock().await.subscription_context();
+            accounts
+                .official_credits(args.first().and_then(|v| v.as_str()).unwrap_or(""))
+                .await
+        }
+        "consumeOfficialChatgptResetCredit" => {
+            let accounts = pilot.lock().await.subscription_context();
+            accounts
+                .consume_official_credit(args.first().unwrap_or(&Value::Null))
+                .await
+        }
+        "getOfficialChatgptAccount" => {
+            let job = pilot.lock().await.official_chatgpt_job();
+            if args.first().is_some_and(|input| input["refresh"] == false) {
+                job.cached()
+            } else {
+                job.execute().await
+            }
+        }
+        "getSubscriptionAccounts" => {
+            let accounts = pilot.lock().await.subscription_context();
+            Ok(accounts.snapshot().await)
+        }
+        "refreshSubscriptionUsage" => {
+            let accounts = pilot.lock().await.subscription_context();
+            accounts
+                .refresh_usage(
+                    args.first()
+                        .and_then(|v| v["platform"].as_str())
+                        .unwrap_or(""),
+                )
+                .await?;
+            Ok(accounts.snapshot().await)
+        }
+        "signOutSubscriptionAccount" => {
+            if core::is_imported_subscription(args.first().and_then(Value::as_str).unwrap_or("")) {
+                return pilot.lock().await.call(&method, &args).await;
+            }
+            let accounts = pilot.lock().await.subscription_context();
+            accounts
+                .sign_out_input(args.first().unwrap_or(&Value::Null))
+                .await
+        }
+        "cancelSubscriptionSignIn" => {
+            let accounts = pilot.lock().await.subscription_context();
+            Ok(accounts.cancel().await)
+        }
         "beginSubscriptionSignIn" => {
-            let p = &mut *pilot.lock().await;
-            let result = p.call(&method, &args).await?;
-            let url = p.subscription_authorization_url().await?;
+            let accounts = pilot.lock().await.subscription_context();
+            let input = args.first().cloned().unwrap_or(Value::Null);
+            let result = accounts
+                .begin_for(
+                    input["platform"].as_str().unwrap_or(""),
+                    input["accountId"].as_str().unwrap_or(""),
+                )
+                .await?;
+            let url = accounts.authorization_url().await?;
             if app.opener().open_url(url, None::<String>).is_err() {
-                p.call("cancelSubscriptionSignIn", &[]).await?;
+                accounts.cancel().await;
                 return Err("无法打开系统浏览器，请重试".into());
             }
             Ok(result)
+        }
+        "smokeTrayAction" => {
+            if !std::env::args().any(|arg| arg == "--smoke") {
+                return Err("仅允许隔离验证".into());
+            }
+            let enabled = args.first().and_then(Value::as_bool).ok_or("无效开关")?;
+            request_trace_from_tray(&app, enabled);
+            Ok(Value::Null)
         }
         "setStartupEnabled" => {
             let mut p = pilot.lock().await;
@@ -57,6 +219,11 @@ async fn pilot_rpc(
         }
         "getState" | "refresh" => {
             let mut state = pilot.lock().await.call(&method, &args).await?;
+            #[cfg(target_os = "macos")]
+            {
+                state["webCryptoStorage"] = app.state::<webcrypto_store::Store>().status();
+            }
+            sync_trace_tray(&app, &state, false);
             if !std::env::args().any(|a| a == "--pilot-root") {
                 match app.autolaunch().is_enabled() {
                     Ok(enabled) => {
@@ -75,7 +242,12 @@ async fn pilot_rpc(
             json!({"nativeFrame":cfg!(target_os="macos"),"maximized":window.is_maximized().unwrap_or(false),"fullscreen":window.is_fullscreen().unwrap_or(false)}),
         ),
         "checkForUpdates" | "downloadUpdate" | "cancelUpdate" => {
-            let result = pilot.lock().await.call(&method, &args).await?;
+            let updates = pilot.lock().await.updates_context();
+            let result = match method.as_str() {
+                "checkForUpdates" => updates.check().await?,
+                "downloadUpdate" => updates.download()?,
+                _ => updates.cancel()?,
+            };
             let _ = app.emit("pilot-update", &result);
             if method == "downloadUpdate" && result["status"] == "downloading" {
                 let app = app.clone();
@@ -98,10 +270,16 @@ async fn pilot_rpc(
             let path = result["path"].as_str().ok_or("无效安装包")?;
             #[cfg(target_os = "macos")]
             {
-                app.opener()
-                    .open_path(path, None::<&str>)
-                    .map_err(|e| e.to_string())?;
-                Ok(Value::Null)
+                core::finish_manual_update(
+                    || {
+                        app.opener().open_path(path, None::<&str>).map_err(|_| {
+                            "无法打开已校验的 DMG，当前应用继续运行；可再次尝试打开安装包"
+                                .to_string()
+                        })
+                    },
+                    || app.exit(0),
+                )?;
+                Ok(result)
             }
             #[cfg(target_os = "windows")]
             {
@@ -117,13 +295,49 @@ async fn pilot_rpc(
             }
         }
         "repairApplication" => {
-            window
-                .clear_all_browsing_data()
-                .map_err(|e| e.to_string())?;
-            let mut p = pilot.lock().await;
-            let mut result = p.call(&method, &args).await?;
+            webview_cache::clear(&window).await?;
+            let metadata = pilot.lock().await.metadata_context();
+            let mut result = metadata.repair(pilot.inner().clone()).await?;
             result["chromiumCacheCleared"] = json!(true);
+            let _ = app.emit("pilot-state", pilot.lock().await.state());
             Ok(result)
+        }
+        "resetApplication" => {
+            let reset_clients = args
+                .first()
+                .and_then(|value| value["resetClientConfigs"].as_bool())
+                .ok_or("无效重置选项")?;
+            // Acquire metadata before Pilot: refresh uses the same order. This
+            // drains a current writer without deadlocking its final state save.
+            let metadata = pilot.lock().await.metadata_context();
+            let _paused = metadata.pause().await;
+            let mut job = pilot.lock().await.prepare_reset(reset_clients).await?;
+            job.clear_browser_stores = true;
+            if argument("--pilot-root").is_none() {
+                app.autolaunch()
+                    .disable()
+                    .map_err(|_| "无法取消开机启动，重置尚未执行")?;
+            }
+            webview_cache::clear_all(&window).await?;
+            let result = pilot.lock().await.launch_reset(job).await?;
+            metadata.shutdown();
+            app.exit(0);
+            Ok(result)
+        }
+        "smokeWindowThemes" if std::env::args().any(|arg| arg == "--smoke") => {
+            let mut themes = serde_json::Map::new();
+            for (label, window) in app.webview_windows() {
+                let theme = window.theme().map_err(|e| e.to_string())?;
+                themes.insert(
+                    label,
+                    json!(if theme == tauri::Theme::Dark {
+                        "night"
+                    } else {
+                        "day"
+                    }),
+                );
+            }
+            Ok(Value::Object(themes))
         }
         "smokeViewerReport" if std::env::args().any(|arg| arg == "--smoke") => {
             let path = pilot
@@ -145,8 +359,39 @@ async fn pilot_rpc(
             window.set_focus().map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }
+        "smokeDashboardWindow" if std::env::args().any(|arg| arg == "--smoke") => {
+            let Some(viewer) = app.get_webview_window("dashboard") else {
+                return Ok(Value::Null);
+            };
+            match args.first().and_then(Value::as_str) {
+                Some("fullscreen") => viewer.set_fullscreen(true).map_err(|e| e.to_string())?,
+                Some("close") => {
+                    viewer.close().map_err(|e| e.to_string())?;
+                    return Ok(Value::Null);
+                }
+                Some("minimize") => viewer.minimize().map_err(|e| e.to_string())?,
+                _ => {}
+            }
+            let scale = viewer.scale_factor().map_err(|e| e.to_string())?;
+            let size = viewer
+                .inner_size()
+                .map_err(|e| e.to_string())?
+                .to_logical::<f64>(scale);
+            Ok(
+                json!({"width":size.width,"height":size.height,"scale":scale,
+                "visible":viewer.is_visible().unwrap_or(false),
+                "minimized":viewer.is_minimized().unwrap_or(false),
+                "fullscreen":viewer.is_fullscreen().unwrap_or(false)}),
+            )
+        }
         "smokeCloseWindow" if std::env::args().any(|arg| arg == "--smoke") => {
             window.close().map_err(|e| e.to_string())?;
+            Ok(Value::Null)
+        }
+        "smokeNotice" if std::env::args().any(|arg| arg == "--smoke") => {
+            let notice = args.first().ok_or("缺少测试通知")?;
+            app.emit("pilot-notice", notice)
+                .map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }
         "smokeContext" if std::env::args().any(|arg| arg == "--smoke") => {
@@ -159,7 +404,12 @@ async fn pilot_rpc(
                     return Err("smoke 只允许本地测试服务".into());
                 }
             }
-            Ok(json!({"upstream":base}))
+            Ok(
+                json!({"upstream":base,"physical":std::env::args().any(|arg|arg=="--smoke-physical")}),
+            )
+        }
+        "smokeExternalClientConflict" if std::env::args().any(|arg| arg == "--smoke") => {
+            pilot.lock().await.smoke_external_client_conflict()
         }
         "smokeRequest" if std::env::args().any(|arg| arg == "--smoke") => {
             let base = pilot.lock().await.state()["localBaseUrl"]
@@ -170,12 +420,44 @@ async fn pilot_rpc(
             if hidden {
                 window.hide().map_err(|e| e.to_string())?;
             }
-            let generic = args.first().and_then(|v|v.get("client")).and_then(Value::as_str);
-            let (path, payload) = if let Some(client) = generic {
-                if client != "opencode" { return Err("无效隔离测试客户端".into()); }
-                (format!("/clients/{client}/v1/chat/completions"), json!({"model":"gpt-4.1","messages":[{"role":"user","content":"isolated native WebKit smoke"}],"stream":true}))
-            } else { ("/v1/responses".into(), json!({"model":"pilot-model","input":"isolated native WebKit smoke","stream":true})) };
-            let response=reqwest::Client::new().post(format!("{base}{path}")).json(&payload).send().await.map_err(|e|e.to_string())?;
+            let generic = args
+                .first()
+                .and_then(|v| v.get("client"))
+                .and_then(Value::as_str);
+            let (path, mut payload) = if let Some(client) = generic {
+                if client != "opencode" {
+                    return Err("无效隔离测试客户端".into());
+                }
+                (
+                    format!("/clients/{client}/v1/chat/completions"),
+                    json!({"model":"gpt-4.1","messages":[{"role":"user","content":"isolated native WebKit smoke"}],"stream":true}),
+                )
+            } else {
+                (
+                    "/v1/responses".into(),
+                    json!({"model":"pilot-model","input":"isolated native WebKit smoke","stream":true}),
+                )
+            };
+            if args.first().is_some_and(|v| v["hold"] == true) {
+                payload["input"] = json!("isolated native held smoke");
+            }
+            if args
+                .first()
+                .is_some_and(|v| v["tool"] == true || v["toolResult"] == true)
+            {
+                let mut input = vec![json!({"role":"user","content":"isolated WebKit tool turn"})];
+                if args.first().is_some_and(|v| v["toolResult"] == true) {
+                    input.push(json!({"type":"function_call","call_id":"webview-tool-call","name":"lookup","arguments":"{}"}));
+                    input.push(json!({"type":"function_call_output","call_id":"webview-tool-call","output":"isolated read-only result"}));
+                }
+                payload["input"] = json!(input);
+            }
+            let response = reqwest::Client::new()
+                .post(format!("{base}{path}"))
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
             let status = response.status().as_u16();
             let body = response.text().await.map_err(|e| e.to_string())?;
             let visible = window.is_visible().map_err(|e| e.to_string())?;
@@ -247,18 +529,20 @@ async fn pilot_rpc(
                 .map_err(|e| e.to_string())?;
                 let value = args.first().and_then(Value::as_str).unwrap_or("");
                 #[cfg(target_os = "windows")]
-                let bytes: Vec<u8> = [0xfeffu16]
+                let encoded: Vec<u8> = [0xfeffu16]
                     .into_iter()
                     .chain(value.encode_utf16())
                     .flat_map(u16::to_le_bytes)
                     .collect();
+                #[cfg(target_os = "windows")]
+                let bytes = encoded.as_slice();
                 #[cfg(target_os = "macos")]
                 let bytes = value.as_bytes();
                 command
                     .stdin
                     .take()
                     .ok_or("无法写入剪贴板")?
-                    .write_all(&bytes)
+                    .write_all(bytes)
                     .map_err(|e| e.to_string())?;
                 if !command.wait().map_err(|e| e.to_string())?.success() {
                     return Err("复制失败".into());
@@ -315,22 +599,66 @@ async fn pilot_rpc(
             Ok(Value::Null)
         }
         "openDashboard" => {
-            let url = pilot.lock().await.dashboard_url().await?;
+            let mut state = pilot.lock().await;
+            let theme = window_theme(state.state()["theme"].as_str().unwrap_or("day"));
+            let url = state.dashboard_url().await?;
+            drop(state);
             if let Some(existing) = app.get_webview_window("dashboard") {
+                existing.unminimize().map_err(|e| e.to_string())?;
                 existing.show().map_err(|e| e.to_string())?;
                 existing.set_focus().map_err(|e| e.to_string())?;
             } else {
-                tauri::WebviewWindowBuilder::new(
+                // Work-area coordinates are physical; window bounds are logical.
+                // Keep a readable initial size on Retina and smaller displays.
+                let monitor = window.current_monitor().map_err(|e| e.to_string())?;
+                let (width, height, position) = if let Some(monitor) = monitor {
+                    let scale = monitor.scale_factor();
+                    let area = monitor.work_area();
+                    let width =
+                        1280.0_f64.min((f64::from(area.size.width) / scale - 48.0).max(1.0));
+                    let height =
+                        820.0_f64.min((f64::from(area.size.height) / scale - 72.0).max(1.0));
+                    (
+                        width,
+                        height,
+                        Some((
+                            f64::from(area.position.x) / scale
+                                + (f64::from(area.size.width) / scale - width) / 2.0,
+                            f64::from(area.position.y) / scale
+                                + (f64::from(area.size.height) / scale - height) / 2.0,
+                        )),
+                    )
+                } else {
+                    (1280.0, 820.0, None)
+                };
+                let builder = tauri::WebviewWindowBuilder::new(
                     &app,
                     "dashboard",
                     tauri::WebviewUrl::External(
                         reqwest::Url::parse(&url).map_err(|e| e.to_string())?,
                     ),
                 )
+                .theme(theme)
                 .title("XwX Deck Trace")
-                .inner_size(1100.0, 760.0)
-                .build()
-                .map_err(|e| e.to_string())?;
+                .inner_size(width, height)
+                .min_inner_size(900.0_f64.min(width), 600.0_f64.min(height));
+                let builder = if let Some((x, y)) = position {
+                    builder.position(x, y)
+                } else {
+                    builder.center()
+                };
+                #[cfg(target_os = "windows")]
+                let builder = if let Some(root) = argument("--pilot-root") {
+                    builder
+                        .incognito(true)
+                        .data_directory(isolated_webview::directory(
+                            &PathBuf::from(root),
+                            "viewer-webview",
+                        )?)
+                } else {
+                    builder
+                };
+                builder.build().map_err(|e| e.to_string())?;
             }
             Ok(Value::Null)
         }
@@ -395,7 +723,15 @@ async fn pilot_rpc(
         }
         _ => {
             let mut pilot = pilot.lock().await;
-            let result = pilot.call(&method, &args).await?;
+            if method == "toggleTracing" {
+                sync_trace_tray(&app, &pilot.state(), true);
+            }
+            let result = pilot.call(&method, &args).await;
+            sync_trace_tray(&app, &pilot.state(), false);
+            let result = result?;
+            if method == "setTheme" {
+                sync_window_theme(&app, result["theme"].as_str().unwrap_or("day"))?;
+            }
             if result.get("readiness").is_some() {
                 let _ = app.emit("pilot-state", &result);
             }
@@ -405,12 +741,30 @@ async fn pilot_rpc(
 }
 
 #[tauri::command]
+async fn pilot_smoke_progress(
+    caller: tauri::WebviewWindow,
+    pilot: tauri::State<'_, Shared>,
+    checks: Vec<String>,
+    pending: Option<String>,
+) -> Result<(), String> {
+    if caller.label() != "main"
+        || !std::env::args().any(|arg| arg == "--smoke")
+        || checks.len() > 300
+        || checks.iter().any(|s| s.len() > 1024)
+    {
+        return Err("无效隔离验证进度".into());
+    }
+    let root = pilot.lock().await.data_root();
+    std::fs::write(root.join("native-smoke-progress.json"),serde_json::to_vec(&json!({"checks":checks,"pending":pending.map(|s|s.chars().take(256).collect::<String>()),"passed":false})).map_err(|_|"验证进度序列化失败")?).map_err(|_|"验证进度保存失败".into())
+}
+#[tauri::command]
 async fn pilot_smoke_report(
     app: tauri::AppHandle,
+    caller: tauri::WebviewWindow,
     pilot: tauri::State<'_, Shared>,
     report: Value,
 ) -> Result<(), String> {
-    if !std::env::args().any(|arg| arg == "--smoke") {
+    if caller.label() != "main" || !std::env::args().any(|arg| arg == "--smoke") {
         return Err("仅隔离 smoke 启动可保存验证证据".into());
     }
     let pilot = pilot.lock().await;
@@ -430,9 +784,132 @@ async fn pilot_smoke_report(
     Ok(())
 }
 
+async fn isolated_rpc(pilot: Shared, request: &Value) -> Result<Value, String> {
+    let method = request["method"].as_str().unwrap_or("");
+    let _rpc = core::admit_rpc(method)?;
+    let args = request["args"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let input = args.first().cloned().unwrap_or(Value::Null);
+    match method {
+        "fetchProviderModels" | "fetchModels" => {
+            let job = pilot.lock().await.catalog_job(method, args)?;
+            if let Some(job) = job {
+                let entries = job.execute().await?;
+                pilot.lock().await.finish_catalog(&job, entries)
+            } else {
+                pilot.lock().await.call(method, args).await
+            }
+        }
+        "repairApplication" => {
+            let metadata = pilot.lock().await.metadata_context();
+            metadata.repair(pilot.clone()).await
+        }
+        "getLegacyRendererPreferences" => {
+            let (root, keys) = pilot.lock().await.renderer_preferences_context();
+            let mut report = renderer_preferences::load(&root, &keys).await?;
+            report["initializationScript"] =
+                json!(renderer_preferences::initialization_script(&report));
+            Ok(report)
+        }
+        "validateProvider" => {
+            let job = pilot.lock().await.validation_job(&input)?;
+            Pilot::execute_validation(job).await
+        }
+        "checkForUpdates" => {
+            let updates = pilot.lock().await.updates_context();
+            updates.check().await
+        }
+        "refreshSubscriptionUsage" => {
+            let accounts = pilot.lock().await.subscription_context();
+            accounts
+                .refresh_usage(input["platform"].as_str().unwrap_or(""))
+                .await?;
+            Ok(accounts.snapshot().await)
+        }
+        "getOfficialChatgptResetCredits" => {
+            let accounts = pilot.lock().await.subscription_context();
+            accounts
+                .official_credits(args.first().and_then(|v| v.as_str()).unwrap_or(""))
+                .await
+        }
+        "consumeOfficialChatgptResetCredit" => {
+            let accounts = pilot.lock().await.subscription_context();
+            accounts
+                .consume_official_credit(args.first().unwrap_or(&Value::Null))
+                .await
+        }
+        "getOfficialChatgptAccount" => {
+            let job = pilot.lock().await.official_chatgpt_job();
+            if args.first().is_some_and(|input| input["refresh"] == false) {
+                job.cached()
+            } else {
+                job.execute().await
+            }
+        }
+        "getSubscriptionAccounts" => {
+            let accounts = pilot.lock().await.subscription_context();
+            Ok(accounts.snapshot().await)
+        }
+        "signOutSubscriptionAccount" => {
+            let accounts = pilot.lock().await.subscription_context();
+            if core::is_imported_subscription(input.as_str().unwrap_or("")) {
+                pilot
+                    .lock()
+                    .await
+                    .call("signOutSubscriptionAccount", &[input])
+                    .await
+            } else {
+                accounts.sign_out_input(&input).await
+            }
+        }
+        "cancelSubscriptionSignIn" => {
+            let accounts = pilot.lock().await.subscription_context();
+            Ok(accounts.cancel().await)
+        }
+        "beginSubscriptionSignIn" => {
+            let accounts = pilot.lock().await.subscription_context();
+            accounts
+                .begin_for(
+                    input["platform"].as_str().unwrap_or(""),
+                    input["accountId"].as_str().unwrap_or(""),
+                )
+                .await
+        }
+
+        "refreshMetadata" => {
+            let metadata = pilot.lock().await.metadata_context();
+            metadata
+                .refresh(
+                    pilot.clone(),
+                    args.first().cloned().unwrap_or(
+                        json!({"topics":["models","capabilities","pricing"],"reason":"manual"}),
+                    ),
+                )
+                .await
+        }
+        _ => pilot.lock().await.call(method, args).await,
+    }
+}
+
 fn argument(name: &str) -> Option<String> {
     let args: Vec<_> = std::env::args().collect();
     args.windows(2).find(|a| a[0] == name).map(|a| a[1].clone())
+}
+
+fn window_theme(preference: &str) -> Option<tauri::Theme> {
+    match preference {
+        "night" => Some(tauri::Theme::Dark),
+        "day" => Some(tauri::Theme::Light),
+        _ => None,
+    }
+}
+
+fn sync_window_theme(app: &tauri::AppHandle, preference: &str) -> Result<(), String> {
+    for window in app.webview_windows().values() {
+        window
+            .set_theme(window_theme(preference))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn show_main(app: &tauri::AppHandle) {
@@ -448,18 +925,119 @@ fn show_licenses(app: &tauri::AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     } else {
-        let _ = tauri::WebviewWindowBuilder::new(
+        let builder = tauri::WebviewWindowBuilder::new(
             app,
             "licenses",
             tauri::WebviewUrl::App("licenses.html".into()),
         )
         .title("XwX Deck 开源许可证")
-        .inner_size(850.0, 650.0)
-        .build();
+        .inner_size(850.0, 650.0);
+        #[cfg(target_os = "windows")]
+        let builder = if let Some(root) = argument("--pilot-root") {
+            match isolated_webview::directory(&PathBuf::from(root), "licenses-webview") {
+                Ok(path) => builder.incognito(true).data_directory(path),
+                Err(error) => {
+                    eprintln!("{error}");
+                    return;
+                }
+            }
+        } else {
+            builder
+        };
+        let _ = builder.build();
     }
 }
 
+fn show_startup_recovery(message: &str) {
+    // No Pilot is opened and no browser store is created while data recovery
+    // is blocked. A Finder launch still gets an actionable native explanation.
+    let mut context = tauri::generate_context!();
+    for window in &mut context.config_mut().app.windows {
+        window.create = false;
+    }
+    if let Ok(app) = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .build(context)
+    {
+        let message = message.to_owned();
+        app.run(move |app, event| {
+            if matches!(event, tauri::RunEvent::Ready) {
+                let handle = app.clone();
+                app.dialog()
+                    .message(&message)
+                    .title("XwX Deck 无法启动")
+                    .show(move |_| handle.exit(2));
+            }
+        });
+    }
+}
 fn main() {
+    if let Some(path) = argument("--application-reset-worker") {
+        match core::reset_worker(std::path::Path::new(&path)) {
+            Ok(()) => {}
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+    if let Some(source) = argument("--legacy-renderer-worker") {
+        match renderer_preferences::worker(
+            std::path::Path::new(&source),
+            &argument("--renderer-keys").unwrap_or_default(),
+        ) {
+            Ok(report) => println!("{report}"),
+            Err(_) => {
+                eprintln!("旧版界面偏好读取失败，原文件未改动");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+    if let Some(mode) = argument("--credential-store-diagnostic") {
+        let result = core::credential_store_diagnostic(
+            &mode,
+            &argument("--probe-id").unwrap_or_default(),
+            &argument("--probe-challenge").unwrap_or_default(),
+        );
+        match result {
+            Ok(report) => println!("{report}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+    if std::env::args().any(|arg| arg == "--pilot-os-credentials")
+        && argument("--pilot-root").is_none()
+        && !(argument("--export-credential-backup").is_some()
+            && std::env::args().any(|arg| arg == "--export-isolated-test"))
+    {
+        eprintln!("系统凭据验证需要显式 --pilot-root 隔离目录。");
+        std::process::exit(2);
+    }
+    if let Some(root) = argument("--export-credential-backup") {
+        let result = argument("--export-destination")
+            .ok_or("缺少 --export-destination".to_string())
+            .and_then(|destination| {
+                core::export_credential_backup(
+                    std::path::Path::new(&root),
+                    std::path::Path::new(&destination),
+                    std::env::args().any(|a| a == "--export-original"),
+                    std::env::args().any(|a| a == "--export-isolated-test"),
+                )
+            });
+        match result {
+            Ok(report) => println!("{report}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if let Some(url) = argument("--subscription-url") {
         let Some(path) = std::env::var_os("XWX_AUTH_URL_FILE").map(PathBuf::from) else {
             std::process::exit(1);
@@ -494,11 +1072,30 @@ fn main() {
     if let Some(code) = portable_update::worker() {
         std::process::exit(code);
     }
+    let acceptance_rpc =
+        cfg!(feature = "manual-acceptance") && std::env::args().any(|a| a == "--acceptance-rpc");
+    let rpc_mode = acceptance_rpc || std::env::args().any(|a| a == "--rpc");
     if (option_env!("XWX_NATIVE_PILOT") == Some("1")
-        || std::env::args().any(|a| a == "--smoke" || a == "--rpc"))
+        || std::env::args().any(|a| {
+            a == "--smoke"
+                || a == "--rpc"
+                || a == "--pilot-webview-persistent"
+                || a == "--pilot-remove-webview-store"
+        }))
         && argument("--pilot-root").is_none()
     {
         eprintln!("Verification requires --pilot-root.");
+        std::process::exit(2);
+    }
+    let readiness: Value = serde_json::from_str(include_str!("../migration-status.json"))
+        .expect("embedded migration readiness");
+    if readiness["productionReady"] != true
+        && !cfg!(feature = "manual-acceptance")
+        && argument("--pilot-root").is_none()
+    {
+        let message = "此隔离验证包不能直接启动。请使用源码仓库的 npm run start:native:isolated，或安装可直接打开的 XwX Deck 人工验收包。原数据未修改。";
+        eprintln!("{message}");
+        show_startup_recovery(message);
         std::process::exit(2);
     }
     let root = argument("--pilot-root")
@@ -519,38 +1116,106 @@ fn main() {
                 .join("xwx-deck")
             }
         });
-    let pilot = match Pilot::open(root) {
+    match core::pending_reset(&root) {
+        Ok(Some(job)) => match core::resume_reset(&job) {
+            Ok(()) => {
+                eprintln!("正在恢复上次重置，原数据与备份保留；完成后会重新打开应用。");
+                std::process::exit(0);
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        },
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("{error}");
+            if !rpc_mode {
+                show_startup_recovery(&error);
+            }
+            std::process::exit(2);
+        }
+    }
+    let pilot = match Pilot::open(root.clone()) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
+            if !rpc_mode {
+                show_startup_recovery(&e);
+            }
             std::process::exit(2);
         }
     };
-    if std::env::args().any(|arg| arg == "--rpc") {
+    if std::env::args().any(|a| a == "--pilot-remove-webview-store") {
+        let result = isolated_webview::cleanup(&root);
+        match &result {
+            Ok(()) => println!("isolated WebView store removed"),
+            Err(error) => eprintln!("{error}"),
+        }
+        std::process::exit(if result.is_ok() { 0 } else { 2 });
+    }
+    let renderer_preferences = tauri::async_runtime::block_on(async {
+        let (root, keys) = pilot.lock().await.renderer_preferences_context();
+        match renderer_preferences::load(&root, &keys).await {
+            Ok(report) => report,
+            Err(error) => {
+                pilot.lock().await.renderer_preferences_problem(&error);
+                eprintln!("{error}");
+                json!({"version":1,"status":"failed","values":{}})
+            }
+        }
+    });
+    if rpc_mode {
+        let metadata =
+            tauri::async_runtime::block_on(async { pilot.lock().await.metadata_context() });
+        metadata.start(pilot.clone(), std::sync::Arc::new(|_| {}));
+        let mut pending = Vec::new();
         for line in std::io::stdin().lock().lines() {
-            let result = match line {
-                Ok(line) => serde_json::from_str::<Value>(&line)
-                    .map_err(|e| e.to_string())
-                    .and_then(|request| {
-                        tauri::async_runtime::block_on(async {
-                            let mut pilot = pilot.lock().await;
-                            pilot
-                                .call(
-                                    request["method"].as_str().unwrap_or(""),
-                                    request["args"].as_array().map(Vec::as_slice).unwrap_or(&[]),
-                                )
-                                .await
-                        })
-                    }),
-                Err(e) => Err(e.to_string()),
-            };
+            let request = line.map_err(|e| e.to_string()).and_then(|line| {
+                serde_json::from_str::<Value>(&line).map_err(|_| "无效 RPC JSON".into())
+            });
+            if let Ok(request) = &request {
+                if let Some(id) = request.get("requestId").cloned() {
+                    let shared = pilot.clone();
+                    let request = request.clone();
+                    pending.push(tauri::async_runtime::spawn(async move {
+                        let result = isolated_rpc(shared, &request).await;
+                        let resetting = request["method"] == "resetApplication" && result.is_ok();
+                        let response = match result {
+                            Ok(result) => json!({"requestId":id,"ok":true,"result":result}),
+                            Err(error) => json!({"requestId":id,"ok":false,"error":error}),
+                        };
+                        println!("{response}");
+                        let _ = std::io::stdout().flush();
+                        if resetting {
+                            std::process::exit(0);
+                        }
+                    }));
+                    continue;
+                }
+            }
+            let resetting = request
+                .as_ref()
+                .is_ok_and(|request| request["method"] == "resetApplication");
+            let result = request.and_then(|request| {
+                tauri::async_runtime::block_on(isolated_rpc(pilot.clone(), &request))
+            });
+            let resetting = resetting && result.is_ok();
             let response = match result {
                 Ok(result) => json!({"ok":true,"result":result}),
                 Err(error) => json!({"ok":false,"error":error}),
             };
             println!("{response}");
             let _ = std::io::stdout().flush();
+            if resetting {
+                std::process::exit(0);
+            }
         }
+        tauri::async_runtime::block_on(async {
+            for task in pending {
+                let _ = task.await;
+            }
+        });
         let result = tauri::async_runtime::block_on(async {
             let mut p = pilot.lock().await;
             let result = p.stop().await;
@@ -566,15 +1231,86 @@ fn main() {
         return;
     }
     let smoke = std::env::args().any(|arg| arg == "--smoke");
+    let restart_stage = if smoke {
+        argument("--smoke-renderer-restart")
+            .and_then(|s| s.parse::<u8>().ok())
+            .filter(|n| (1..=4).contains(n))
+    } else {
+        None
+    };
+    let reset_smoke = smoke && std::env::args().any(|arg| arg == "--smoke-application-reset");
+    let preferences_smoke = smoke
+        && (reset_smoke
+            || restart_stage.is_some()
+            || std::env::args().any(|arg| arg == "--smoke-renderer-preferences"));
+    let mut preferences_script = renderer_preferences::initialization_script(&renderer_preferences);
+    if preferences_smoke {
+        let keys = renderer_preferences["values"]
+            .as_object()
+            .map(|values| values.keys().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let keys = serde_json::to_string(&keys)
+            .unwrap()
+            .replace('<', "\\u003c");
+        let expected = renderer_preferences["values"]
+            .to_string()
+            .replace('<', "\\u003c");
+        preferences_script.push_str(&format!(";if(['tauri:','http:'].includes(location.protocol)){{window.__nativeRendererPreferencesExpected={expected};window.__nativeRendererPreferencesBoot=Object.fromEntries({keys}.map(k=>[k,localStorage.getItem(k)]));}}"));
+    }
+    if let Some(stage) = restart_stage {
+        preferences_script.push_str(&format!(";window.__nativeRendererRestartStage={stage};"));
+    }
+    if preferences_smoke && std::env::args().any(|arg| arg == "--smoke-storage-sentinel") {
+        preferences_script.push_str(";window.__nativeRendererPreferencesSentinel=true;");
+    }
+    let persistent_root = if std::env::args().any(|a| a == "--pilot-webview-persistent") {
+        Some(root.clone())
+    } else {
+        None
+    };
+    #[cfg(target_os = "windows")]
+    let isolated_root = argument("--pilot-root").map(|_| root.clone());
     let shared = pilot.clone();
-    let builder=tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .manage(webcrypto_store::Store::new(
+            &root,
+            argument("--pilot-root").is_some(),
+        ))
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("private-webcrypto")
+                .on_webview_ready(|webview| {
+                    if let Err(error) = webview.state::<webcrypto_store::Store>().attach(&webview) {
+                        eprintln!("{error}");
+                    }
+                })
+                .build(),
+        );
+    let builder=builder
+        .plugin(tauri::plugin::Builder::<tauri::Wry>::new("renderer-preferences")
+            .js_init_script(preferences_script).build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::Builder::new().app_name("XwX Deck").args(["--launch-hidden"]).build())
-        .setup(|app| {
+        .setup(move |app| {
+            let preference=tauri::async_runtime::block_on(async { app.state::<Shared>().inner().lock().await.state()["theme"].as_str().unwrap_or("day").to_owned() });
+            sync_window_theme(app.handle(), &preference).map_err(std::io::Error::other)?;
+            if let Some(root) = &persistent_root {
+                isolated_webview::create(app, root).map_err(std::io::Error::other)?;
+            } else {
+                #[cfg(target_os="windows")]
+                if let Some(root) = &isolated_root {
+                    isolated_webview::create_ephemeral(app, root).map_err(std::io::Error::other)?;
+                }
+            }
             use tauri::menu::{Menu,MenuItem};
             use tauri::tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState};
             // Captures must refresh native counters even when WebKit throttles polling.
+            let metadata_shared=app.state::<Shared>().inner().clone();
+            let metadata_handle=app.handle().clone();
+            let metadata=tauri::async_runtime::block_on(async{metadata_shared.lock().await.metadata_context()});
+            metadata.start(metadata_shared,std::sync::Arc::new(move|state|{let _=metadata_handle.emit("pilot-state",state);let _=metadata_handle.emit("pilot-metadata",());}));
             let capture_shared=app.state::<Shared>().inner().clone();
             let capture_handle=app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -602,10 +1338,14 @@ fn main() {
             let quit=MenuItem::with_id(app,"quit","退出 XwX Deck",true,None::<&str>)?;
             let licenses=MenuItem::with_id(app,"licenses","开源许可证",true,None::<&str>)?;
             let menu=Menu::with_items(app,&[&show,&licenses,&quit])?;
-            let mut rgba=vec![0u8;24*24*4];for y in 0..24{for x in 0..24{let d=(x as i32-12).pow(2)+(y as i32-12).pow(2);if (25..=100).contains(&d){let i=(y*24+x)*4;rgba[i..i+4].copy_from_slice(&[100,90,190,255]);}}}
-            TrayIconBuilder::with_id("xwx-deck").icon(tauri::image::Image::new_owned(rgba,24,24)).tooltip("XwX Deck").menu(&menu).show_menu_on_left_click(false)
-              .on_menu_event(|app,event|{match event.id.as_ref(){"show"=>show_main(app),"licenses"=>show_licenses(app),"quit"=>app.exit(0),_=>{}}})
+            #[cfg(target_os="macos")]
+            let tray_icon=tauri::include_image!("../assets/trayTemplate@2x.png");
+            #[cfg(not(target_os="macos"))]
+            let tray_icon=tauri::include_image!("../assets/tray.png");
+            TrayIconBuilder::with_id("xwx-deck").icon(tray_icon).icon_as_template(cfg!(target_os="macos")).tooltip("XwX Deck").menu(&menu).show_menu_on_left_click(false)
+              .on_menu_event(|app,event|{match event.id.as_ref(){"show"=>show_main(app),"trace-start"=>request_trace_from_tray(app,true),"trace-stop"=>request_trace_from_tray(app,false),"licenses"=>show_licenses(app),"quit"=>app.exit(0),_=>{}}})
               .on_tray_icon_event(|tray,event|{if matches!(event,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){show_main(tray.app_handle());}}).build(app)?;
+            sync_trace_tray(app.handle(), &tauri::async_runtime::block_on(async { app.state::<Shared>().lock().await.state() }), false);
             if !std::env::args().any(|a|a=="--pilot-root"){
                 let shared=app.state::<Shared>().inner().clone();let handle=app.handle().clone();
                 tauri::async_runtime::spawn(async move{
@@ -615,12 +1355,15 @@ fn main() {
                         Err(error)=>{let mut state=shared.lock().await.state();state["lastError"]=json!(error);let _=handle.emit("pilot-state",state);}
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(6000)).await;
-                    if let Ok(state)=shared.lock().await.call("checkForAutomaticUpdates",&[]).await{let _=handle.emit("pilot-update",state);}
+                    let updates=shared.lock().await.updates_context();if updates.state()["status"]=="idle"{if let Ok(state)=updates.check().await{let _=handle.emit("pilot-update",state);}}
                     let mut previous_update=Value::Null;
                     loop{
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                         let state=shared.lock().await.update_state();if state!=previous_update{let _=handle.emit("pilot-update",&state);previous_update=state.clone();}
-                        #[cfg(target_os="macos")]if state["status"]=="available"{let _=shared.lock().await.call("downloadAutomaticUpdate",&[]).await;}
+                        #[cfg(target_os="macos")]
+                        {
+                            if state["status"]=="available" {let _=shared.lock().await.call("downloadAutomaticUpdate",&[]).await;}
+                        }
                         #[cfg(target_os="windows")]if portable_update::idle_for_nightly(){
                             let mut p=shared.lock().await;if !p.active()&&p.nightly_eligible(){
                                 if state["status"]=="available"{let _=p.call("downloadAutomaticUpdate",&[]).await;}
@@ -632,20 +1375,19 @@ fn main() {
             }
             Ok(())
         })
-        .on_menu_event(|app,event|{if std::env::args().any(|a|a=="--smoke"){eprintln!("native-menu {}",event.id.as_ref());}if event.id.as_ref()=="native-quit"{app.exit(0);}else if event.id.as_ref()=="licenses"{show_licenses(app);}})
+        .on_menu_event(|app,event|{if std::env::args().any(|a|a=="--smoke"){eprintln!("native-menu {}",event.id.as_ref());}
+ if event.id.as_ref()=="native-quit"{app.exit(0);}else if event.id.as_ref()=="licenses"{show_licenses(app);}})
         .manage(pilot.clone())
-        .invoke_handler(tauri::generate_handler![pilot_rpc,pilot_smoke_report])
+        .invoke_handler(tauri::generate_handler![pilot_rpc,pilot_smoke_report,pilot_smoke_progress])
         .on_page_load(move |window,payload| {
-            if smoke && payload.event()==tauri::webview::PageLoadEvent::Finished {
-                match window.label() {
-                    "main" => { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
-                    _ => {}
-                }
-            }
+            if smoke && payload.event()==tauri::webview::PageLoadEvent::Finished
+                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
         })
         .on_window_event(move |window,event| {
             if let tauri::WindowEvent::CloseRequested{api,..}=event {
-                if tauri::async_runtime::block_on(async{shared.lock().await.active()}) {api.prevent_close();let _=window.hide();}
+                // Only the manager stays in the tray while Trace is running.
+                // Hiding a fullscreen dashboard leaves a blank macOS Space.
+                if window.label()=="main" && tauri::async_runtime::block_on(async{shared.lock().await.active()}) {api.prevent_close();let _=window.hide();}
             }
             if let tauri::WindowEvent::Resized(_)=event {
                 let _=window.emit("pilot-window",json!({"maximized":window.is_maximized().unwrap_or(false),"fullscreen":window.is_fullscreen().unwrap_or(false),"nativeFrame":cfg!(target_os="macos")}));
@@ -653,11 +1395,30 @@ fn main() {
         });
     let mut context = tauri::generate_context!();
     if smoke {
+        // Acceptance keeps running when the user focuses another app. This is
+        // fixture-only; ordinary windows keep the system's power policy.
+        context.config_mut().app.windows[0].background_throttling =
+            Some(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
+    }
+    if argument("--pilot-root").is_some() {
         // Fixture roots must not inherit onboarding or other browser state from
         // an existing desktop session that shares the same test app identity.
         context.config_mut().app.windows[0].incognito = true;
-        context.config_mut().app.windows[0].url =
-            tauri::WebviewUrl::App("index.html?tour=1".into());
+        #[cfg(target_os = "windows")]
+        {
+            context.config_mut().app.windows[0].create = false;
+        }
+        if std::env::args().any(|a| a == "--pilot-webview-persistent") {
+            if let Err(error) = isolated_webview::supported() {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+            context.config_mut().app.windows[0].create = false;
+        }
+        if smoke && !preferences_smoke {
+            context.config_mut().app.windows[0].url =
+                tauri::WebviewUrl::App("index.html?tour=1".into());
+        }
     }
     if std::env::args().any(|a| a == "--launch-hidden") {
         context.config_mut().app.windows[0].visible = false;
@@ -666,6 +1427,26 @@ fn main() {
         .build(context)
         .expect("failed to build XwX Deck native host");
     app.run(move |handle, event| match event {
+        tauri::RunEvent::Ready if !smoke => {
+            let shared=pilot.clone();let app=handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let Ok(result)=shared.lock().await.call("getApplicationResetResult",&[]).await else{return;};
+                if result.is_null() || result["noticeSeen"]==true{return;}
+                let Some(backup)=result["backupPath"].as_str().map(PathBuf::from) else{return;};
+                if !backup.is_absolute() || !backup.is_dir(){return;}
+                let failed=result["status"]!="completed";
+                let skipped=result["skippedClientFiles"].as_array().map(Vec::len).unwrap_or(0);
+                let detail=if failed {format!("重置未完成：{}",result["reason"].as_str().unwrap_or("请检查恢复记录"))}
+                    else if skipped>0 {format!("应用重置完成；{skipped} 个客户端文件因外部变化或占用而保留，请核对后再处理。")}
+                    else {"应用已重置，原数据与凭据恢复记录已归档。客户端历史、Skills 与 Agents 保留。".to_owned()};
+                let dialog=app.dialog().message(format!("{detail}\n\n备份：{}",backup.display())).title(if failed {"重置未完成"}else{"重置完成"}).buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancelCustom("打开备份".into(),"继续".into()));
+                let dialog=if let Some(window)=app.get_webview_window("main"){dialog.parent(&window)}else{dialog};
+                dialog.show(move|open|{
+                    if open {let _=app.opener().open_path(backup.to_string_lossy().into_owned(),None::<&str>);}
+                    tauri::async_runtime::spawn(async move{let _=shared.lock().await.call("ackApplicationResetResult",&[json!({"atMs":result["atMs"]})]).await;});
+                });
+            });
+        }
         tauri::RunEvent::ExitRequested { api, .. } => {
             if std::env::args().any(|a| a == "--smoke") {
                 eprintln!("native-exit-requested");

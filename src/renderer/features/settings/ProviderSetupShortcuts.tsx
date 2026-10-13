@@ -40,9 +40,7 @@ function desktopDownloadGroups(client: DownloadClientId): readonly DownloadGroup
       { name: 'Mac', official: true, rows: [{ name: 'Apple Silicon', mirror: 'opencode-mac-arm64-download' }, { name: 'Intel', mirror: 'opencode-mac-x64-download' }] }
     ];
   }
-  return client === 'qwen-code' ? [
-    { name: 'Mac', official: true, rows: [{ name: 'Apple Silicon', mirror: 'qwen-code-mac-arm64-download' }, { name: 'Intel', mirror: 'qwen-code-mac-x64-download' }] }
-  ] : [];
+  return [];
 }
 
 const CLI_DOWNLOADS: Partial<Record<DownloadClientId, { name: string; site: SetupWebsite }>> = {

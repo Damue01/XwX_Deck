@@ -4,6 +4,7 @@ import { t, useLanguage } from '@/lib/i18n';
 import { Toast } from "@base-ui/react/toast";
 import { X } from "lucide-react";
 import type React from "react";
+import { TOAST_VISIBLE_LIMIT } from '@/lib/toast-queue';
 import { cn } from "@/lib/utils";
 
 type SwipeDirection = "up" | "down" | "left" | "right";
@@ -13,16 +14,6 @@ function getSwipeDirection(position: ToastPosition): SwipeDirection[] {
   const vertical: SwipeDirection = position.startsWith("top") ? "up" : "down";
   if (position.includes("center")) return [vertical];
   return position.includes("left") ? ["left"] : ["right"];
-}
-
-function replayClassName(toast: { type?: string; updateKey?: number }): string | undefined {
-  const updateKey = toast.updateKey ?? 0;
-  if (updateKey <= 0) return undefined;
-  const isEven = updateKey % 2 === 0;
-  if (toast.type === "error" || toast.type === "warning") {
-    return isEven ? "animate-toast-error-even" : "animate-toast-error-odd";
-  }
-  return isEven ? "animate-toast-success-even" : "animate-toast-success-odd";
 }
 
 function Toasts({
@@ -53,7 +44,7 @@ function Toasts({
             <Toast.Root
               key={toast.id}
               className={cn(
-                "absolute z-[calc(9999-var(--toast-index))] h-(--toast-calc-height) w-full select-none rounded-lg border bg-[color-mix(in_srgb,var(--popover),var(--color-black)_calc(1%*max(0,var(--toast-index,0))))] not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 [transition:transform_.24s_cubic-bezier(.22,1,.36,1),opacity_.24s,height_.12s,background-color_.24s] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] data-expanded:bg-popover dark:bg-[color-mix(in_srgb,var(--popover),var(--color-black)_calc(6%*max(0,var(--toast-index,0))))] dark:data-expanded:bg-popover dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+                "absolute z-[calc(9999-var(--toast-index))] h-(--toast-calc-height) w-full select-text rounded-lg border bg-[color-mix(in_srgb,var(--popover),var(--color-black)_calc(1%*max(0,var(--toast-index,0))))] not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 [transition:transform_.24s_cubic-bezier(.22,1,.36,1),opacity_.24s,height_.12s,background-color_.24s] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] data-expanded:bg-popover dark:bg-[color-mix(in_srgb,var(--popover),var(--color-black)_calc(6%*max(0,var(--toast-index,0))))] dark:data-expanded:bg-popover dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
                 "data-[position*=right]:right-0 data-[position*=right]:left-auto data-[position*=left]:right-auto data-[position*=left]:left-0 data-[position*=center]:right-0 data-[position*=center]:left-0",
                 "data-[position*=top]:top-0 data-[position*=top]:bottom-auto data-[position*=top]:origin-[50%_calc(50%-50%*min(var(--toast-index,0),1))] data-[position*=bottom]:top-auto data-[position*=bottom]:bottom-0 data-[position*=bottom]:origin-[50%_calc(50%+50%*min(var(--toast-index,0),1))]",
                 "after:absolute after:left-0 after:h-[calc(var(--toast-gap)+1px)] after:w-full data-[position*=top]:after:top-full data-[position*=bottom]:after:bottom-full",
@@ -65,28 +56,31 @@ function Toasts({
                 "data-ending-style:not-data-limited:not-data-swipe-direction:transform-[translateX(calc(100%+var(--toast-inset)))_translateY(var(--toast-calc-offset-y))] data-ending-style:data-[swipe-direction=left]:transform-[translateX(calc(var(--toast-swipe-movement-x)-100%-var(--toast-inset)))_translateY(var(--toast-calc-offset-y))] data-ending-style:data-[swipe-direction=right]:transform-[translateX(calc(var(--toast-swipe-movement-x)+100%+var(--toast-inset)))_translateY(var(--toast-calc-offset-y))] data-ending-style:data-[swipe-direction=up]:transform-[translateY(calc(var(--toast-swipe-movement-y)-100%-var(--toast-inset)))] data-ending-style:data-[swipe-direction=down]:transform-[translateY(calc(var(--toast-swipe-movement-y)+100%+var(--toast-inset)))]",
                 "data-expanded:data-ending-style:data-[swipe-direction=left]:transform-[translateX(calc(var(--toast-swipe-movement-x)-100%-var(--toast-inset)))_translateY(var(--toast-calc-offset-y))] data-expanded:data-ending-style:data-[swipe-direction=right]:transform-[translateX(calc(var(--toast-swipe-movement-x)+100%+var(--toast-inset)))_translateY(var(--toast-calc-offset-y))]",
                 "data-expanded:data-ending-style:data-[swipe-direction=up]:transform-[translateY(calc(var(--toast-swipe-movement-y)-100%-var(--toast-inset)))] data-expanded:data-ending-style:data-[swipe-direction=down]:transform-[translateY(calc(var(--toast-swipe-movement-y)+100%+var(--toast-inset)))]",
-                replayClassName(toast),
               )}
               data-position={position}
+              aria-hidden={toast.transitionStatus === 'ending' || undefined}
               swipeDirection={swipeDirection}
               toast={toast}
             >
-              <Toast.Content className="pointer-events-auto relative flex flex-col gap-1.5 overflow-hidden px-3.5 py-3 text-[13px] transition-opacity duration-180 data-behind:not-data-expanded:pointer-events-none data-behind:opacity-0 data-expanded:opacity-100">
+              <Toast.Content className="pointer-events-auto relative flex flex-col gap-1.5 max-h-[min(70dvh,32rem)] overflow-y-auto overscroll-contain px-3.5 py-3 text-[13px] transition-opacity duration-180 data-behind:not-data-expanded:pointer-events-none data-behind:opacity-0 data-expanded:opacity-100">
                 <div className="flex min-w-0 flex-col gap-1 pr-7">
-                  <Toast.Title className="font-semibold leading-5" data-slot="toast-title" />
+                  <Toast.Title className="break-words whitespace-pre-line font-semibold leading-5" data-slot="toast-title" />
                   <Toast.Description className="whitespace-pre-line break-words leading-5 text-muted-foreground" data-slot="toast-description" />
                 </div>
-                {toast.actionProps && (
-                  <div className="flex min-w-0 justify-end gap-2 pt-1">
-                    <Toast.Action
-                      className="inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64"
+                {(toast.actionProps || toast.data?.secondaryActionProps) && (
+                  <div className="flex min-w-0 flex-wrap justify-end gap-2 pt-1">
+                    {toast.data?.secondaryActionProps && <button {...toast.data.secondaryActionProps}
+                      className="provider-text-action" data-slot="toast-secondary-action" />}
+                    {toast.actionProps && <Toast.Action
+                      className="inline-flex min-h-7 cursor-pointer items-center justify-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64"
                       data-slot="toast-action"
-                    />
+                    />}
                   </div>
                 )}
                 <div className="absolute right-2 top-2 flex shrink-0 items-center">
                   <Toast.Close
                     type="button"
+                    disabled={toast.transitionStatus === 'ending'}
                     aria-label={t("关闭通知")}
                     title={t("关闭")}
                     className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -104,7 +98,10 @@ function Toasts({
   );
 }
 
-export const toastManager: ReturnType<typeof Toast.createToastManager> = Toast.createToastManager();
+interface NotificationData {
+  secondaryActionProps?: React.ComponentPropsWithoutRef<'button'>;
+}
+export const toastManager: ReturnType<typeof Toast.createToastManager<NotificationData>> = Toast.createToastManager<NotificationData>();
 
 export interface ToastProviderProps extends Toast.Provider.Props {
   position?: ToastPosition;
@@ -115,11 +112,12 @@ export function ToastProvider({
   children,
   position = "bottom-right",
   portalProps,
+  limit = TOAST_VISIBLE_LIMIT,
   ...props
 }: ToastProviderProps): React.ReactElement {
   useLanguage();
   return (
-    <Toast.Provider toastManager={toastManager} {...props}>
+    <Toast.Provider limit={limit} toastManager={toastManager} {...props}>
       {children}
       <Toasts portalProps={portalProps} position={position} />
     </Toast.Provider>

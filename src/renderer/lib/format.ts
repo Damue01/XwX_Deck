@@ -1,5 +1,5 @@
 import { getLanguage, t } from '@/lib/i18n';
-// Pure formatting helpers ported from src/main/trace/webview/common.ts.
+// Pure formatting helpers shared with the Trace viewer.
 // No DOM manipulation here — all functions are stateless and browser-environment-agnostic.
 
 export function formatNumber(value: unknown, locale = getLanguage()): string {

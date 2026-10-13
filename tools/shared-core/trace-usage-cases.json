@@ -1,0 +1,431 @@
+[
+  {
+    "name": "responses-subsets",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 130000,
+      "output_tokens": 400,
+      "input_tokens_details": {
+        "cached_tokens": 113000,
+        "cache_write_tokens": 9000
+      },
+      "output_tokens_details": {
+        "reasoning_tokens": 50
+      }
+    },
+    "expected": {
+      "inputUncachedTokens": 8000,
+      "inputTotalTokens": 130000,
+      "cacheReadTokens": 113000,
+      "cacheCreationTokens": 9000,
+      "reasoningTokens": 50,
+      "totalTokens": 130400
+    }
+  },
+  {
+    "name": "compatible-chat-additive",
+    "wire": "chat-completions",
+    "raw": {
+      "prompt_tokens": 838,
+      "completion_tokens": 7,
+      "cache_read_input_tokens": 23992,
+      "cache_creation_input_tokens": 10396,
+      "prompt_tokens_details": {
+        "cached_tokens": 23992
+      },
+      "claude_cache_creation_5_m_tokens": 10396,
+      "claude_cache_creation_1_h_tokens": 0
+    },
+    "expected": {
+      "inputUncachedTokens": 838,
+      "inputTotalTokens": 35226,
+      "cacheCreationTokens": 10396,
+      "cacheReadTokens": 23992,
+      "cacheCreation5mTokens": 10396,
+      "cacheCreation1hTokens": 0,
+      "totalTokens": 35233,
+      "inputIncludesCache": false
+    }
+  },
+  {
+    "name": "compatible-chat-inclusive-ttl",
+    "wire": "chat-completions",
+    "raw": {
+      "prompt_tokens": 100,
+      "completion_tokens": 5,
+      "prompt_tokens_details": {
+        "cached_tokens": 60
+      },
+      "claude_cache_creation_5_m_tokens": 10,
+      "claude_cache_creation_1_h_tokens": 10
+    },
+    "expected": {
+      "inputUncachedTokens": 20,
+      "inputTotalTokens": 100,
+      "cacheCreationTokens": 20,
+      "cacheCreation5mTokens": 10,
+      "cacheCreation1hTokens": 10,
+      "totalTokens": 105,
+      "inputIncludesCache": true
+    }
+  },
+  {
+    "name": "messages-split-only",
+    "wire": "messages",
+    "raw": {
+      "input_tokens": 20,
+      "output_tokens": 5,
+      "cache_read_input_tokens": 60,
+      "cache_creation": {
+        "ephemeral_5m_input_tokens": 10,
+        "ephemeral_1h_input_tokens": 10
+      }
+    },
+    "expected": {
+      "inputTotalTokens": 100,
+      "cacheCreationTokens": 20,
+      "cacheCreation5mTokens": 10,
+      "cacheCreation1hTokens": 10,
+      "totalTokens": 105
+    }
+  },
+  {
+    "name": "ttl-complement-derived",
+    "wire": "messages",
+    "raw": {
+      "input_tokens": 20,
+      "output_tokens": 5,
+      "cache_read_input_tokens": 60,
+      "cache_creation_input_tokens": 20,
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 12
+      }
+    },
+    "expected": {
+      "cacheCreationTokens": 20,
+      "cacheCreation5mTokens": 8,
+      "cacheCreation1hTokens": 12,
+      "totalTokens": 105
+    }
+  },
+  {
+    "name": "singular-aliases",
+    "wire": "responses",
+    "raw": {
+      "input": 100,
+      "output": 5,
+      "input_token_details": {
+        "cache_read_tokens": 60,
+        "cache_creation_tokens": 20
+      },
+      "output_token_details": {
+        "thinking_tokens": 3
+      },
+      "total": 105
+    },
+    "expected": {
+      "inputUncachedTokens": 20,
+      "inputTotalTokens": 100,
+      "cacheReadTokens": 60,
+      "cacheCreationTokens": 20,
+      "reasoningTokens": 3,
+      "totalTokens": 105
+    }
+  },
+  {
+    "name": "deepseek-top-hit",
+    "wire": "chat-completions",
+    "raw": {
+      "prompt_tokens": 100,
+      "completion_tokens": 5,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 60
+    },
+    "expected": {
+      "inputUncachedTokens": 40,
+      "cacheReadTokens": 60,
+      "cacheCreationTokens": 0,
+      "optionalDefaults": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "moonshot-top-cached",
+    "wire": "chat-completions",
+    "raw": {
+      "prompt_tokens": 100,
+      "completion_tokens": 5,
+      "cached_tokens": 60
+    },
+    "expected": {
+      "inputUncachedTokens": 40,
+      "cacheReadTokens": 60,
+      "cacheCreationTokens": 0,
+      "optionalDefaults": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "messages-optional-cache-defaults",
+    "wire": "messages",
+    "raw": {
+      "input_tokens": 20,
+      "output_tokens": 5
+    },
+    "expected": {
+      "inputUncachedTokens": 20,
+      "inputTotalTokens": 20,
+      "cacheCreationTokens": 0,
+      "optionalDefaults": [
+        "cacheRead",
+        "cacheWrite"
+      ],
+      "cacheReadTokens": 0,
+      "totalTokens": 25
+    }
+  },
+  {
+    "name": "explicit-zero",
+    "wire": "messages",
+    "raw": {
+      "input_tokens": 20,
+      "output_tokens": 5,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0
+    },
+    "expected": {
+      "inputTotalTokens": 20,
+      "cacheReadTokens": 0,
+      "cacheCreationTokens": 0,
+      "totalTokens": 25
+    }
+  },
+  {
+    "name": "contradictory-ttl",
+    "wire": "messages",
+    "raw": {
+      "input_tokens": 20,
+      "output_tokens": 5,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 20,
+      "cache_creation": {
+        "ephemeral_5m_input_tokens": 10,
+        "ephemeral_1h_input_tokens": 15
+      }
+    },
+    "expected": {
+      "invalidFields": [
+        "cacheWriteTtl"
+      ]
+    }
+  },
+  {
+    "name": "negative-rejected",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": -1,
+      "output_tokens": 5,
+      "input_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0
+      }
+    },
+    "expected": {
+      "incompleteFields": [
+        "input",
+        "total"
+      ]
+    }
+  },
+  {
+    "name": "overlapping-subsets",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 20,
+      "output_tokens": 5,
+      "input_tokens_details": {
+        "cached_tokens": 25,
+        "cache_write_tokens": 0
+      }
+    },
+    "expected": {
+      "incompleteFields": [
+        "input"
+      ]
+    }
+  },
+  {
+    "name": "compatible-zero-mirror",
+    "wire": "chat-completions",
+    "raw": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "prompt_tokens": 109331,
+      "completion_tokens": 537,
+      "prompt_tokens_details": {
+        "cached_tokens": 192
+      },
+      "claude_cache_creation_5_m_tokens": 0,
+      "claude_cache_creation_1_h_tokens": 0,
+      "total_tokens": 109868
+    },
+    "expected": {
+      "inputTokens": 109331,
+      "outputTokens": 537,
+      "inputUncachedTokens": 109139,
+      "cacheReadTokens": 192,
+      "cacheCreationTokens": 0,
+      "totalTokens": 109868
+    }
+  },
+  {
+    "name": "chat-optional-breakdown-defaults",
+    "wire": "chat-completions",
+    "raw": {
+      "prompt_tokens": 100,
+      "completion_tokens": 5
+    },
+    "expected": {
+      "inputUncachedTokens": 100,
+      "inputTotalTokens": 100,
+      "cacheReadTokens": 0,
+      "cacheCreationTokens": 0,
+      "totalTokens": 105,
+      "optionalDefaults": [
+        "cacheRead",
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "chat-output-derived-from-total",
+    "wire": "chat-completions",
+    "raw": {
+      "prompt_tokens": 100,
+      "total_tokens": 105
+    },
+    "expected": {
+      "outputTokens": 5,
+      "totalTokens": 105,
+      "derivedFields": [
+        "output"
+      ]
+    }
+  },
+  {
+    "name": "chat-input-derived-from-total",
+    "wire": "chat-completions",
+    "raw": {
+      "completion_tokens": 5,
+      "total_tokens": 105
+    },
+    "expected": {
+      "inputUncachedTokens": 100,
+      "inputTotalTokens": 100,
+      "derivedFields": [
+        "input"
+      ]
+    }
+  },
+  {
+    "name": "responses-required-counters-stay-unknown",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5
+    },
+    "expected": {
+      "incompleteFields": [
+        "cacheRead",
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "invalid-optional-counter-is-not-zero",
+    "wire": "chat-completions",
+    "raw": {
+      "prompt_tokens": 100,
+      "completion_tokens": 5,
+      "prompt_tokens_details": {
+        "cached_tokens": -1
+      }
+    },
+    "expected": {
+      "incompleteFields": [
+        "cacheRead"
+      ],
+      "cacheCreationTokens": 0
+    }
+  },
+  {
+    "name": "messages-optional-null-cache-defaults",
+    "wire": "messages",
+    "raw": {
+      "input_tokens": 20,
+      "output_tokens": 5,
+      "cache_read_input_tokens": null,
+      "cache_creation_input_tokens": null
+    },
+    "expected": {
+      "inputTotalTokens": 20,
+      "cacheReadTokens": 0,
+      "cacheCreationTokens": 0,
+      "totalTokens": 25,
+      "optionalDefaults": [
+        "cacheRead",
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "messages-default-5m-with-request",
+    "wire": "messages",
+    "request": {
+      "messages": []
+    },
+    "raw": {
+      "input_tokens": 20,
+      "output_tokens": 5,
+      "cache_creation_input_tokens": 80
+    },
+    "expected": {
+      "cacheCreationTokens": 80,
+      "cacheCreation5mTokens": 80,
+      "cacheCreation1hTokens": 0,
+      "derivedFields": [
+        "cacheWriteTtl"
+      ],
+      "totalTokens": 105
+    }
+  },
+  {
+    "name": "messages-hour-request-does-not-guess-ttl",
+    "wire": "messages",
+    "request": {
+      "system": [
+        {
+          "type": "text",
+          "text": "fixture",
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "1h"
+          }
+        }
+      ]
+    },
+    "raw": {
+      "input_tokens": 20,
+      "output_tokens": 5,
+      "cache_creation_input_tokens": 80
+    },
+    "expected": {
+      "cacheCreationTokens": 80,
+      "totalTokens": 105
+    }
+  }
+]

@@ -16,7 +16,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -33,10 +33,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux native prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
       - name: Validate source
         run: |
           npm test
-          npm run test:upstream
+          npm run check:test-plan
           npm run docs:build
           npm run check:public-boundary
           npm run check:workflows
@@ -112,7 +120,7 @@ jobs:
           path: |
             test-results/*.json
             test-results/*.log
-            release-native/native-build-report.json
+            release/native-build-report.json
           if-no-files-found: warn
 
       - name: Prepare Windows assets

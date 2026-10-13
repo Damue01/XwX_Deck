@@ -1,6 +1,13 @@
 //! Account routing metadata contains no credentials. Leases live through the response stream.
 use super::*;
 use std::collections::{HashMap, HashSet};
+pub(super) fn group(id: &str) -> &'static str {
+    if id.starts_with("official-chatgpt") {
+        "chatgpt-official"
+    } else {
+        platform(id)
+    }
+}
 pub(super) fn platform(id: &str) -> &'static str {
     if id.starts_with("cursor-") {
         "cursor"
@@ -20,6 +27,7 @@ pub(super) struct Policy {
     pub strategy: String,
     pub fixed_account_id: String,
     pub excluded_account_ids: Vec<String>,
+    pub account_order: Vec<String>,
 }
 impl Default for Policy {
     fn default() -> Self {
@@ -27,6 +35,7 @@ impl Default for Policy {
             strategy: "exhaust".into(),
             fixed_account_id: String::new(),
             excluded_account_ids: vec![],
+            account_order: vec![],
         }
     }
 }
@@ -44,9 +53,12 @@ struct Runtime {
     uses: HashMap<String, u64>,
     blocked: HashMap<String, (u64, String)>,
     quotas: HashMap<String, Quota>,
+    quota_details: HashMap<String, Value>,
+    quota_errors: HashMap<String, String>,
     notices: Vec<Value>,
     serial: u64,
     last_account: HashMap<String, String>,
+    rotation: HashMap<String, String>,
     exhaust_account: HashMap<String, String>,
     models: HashMap<String, HashSet<String>>,
     rejected_models: HashSet<(String, String)>,
@@ -91,7 +103,15 @@ impl Pool {
         })
     }
     pub fn save(&self, service: &str, policy: Policy) -> Result<()> {
-        if !["chatgpt", "claude", "grok", "copilot", "cursor"].contains(&service)
+        if ![
+            "chatgpt",
+            "chatgpt-official",
+            "claude",
+            "grok",
+            "copilot",
+            "cursor",
+        ]
+        .contains(&service)
             || ![
                 "exhaust",
                 "most-remaining",
@@ -128,18 +148,72 @@ impl Pool {
         // Existing response leases remain valid; new requests observe the new policy.
         Ok(())
     }
+    pub fn quota_exhausted(&self, preferred: &str, accounts: &Value) -> bool {
+        let service = group(preferred);
+        let policies = self.policies.lock().unwrap();
+        let policy = policies.get(service).cloned().unwrap_or_default();
+        let state = self.runtime.lock().unwrap();
+        let now = (millis() / 1000) as u64;
+        let ids = accounts["accounts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|a| group(text(a, "id")) == service && a["status"] == "connected")
+            .map(|a| text(a, "id"))
+            .filter(|id| {
+                if policy.strategy == "fixed" {
+                    *id == policy.fixed_account_id
+                } else {
+                    !policy.excluded_account_ids.iter().any(|x| x == id)
+                }
+            })
+            .collect::<Vec<_>>();
+        !ids.is_empty()
+            && ids.iter().all(|id| {
+                state
+                    .blocked
+                    .get(*id)
+                    .is_some_and(|(until, reason)| *until > now && reason == "额度已用完")
+            })
+    }
     pub fn decorate(&self, snapshot: &mut Value) {
         let now = (millis() / 1000) as u64;
         let policies = self.policies.lock().unwrap();
         let state = self.runtime.lock().unwrap();
-        snapshot["routing"] = json!(["chatgpt", "claude", "grok", "copilot", "cursor"]
-            .into_iter()
-            .map(|service| (service, policies.get(service).cloned().unwrap_or_default()))
-            .collect::<HashMap<_, _>>());
+        snapshot["routing"] = json!([
+            "chatgpt",
+            "chatgpt-official",
+            "claude",
+            "grok",
+            "copilot",
+            "cursor"
+        ]
+        .into_iter()
+        .map(|service| (service, policies.get(service).cloned().unwrap_or_default()))
+        .collect::<HashMap<_, _>>());
         if let Some(accounts) = snapshot["accounts"].as_array_mut() {
             for account in accounts {
                 let id = text(account, "id").to_string();
                 account["activeRequests"] = json!(state.active.get(&id).copied().unwrap_or(0));
+                let details = state.quota_details.get(&id).filter(|details| {
+                    group(&id) != "chatgpt-official"
+                        || (details["accountKey"] == account["accountKey"]
+                            && details["checkedAt"].as_u64().is_some_and(|checked| {
+                                checked <= now && now.saturating_sub(checked) < 300
+                            })
+                            && details["windows"].as_array().is_none_or(|windows| {
+                                windows.iter().all(|window| {
+                                    window["resetsAt"].as_u64().is_none_or(|reset| reset > now)
+                                })
+                            }))
+                });
+                if let Some(details) = details {
+                    account["quotaDetails"] = details.clone();
+                    account["quotaCached"] = json!(details["cached"] == true);
+                }
+                if let Some(error) = state.quota_errors.get(&id) {
+                    account["quotaError"] = json!(error);
+                }
                 if let Some((until, reason)) =
                     state.blocked.get(&id).filter(|(until, _)| *until > now)
                 {
@@ -147,7 +221,8 @@ impl Pool {
                     account["routingStatus"] = json!(reason);
                 }
                 if let Some(quota) = state.quotas.get(&id).filter(|q| {
-                    now.saturating_sub(q.checked_at) < 300
+                    (group(&id) != "chatgpt-official" || details.is_some())
+                        && now.saturating_sub(q.checked_at) < 300
                         && (q.resets_at == 0 || q.resets_at > now)
                 }) {
                     account["quota"] = json!(quota);
@@ -156,6 +231,11 @@ impl Pool {
         }
     }
     pub fn refresh_due(&self, service: &str) -> bool {
+        // SiWC's public API grant does not authorize Codex WHAM. Retaining an
+        // old quota policy must not trigger unsupported background probes.
+        if service == "chatgpt" {
+            return false;
+        }
         let policy = self
             .policies
             .lock()
@@ -190,6 +270,7 @@ impl Pool {
             return;
         }
         let mut state = self.runtime.lock().unwrap();
+        state.quota_errors.remove(id);
         if remaining > 0.
             && state
                 .blocked
@@ -207,6 +288,36 @@ impl Pool {
             },
         );
     }
+    pub fn quota_details(&self, id: &str, mut details: Value) {
+        details["checkedAt"] = json!((millis() / 1000) as u64);
+        self.runtime
+            .lock()
+            .unwrap()
+            .quota_details
+            .insert(id.into(), details);
+    }
+    pub fn quota_failed(&self, id: &str, error: &str) {
+        let mut state = self.runtime.lock().unwrap();
+        state.quotas.remove(id);
+        state.quota_details.remove(id);
+        state.quota_errors.insert(id.into(), error.into());
+    }
+    pub fn quota_read_failed(&self, id: &str, error: &str) {
+        // The WHAM reader replaces details before each request. Retain this
+        // attempt's safe status/windows while clearing the previous aggregate.
+        let mut state = self.runtime.lock().unwrap();
+        state.quotas.remove(id);
+        state.quota_errors.insert(id.into(), error.into());
+    }
+    pub fn notice(&self, message: String) {
+        let mut state = self.runtime.lock().unwrap();
+        state.serial += 1;
+        let id = state.serial;
+        state.notices.push(json!({"id":id,"message":message}));
+        if state.notices.len() > 16 {
+            state.notices.remove(0);
+        }
+    }
     pub fn notices(&self) -> Value {
         json!(self.runtime.lock().unwrap().notices)
     }
@@ -218,7 +329,7 @@ impl Pool {
         model: &str,
         attempted: &HashSet<String>,
     ) -> Result<Lease> {
-        let service = platform(preferred);
+        let service = group(preferred);
         let policy = self
             .policies
             .lock()
@@ -239,7 +350,7 @@ impl Pool {
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|a| text(a, "platform") == service && text(a, "status") == "connected")
+            .filter(|a| group(text(a, "id")) == service && text(a, "status") == "connected")
             .map(|a| text(a, "id").to_string())
             .filter(|id| {
                 !attempted.contains(id)
@@ -269,22 +380,45 @@ impl Pool {
         } else {
             state.affinity.get(&key).map(|(id, _)| id.clone())
         };
+        // New registrations join automatically after explicitly ordered rows.
+        let mut sequence = candidates.clone();
+        sequence.sort_by_key(|id| {
+            policy
+                .account_order
+                .iter()
+                .position(|item| item == id)
+                .unwrap_or(policy.account_order.len())
+        });
         let score = |id: &String| {
+            let order = sequence
+                .iter()
+                .position(|candidate| candidate == id)
+                .unwrap_or(sequence.len());
             let quota = state.quotas.get(id).filter(|q| {
                 now.saturating_sub(q.checked_at) < 300 && (q.resets_at == 0 || q.resets_at > now)
             });
-            let active = state.active.get(id).copied().unwrap_or(0);
             let uses = state.uses.get(id).copied().unwrap_or(0);
+            let active = state.active.get(id).copied().unwrap_or(0);
             let rank = match policy.strategy.as_str() {
+                "balanced" if !policy.account_order.is_empty() => {
+                    let count = sequence.len();
+                    let start = state
+                        .rotation
+                        .get(service)
+                        .and_then(|last| sequence.iter().position(|item| item == last))
+                        .map(|index| (index + 1) % count)
+                        .unwrap_or(0);
+                    (0, ((order + count - start) % count) as u64)
+                }
                 "balanced" => (active, uses),
                 "most-remaining" => quota
                     .map(|q| (0, ((100. - q.remaining_percent) * 1000.) as u64))
-                    .unwrap_or((1, uses)),
+                    .unwrap_or((1, 0)),
                 "reset-soon" => quota
                     .filter(|q| q.resets_at > now && q.remaining_percent > 0.)
                     .map(|q| (0, q.resets_at))
-                    .unwrap_or((1, uses)),
-                _ => (
+                    .unwrap_or((1, 0)),
+                _ if policy.account_order.is_empty() => (
                     if id
                         == state
                             .exhaust_account
@@ -298,15 +432,20 @@ impl Pool {
                     },
                     0,
                 ),
+                _ => (0, 0),
             };
             (
                 if sticky.as_ref() == Some(id) { 0 } else { 1 },
                 rank,
+                order,
                 id.clone(),
             )
         };
         candidates.sort_by_key(score);
         let id = candidates[0].clone();
+        if policy.strategy == "balanced" && sticky.as_ref() != Some(&id) {
+            state.rotation.insert(service.into(), id.clone());
+        }
         *state.active.entry(id.clone()).or_default() += 1;
         *state.uses.entry(id.clone()).or_default() += 1;
         if !session.is_empty() {
@@ -449,7 +588,7 @@ impl Pool {
             .map(|a| text(a, "label"))
             .unwrap_or("其他账号");
         let mut state = self.runtime.lock().unwrap();
-        let service = platform(to).to_string();
+        let service = group(to).to_string();
         state.exhaust_account.insert(from.into(), to.into());
         let previous = state.last_account.insert(service, to.into());
         if previous.as_deref() == Some(to) || (previous.is_none() && from == to) {
@@ -559,18 +698,28 @@ mod tests {
     #[test]
     fn background_quota_refresh_is_bounded_and_only_for_quota_policies() {
         let pool = pool();
-        assert!(!pool.refresh_due("chatgpt"));
+        assert!(!pool.refresh_due("chatgpt-official"));
         pool.policies.lock().unwrap().insert(
-            "chatgpt".into(),
+            "chatgpt-official".into(),
             Policy {
                 strategy: "most-remaining".into(),
                 ..Policy::default()
             },
         );
-        assert!(pool.refresh_due("chatgpt"));
-        assert!(!pool.refresh_due("chatgpt"));
-        pool.usage_refresh_started("chatgpt");
-        assert!(!pool.refresh_due("chatgpt"));
+        assert!(pool.refresh_due("chatgpt-official"));
+        assert!(!pool.refresh_due("chatgpt-official"));
+        pool.usage_refresh_started("chatgpt-official");
+        assert!(!pool.refresh_due("chatgpt-official"));
+        for strategy in ["most-remaining", "reset-soon"] {
+            pool.policies.lock().unwrap().insert(
+                "chatgpt".into(),
+                Policy {
+                    strategy: strategy.into(),
+                    ..Policy::default()
+                },
+            );
+            assert!(!pool.refresh_due("chatgpt"));
+        }
     }
     #[test]
     fn response_affinity_and_known_model_capabilities() {

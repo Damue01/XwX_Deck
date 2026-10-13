@@ -1,6 +1,10 @@
 # 原生运行时迁移导读
 
-参考实现保留 React 界面，将运行时后端与外壳移到 Rust / Tauri。按能力迁移到其他项目时，应先列出目标项目的产品范围、现有用户数据、身份和更新渠道；页面缺失不代表应删除目标功能。迁移保持目标项目独立历史、应用身份、数据路径和端口。
+当前公开版保留 React 界面。
+后端与桌面外壳统一使用 Rust / Tauri。
+复用代码前，先核对目标项目的产品范围和用户数据。
+页面缺失不代表应删除目标功能。
+目标历史、身份、数据路径、端口和更新渠道分别保留。
 
 ## 代码入口
 
@@ -9,8 +13,13 @@
 | 桌面生命周期、窗口、托盘、权限与 IPC | `src-native/src/main.rs` |
 | 配置、模型服务、接管账本、迁移、修复和退出恢复 | `src-native/src/core.rs` |
 | 协议转换、流式消息与续接 | `src-native/src/protocol.rs` |
-| Trace JSONL、索引、用量、保留与手动修复 | `src-native/src/storage.rs` |
-| 多账号授权、凭据、额度与轮换 | `src-native/src/subscriptions.rs` |
+| Trace JSONL、索引和手动修复 | `src-native/src/storage.rs` |
+| 会话身份和辅助请求 | `src-native/src/conversation_identity.rs`、`src-native/src/trace_classification.rs` |
+| 用量归一化与每请求费用快照 | `src-native/src/trace_usage.rs`、`src-native/src/trace_pricing.rs` |
+| 服务目录和公共能力来源 | `src-native/src/catalog.rs`、`src-native/src/model_metadata.rs` |
+| 多账号授权、额度与轮换 | `src-native/src/subscriptions.rs`、`src-native/src/subscription_routing.rs` |
+| 凭据保护 | `src-native/src/credentials.rs` |
+| 明确启用的跨服务切换 | `src-native/src/service_switching.rs` |
 | 外部 API 配置的预览与导入 | `src-native/src/config_import.rs` |
 | 客户端发现与显式标签管理 | `src-native/src/client_installations.rs` |
 | 原生 Windows 便携更新 | `src-native/src/portable_update.rs` |
@@ -32,16 +41,27 @@
 ## 检查入口
 
 ```bash
-npm run compile
-npm run test:built
-npm run test:upstream
+npm run check:quality
 npm run check:public-boundary
 npm run check:workflows
 npm run docs:build
-npm run build:rust:pilot
-npm run test:rust
+npm run build:native:isolated
+npm run test:native:webview
 ```
 
-`test:rust:backend` 包含协议、服务预设、API 导入、订阅授权与策略、历史元数据、字段冲突、退出恢复、Trace 修复、迁移、客户端、语言和更新检查。`native-test.mjs` 使用实际系统 WebView 和真实后端请求。Windows 的物理更新测试只在原生 Windows 运行；Mac 不能替它给出通过结论。
+`test:native:backend` 验证隔离后端。
+覆盖配置、协议、账号、历史、恢复、存储和更新。
+`native-test.mjs` 使用系统 WebView 和实际 Rust 后端。
+WebView 是系统提供的网页渲染组件。
 
-当前订阅及协议转换使用 HTTP SSE；转换 WebSocket、无本地来源的不透明状态和未提供可信用量的服务均保留明确边界。旧 TypeScript 保留部分测试与资源生成作用，不应在对照验收完成前整体删除。
+物理 Windows 更新只在原生 Windows 验证。
+macOS 不能替 Windows 给出通过结论。
+
+HTTP SSE 与 WebSocket 按实际入口分别验证。
+无本地可读来源的不透明上下文不能强行恢复。
+缺少可信用量时，记录未计价原因。
+
+TypeScript 只用于前端、共享格式和开发工具。
+默认构建不包含第二套后端、Node 或 Chromium。
+macOS 公开版只下载并校验 DMG，最终安装由用户手动完成。
+迁移源码、构建候选和通过回归不等于安装或公开发布。

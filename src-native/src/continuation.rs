@@ -90,6 +90,56 @@ fn portable(input: &Value) -> Result<(Vec<Value>, bool)> {
     }
     Ok((out, complete))
 }
+fn official_input(input: Vec<Value>) -> Result<Vec<Value>> {
+    let mut output = vec![];
+    for mut item in input {
+        if item["type"] != "reasoning" {
+            output.push(item);
+            continue;
+        }
+        // Only a seal accepted by this provider can carry opaque reasoning state.
+        // An unsealed item ID is not reusable with store=false, including when
+        // another Responses provider supplies summary text but no content.
+        if !text(&item, "encrypted_content").is_empty() {
+            item.as_object_mut().unwrap().remove("content");
+            item.as_object_mut()
+                .unwrap()
+                .remove("internal_chat_message_metadata_passthrough");
+            output.push(item);
+            continue;
+        }
+        let mut parts = vec![];
+        for part in item["summary"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(item["content"].as_array().into_iter().flatten())
+        {
+            let value = part["text"]
+                .as_str()
+                .ok_or("无法转换原服务的 reasoning 内容，请回到原服务继续")?;
+            if !value.is_empty() {
+                parts.push(json!({"type":"output_text","text":value}));
+            }
+        }
+        if !parts.is_empty() {
+            output.push(json!({"type":"message","role":"assistant","content":parts}));
+        }
+    }
+    Ok(output)
+}
+// A strict Responses endpoint follows the strict OpenAI input schema. Keep
+// third-party visible reasoning as assistant text; never invent an opaque seal.
+#[cfg(test)]
+pub(super) fn strict_responses(body: &Value) -> Result<Value> {
+    let before = items(&body["input"]);
+    let input = official_input(before.clone())?;
+    let mut body = body.clone();
+    if input != before {
+        body["input"] = json!(input);
+    }
+    Ok(body)
+}
 pub(super) fn expand(
     root: &Path,
     provider: &Provider,
@@ -136,6 +186,12 @@ pub(super) fn expand(
             input.push(checkpoint);
             continue;
         }
+        let item_owner = &ledger["items"][text(&item, "id")]["owner"];
+        if item_owner.as_str().is_some_and(|o| o != origin) {
+            if let Some(object) = item.as_object_mut() {
+                object.remove("id");
+            }
+        }
         let seal = text(&item, "encrypted_content");
         if !seal.is_empty() {
             let hash = storage::digest(seal.as_bytes());
@@ -171,17 +227,45 @@ pub(super) fn expand(
         }
         input.push(item);
     }
+    if provider.official || provider.oauth {
+        input = official_input(input)?;
+    }
     if input != before_input {
         body["input"] = json!(input);
     }
     Ok(body)
 }
+// A long-lived client retains its launch model. Only follow Deck's explicitly
+// chosen default when this native session previously used that default. An
+// client model that differs from the recorded launch default is retained.
+pub(super) fn selected_model(
+    root: &Path,
+    provider: &Provider,
+    session: &str,
+    model: &str,
+) -> Result<String> {
+    if session.is_empty() || provider.codex_model.is_empty() {
+        return Ok(model.into());
+    }
+    let _lock = CACHE_LOCK.lock().map_err(err)?;
+    let ledger =
+        load(&directory(root, provider, session).join("owners.json"))?.unwrap_or(Value::Null);
+    Ok(
+        if ledger["usesDefaultModel"] == true && ledger["clientModel"] == model {
+            provider.codex_model.clone()
+        } else {
+            model.into()
+        },
+    )
+}
+
 pub(super) fn save(
     root: &Path,
     provider: &Provider,
     session: &str,
     body: &Value,
     response: &Value,
+    client_model: &str,
 ) -> Result<()> {
     let id = text(response, "id");
     if id.is_empty()
@@ -203,16 +287,32 @@ pub(super) fn save(
     }
     write(&dir.join(format!("{name}.json")), &source)?;
     let mut ledger = load(&dir.join("owners.json"))?.unwrap_or_else(|| json!({"seals":{}}));
+    let uses_default = if ledger["clientModel"] == client_model {
+        ledger["usesDefaultModel"] == true
+    } else {
+        !client_model.is_empty() && client_model == provider.codex_model
+    };
+    ledger["clientModel"] = json!(client_model);
+    ledger["usesDefaultModel"] = json!(uses_default);
     ledger["owner"] = json!(origin);
     ledger["at"] = json!(millis() as u64);
+    if !ledger["items"].is_object() {
+        ledger["items"] = json!({});
+    }
     for item in items(&response["output"]) {
+        let id = text(&item, "id");
+        if !id.is_empty() {
+            ledger["items"][id] = json!({"owner":origin});
+        }
         let seal = text(&item, "encrypted_content");
         if seal.is_empty() {
             continue;
         }
         ledger["seals"][storage::digest(seal.as_bytes())] = json!({"owner":origin,"source":name});
     }
-    if ledger["seals"].as_object().is_some_and(|s| s.len() > 2048) {
+    if ledger["seals"].as_object().is_some_and(|s| s.len() > 2048)
+        || ledger["items"].as_object().is_some_and(|s| s.len() > 8192)
+    {
         return Err("会话不透明状态记录超过上限，已保留历史".into());
     }
     write(&dir.join("owners.json"), &ledger.to_string())?;
@@ -244,4 +344,68 @@ pub(super) fn save(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn strict_responses_preserves_foreign_text_tool_order_and_original_request() {
+        let original = json!({"model":"fixture", "input":[
+            {"type":"reasoning","id":"foreign","summary":[],"content":[{"type":"reasoning_text","text":"provider supplied text"}]},
+            {"type":"function_call","call_id":"kept","name":"read","arguments":"{}"},
+            {"type":"function_call_output","call_id":"kept","output":"tool result"}
+        ]});
+        let converted = strict_responses(&original).unwrap();
+        assert_eq!(original["input"][0]["type"], "reasoning");
+        assert_eq!(
+            converted["input"][0],
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"provider supplied text"}]})
+        );
+        assert_eq!(
+            converted["input"].as_array().unwrap()[1..],
+            original["input"].as_array().unwrap()[1..]
+        );
+        assert_eq!(converted["model"], original["model"]);
+    }
+    #[test]
+    fn official_input_retains_provider_text_and_tool_order() {
+        let source = vec![
+            json!({"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"supplied thought"}],"internal_chat_message_metadata_passthrough":{}}),
+            json!({"type":"function_call","call_id":"fixture","name":"read","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"fixture","output":"fixture result"}),
+        ];
+        let converted = official_input(source.clone()).unwrap();
+        assert_eq!(
+            converted[0],
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"supplied thought"}]})
+        );
+        assert_eq!(converted[1..], source[1..]);
+        assert_eq!(source[0]["type"], "reasoning");
+        assert!(official_input(vec![
+            json!({"type":"reasoning","content":[{"type":"unknown"}]})
+        ])
+        .is_err());
+    }
+    #[test]
+    fn official_input_converts_summary_only_and_drops_empty_unsealed_ids() {
+        let converted = official_input(vec![
+            json!({"id":"foreign-summary","type":"reasoning","summary":[{"type":"summary_text","text":"supplied summary"}],"content":[],"encrypted_content":null}),
+            json!({"id":"foreign-empty","type":"reasoning","summary":[],"content":[]}),
+            json!({"type":"function_call","call_id":"call_kept","name":"read","arguments":"{}"}),
+        ]).unwrap();
+        assert_eq!(converted.len(), 2);
+        assert_eq!(
+            converted[0],
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"supplied summary"}]})
+        );
+        assert_eq!(converted[1]["call_id"], "call_kept");
+    }
+    #[test]
+    fn official_input_keeps_opaque_state_without_inventing_one() {
+        let converted=official_input(vec![json!({"id":"rs_fixture","type":"reasoning","summary":[],"encrypted_content":"owned-seal","content":[{"type":"reasoning_text","text":"supplied thought"}]})]).unwrap();
+        assert_eq!(converted[0]["encrypted_content"], "owned-seal");
+        assert_eq!(converted[0]["id"], "rs_fixture");
+        assert!(converted[0].get("content").is_none());
+    }
 }

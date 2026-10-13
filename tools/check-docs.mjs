@@ -20,8 +20,20 @@ const docs = [
   'docs/public-release-boundary.md',
   'docs/roadmap.md',
   'docs/upstream-port.md',
-  'docs/ux-product-requirements.md'
+  'docs/ux-product-requirements.md',
+  'docs/documentation-style-guide.md',
+  'docs/public-sync-acceptance.md',
+  'docs/testing-strategy.md',
+  'docs/core-functional-acceptance-checklist.md'
 ];
+const collectMarkdown = directory => fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+  if (entry.name.startsWith('.')) return [];
+  const absolute = path.join(directory, entry.name);
+  return entry.isDirectory() ? collectMarkdown(absolute) : entry.name.endsWith('.md') ? [path.relative(root, absolute)] : [];
+});
+for (const relative of collectMarkdown(path.join(root, 'docs'))) {
+  if (!docs.includes(relative)) docs.push(relative);
+}
 const errors = [];
 for (const relative of docs) {
   const absolute = path.join(root, relative);
@@ -29,6 +41,12 @@ for (const relative of docs) {
   const content = fs.readFileSync(absolute, 'utf8');
   for (const match of content.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
     const target = match[1];
+    const sourcePrefix = 'https://github.com/Damue01/XwX_Deck/blob/main/';
+    if (target.startsWith(sourcePrefix)) {
+      const sourcePath = decodeURIComponent(target.slice(sourcePrefix.length).split('#', 1)[0]);
+      if (!fs.existsSync(path.resolve(root, sourcePath))) errors.push(`${relative}: broken source link ${target}`);
+      continue;
+    }
     if (/^(?:https?:|mailto:|#)/.test(target)) continue;
     const resolved = path.resolve(path.dirname(absolute), target.split('#', 1)[0]);
     if (!fs.existsSync(resolved)) errors.push(`${relative}: broken link ${target}`);

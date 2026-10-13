@@ -1,4 +1,4 @@
-// Theme management for XwX Deck. Two themes: 'day' (light) and 'night' (dark).
+// Theme management for XwXDeck. Day, night, or follow the operating system.
 // Drives both our own tokens (html[data-theme]) and COSS components (html.dark).
 //
 // Main-process settings restore the theme at startup. After a local selection,
@@ -7,7 +7,8 @@
 // localStorage is only an early-paint hint, never the live UI state.
 import * as React from 'react';
 
-export type Theme = 'day' | 'night';
+export type Theme = 'day' | 'night' | 'system';
+const systemTheme = window.matchMedia?.('(prefers-color-scheme: dark)');
 
 const STORAGE_KEY = 'xwx-deck.theme';
 let themeChangeId = 0;
@@ -19,7 +20,7 @@ let currentTheme: Theme | undefined;
 export function getStoredTheme(): Theme {
   try {
     const v = localStorage.getItem(STORAGE_KEY);
-    if (v === 'day' || v === 'night') return v;
+    if (v === 'day' || v === 'night' || v === 'system') return v;
   } catch { /* ignore */ }
   return 'day';
 }
@@ -32,8 +33,11 @@ export function applyTheme(theme: Theme): void {
 function paintTheme(theme: Theme): void {
   currentTheme = theme;
   const root = document.documentElement;
-  root.dataset.theme = theme;
-  root.classList.toggle('dark', theme === 'night');
+  const resolved = theme === 'system' ? (systemTheme?.matches ? 'night' : 'day') : theme;
+  root.dataset.themePreference = theme;
+  root.dataset.theme = resolved;
+  root.style.colorScheme = resolved === 'night' ? 'dark' : 'light';
+  root.classList.toggle('dark', resolved === 'night');
   try { localStorage.setItem(STORAGE_KEY, theme); } catch { /* ignore */ }
   document.dispatchEvent(new Event('xwx:themechange'));
 }
@@ -41,6 +45,9 @@ function paintTheme(theme: Theme): void {
 /** Apply the early-paint hint as soon as possible (called from main entry). */
 export function initTheme(): void {
   applyTheme(getStoredTheme());
+  systemTheme?.addEventListener('change', () => {
+    if (currentTheme === 'system') paintTheme('system');
+  });
 }
 
 function changeTheme(theme: Theme, persist: (theme: Theme) => Promise<unknown>): void {
@@ -64,6 +71,7 @@ export function useTheme(
   authoritative: Theme | undefined,
   persist: (theme: Theme) => Promise<unknown>,
 ): [Theme, (t: Theme) => void] {
+  const [, refresh] = React.useReducer((value: number) => value + 1, 0);
   const [theme, setThemeState] = React.useState<Theme>(() => currentTheme ?? getStoredTheme());
 
   React.useEffect(() => {
@@ -71,7 +79,7 @@ export function useTheme(
   }, [authoritative]);
 
   React.useEffect(() => {
-    const onChange = () => setThemeState(currentTheme ?? getStoredTheme());
+    const onChange = () => { setThemeState(currentTheme ?? getStoredTheme()); refresh(); };
     document.addEventListener('xwx:themechange', onChange);
     onChange();
     return () => document.removeEventListener('xwx:themechange', onChange);

@@ -18,7 +18,7 @@ jobs:
   validate:
     name: Validate source
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -32,10 +32,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux native prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
       - name: Compile and run core tests
         run: |
           npm test
-          npm run test:upstream
+          npm run check:test-plan
 
       - name: Build documentation
         run: npm run docs:build

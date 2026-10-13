@@ -1,11 +1,12 @@
 import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
-import { ArrowUpRight, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
 import { ProviderIcon, providerIconKind } from './ProviderIcon';
 import { AddConfigurationDialog, type ConfigurationTab } from './AddConfigurationDialog';
 import { isLocalProvider, newProviderDraft, officialProviderForUrl, OFFICIAL_PROVIDERS, type OfficialProviderId } from '../../../shared/officialProviders';
 import { useBridge } from '@/bridge/store';
-import { useConfirm } from '@/components/ui/confirm-dialog';
+import { SecretInput } from '@/components/ui/secret-input';
+import { ConfigurationDeleteAction } from '@/components/ui/configuration-delete-action';
 import { OPEN_CONFIGURATION_EVENT, OPEN_PROVIDER_SETTINGS_EVENT, showErrorToast, showToast, type ConfigurationEntry } from '@/lib/toast';
 import { groupSubscriptionConnections, subscriptionPlatformForAccount, subscriptionServiceIcon, subscriptionServiceNames } from '@/lib/subscriptionServices';
 import { SubscriptionAccountsPanel } from './SubscriptionAccountsPanel';
@@ -20,7 +21,6 @@ import {
 export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void }): React.ReactElement {
   useLanguage();
   const bridge = useBridge();
-  const confirm = useConfirm();
   const [drafts, setDrafts] = React.useState<Record<string, ProviderInput>>({});
   const [draftKey, setDraftKey] = React.useState('new');
   const [editorOpen, setEditorOpen] = React.useState(false);
@@ -43,13 +43,12 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
     else delete next[draftKey];
     return next;
   });
-  const [showBearerToken, setShowBearerToken] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
+  const [operation, setOperation] = React.useState<'save' | 'delete' | null>(null);
+  const busy = operation !== null;
   const savedProvider = bridge.providers?.connections.find(provider => provider.id === draft?.id);
   const previousName = savedProvider?.displayName;
   const draftChanged = !!draft && !!savedProvider && (draft.displayName !== savedProvider.displayName || draft.baseUrl !== savedProvider.baseUrl || draft.bearerToken !== savedProvider.bearerToken || draft.adapter !== savedProvider.adapter);
-  const nameError = draft ? providerNameError(draft.displayName, previousName)
-    || (draft.displayName !== previousName && bridge.providers?.connections.some(provider => provider.id !== draft.id && (provider.displayName === draft.displayName || provider.codexProviderId === draft.displayName)) ? t('此名称已被其他连接使用。') : undefined) : undefined;
+  const nameError = draft ? providerNameError(draft.displayName, previousName) : undefined;
   const lock = React.useRef(false);
   const refreshGeneration = React.useRef(0);
   const editorTrigger = React.useRef<HTMLButtonElement | null>(null);
@@ -69,7 +68,6 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
     return () => window.removeEventListener(OPEN_CONFIGURATION_EVENT, open);
   }, []);
   const closeEditor = () => {
-    setShowBearerToken(false);
     setEditorOpen(false);
     setDialogOpen(false);
     setSetupProvider(null);
@@ -91,12 +89,12 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
     apply(bridge.api.getCodexConfig(), codexConfig => bridge.patch({ codexConfig }));
     apply(bridge.api.getClaudeModels(), claudeModels => bridge.patch({ claudeModels }));
   };
-  const run = async (title: string, operation: () => Promise<void>) => {
-    if (lock.current) return;
-    lock.current = true; setBusy(true);
-    try { await operation(); }
-    catch (error) { showErrorToast(title, error); }
-    finally { lock.current = false; setBusy(false); }
+  const run = async (kind: 'save' | 'delete', title: string, operation: () => Promise<void>) => {
+    if (lock.current) return false;
+    lock.current = true; setOperation(kind);
+    try { await operation(); return true; }
+    catch (error) { showErrorToast(title, error); return false; }
+    finally { lock.current = false; setOperation(null); }
   };
   const edit = React.useCallback((p: ProviderConnection, trigger: HTMLButtonElement | null) => {
     editorTrigger.current = trigger;
@@ -112,7 +110,6 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
     setManagementOpen(true); returnProviderId.current = p.id; managementDraftKey.current = p.id;
     setSetupProvider((OFFICIAL_PROVIDERS.find(item => 'providerPreset' in item && item.providerPreset === p.providerPreset) ?? officialProviderForUrl(p.baseUrl))?.id ?? 'custom');
     setDialogOpen(true);
-    setShowBearerToken(false);
     setDraftKey(p.id);
     setEditorOpen(true);
     setDrafts(current => current[p.id] ? current : { ...current, [p.id]: { id: p.id, displayName: p.displayName, baseUrl: p.baseUrl, bearerToken: p.bearerToken, adapter: p.adapter, providerPreset: p.providerPreset, codexModel: p.codexModel } });
@@ -121,7 +118,6 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
     setSubscriptionConnectionId(null);
     const key = `new:${preset}`;
     if (preset === 'custom') { setManagementOpen(true); setConfigurationTab('saved'); managementDraftKey.current = key; }
-    setShowBearerToken(false);
     setChecksOpen(false);
     setDraftKey(key);
     setSetupProvider(preset);
@@ -176,9 +172,7 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
       showToast(t('请先停止 Trace，并在模型页切换使用此配置的客户端。'), 'info');
       return;
     }
-    const ok = await confirm({ title: t("删除模型服务「{0}」？", provider.displayName), body: t('此操作只删除这份配置，其他模型服务和历史记录会保留。'), confirmText: t('删除'), tone: 'danger' });
-    if (!ok) return;
-    await run(t('删除模型服务失败'), async () => {
+    await run('delete', t('删除模型服务失败'), async () => {
       const providers = await bridge.api.deleteProvider(provider.id);
       bridge.patch({ providers });
       setDrafts(current => { const next = { ...current }; delete next[provider.id]; return next; });
@@ -196,7 +190,7 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
   const editor = draft && <form key={draft.id ?? draftKey} id="provider-editor" className="provider-editor" hidden={!editorOpen} aria-label={draft.id ? t('编辑模型服务') : t('添加模型服务')} aria-busy={busy} onSubmit={e => {
     e.preventDefault();
     if (nameError) return;
-    void run(t('保存模型服务失败'), async () => {
+    void run('save', t('保存模型服务失败'), async () => {
       const providers = await bridge.api.saveProvider(draft);
       bridge.patch({ providers });
       refresh();
@@ -207,7 +201,7 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
         requestAnimationFrame(() => document.getElementById('provider-config-tab')?.focus());
       }
       const endpointIncluded = /\/(?:responses(?:\/compact)?|chat\/completions|messages)\/?$/i.test(new URL(draft.baseUrl).pathname);
-      showToast(t('模型服务已保存'), 'success');
+      showToast(t(draft.id ? '已保存配置「{0}」' : '已添加配置「{0}」', draft.displayName.trim()), 'success');
       if (endpointIncluded) {
         showToast(t('请核对 API 地址路径'), 'info', undefined, {
           description: t('地址包含完整接口路径。请按服务商文档确认是否应去掉末尾的 responses、chat/completions 或 messages。')
@@ -215,11 +209,12 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
       }
     });
   }}>
+      <div className="provider-editor-fields">
       <div className="field-row">
         <label className="fr-label" htmlFor="provider-name">{t("名称")}</label>
         <div className="fr-value"><div className="provider-name-field">
           <input id="provider-name" type="text" className="txt-input" required maxLength={80}
-            value={draft.displayName} placeholder={t("仅支持英文字母、数字、下划线和连字符")}
+            value={draft.displayName} placeholder={t("名称")}
             disabled={busy} aria-invalid={!!nameError && draft.displayName.length > 0}
             aria-describedby={nameError && draft.displayName.length > 0 ? 'provider-name-feedback' : undefined}
             onChange={e => setDraft({ ...draft, displayName: e.target.value })} />
@@ -227,8 +222,16 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
         </div></div>
       </div>
       <div className="field-row"><label className="fr-label" htmlFor="provider-url">URL</label><div className="fr-value"><input id="provider-url" className="txt-input" type="url" required value={draft.baseUrl} placeholder="https://api.example.com/v1" disabled={busy} onChange={e => setDraft({ ...draft, baseUrl: e.target.value, ...(!draft.id && setupProvider === 'custom' ? { adapter: officialProviderForUrl(e.target.value)?.adapter ?? 'auto' as const } : {}) })} /></div></div>
-      <div className="field-row"><div className="provider-key-heading"><label className="fr-label" htmlFor="provider-key">Key</label>{preset && <button type="button" className="provider-text-action" disabled={busy} onClick={() => void bridge.api.openSetupWebsite(preset.id).catch(error => showErrorToast(t('打开密钥管理页面失败'), error))}>{'local' in preset ? t('打开官网') : t('获取 Key')}<ArrowUpRight size={14} aria-hidden="true" /></button>}</div><div className="fr-value"><div className="provider-key-control"><input id="provider-key" className="txt-input" type={showBearerToken ? 'text' : 'password'} autoFocus={!draft.id} autoComplete="off" required={!isLocalProvider(draft)} placeholder={isLocalProvider(draft) ? t("可留空") : undefined} value={draft.bearerToken} disabled={busy} onChange={e => setDraft({ ...draft, bearerToken: e.target.value })} /><button type="button" className="provider-key-visibility" aria-label={showBearerToken ? t('隐藏访问密钥') : t('显示访问密钥')} aria-pressed={showBearerToken} aria-controls="provider-key" title={showBearerToken ? t('隐藏访问密钥') : t('显示访问密钥')} disabled={busy} onClick={() => setShowBearerToken(value => !value)}><Eye className="provider-key-icon-show" aria-hidden="true" /><EyeOff className="provider-key-icon-hide" aria-hidden="true" /></button></div></div></div>
-      <div className="prov-save-bar">{savedProvider && managementOpen && <button type="button" className="provider-text-action configuration-destructive" disabled={busy} onClick={() => void remove(savedProvider)}><Trash2 size={16} aria-hidden="true" />{t('删除配置')}</button>}<button type="button" className="provider-text-action" disabled={busy} onClick={managementOpen ? closeEditor : returnProviderId.current !== undefined || (bridge.providers?.connections.some(item => !item.subscriptionAccountId)) ? returnToManagement : closeEditor}>{t("取消")}</button><button type="submit" className="btn primary" disabled={busy || !!nameError}>{t("保存")}</button></div>
+      <div className="field-row"><div className="provider-key-heading"><label className="fr-label" htmlFor="provider-key">Key</label>{preset && <button type="button" className="provider-text-action" disabled={busy} onClick={() => void bridge.api.openSetupWebsite(preset.id).catch(error => showErrorToast(t('打开密钥管理页面失败'), error))}>{'local' in preset ? t('打开官网') : t('获取 Key')}<ArrowUpRight size={14} aria-hidden="true" /></button>}</div><div className="fr-value"><SecretInput key={draftKey} active={dialogOpen && editorOpen && !checksOpen} id="provider-key" autoFocus={!draft.id} autoComplete="off" required={!isLocalProvider(draft)} placeholder={isLocalProvider(draft) ? t("可留空") : undefined} value={draft.bearerToken} disabled={busy} onChange={e => setDraft({ ...draft, bearerToken: e.target.value })} /></div></div>
+      </div>
+      <div className="prov-save-bar">{savedProvider && managementOpen && <ConfigurationDeleteAction disabled={busy}
+        confirmation={{ title: t('删除模型服务「{0}」？', savedProvider.displayName), body: t('此操作只删除这份配置，其他模型服务和历史记录会保留。') }}
+        beforeConfirm={() => {
+          if (bridge.runtime?.tracingEnabled || bridge.runtime?.backgroundGatewayActive || bridge.providers?.selected.codex === savedProvider.id || bridge.providers?.selected.claude === savedProvider.id) {
+            showToast(t('请先停止 Trace，并在模型页切换使用此配置的客户端。'), 'info'); return false;
+          }
+          return !lock.current;
+        }} onDelete={() => remove(savedProvider)} />}<button type="button" className="provider-text-action" disabled={busy} onClick={managementOpen ? closeEditor : returnProviderId.current !== undefined || (bridge.providers?.connections.some(item => !item.subscriptionAccountId)) ? returnToManagement : closeEditor}>{t("取消")}</button><button type="submit" className="btn primary" disabled={busy || !!nameError}>{t(operation === 'save' ? "保存中…" : "保存")}</button></div>
     </form>;
   return <div id="providerList" aria-busy={busy}>
     <AddConfigurationDialog manageClients activeTab={configurationTab} initialTab={configurationTab} onTabChange={tab => {
@@ -249,13 +252,13 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
         setChecksOpen(models);
         document.getElementById(models ? 'provider-models-tab' : 'provider-config-tab')?.focus();
       }}>
-        <button id="provider-config-tab" role="tab" type="button" aria-selected={!checksOpen} aria-controls="provider-config-panel" tabIndex={checksOpen ? -1 : 0} onClick={() => setChecksOpen(false)} disabled={busy}>{t('配置')}</button>
-        <button id="provider-models-tab" role="tab" type="button" aria-selected={checksOpen} aria-controls="provider-models-panel" tabIndex={checksOpen ? 0 : -1} onClick={() => setChecksOpen(true)} disabled={busy}>{t('模型')}</button>
+        <button id="provider-config-tab" role="tab" type="button" aria-selected={!checksOpen} aria-controls="provider-config-panel" tabIndex={checksOpen ? -1 : 0} onClick={event => { setChecksOpen(false); event.currentTarget.focus(); }} disabled={busy}>{t('配置')}</button>
+        <button id="provider-models-tab" role="tab" type="button" aria-selected={checksOpen} aria-controls="provider-models-panel" tabIndex={checksOpen ? 0 : -1} onClick={event => { setChecksOpen(true); event.currentTarget.focus(); }} disabled={busy}>{t('模型')}</button>
       </div>}
       draftName={editorOpen ? draft?.displayName : undefined} connectionNames={Object.fromEntries(Object.entries(drafts).filter(([, value]) => !!value.id).map(([id, value]) => [id, value.displayName]))}
       savedConnections={bridge.providers?.connections ?? []} selectedConnectionId={subscriptionConnection?.id ?? (editorOpen ? draft?.id : undefined)}
       onEditConnection={provider => edit(provider, editorTrigger.current)}
-      onOpenChange={open => { setDialogOpen(open); if (!open) { setEditorOpen(false); setChecksOpen(false); setShowBearerToken(false); } }} />
+      onOpenChange={open => { setDialogOpen(open); if (!open) { setEditorOpen(false); setChecksOpen(false); } }} />
     {configuredConnections.map(p => <div className="provider" key={p.id}>
       <div className="provider-list-row">
         <button id={`provider-edit-${p.id}`} type="button" className="provider-disclosure" disabled={busy} aria-label={t("编辑模型服务 {0}", p.subscriptionAccountId ? t(subscriptionServiceNames[subscriptionPlatformForAccount(p.subscriptionAccountId)]) : p.displayName)} aria-haspopup="dialog" onClick={e => {

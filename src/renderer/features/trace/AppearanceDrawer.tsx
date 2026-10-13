@@ -1,9 +1,10 @@
 import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
-import { Check, ImagePlus, Shirt, Trash2, X } from 'lucide-react';
+import { Sun, Moon, Check, ImagePlus, Shirt, Trash2, X } from 'lucide-react';
 import type { XwXDeckRuntimeState, TraceAppearanceSnapshot, TraceSkin } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
 import { Toggle } from '@/features/shell/Toggle';
+import { useTheme, type Theme } from '@/lib/theme';
 import { showErrorToast, showToast } from '@/lib/toast';
 
 interface Props {
@@ -41,6 +42,11 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
   useLanguage();
   const bridge = useBridge();
   const appearance = bridge.runtime?.traceAppearance;
+  const persistTheme = React.useCallback(async (theme: Theme) => {
+    try { return await bridge.api.setTheme(theme); }
+    catch (error) { showErrorToast(t('主题未保存'), error); throw error; }
+  }, [bridge.api]);
+  const [theme, setTheme] = useTheme(bridge.runtime?.theme, persistTheme);
   const [busy, setBusy] = React.useState(false);
   const [pendingSaves, setPendingSaves] = React.useState(0);
   const [overlayDraft, setOverlayDraft] = React.useState(appearance?.customImageOverlay ?? 42);
@@ -106,7 +112,7 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
   }, [bridge.api, bridge.patch, busy]);
 
   const activeSkin = appearance?.skin ?? 'classic';
-  const showThroughput = appearance?.showThroughput !== false;
+  const showThroughput = appearance?.showThroughput === true;
 
   return (
     <>
@@ -203,6 +209,22 @@ export function AppearanceDrawer({ open, onOpenChange }: Props): React.ReactElem
               </label>
             </section>
           ) : null}
+
+          <section className="appearance-section" aria-labelledby="themeTitle">
+            <h3 id="themeTitle">{t("日夜模式")}</h3>
+            <div className="appearance-row module-row">
+              <label htmlFor="themeToggle">{t("夜间模式")}</label>
+              <Toggle id="themeToggle" checked={theme === 'night' || (theme === 'system' && document.documentElement.dataset.theme === 'night')}
+                ariaLabel={t("夜间模式")}
+                thumb={<span className="theme-glyph" aria-hidden="true"><Sun className="theme-glyph-sun" /><Moon className="theme-glyph-moon" /></span>}
+                onToggle={() => setTheme(document.documentElement.dataset.theme === 'night' ? 'day' : 'night')} />
+            </div>
+            <div className="appearance-row module-row">
+              <label htmlFor="systemThemeToggle">{t("跟随系统")}</label>
+              <Toggle id="systemThemeToggle" checked={theme === 'system'} ariaLabel={t("跟随系统")}
+                onToggle={() => setTheme(theme === 'system' ? (document.documentElement.dataset.theme === 'night' ? 'night' : 'day') : 'system')} />
+            </div>
+          </section>
 
           <section className="appearance-section modules-section" aria-labelledby="modulesTitle">
             <h3 id="modulesTitle">{t("页面模块")}</h3>

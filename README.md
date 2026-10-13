@@ -34,7 +34,7 @@ XwX Deck 是一个独立的本地 Claude / ChatGPT 请求追踪与模型网关�
 
 当前没有 Intel Mac、Windows ARM64 或 Linux 安装包。Mac 安装包没有 Apple Developer ID 签名和公证，首次打开请参照 [安装说明](docs/macos-first-run.md)。[版本记录与文件校验](https://github.com/Damue01/XwX_Deck/releases/latest) 集中在 Release 页面。
 
-新安装没有 API 连接。首次引导可检测并导入 Magpie、CC Switch 或客户端的已有配置；源文件保留，不自动切换连接。“设置 → 添加配置”提供 API 服务、订阅账号和客户端下载三个入口。服务预设默认只显示名称、URL、Key，高级协议设置按需展开。ChatGPT、Claude、GitHub Copilot、Grok、Cursor 订阅分别合并为一个模型服务，可管理多个账号和轮换策略；不支持的官方额度显示未知。
+新安装没有 API 连接。首次引导可检测并导入 Magpie、CC Switch 或客户端的已有配置；源文件保留，不自动切换连接。“设置 → 添加配置”提供 API 服务、订阅账号、我的配置和客户端管理四个标签。服务预设默认只显示名称、URL、Key，已有明确协议与模型设置继续保留。ChatGPT、Claude、GitHub Copilot、Grok、Cursor 订阅分别合并为一个模型服务，可管理多个账号和轮换策略；不支持的官方额度显示未知。
 
 在模型页为 ChatGPT 和 Claude 分别选择服务和模型。每个连接独立记住选择，目录离线不会撤销已保存的配置。需要协议转换的模型会显示「需 Trace」；运行中的客户端可能缓存旧连接，切换后未生效时需完整退出并重新打开客户端。
 
@@ -49,7 +49,7 @@ npm ci
 npm run compile
 npm test
 npm run docs:build
-npm run preview:web
+npm run build:site
 ```
 
 Rust 原生开发模式（隔离配置）：
@@ -58,15 +58,21 @@ Rust 原生开发模式（隔离配置）：
 npm run dev
 ```
 
-`preview:web` 提供带演示数据的设置界面预览；它不能证明真实客户端路由或 API 凭据有效。Rust 原生回归和旧实现对照回归使用隔离的配置目录与本地测试服务。默认启动与发行构建已使用 Rust / Tauri，保留现有 React 页面。旧 TypeScript 后端只用于回归对照和构建时生成资源，不进入原生包。详见 [原生运行时](tools/native/README.md)。
+`build:site` 生成官网及设置界面演示。
+演示用于检查布局与交互。
+真实配置和请求由原生回归验证。
+
+应用后端统一使用 Rust/Tauri。
+前端使用 React 和 TypeScript。
+旧 TypeScript 后端已移除。
+Node.js 仅用于开发、构建与测试。
+详见 [原生运行时](tools/native/README.md)。
 
 提交前的常规检查：
 
 ```bash
-npm run compile
-npm run test:built
-npm run test:upstream
-npm run check:public-boundary
+npm run check:quality
+npm run check:test-plan
 npm run check:workflows
 npm run docs:build
 ```
@@ -130,3 +136,7 @@ npm run test:rust
 模型目录返回 404/405 时保持为空，可手工填写实际模型或 Endpoint ID；不会生成虚假的单模型目录。兼容边界见 [服务商兼容说明](docs/provider-compatibility.md)。
 
 更多说明见 [docs/README.md](docs/README.md)。
+
+当前源码采用单一 Rust/Tauri 后端。
+前端与共享资源不再依赖旧 TypeScript 后端。
+最新同步范围与测试结果见 [公开版整合验收](docs/public-sync-acceptance.md)。

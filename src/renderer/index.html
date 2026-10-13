@@ -12,6 +12,7 @@
       // Apply stored theme before first paint to avoid a flash.
       try {
         var t = localStorage.getItem('xwx-deck.theme');
+        if (t === 'system') t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'night' : 'day';
         if (t !== 'day' && t !== 'night') t = 'day';
         document.documentElement.dataset.theme = t;
         if (t === 'night') document.documentElement.classList.add('dark');

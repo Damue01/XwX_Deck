@@ -8,3 +8,15 @@
 - Trace 新配置默认上限 1 GB 并开启超出上限自动清理；已有明确容量与清理选择必须保留。手动删除与索引修复仅由用户发起。对话诊断只读 SQLite 元数据和 JSONL 第一条 session_meta，不读取对话正文。
 - 验证使用隔离的配置目录和本地测试服务。界面变更需要真实渲染与交互检查；模型/Gateway 变更需要实际请求回归。
 - 常规检查：`npm run compile`、`npm run test:built`、`npm run test:upstream`、`npm run check:public-boundary`、`npm run check:workflows`。发布或安装遵循用户当次明确范围。
+
+## 唯一运行架构与文档
+
+后端只维护 Rust/Tauri。
+产品代码位于 `src-native`、`src/renderer` 和 `src/shared`。
+默认构建不得引入第二套后端或桌面运行时。
+Toast 高于应用内所有弹窗、菜单和引导层。
+修改后执行 `npm run check:runtime-boundary`。
+
+中文技术文档遵循阮一峰的写作规范。
+执行要求见 [写作准则](docs/documentation-style-guide.md)。
+当前结果以 [公开版整合验收](docs/public-sync-acceptance.md) 为准。

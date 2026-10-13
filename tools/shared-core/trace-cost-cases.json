@@ -1,0 +1,368 @@
+[
+  {
+    "name": "complete",
+    "usage": {
+      "version": 2,
+      "input": 20,
+      "inputTotal": 100,
+      "inputTotalComplete": true,
+      "output": 5,
+      "cacheRead": 60,
+      "cacheCreation": 20,
+      "cacheCreation5m": 10,
+      "cacheCreation1h": 10,
+      "total": 105
+    },
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "cacheRead": 0.1,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 1
+    },
+    "cost": 5.6e-05,
+    "complete": true
+  },
+  {
+    "name": "missing premium write",
+    "usage": {
+      "version": 2,
+      "input": 40,
+      "inputTotal": 100,
+      "inputTotalComplete": true,
+      "output": 5,
+      "cacheRead": 60,
+      "cacheCreation": 0,
+      "cacheCreation5m": null,
+      "cacheCreation1h": null,
+      "total": 105,
+      "incompleteFields": [
+        "cacheWrite"
+      ]
+    },
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "cacheRead": 0.1,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 1,
+      "cacheWrite": 1.25
+    },
+    "cost": 1.6e-05,
+    "complete": false
+  },
+  {
+    "name": "missing discounted read",
+    "usage": {
+      "version": 2,
+      "input": 100,
+      "inputTotal": 100,
+      "inputTotalComplete": true,
+      "output": 5,
+      "cacheRead": 0,
+      "cacheCreation": 0,
+      "cacheCreation5m": null,
+      "cacheCreation1h": null,
+      "total": 105,
+      "incompleteFields": [
+        "cacheRead"
+      ]
+    },
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "cacheRead": 0.1,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 1
+    },
+    "cost": 1e-05,
+    "complete": false
+  },
+  {
+    "name": "unknown TTL",
+    "usage": {
+      "version": 2,
+      "input": 20,
+      "inputTotal": 100,
+      "inputTotalComplete": true,
+      "output": 5,
+      "cacheRead": 60,
+      "cacheCreation": 20,
+      "cacheCreation5m": null,
+      "cacheCreation1h": null,
+      "total": 105
+    },
+    "price": {
+      "protocol": "anthropic",
+      "input": 1,
+      "output": 2,
+      "cacheRead": 0.1,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 2,
+      "cacheWrite": 1.25
+    },
+    "cost": 3.6e-05,
+    "complete": false
+  },
+  {
+    "name": "partial TTL",
+    "usage": {
+      "version": 2,
+      "input": 20,
+      "inputTotal": 100,
+      "inputTotalComplete": true,
+      "output": 5,
+      "cacheRead": 60,
+      "cacheCreation": 20,
+      "cacheCreation5m": 4,
+      "cacheCreation1h": 3,
+      "total": 105
+    },
+    "price": {
+      "protocol": "anthropic",
+      "input": 1,
+      "output": 2,
+      "cacheRead": 0.1,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 2,
+      "cacheWrite": 1.25
+    },
+    "cost": 4.7e-05,
+    "complete": false
+  },
+  {
+    "name": "invalid TTL",
+    "usage": {
+      "version": 2,
+      "input": 20,
+      "inputTotal": 100,
+      "inputTotalComplete": true,
+      "output": 5,
+      "cacheRead": 60,
+      "cacheCreation": 20,
+      "cacheCreation5m": 10,
+      "cacheCreation1h": 10,
+      "total": 105,
+      "invalidFields": [
+        "cacheWriteTtl"
+      ]
+    },
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "cacheRead": 0.1,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 1
+    },
+    "cost": 3.6e-05,
+    "complete": false
+  },
+  {
+    "name": "storage duration missing",
+    "usage": {
+      "version": 2,
+      "input": 20,
+      "inputTotal": 100,
+      "inputTotalComplete": true,
+      "output": 5,
+      "cacheRead": 60,
+      "cacheCreation": 20,
+      "cacheCreation5m": 10,
+      "cacheCreation1h": 10,
+      "total": 105
+    },
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "cacheRead": 0.1,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 1,
+      "cacheStoragePerHour": 1
+    },
+    "cost": 3.6e-05,
+    "complete": false
+  },
+  {
+    "name": "unknown read price",
+    "usage": {
+      "version": 2,
+      "input": 20,
+      "inputTotal": 100,
+      "inputTotalComplete": true,
+      "output": 5,
+      "cacheRead": 60,
+      "cacheCreation": 20,
+      "cacheCreation5m": 10,
+      "cacheCreation1h": 10,
+      "total": 105
+    },
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "cacheRead": null,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 1
+    },
+    "cost": 5e-05,
+    "complete": false
+  },
+  {
+    "name": "missing output",
+    "usage": {
+      "version": 2,
+      "input": 20,
+      "inputTotal": 100,
+      "inputTotalComplete": true,
+      "output": 0,
+      "cacheRead": 60,
+      "cacheCreation": 20,
+      "cacheCreation5m": 10,
+      "cacheCreation1h": 10,
+      "total": 105,
+      "incompleteFields": [
+        "output"
+      ]
+    },
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "cacheRead": 0.1,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 1
+    },
+    "cost": 4.6e-05,
+    "complete": false
+  },
+  {
+    "name": "missing equal-rate detail and output",
+    "usage": {
+      "version": 2,
+      "input": 100,
+      "inputTotal": 100,
+      "inputTotalComplete": true,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheCreation": 0,
+      "cacheCreation5m": null,
+      "cacheCreation1h": null,
+      "total": 105,
+      "incompleteFields": [
+        "cacheRead",
+        "output"
+      ]
+    },
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "cacheRead": 1,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 1
+    },
+    "cost": 0.0001,
+    "complete": false
+  },
+  {
+    "name": "additive input independent of cache",
+    "usage": {
+      "version": 2,
+      "input": 20,
+      "inputTotal": 100,
+      "inputTotalComplete": false,
+      "output": 5,
+      "cacheRead": 0,
+      "cacheCreation": 0,
+      "cacheCreation5m": null,
+      "cacheCreation1h": null,
+      "total": 105,
+      "apiType": "messages",
+      "incompleteFields": [
+        "cacheRead",
+        "cacheWrite"
+      ]
+    },
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "cacheRead": 0.1,
+      "cacheWritePolicy": "input",
+      "cacheWrite1h": 1
+    },
+    "cost": 3e-05,
+    "complete": false
+  },
+  {
+    "name": "separate-reasoning-rate-no-double-count",
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "reasoning": 5
+    },
+    "usage": {
+      "version": 2,
+      "apiType": "responses",
+      "input": 20,
+      "inputTotal": 20,
+      "output": 10,
+      "cacheRead": 0,
+      "cacheCreation": 0,
+      "total": 30,
+      "reasoning": 4
+    },
+    "cost": 5.2e-05,
+    "complete": true
+  },
+  {
+    "name": "missing-reasoning-split-known-input",
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "reasoning": 5
+    },
+    "usage": {
+      "version": 2,
+      "apiType": "responses",
+      "input": 20,
+      "inputTotal": 20,
+      "output": 10,
+      "cacheRead": 0,
+      "cacheCreation": 0,
+      "total": 30
+    },
+    "cost": 2e-05,
+    "complete": false
+  },
+  {
+    "name": "partial-reasoning-aggregate-known-input",
+    "price": {
+      "protocol": "openai",
+      "input": 1,
+      "output": 2,
+      "reasoning": 5
+    },
+    "usage": {
+      "version": 2,
+      "apiType": "responses",
+      "input": 20,
+      "inputTotal": 20,
+      "output": 10,
+      "cacheRead": 0,
+      "cacheCreation": 0,
+      "total": 30,
+      "reasoning": 4,
+      "reasoningComplete": false
+    },
+    "cost": 2e-05,
+    "complete": false
+  }
+]

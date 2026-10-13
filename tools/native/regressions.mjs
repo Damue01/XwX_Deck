@@ -1,3 +1,4 @@
+import { clearFreshCompatibleFixture } from './test-support.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,7 +8,7 @@ import { createInterface } from 'node:readline';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
-const binary = resolve(import.meta.dirname, '../../test-results/native-target/release/xwx-deck-native'+(process.platform==='win32'?'.exe':''));
+const binary = process.env.XWX_NATIVE_TEST_BINARY ?? resolve(import.meta.dirname, '../../test-results/native-target/release/xwx-deck-native'+(process.platform==='win32'?'.exe':''));
 // macOS tmpdir can be /var, whose physical path is /private/var.
 const { realpath } = await import('node:fs/promises');
 const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-rust-pilot-regression-'));
@@ -50,7 +51,7 @@ async function stopProcess() { const finished = once(child, 'exit'); child.stdin
 const pass = name => { checks.push(name); console.log(`PASS ${name}`); };
 start();
 try {
-  assert.deepEqual((await rpc('getProviders')).connections, []);
+  await clearFreshCompatibleFixture(rpc);
   const initial = await rpc('getState'); assert.equal(initial.traceWarningGB, 1); assert.equal(initial.traceAutoCleanup, true); pass('empty registry and 1 GB automatic cleanup defaults');
   await rpc('saveProvider', { displayName: 'Local_Test', baseUrl: base, bearerToken: 'pilot-test-key', adapter: 'responses', codexModel: 'pilot-model' });
   await rpc('switchClientProvider', { client: 'codex', providerId: 'Local_Test' });
@@ -113,7 +114,7 @@ try {
   await rpc('switchClientProvider',{client:'codex',providerId:null});await rpc('toggleClient','codex-cli');const officialBefore=await readFile(configPath,'utf8');const claudeOnly=await rpc('toggleTracing',true);assert.equal(await readFile(configPath,'utf8'),officialBefore);await rpc('toggleTracing',false);assert.equal(await readFile(configPath,'utf8'),officialBefore);pass('Claude-only capture never modifies the disabled Codex configuration');await rpc('toggleClient','codex-cli');
   await rpc('switchClientProvider',{client:'claude',providerId:null});assert.equal((await rpc('getModelServices')).claude,false);assert.equal(JSON.parse(await readFile(claudePath,'utf8')).env?.ANTHROPIC_BASE_URL,undefined);pass('switching Claude back to official restores the original managed fields');
   await rpc('switchClientProvider',{client:'codex',providerId:'Local_Test'});const crash=await rpc('toggleTracing',true);const exited=once(child,'exit');child.kill('SIGKILL');await exited;start();assert.equal((await rpc('getState')).backgroundGatewayActive,false);assert.ok((await readFile(configPath,'utf8')).includes(base));assert.ok(!(await readFile(configPath,'utf8')).includes(crash.localBaseUrl));pass('process crash releases OS lock; reopening restores direct config from durable journal');
-  assert.equal((await call('downloadUpdate')).ok, false); assert.equal((await call('queryCodexConversations', {})).ok, false); pass('unmigrated operations and removed tools report errors');
+  assert.equal((await call('downloadUpdate')).ok, false); assert.equal((await call('queryCodexConversations', {})).ok, false); pass('unavailable operations explicitly report errors without deleting retained pages');
   await stopProcess();
   console.log(JSON.stringify({ passed: true, checks, sandbox: root, upstreamRequestCount: requests.length }));
 } finally {

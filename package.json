@@ -10,101 +10,111 @@
     "node": ">=22.12.0",
     "npm": ">=11.6.2 <12"
   },
-  "main": "dist/main.js",
   "scripts": {
-    "postinstall": "electron-builder install-app-deps",
     "clean": "rimraf dist",
-    "compile": "npm run check-types && npm run check:docs && npm run check:icons && npm run check:release-contract && node esbuild.config.mjs",
+    "compile": "npm run check-types && npm run check:docs && npm run check:icons && npm run check:release-contract && npm run check:runtime-boundary && node esbuild.config.mjs && npm run check:public-boundary",
     "check-types": "tsc --noEmit",
+    "check:quality": "node tools/checks/check-quality.mjs",
     "check:docs": "node tools/check-docs.mjs",
+    "check:test-plan": "node tools/checks/check-test-plan.mjs",
     "check:release-contract": "node tools/check-release-contract.mjs",
-    "check:icons": "node tools/check-icon-assets.mjs",
+    "check:icons": "node tools/checks/check-icon-assets.mjs",
     "check:public-boundary": "node tools/check-public-boundary.mjs",
+    "generate:icons": "npm run generate:icons:win",
+    "generate:icons:win": "node tools/icons/windows-icon-assets.mjs",
+    "regenerate:icons:win": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/icons/generate-icon-assets.ps1 && node tools/icons/windows-icon-assets.mjs --write",
+    "generate:icons:mac": "node tools/icons/generate-macos-app-icon.mjs",
+    "test": "npm run check:quality",
+    "test:built": "npm run test:theme && npm run test:history-confirm && npm run test:trace-notices && npm run test:shared-core",
+    "test:shared-core": "node tools/shared-core/trace-cache-rate-test.mjs && node tools/shared-core/models-dev-unification-test.mjs",
+    "test:trace-notices": "node tools/tests/run-trace-notice-regressions.mjs && node tools/tests/run-bridge-order-regressions.mjs",
+    "test:history-confirm": "node tools/tests/run-history-confirm-regressions.mjs",
+    "test:theme": "node tools/tests/run-theme-regressions.mjs",
+    "dev": "npm run build:native:isolated && npm run start:native:isolated",
+    "start": "npm run start:native:isolated",
+    "build:win": "npm run compile && node tools/native/build.mjs --acceptance --require-platform=win32 --require-arch=x64",
+    "build:mac:arm64": "npm run compile && node tools/native/build.mjs --acceptance --require-platform=darwin --require-arch=arm64",
+    "build:mac:x64": "npm run compile && node tools/native/build.mjs --acceptance --require-platform=darwin --require-arch=x64",
+    "build:native": "npm run compile && node tools/native/build.mjs",
+    "build:native:acceptance": "npm run compile && node tools/native/build.mjs --acceptance",
+    "build:native:isolated": "npm run compile && node tools/native/build.mjs --pilot",
+    "test:native:backend": "node tools/native/run-backend-tests.mjs",
+    "test:native:webview": "node tools/native/native-test.mjs",
+    "test:native:window-lifecycle": "node tools/native/window-lifecycle-test.mjs",
+    "start:native:isolated": "node tools/native/launch.mjs",
+    "test:native:reset": "node tools/native/application-reset-test.mjs",
+    "test:native:reset-webview": "node tools/native/application-reset-ui-test.mjs",
+    "test:native:toast": "node tools/native/toast-renderer-test.mjs",
+    "build:native:mac:signed": "npm run compile && node tools/native/build.mjs --acceptance --signed --require-arch=arm64 && npm run verify:native:mac:signed",
+    "verify:native:mac:signed": "node tools/native/verify-macos-release.mjs",
+    "check:runtime-boundary": "node tools/checks/check-runtime-boundary.mjs",
     "check:workflows": "node tools/check-github-workflows.mjs",
-    "preview": "node esbuild.config.mjs --development && node tools/preview-server.mjs",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
-    "generate:icons": "npm run generate:icons:win",
-    "generate:icons:win": "node tools/windows-icon-assets.mjs",
-    "regenerate:icons:win": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/generate-icon-assets.ps1 && node tools/windows-icon-assets.mjs --write",
-    "generate:icons:mac": "node tools/generate-macos-app-icon.mjs",
-    "test": "npm run compile && npm run test:built",
-    "test:built": "node tools/run-core-smoke.mjs && node tools/run-gateway-helper-smoke.mjs && node tools/run-gateway-helper-upgrade-smoke.mjs && node tools/run-background-controller-smoke.mjs",
-    "test:gateway-helper": "node tools/run-gateway-helper-smoke.mjs",
-    "test:gateway-upgrade": "node tools/run-gateway-helper-upgrade-smoke.mjs",
-    "test:background-controller": "node tools/run-background-controller-smoke.mjs",
-    "diagnose:trace": "node tools/trace-integrity.mjs",
-    "test:packaged": "npm run build:rust:pilot && node tools/native/native-test.mjs",
-    "test:packaged-gateway": "npm run test:rust:backend",
-    "dev": "npm run build:rust:pilot && npm run start:rust:isolated",
-    "start": "npm run start:rust",
-    "preview:web": "node tools/serve-manager-preview.mjs",
-    "update:pricing": "node tools/update-model-pricing.mjs",
-    "build:win": "npm run clean && npm run generate:icons:win && npm run test && node tools/native/build.mjs",
-    "build:mac:arm64": "npm run clean && npm run generate:icons:mac && npm run test && node tools/native/build.mjs",
-    "build:mac:x64": "node tools/native/build.mjs --require-arch=x64",
-    "repair:trace-index": "node tools/run-trace-index-repair.mjs",
-    "test:upstream": "node tools/run-provider-selection-regressions.mjs && node tools/run-claude-desktop-effort-regressions.mjs && node tools/test-application-reset-worker.mjs && node tools/run-theme-regressions.mjs && node tools/run-history-confirm-regressions.mjs && node tools/run-macos-installer-cleanup-smoke.mjs && node tools/run-public-update-regressions.mjs",
-    "build:rust": "npm run compile && node tools/native/build.mjs",
-    "test:rust": "npm run test:rust:backend && node tools/native/native-test.mjs",
-    "test:rust:clients": "node tools/native/client-management-test.mjs",
+    "test:upstream": "node tools/native/run-backend-tests.mjs",
+    "build:rust": "npm run build:native",
+    "build:rust:pilot": "npm run build:native:isolated",
+    "test:rust:backend": "npm run test:native:backend",
+    "test:rust": "npm run test:native:backend && npm run test:native:webview",
     "start:rust": "node tools/native/launch.mjs --production",
-    "build:rust:pilot": "npm run compile && node tools/native/build.mjs --pilot",
-    "test:rust:backend": "node tools/native/run-backend-tests.mjs",
-    "start:rust:isolated": "node tools/native/launch.mjs",
-    "start:legacy": "electron .",
-    "test:packaged:legacy": "node tools/run-packaged-smoke.mjs"
+    "start:rust:isolated": "npm run start:native:isolated",
+    "update:pricing": "node tools/dev/update-model-pricing.mjs",
+    "supplement:pricing": "node tools/dev/supplement-model-pricing.mjs",
+    "build:site": "node tools/site/build-app-preview.mjs",
+    "test:site": "node tools/site/site-browser-test.mjs"
   },
-  "build": {
-    "appId": "app.xwxdeck.desktop",
-    "productName": "XwX Deck",
-    "asar": {
-      "smartUnpack": false
-    },
-    "electronLanguages": [
-      "en-US",
-      "zh-CN"
-    ],
-    "files": [
-      "dist/**/*",
-      "assets/icon.png",
-      "assets/icon-runtime.png",
-      "assets/models-dev-pricing.json",
-      "assets/tray.png",
-      "assets/trayTemplate.png",
-      "assets/trayTemplate@2x.png",
-      "LICENSE",
-      "NOTICE",
-      "THIRD_PARTY_NOTICES.md",
-      "package.json",
-      "!**/*.map"
-    ],
-    "afterPack": "tools/after-pack.cjs",
-    "directories": {
-      "output": "release"
-    },
-    "publish": [
-      {
-        "provider": "generic",
-        "url": "https://github.com/Damue01/XwX_Deck/releases/latest/download"
-      }
-    ],
-    "win": {
-      "icon": "assets/icon.ico",
-      "target": [
-        "portable"
-      ]
-    },
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "icon": "assets/icon.icns",
-      "hardenedRuntime": false,
-      "target": [
-        "dmg"
-      ],
-      "artifactName": "XwX-Deck-mac-${arch}.${ext}"
-    },
+  "devDependencies": {
+    "@base-ui/react": "^1.6.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^20.14.15",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
+    "clsx": "^2.1.1",
+    "esbuild": "^0.28.1",
+    "jsdom": "26.1.0",
+    "lucide-react": "^1.25.0",
+    "postcss": "^8.5.20",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "rimraf": "^6.0.1",
+    "smol-toml": "^1.7.0",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.5.4",
+    "yaml": "^2.9.0",
+    "class-variance-authority": "^0.7.1",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
+    "ws": "^8.21.3",
+    "vitepress": "^2.0.0-alpha.19"
+  },
+  "dependencies": {},
+  "overrides": {
+    "brace-expansion": "5.0.12",
+    "tar": "7.5.22"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Damue01/XwX_Deck.git"
+  },
+  "homepage": "https://damue01.github.io/XwX_Deck/",
+  "bugs": {
+    "url": "https://github.com/Damue01/XwX_Deck/issues"
+  },
+  "keywords": [
+    "claude",
+    "chatgpt",
+    "trace",
+    "ai-gateway",
+    "openai-compatible",
+    "rust",
+    "tauri"
+  ],
+  "nativePackaging": {
     "dmg": {
       "title": "XwX Deck ${version}",
       "backgroundColor": "#f5f5f7",
@@ -133,63 +143,6 @@
           "name": "首次打开说明.txt"
         }
       ]
-    },
-    "portable": {
-      "artifactName": "${productName}.${ext}",
-      "useZip": true
     }
-  },
-  "devDependencies": {
-    "@base-ui/react": "^1.6.0",
-    "@fontsource-variable/geist-mono": "^5.3.0",
-    "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^20.14.15",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@types/ws": "^8.18.1",
-    "clsx": "^2.1.1",
-    "electron": "^43.1.1",
-    "electron-builder": "^26.15.7",
-    "esbuild": "^0.28.1",
-    "lucide-react": "^1.25.0",
-    "postcss": "^8.5.20",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "rimraf": "^6.0.1",
-    "smol-toml": "^1.7.0",
-    "tailwind-merge": "^3.6.0",
-    "tailwindcss": "^4.3.3",
-    "typescript": "^5.5.4",
-    "vitepress": "^2.0.0-alpha.19",
-    "yaml": "^2.9.0"
-  },
-  "dependencies": {
-    "class-variance-authority": "^0.7.1",
-    "electron-updater": "^6.8.9",
-    "http-proxy-agent": "7.0.2",
-    "https-proxy-agent": "7.0.6",
-    "ws": "^8.21.3"
-  },
-  "overrides": {
-    "brace-expansion": "5.0.9",
-    "tar": "7.5.22"
-  },
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Damue01/XwX_Deck.git"
-  },
-  "homepage": "https://damue01.github.io/XwX_Deck/",
-  "bugs": {
-    "url": "https://github.com/Damue01/XwX_Deck/issues"
-  },
-  "keywords": [
-    "claude",
-    "chatgpt",
-    "trace",
-    "ai-gateway",
-    "openai-compatible",
-    "rust",
-    "tauri"
-  ]
+  }
 }

@@ -1,6 +1,7 @@
 import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
-import { Check, RefreshCw } from 'lucide-react';
+import { Dialog } from '@base-ui/react/dialog';
+import { RefreshCw } from 'lucide-react';
 import { ParticleField, emitFieldRipple } from '@/features/trace/ParticleField';
 import { useClientInstallations } from '@/features/models/useClientInstallations';
 import { ProviderIcon } from '@/features/settings/ProviderIcon';
@@ -10,119 +11,129 @@ import { MODEL_CLIENT_CATALOG, clientCatalogLabel, type DownloadClientId } from 
 
 /** The two clients onboarding recommends. Everything else stays in client management. */
 const RECOMMENDED: readonly DownloadClientId[] = ['codex', 'claude'];
-const STEPS = 3;
 
 function rippleFrom(element: Element | null): void {
   if (!element) return;
   const r = element.getBoundingClientRect();
-  emitFieldRipple(r.left + r.width / 2, r.top + r.height / 2);
+  emitFieldRipple(r.left + r.width / 2, r.top + r.height / 2, { soft: true });
+}
+
+const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** The welcome title settles character by character; screen readers get the plain text. */
+function SettlingTitle({ text }: { text: string }): React.ReactElement {
+  const chars = Array.from(text);
+  return <h1 tabIndex={-1} aria-label={text} className="onboarding-hello-title">
+    {chars.map((c, i) => <span key={i} aria-hidden="true" style={{ '--i': i } as React.CSSProperties}>{c}</span>)}
+  </h1>;
 }
 
 /**
- * Full-window first-run setup: detect clients, get ChatGPT and Claude, import
+ * Full-window first-run setup: welcome, get missing ChatGPT and Claude, import
  * existing configurations. It covers the manager entirely; the feature
  * walkthrough that follows uses the spotlight over the real interface.
  */
 export function OnboardingSetup({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }): React.ReactElement {
   useLanguage();
   const [step, setStep] = React.useState(0);
+  const [importCount, setImportCount] = React.useState<number | null>(null);
   const [importBusy, setImportBusy] = React.useState(false);
+  const [importActions, setImportActions] = React.useState<HTMLDivElement | null>(null);
   const [leaving, setLeaving] = React.useState(false);
+  const [departing, setDeparting] = React.useState(false);
   const installs = useClientInstallations(!leaving);
   const panel = React.useRef<HTMLDivElement | null>(null);
+  const finishTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const departTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => { for (const timer of [finishTimer.current, departTimer.current]) if (timer !== null) clearTimeout(timer); }, []);
   const nextButton = React.useRef<HTMLButtonElement | null>(null);
 
   const installed = React.useMemo(() => new Set(installs.snapshot?.available ? installs.snapshot.clients.filter(client => client.installed).map(client => client.id) : []), [installs.snapshot]);
-  const found = React.useMemo(() => {
-    const list = MODEL_CLIENT_CATALOG.filter(client => installed.has(client.id));
-    return [...list.filter(client => RECOMMENDED.includes(client.id)), ...list.filter(client => !RECOMMENDED.includes(client.id))];
-  }, [installed]);
 
-  // One wave through the field when detection settles.
+  const missing = RECOMMENDED.filter(id => installs.snapshot?.available && !installed.has(id));
   const settled = installs.snapshot !== null && !installs.checking;
-  React.useEffect(() => { if (settled && step === 0) rippleFrom(panel.current?.querySelector('.onboarding-clients, .onboarding-status') ?? null); }, [settled, step]);
+  // Detection runs behind the welcome screen. Recommendations appear only for
+  // missing clients; an unfinished or failed check keeps the step reachable.
+  const recommend = missing.length > 0 || !settled || !!installs.error;
+  const steps = recommend ? [0, 1, 2] : [0, 2];
+  const stepIndex = steps.indexOf(step);
 
   const finish = React.useCallback((next: () => void) => {
+    if (finishTimer.current !== null) return;
     rippleFrom(nextButton.current ?? panel.current);
     setLeaving(true);
-    window.setTimeout(next, 420);
+    finishTimer.current = setTimeout(next, 420);
   }, []);
-  const advance = React.useCallback(() => {
-    if (step >= STEPS - 1) { finish(onDone); return; }
+  const advance = () => {
+    if (step === 2) { finish(onDone); return; }
     rippleFrom(nextButton.current);
-    setStep(step + 1);
-  }, [step, finish, onDone]);
-
-  React.useEffect(() => { panel.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true }); }, [step]);
+    if (step !== 0) { setStep(2); return; }
+    // The welcome eases out before the next step settles in.
+    if (departTimer.current !== null) return;
+    const go = () => { departTimer.current = null; setDeparting(false); setStep(recommend ? 1 : 2); };
+    if (reducedMotion()) { go(); return; }
+    setDeparting(true);
+    departTimer.current = setTimeout(go, 320);
+  };
+  // Detection finishing late, or returning from a vendor page, skips clients already installed.
   React.useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !importBusy) finish(onSkip); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [finish, onSkip, importBusy]);
+    if (step === 1 && settled && !installs.error && !missing.length) setStep(2);
+  }, [step, settled, installs.error, missing.length]);
 
-  const detectionState = installs.error
-    ? installs.error
-    : !installs.snapshot ? t('正在检测这台电脑…')
-    : !installs.snapshot.available ? t('当前环境无法检测本机客户端，可以稍后在客户端管理中重新检测。')
-    : !found.length ? t('没有检测到已安装的客户端。') : '';
+  React.useEffect(() => { panel.current?.querySelector<HTMLElement>('.onboarding-step:not([hidden]) h1')?.focus({ preventScroll: true }); }, [step]);
 
-  return <div id="onboarding-setup" className={`onboarding-setup${leaving ? ' leaving' : ''}`} role="dialog" aria-modal="true" aria-label={t('新手引导')} data-field-host>
+  const detectionState = installs.error ? installs.error : !settled ? t('正在检测…') : '';
+
+  return <Dialog.Root open onOpenChange={open => { if (!open && !importBusy && !leaving) finish(onSkip); }}><Dialog.Portal>
+    <Dialog.Popup initialFocus={() => panel.current?.querySelector<HTMLElement>('h1') ?? false} finalFocus={false} id="onboarding-setup" className={`onboarding-setup${leaving ? ' leaving' : ''}`} role="dialog" aria-modal="true" aria-label={t('新手引导')} data-field-host>
     <div className="onboarding-field" aria-hidden="true"><ParticleField scale={58} flow={0.9} /></div>
     <div className="onboarding-panel" ref={panel} data-step={step}>
       <header className="onboarding-top">
-        <div className="tour-dots" aria-label={t('第 {0} 步，共 {1} 步', step + 1, STEPS)} role="img">
-          {Array.from({ length: STEPS }, (_, i) => <i key={i} className={i === step ? 'on' : undefined} />)}
+        <div className="tour-dots" aria-label={t('第 {0} 步，共 {1} 步', stepIndex + 1, steps.length)} role="img">
+          {Array.from({ length: steps.length }, (_, i) => <i key={i} className={i === stepIndex ? 'on' : undefined} />)}
         </div>
-        <button type="button" className="tour-skip" disabled={importBusy} onClick={() => finish(onSkip)}>{t('跳过引导')}</button>
+        <button type="button" className="tour-skip" disabled={importBusy || leaving} onClick={() => finish(onSkip)}>{t('跳过')}</button>
       </header>
-      <div className="onboarding-step" key={step}>
+      <div className={`onboarding-step${step === 0 ? ` onboarding-hello${departing ? ' departing' : ''}` : ''}`} hidden={step === 2} key={step === 2 ? 1 : step}>
         {step === 0 && <>
-          <h1 tabIndex={-1}>{t('欢迎使用 XwX Deck')}</h1>
-          <p className="onboarding-lead">{t('检测这台电脑上已安装的 AI 客户端，不读取登录信息，也不修改配置。')}</p>
-          <div className="onboarding-body">
-            {detectionState
-              ? <p className="onboarding-status" role="status">{detectionState}</p>
-              : <ul className="onboarding-clients" aria-label={t('已安装的客户端')}>
-                {found.map((client, index) => <li key={client.id} style={{ '--i': index } as React.CSSProperties}><ProviderIcon kind={client.icon} /><span>{clientCatalogLabel(client)}</span></li>)}
-              </ul>}
-            {(installs.error || installs.snapshot) && <button type="button" className="provider-text-action onboarding-recheck" disabled={installs.checking} aria-busy={installs.checking} onClick={() => void installs.refresh()}><RefreshCw size={15} className={installs.checking ? 'configuration-refresh-spinner' : undefined} aria-hidden="true" />{t('重新检测')}</button>}
-          </div>
+          <SettlingTitle text={t('欢迎使用 XwX Deck')} />
+          <button type="button" ref={nextButton} className="btn primary onboarding-start" disabled={leaving || departing} onClick={advance}>{t('开始使用')}</button>
         </>}
 
         {step === 1 && <>
-          <h1 tabIndex={-1}>{t('推荐安装 ChatGPT 和 Claude')}</h1>
-          <p className="onboarding-lead">{t('可选，不安装也可以继续。')}</p>
+          <h1 tabIndex={-1}>{t(missing.length === 1 ? (missing[0] === 'claude' ? '为您推荐 Claude' : '为您推荐 ChatGPT') : '为您推荐 ChatGPT 与 Claude')}</h1>
           <div className="onboarding-body onboarding-apps">
-            {RECOMMENDED.map(id => {
+            {detectionState && <div className="onboarding-discovery">
+              <p className="onboarding-status" role="status">{detectionState}</p>
+              {installs.error && <button type="button" className="provider-text-action onboarding-recheck" disabled={installs.checking} aria-busy={installs.checking} onClick={() => void installs.refresh()}><RefreshCw size={15} className={installs.checking ? 'configuration-refresh-spinner' : undefined} aria-hidden="true" />{t('重新检测')}</button>}
+            </div>}
+            {missing.map(id => {
               const client = MODEL_CLIENT_CATALOG.find(item => item.id === id)!;
-              const known = !!installs.snapshot?.available;
-              const ready = installed.has(id);
-              return <section key={id} className="onboarding-app" data-ready={ready}>
+              return <section key={id} className="onboarding-app">
                 <header><ProviderIcon kind={client.icon} /><h2>{clientCatalogLabel(client)}</h2>
-                  {ready ? <span className="onboarding-ready"><Check size={15} aria-hidden="true" />{t('已安装')}</span>
-                    : known ? <span className="onboarding-missing">{t('未安装')}</span> : null}
+                  <span className="onboarding-missing">{t('未安装')}</span>
                 </header>
-                {!ready && <ClientDownloads client={id} />}
+                <ClientDownloads client={id} />
               </section>;
             })}
           </div>
         </>}
 
-        {step === 2 && <>
-          <h1 tabIndex={-1}>{t('导入已有配置')}</h1>
-          <p className="onboarding-lead">{t('从 CC Switch、Magpie 或旧版 XwX Deck 导入模型服务，原文件不会被修改。')}</p>
+      </div>
+      <div className="onboarding-step" hidden={step !== 2}>
+          <h1 tabIndex={-1}>{t(importCount === null ? '正在查找之前的配置' : importCount ? '找到了您之前的配置' : '没有找到之前的配置')}</h1>
           <div className="onboarding-body onboarding-import">
-            <ImportConfigurations visible onboarding onBack={advance} onImported={advance} onBusyChange={setImportBusy} />
+            <ImportConfigurations visible={step === 2} onboarding onDetected={setImportCount} onBack={advance} onImported={advance} onBusyChange={setImportBusy} actionsContainer={importActions} />
           </div>
-        </>}
       </div>
 
-      {/* Back sits on the column's left edge, the forward action on its right edge.
-          The import step supplies its own Skip / Import pair in that right slot. */}
-      <footer className="onboarding-foot">
-        {step > 0 ? <button type="button" className="btn" disabled={importBusy} onClick={() => setStep(step - 1)}>{t('上一步')}</button> : <span />}
-        {step < STEPS - 1 && <button type="button" ref={nextButton} className="btn primary" onClick={advance}>{t('继续')}</button>}
-      </footer>
+      {/* Every step uses the same content column and action row. */}
+      {step > 0 && <footer className="onboarding-foot">
+        <button type="button" className="btn" disabled={importBusy || leaving} onClick={() => setStep(step === 2 && recommend ? 1 : 0)}>{t('上一步')}</button>
+        {step === 1 && <button type="button" ref={nextButton} className="btn primary" disabled={leaving} onClick={advance}>{t('继续')}</button>}
+        {step === 2 && <div className="onboarding-forward" ref={setImportActions} />}
+      </footer>}
     </div>
-  </div>;
+    </Dialog.Popup>
+  </Dialog.Portal></Dialog.Root>;
 }

@@ -6,7 +6,7 @@ export function cn(...inputs: ClassValue[]): string {
 }
 
 /** Navigate the shell to a page (used by cross-page flows like the 兼容服务 guard). */
-export function navigateTo(page: 'signal' | 'models' | 'sync' | 'tools' | 'settings'): void {
+export function navigateTo(page: 'signal' | 'models' | 'settings'): void {
   window.dispatchEvent(new CustomEvent('xwxdeck:navigate', { detail: page }));
 }
 

@@ -1,6 +1,7 @@
 //! Grok Build owns authorization and refresh. Each account has its own CLI home.
 //! Protocol references: x.ai/cli and yetone/magpie (MIT, see THIRD_PARTY_NOTICES).
 use super::*;
+#[cfg(target_os = "macos")]
 use std::collections::HashMap;
 use std::process::Stdio;
 use tokio::{io::AsyncReadExt, process::Command};
@@ -18,6 +19,7 @@ struct Login {
     url: String,
     account_id: String,
     cancel: tokio::sync::watch::Sender<bool>,
+    finished: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 #[derive(Clone)]
 pub(super) struct GrokAccounts {
@@ -93,11 +95,14 @@ impl GrokAccounts {
             })
     }
     fn command(&self, binary: &Path, id: &str) -> Command {
+        self.command_home(binary, &self.root.join(id))
+    }
+    fn command_home(&self, binary: &Path, home: &Path) -> Command {
         let mut command = Command::new(binary);
         command
             .env_remove("GROK_AUTH_PROVIDER_COMMAND")
             .env_remove("GROK_AUTH_EXPIRED")
-            .env("GROK_HOME", self.root.join(id))
+            .env("GROK_HOME", home)
             .current_dir(&self.root)
             .kill_on_drop(true)
             .stdin(Stdio::null());
@@ -140,23 +145,46 @@ impl GrokAccounts {
         &self.api
     }
     pub async fn snapshot(&self) -> Value {
+        // Publication holds flow before registrations. Read in the same order
+        // so a completed flow always includes its published account.
+        let flow = self.flow.lock().await;
         let registrations = self.registrations.lock().await;
         let accounts: Vec<_> = registrations.iter().map(|a| json!({"id":a.id,"label":a.label,"email":a.email,"platform":"grok","status":if self.auth(&a.id).is_ok(){"connected"}else{"signed-out"}})).collect();
         drop(registrations);
-        let flow = self.flow.lock().await;
         json!({"accounts":accounts,"installed":self.executable().is_some(),"flow":flow.as_ref().map(|f|json!({"id":f.id,"platform":"grok","status":f.status,"error":f.error,"accountId":f.account_id}))})
     }
     pub async fn cancel(&self) {
-        if let Some(f) = self
-            .flow
-            .lock()
-            .await
-            .as_mut()
-            .filter(|f| f.status == "waiting" || f.status == "exchanging")
-        {
-            f.status = "cancelled".into();
-            let _ = f.cancel.send(true);
+        let finished = {
+            let mut flow = self.flow.lock().await;
+            if let Some(f) = flow
+                .as_mut()
+                .filter(|f| f.status == "waiting" || f.status == "exchanging")
+            {
+                f.status = "cancelled".into();
+                let _ = f.cancel.send(true);
+                f.finished.take()
+            } else {
+                None
+            }
+        };
+        if let Some(finished) = finished {
+            let _ = finished.await;
         }
+    }
+    async fn stop_login(child: &mut tokio::process::Child) {
+        // A .cmd login owns a wrapper and its child. Stop that owned tree before
+        // removing the staging home; ordinary client processes are not targets.
+        #[cfg(windows)]
+        if let Some(id) = child.id() {
+            let _ = Command::new("taskkill")
+                .args(["/PID", &id.to_string(), "/T", "/F"])
+                .creation_flags(0x08000000)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await;
+        }
+        let _ = child.kill().await;
     }
     pub async fn authorization_url(&self) -> Result<String> {
         self.flow
@@ -206,6 +234,7 @@ impl GrokAccounts {
             .spawn()
             .map_err(|_| "无法启动 Grok Build 登录")?;
         let (cancel, mut cancelled) = tokio::sync::watch::channel(false);
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
         let flow_id = random_id()?;
         *self.flow.lock().await = Some(Login {
             id: flow_id.clone(),
@@ -214,10 +243,12 @@ impl GrokAccounts {
             url: String::new(),
             account_id: String::new(),
             cancel,
+            finished: Some(finished_rx),
         });
         let (link_tx, link_rx) = tokio::sync::oneshot::channel();
         let engine = self.clone();
         tokio::spawn(async move {
+            let _finished = finished_tx;
             let (lines_tx, mut lines_rx) = tokio::sync::mpsc::channel::<String>(16);
             for stream in [
                 child
@@ -243,8 +274,8 @@ impl GrokAccounts {
             tokio::pin!(deadline);
             let result = loop {
                 tokio::select! {
-                    _=cancelled.changed()=>{ let _=child.kill().await; break Err("登录已取消".to_string()); },
-                    _=&mut deadline=>{ let _=child.kill().await; break Err("Grok 登录已超时，请重试".to_string()); },
+                    _=cancelled.changed()=>{ Self::stop_login(&mut child).await; break Err("登录已取消".to_string()); },
+                    _=&mut deadline=>{ Self::stop_login(&mut child).await; break Err("Grok 登录已超时，请重试".to_string()); },
                     line=lines_rx.recv(), if !lines_rx.is_closed()=>{ if let Some(line)=line { if let Some(url)=engine.login_link(&line) { let mut flow=engine.flow.lock().await; if let Some(f)=flow.as_mut().filter(|f|f.id==flow_id && f.status=="waiting") { f.url=url.clone(); if let Some(tx)=link_tx.take(){let _=tx.send(url);} } } } },
                     exit=child.wait()=>{ break if exit.is_ok_and(|s|s.success()) { Ok(()) } else { Err("Grok 官方登录未完成，请重试".to_string()) }; }
                 }
@@ -284,6 +315,9 @@ impl GrokAccounts {
                             let _ = fs::remove_dir_all(&dir);
                             next.iter().find(|old| old.id == a.id).cloned().unwrap_or(a)
                         } else {
+                            let auth =
+                                read(&dir.join("auth.json"))?.ok_or("Grok 登录数据不存在")?;
+                            write(&dir.join("auth.json"), &auth)?;
                             Registration {
                                 id: account_id.clone(),
                                 label: format!("Grok-{}", next.len() + 1),
@@ -363,20 +397,41 @@ impl GrokAccounts {
             let binary = self
                 .executable()
                 .ok_or("请重新安装 Grok Build 来刷新订阅登录")?;
-            let status = tokio::time::timeout(
-                Duration::from_secs(30),
-                self.command(&binary, id)
-                    .arg("models")
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status(),
-            )
-            .await
-            .map_err(|_| "Grok 刷新登录超时")?
-            .map_err(|_| "无法刷新 Grok 登录")?;
+            let source_path = self.root.join(id).join("auth.json");
+            let before = read(&source_path)?.ok_or("Grok 账号需要重新登录")?;
+            let mut home =
+                credentials::CliHome::create(self.root.parent().ok_or("Grok 账号目录无效")?)?;
+            home.put("auth.json", &before)?;
+            let mut command = self.command_home(&binary, &home.path);
+            command
+                .arg("models")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let timeout = if self.test_cli.is_some() {
+                std::env::var("XWX_DECK_CLI_TEST_TIMEOUT_MS")
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .filter(|n| (50..=30_000).contains(n))
+                    .map(Duration::from_millis)
+                    .unwrap_or(Duration::from_secs(30))
+            } else {
+                Duration::from_secs(30)
+            };
+            let status = home.status(&mut command, timeout).await?;
             if !status.success() {
                 return Err("Grok 刷新登录失败，请重新登录".into());
             }
+            let refreshed = read(&home.path.join("auth.json"))?.ok_or("Grok 刷新未返回登录数据")?;
+            let next: Value =
+                serde_json::from_str(&refreshed).map_err(|_| "Grok 刷新登录数据无效")?;
+            let next_auth = next
+                .as_object()
+                .and_then(|m| m.values().find(|v| !text(v, "key").is_empty()))
+                .ok_or("Grok 刷新未返回可用登录")?;
+            if text(next_auth, "email") != text(&auth, "email") {
+                return Err("Grok 刷新账号身份变化，原登录已保留".into());
+            }
+            write_checked(&source_path, &before, &refreshed)?;
             auth = self.auth(id)?;
         }
         let expires = chrono::DateTime::parse_from_rfc3339(text(&auth, "expires_at"))
@@ -394,6 +449,7 @@ impl GrokAccounts {
             .find(|a| a.id == id)
             .ok_or("Grok 账号不存在")?;
         Ok(Provider {
+            other: Default::default(),
             id: format!("subscription-{id}"),
             display_name: a.label.clone(),
             subscription_account_id: a.id.clone(),
@@ -554,5 +610,66 @@ async fn scan_lines(
     }
     if !line.is_empty() {
         let _ = tx.send(String::from_utf8_lossy(&line).into_owned()).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        future::Future,
+        task::{Context, Waker},
+    };
+
+    #[test]
+    fn completed_flow_includes_the_published_account() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let root = std::env::temp_dir()
+                .join(format!("xwxdeck-grok-snapshot-{}", random_id().unwrap()));
+            let (cancel, _) = tokio::sync::watch::channel(false);
+            let accounts = GrokAccounts {
+                test_cli: Some(root.join("synthetic-cli")),
+                root,
+                registrations: Arc::new(Mutex::new(vec![Registration {
+                    id: "first".into(),
+                    label: "First".into(),
+                    email: "first@example.test".into(),
+                }])),
+                flow: Arc::new(Mutex::new(Some(Login {
+                    id: "flow".into(),
+                    status: "waiting".into(),
+                    error: String::new(),
+                    url: String::new(),
+                    account_id: String::new(),
+                    cancel,
+                    finished: None,
+                }))),
+                refresh: Arc::new(Mutex::new(())),
+                version: Arc::new(Mutex::new(None)),
+                api: String::new(),
+                proxy: None,
+            };
+            // Pause publication while the reader begins. It must not combine
+            // the earlier account list with the later completed flow.
+            let mut publication = accounts.flow.lock().await;
+            let mut snapshot = Box::pin(accounts.snapshot());
+            assert!(snapshot
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending());
+            accounts.registrations.lock().await.push(Registration {
+                id: "second".into(),
+                label: "Second".into(),
+                email: "second@example.test".into(),
+            });
+            let flow = publication.as_mut().unwrap();
+            flow.status = "complete".into();
+            flow.account_id = "second".into();
+            drop(publication);
+            let snapshot = snapshot.await;
+            assert_eq!(snapshot["flow"]["status"], "complete");
+            assert_eq!(snapshot["accounts"].as_array().unwrap().len(), 2);
+            assert_eq!(snapshot["accounts"][1]["id"], snapshot["flow"]["accountId"]);
+        });
     }
 }

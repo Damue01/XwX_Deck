@@ -1,28 +1,47 @@
-# Rust 原生运行时
+# 原生构建与回归
 
-`src-native` 是产品的原生外壳和后端；原有 React 页面通过 `bridge.ts` 调用 Rust。发行包不携带 Electron、Node 或 Chromium。`src/main` 中的旧 TypeScript 实现保留为迁移回归对照和构建时的 Viewer、价格规则生成来源，不进入原生发行包。
+后端使用 Rust/Tauri，界面使用现有 React 前端。
+Viewer 与价格资源来自 `src/renderer` 和 `src/shared`。
+构建不读取正常用户配置。
 
-保留模型、设置和 Trace 页面，移除工具页及对话诊断。macOS 使用系统标题栏、红黄绿按钮和 WebKit；Windows 使用系统 WebView2 和原有窗口控件。
-
-后端包含独立客户端配置、字段恢复账本、官方 OAuth、Responses / Chat / Messages 转换、SSE、原生 Responses WebSocket、续接缓存、Trace JSONL / 索引 / 用量 / 计费、显式历史归并和恢复、Claude Desktop、修复、目录和登录项、更新清单与校验。窗口关闭后 Gateway 可继续工作，托盘或 Dock 可重新打开；主动退出需要先完成配置恢复。Windows 便携版更新由单独复制的原生进程等待旧进程退出、校验和替换文件，保留恢复备份。
-
-## 本地构建与验证
-
-要求 Node.js 22.12+、npm 11、Rust stable；Mac 需要 Command Line Tools，Windows 需要 MSVC 和 WebView2。
+## 常用命令
 
 ```sh
-npm run build:rust:pilot
-npm run test:rust
-npm run start:rust:isolated
-npm run build:rust
+npm ci
+npm run check:quality
+npm run check:test-plan
+npm run check:workflows
+npm run docs:build
+npm run build:native:isolated
 ```
 
-试验构建在 `test-results/rust-pilot-package`，使用独立应用身份，且启动时必须指定隔离目录。验证与本地 HTTP / WebSocket 服务都使用 `--pilot-root`，不会读取真实客户端目录、注册登录项或安装更新。首次隔离目录必须为空，不能使用符号链接。`--rpc`、`--smoke` 必须显式指定隔离目录。
+`check:quality` 绑定当前源码指纹。
+它检查前端、共享合同和原生资源。
+随后执行 Rust 格式、Clippy、单元与后端回归。
+每个后端套件使用独立进程和配置目录。
+失败保留日志，平台不适用项标记跳过。
 
-正式 Mac 候选包输出到 `release-native`，Windows EXE 到 `release`。`npm start` 使用正式原生运行时和 `xwx-deck` 配置目录；不要用它做隔离验证。构建只生成本地候选包，不安装、上传或发布。Mac 使用 ad-hoc 签名，没有公证，更新为手动 DMG。
+## 界面与真实服务
 
-Rust release 使用 `opt-level=z`、LTO、单个 codegen unit、panic abort 和 strip；资源嵌入压缩，TLS、WebKit、Mac SQLite 使用系统实现。Mac 构建比较 zlib、bzip2 和 LZFSE 压缩，并保留许可证、首次打开说明及 Applications 拖拽入口。体积实测记录在 `native-build-report.json`。
+原生界面检查使用 `native-test.mjs`。
+浏览器分别检查仪表盘、分页和通知层级。
+已安装 CLI 只在隔离 HOME 中访问合成上游。
+这不能替代真实授权或费用账单验收。
+Windows 的系统集成需要原生 Windows 主机。
 
-`test:rust:backend` 覆盖本地真实请求、协议转换、官方登录路由、WebSocket、续接、配置恢复与冲突、崩溃恢复、目录、历史元数据、Desktop 和更新下载。`native-test.mjs` 在实际系统 WebView 中验证原有表单、侧栏、主题、Trace 按钮、实时仪表盘与详情交互和窗口隐藏后的请求。旧 Trace 索引的累计与每日用量直接沿用；缺少可靠计费信息时标记费用不完整。原生菜单可查看压缩嵌入的第三方许可证。Windows 的编译、WebView2、便携更新和系统登录项仍需要原生 Windows 主机验证；Mac 的隔离验证不会修改真实登录项。
+## 构建与运行
 
-`portability-test.mjs` 使用隔离目录和本地 HTTP 服务验证同端口热切换、两个客户端的请求快照、增量转换、残缺工具拒绝、图片和推理往返、会话续接、原生响应缓存与压缩来源恢复。转换流不盲目重试，已知不能恢复的外来压缩会明确失败。转换和订阅路由的 WebSocket 仍不支持，客户端需走 HTTP SSE；已有会话但没有本地来源记录的不透明状态无法保证跨服务续接。这里的回归不等同于真实服务商套餐额度或所有私有协议的验证。
+隔离构建输出到 `test-results/rust-pilot-package`。
+启动器创建独立目录并核对候选指纹。
+正常应用身份、数据与进程保持原状。
+正式输出沿用 `release-native` 和 `release`。
+构建不安装、上传或发布。
+
+## 可选签名验证
+
+默认公开候选保持未签名状态。
+签名命令需要维护者提供独立 Apple 配置。
+配置文件为 `assets/macos/native-release.json`。
+包含团队 ID、签名身份和公证配置名称。
+仓库不预置这些个人配置。
+本轮源码同步不执行签名或公证上传。

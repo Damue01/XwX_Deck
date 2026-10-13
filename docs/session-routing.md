@@ -1,8 +1,18 @@
 # Trace session routing decisions
 
-The routing implementation lives in `src/main/trace/sessionRouter.ts`; request fingerprint extraction remains in `sessionBoundary.ts`. This document keeps the historical reasoning out of the persistence layer.
+The current runtime uses Rust. Native conversation identity is handled in
+[conversation_identity.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/conversation_identity.rs).
+Auxiliary request classification is handled in
+[trace_classification.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/trace_classification.rs), while
+[storage.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/storage.rs) maintains summaries and grouping.
 
-## Stable routing order
+The rules below preserve historical routing rationale. They are not a substitute
+for the current native implementation or source-bound acceptance results.
+Use [trace-native-sessions-test.mjs](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/trace-native-sessions-test.mjs)
+and [trace-session-navigation-test.mjs](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/trace-session-navigation-test.mjs)
+to verify the current behavior.
+
+## Historical routing order
 
 1. Native continuation identifiers win: `previous_response_id`, then the client conversation key.
 2. Auxiliary title/patch requests use an exact native conversation key, root hash, or interaction id when available.
@@ -11,7 +21,7 @@ The routing implementation lives in `src/main/trace/sessionRouter.ts`; request f
 5. Hidden provisional sessions are absorbed only by a later main turn from the same source.
 6. A trace that matches none of the above starts a new session.
 
-## Guardrails retained from production findings
+## Historical routing guardrails
 
 - Source matching is strict. A missing or different source is never treated as a wildcard because concurrent Claude, Codex, and Copilot traffic otherwise crosses session boundaries.
 - Title and policy helpers use a 10-minute host window; ordinary auxiliary and subagent fallbacks use two minutes.

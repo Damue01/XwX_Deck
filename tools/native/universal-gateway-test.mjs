@@ -1,3 +1,4 @@
+import { clearFreshCompatibleFixture } from './test-support.mjs';
 // Real Rust RPC, local upstream HTTP and disposable client homes. No user credentials.
 import assert from 'node:assert/strict';
 import { mkdtemp, realpath, mkdir, writeFile, readFile, rename } from 'node:fs/promises';
@@ -52,10 +53,10 @@ const upstream = createServer(async (req, res) => {
     res.write('data: ' + JSON.stringify({ id: 'chat-fixture', model: body.model, choices: [{ index: 0, delta: { role: 'assistant', content: 'fixture ' }, finish_reason: null }] }) + '\n\n');
     setTimeout(() => { delayedFinish++; res.end('data: ' + JSON.stringify({ id: 'chat-fixture', model: body.model, choices: [{ index: 0, delta: { content: 'reply', ...(body.tools?.length ? { tool_calls: result.choices[0].message.tool_calls.map((call, index) => ({ index, ...call })) } : {}) }, finish_reason: result.choices[0].finish_reason }], usage: result.usage }) + '\n\ndata: [DONE]\n\n'); }, 300);
   } else if (req.url === '/v1/responses') {
-    res.write('event: response.created\ndata: ' + JSON.stringify({ type: 'response.created', response: { ...v, output: [], usage: null } }) + '\n\n');
+    res.write('event: response.created\ndata: ' + JSON.stringify({ type: 'response.created', error: null, response: { ...v, output: [], usage: null } }) + '\n\n');
     res.write('event: response.output_text.delta\ndata: ' + JSON.stringify({ type: 'response.output_text.delta', response_id: v.id, delta: 'fixture ' }) + '\n\n');
     // Final-only remainder exercises honest stream assembly without duplicate text or lost tools.
-    setTimeout(() => { delayedFinish++; res.end(body.metadata?.truncate ? '' : 'event: response.completed\ndata: ' + JSON.stringify({ type: 'response.completed', response: v }) + '\n\n'); }, 300);
+    setTimeout(() => { delayedFinish++; res.end(body.metadata?.truncate ? '' : 'event: response.completed\ndata: ' + JSON.stringify({ type: 'response.completed', error: null, response: v }) + '\n\n'); }, 300);
   } else {
     const events = [{ type: 'message_start', message: { ...result, content: [] } }, { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: reply } }, { type: 'content_block_stop', index: 0 }, ...(body.tools?.length ? [{ type: 'content_block_start', index: 1, content_block: result.content[1] }, { type: 'content_block_stop', index: 1 }] : []), { type: 'message_delta', delta: { stop_reason: result.stop_reason }, usage: result.usage }, { type: 'message_stop' }];
     res.end(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''));
@@ -86,9 +87,9 @@ async function records() { const url = await rpc('getDashboardUrl'); const view 
 launch();
 let frontend;
 try {
-  assert.equal((await rpc('getProviders')).connections.length, 0);
+  await clearFreshCompatibleFixture(rpc);
   assert.equal((await rpc('resumeTracing')).backgroundGatewayActive, false);
-  pass('fresh installation has no default API or automatic client edits');
+  pass('saved empty registry has no automatic client edits');
   await installFixtures();
   for (const adapter of ['responses', 'chat-completions', 'anthropic-messages']) await rpc('saveProvider', { id: adapter, displayName: adapter, baseUrl: base, bearerToken: 'fixture-secret-' + adapter, adapter, codexModel: model });
   const providers = (await rpc('getProviders')).connections;
@@ -191,11 +192,14 @@ try {
   assert.match(await held.text(), /\[DONE\]/); assert.equal(calls[beforeHold].path, '/v1/responses');
   const changed = await post('opencode', '/v1/chat/completions', chat()); await changed.text(); assert.equal(calls.at(-1).path, '/v1/chat/completions');
   pass('provider switching keeps in-flight replies and routes the next request to the new provider');
+  // These protocol-only fixtures returned 17 calls that were inspected, never executed.
+  assert.equal((await rpc('getState')).waitingTools,17);
+  await assert.rejects(rpc('toggleTracing',false),/工具调用仍在等待/);
   const liveConfig = await readFile(paths.opencode, 'utf8');
   await writeFile(paths.opencode, liveConfig.replace('xwx_deck/gpt-4.1', 'external/new-model'));
-  const failed = await rawRpc('toggleTracing', false); assert.equal(failed.ok, false); assert.match(failed.error, /外部修改/); assert.equal((await rpc('getState')).backgroundGatewayActive, true);
+  const failed = await rawRpc('toggleTracing', false, true); assert.equal(failed.ok, false); assert.match(failed.error, /外部修改/); assert.equal((await rpc('getState')).backgroundGatewayActive, true);
   await writeFile(paths.opencode, liveConfig.replace('"theme": "system"', '"theme": "dark"'));
-  await rpc('toggleTracing', false); assert.match(await readFile(paths.opencode, 'utf8'), /"theme": "dark"/); assert.doesNotMatch(await readFile(paths.opencode, 'utf8'), /xwx_deck/);
+  await rpc('toggleTracing', false, true); assert.match(await readFile(paths.opencode, 'utf8'), /"theme": "dark"/); assert.doesNotMatch(await readFile(paths.opencode, 'utf8'), /xwx_deck/);
   assert.equal(await readFile(envPath, 'utf8'), originalEnv); assert.equal(await readFile(paths['qwen-code'], 'utf8'), original['qwen-code']);
   assert.equal((await rpc('resumeTracing')).backgroundGatewayActive, false);
   pass('stop restores owned connections, preserves unrelated changes, and refuses conflicting external writes');
@@ -216,7 +220,7 @@ try {
   await writeFile(paths.opencode, original.opencode);
   pass('stale takeover previews and ambiguous duplicate JSON keys are rejected without overwriting files');
   await select('opencode', ids.responses);
-  const executable = join(home, '.local/bin/opencode');
+  const executable = join(home, '.local/bin/opencode' + (process.platform === 'win32' ? '.cmd' : ''));
   await rename(executable, executable + '.not-installed');
   state = await rpc('toggleTracing', true);
   const skipped = state.clients.find(c => c.id === 'opencode');

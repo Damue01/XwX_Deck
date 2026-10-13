@@ -1,3 +1,5 @@
+import { CLIENT_GATEWAY_HELP } from './clientGatewaySetup';
+
 /** Download / installation pages only; this catalog does not imply Trace support. */
 export const CLIENT_DOWNLOADS = [
   { id: 'codex', label: 'ChatGPT', downloadLabel: 'ChatGPT Desktop', icon: 'chatgpt', url: 'https://learn.chatgpt.com/docs/app' },
@@ -9,7 +11,7 @@ export const CLIENT_DOWNLOADS = [
   { id: 'codex-cli', label: 'Codex CLI', icon: 'chatgpt', url: 'https://learn.chatgpt.com/docs/codex/cli' },
   { id: 'claude-code', label: 'Claude Code', downloadLabel: 'Claude Code CLI', icon: 'claude', url: 'https://code.claude.com/docs/en/setup' },
   { id: 'gemini-cli', label: 'Gemini CLI', icon: 'gemini', url: 'https://geminicli.com/docs/get-started/installation/' },
-  { id: 'qwen-code', label: 'Qwen Code', downloadLabel: 'Qwen Code Desktop', icon: 'qwen', url: 'https://github.com/QwenLM/qwen-code/releases/tag/desktop-latest' },
+  { id: 'qwen-code', label: 'Qwen Code', downloadLabel: 'Qwen Code Desktop', icon: 'qwen', url: 'https://qwen.ai/qwencode' },
   { id: 'grok-build', label: 'Grok Build', icon: 'xai', url: 'https://x.ai/build' },
   { id: 'cursor', label: 'Cursor', downloadLabel: 'Cursor Desktop', icon: 'cursor', url: 'https://cursor.com/downloads' },
   { id: 'windsurf', label: 'Devin（Windsurf）', icon: 'windsurf', url: 'https://devin.ai/download' },
@@ -26,13 +28,13 @@ export const CLIENT_DOWNLOADS = [
   { id: 'droid', label: 'Droid', downloadLabel: 'Droid CLI', icon: 'factory', url: 'https://docs.factory.com/droid-cli/quickstart' },
   { id: 'copilot-cli', label: 'GitHub Copilot', downloadLabel: 'GitHub Copilot CLI', icon: 'copilot', url: 'https://docs.github.com/en/copilot/get-started/cli-quickstart' },
   { id: 'cursor-cli', label: 'Cursor CLI', icon: 'cursor', url: 'https://cursor.com/docs/cli/installation' },
-  { id: 'mimo-code', label: 'MiMo Code', downloadLabel: 'MiMo Code CLI', icon: 'mimocode', url: 'https://github.com/XiaomiMiMo/MiMo-Code#installation' },
-  { id: 'workbuddy', label: 'WorkBuddy', downloadLabel: 'WorkBuddy Desktop', icon: 'workbuddy', url: 'https://www.codebuddy.cn/app/' },
+  { id: 'mimo-code', label: 'MiMo Code', downloadLabel: 'MiMo Code CLI', icon: 'mimocode', url: 'https://mimo.mi.com/docs/en-US/tokenplan/integration/mimo-code' },
+  { id: 'workbuddy', label: 'WorkBuddy', downloadLabel: 'WorkBuddy Desktop', icon: 'workbuddy', url: 'https://www.workbuddy.cn/' },
   { id: 'codebuddy-code', label: 'CodeBuddy Code', downloadLabel: 'CodeBuddy Code CLI', icon: 'codebuddy', url: 'https://www.codebuddy.ai/docs/cli/quickstart' },
-  { id: 'hermes-agent', label: 'Hermes Agent', downloadLabel: 'Hermes Agent CLI', icon: 'hermes', url: 'https://github.com/NousResearch/hermes-agent#installation' },
+  { id: 'hermes-agent', label: 'Hermes Agent', downloadLabel: 'Hermes Agent CLI', icon: 'hermes', url: 'https://hermes-agent.nousresearch.com/docs/' },
   { id: 'antigravity-cli', label: 'Antigravity', downloadLabel: 'Antigravity CLI', icon: 'antigravity', url: 'https://www.antigravity.google/docs/cli/install/' },
-  { id: 'openchamber', label: 'OpenChamber', downloadLabel: 'OpenChamber Desktop', icon: 'openchamber', url: 'https://github.com/openchamber/openchamber' },
-  { id: 't3-code', label: 'T3 Code', downloadLabel: 'T3 Code Desktop', icon: 't3code', url: 'https://github.com/pingdotgg/t3code' },
+  { id: 'openchamber', label: 'OpenChamber', downloadLabel: 'OpenChamber Desktop', icon: 'openchamber', url: 'https://openchamber.dev/download/' },
+  { id: 't3-code', label: 'T3 Code', downloadLabel: 'T3 Code Desktop', icon: 't3code', url: 'https://t3.codes/download' },
   { id: 'cherry-studio', label: 'Cherry Studio', icon: 'cherry-studio', url: 'https://www.cherry-ai.com/download' },
   { id: 'ollama-app', label: 'Ollama', icon: 'ollama', url: 'https://ollama.com/download' },
   { id: 'lmstudio-app', label: 'LM Studio', icon: 'lmstudio', url: 'https://lmstudio.ai/download' }
@@ -66,6 +68,12 @@ export const MODEL_CLIENT_CATALOG = CLIENT_DOWNLOADS.filter(client => !['codex-c
 const MANAGED_MODEL_CLIENTS: readonly DownloadClientId[] = ['claude', 'codex', 'opencode', 'gemini-cli', 'qwen-code', 'pi', 'mimo-code', 'crush', 'qoder', 'droid', 'codebuddy-code', 'workbuddy'];
 export function supportsManagedModels(client: DownloadClientId): boolean {
   return MANAGED_MODEL_CLIENTS.includes(canonicalModelClient(client));
+}
+
+/** Manual Gateway connections also belong in the model panel, without claiming automatic setup. */
+export function supportsModelManagement(client: DownloadClientId): boolean {
+  const product = canonicalModelClient(client);
+  return supportsManagedModels(product) || `gateway-help-${product}` in CLIENT_GATEWAY_HELP;
 }
 
 export interface ClientInstallationSnapshot {

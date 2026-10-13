@@ -3,6 +3,8 @@ import { isDesktop } from '@/bridge/api';
 
 interface Props {
   readonly scale?: number;
+  readonly dotSize?: number;
+  readonly active?: boolean;
   /** Extra drift for surfaces that want a visibly flowing field (onboarding). 0 keeps the Trace look. */
   readonly flow?: number;
 }
@@ -15,31 +17,47 @@ interface Ripple {
   readonly x: number;
   readonly y: number;
   readonly start: number;
+  readonly soft: boolean;
 }
 
 /**
  * Sends a water ripple through the dot field from a viewport point. Used as
  * the immediate response to the Trace dial: the wave starts on the same frame
- * as the click, long before the backend finishes switching.
+ * as the click, long before the backend finishes switching. `soft` is a slower,
+ * shallower swell that fades in and out, for navigation such as onboarding.
  */
-export function emitFieldRipple(clientX: number, clientY: number): void {
-  document.dispatchEvent(new CustomEvent<{ x: number; y: number }>(RIPPLE_EVENT, { detail: { x: clientX, y: clientY } }));
+export function emitFieldRipple(clientX: number, clientY: number, options?: { readonly soft?: boolean }): void {
+  document.dispatchEvent(new CustomEvent<{ x: number; y: number; soft: boolean }>(RIPPLE_EVENT, { detail: { x: clientX, y: clientY, soft: !!options?.soft } }));
+}
+
+const SOFT_LIFE_MS = 2600;
+const lifeOf = (rp: Ripple) => (rp.soft ? SOFT_LIFE_MS : RIPPLE_LIFE_MS);
+
+/** Travel progress and amplitude for a ripple at `now`. Soft ripples move at
+ * ~55% speed, peak at ~35% strength, and ease in instead of starting at full force. */
+function rippleState(rp: Ripple, now: number, reduce: boolean): { readonly age: number; readonly amp: number } {
+  const ms = now - rp.start;
+  const life = Math.max(0, 1 - ms / lifeOf(rp));
+  if (!rp.soft) return { age: ms / 1000, amp: life * life * (reduce ? 0.6 : 1) };
+  const rise = Math.min(1, ms / 420);
+  const swell = rise * rise * (3 - 2 * rise);
+  return { age: ms / 1000 * 0.55, amp: swell * life * life * life * 0.34 * (reduce ? 0.6 : 1) };
 }
 
 /** Collects ripples in canvas-local CSS pixels and drops them once spent. */
 function trackRipples(canvas: HTMLCanvasElement): { readonly list: () => readonly Ripple[]; readonly stop: () => void } {
   let ripples: Ripple[] = [];
   const onRipple = (event: Event) => {
-    const detail = (event as CustomEvent<{ x: number; y: number }>).detail;
+    const detail = (event as CustomEvent<{ x: number; y: number; soft?: boolean }>).detail;
     if (!detail) return;
     const rect = canvas.getBoundingClientRect();
-    ripples = [...ripples, { x: detail.x - rect.left, y: detail.y - rect.top, start: performance.now() }].slice(-MAX_RIPPLES);
+    ripples = [...ripples, { x: detail.x - rect.left, y: detail.y - rect.top, start: performance.now(), soft: !!detail.soft }].slice(-MAX_RIPPLES);
   };
   document.addEventListener(RIPPLE_EVENT, onRipple);
   return {
     list: () => {
       const now = performance.now();
-      if (ripples.length && now - ripples[0].start > RIPPLE_LIFE_MS) ripples = ripples.filter(r => now - r.start <= RIPPLE_LIFE_MS);
+      if (ripples.some(r => now - r.start > lifeOf(r))) ripples = ripples.filter(r => now - r.start <= lifeOf(r));
       return ripples;
     },
     stop: () => document.removeEventListener(RIPPLE_EVENT, onRipple)
@@ -95,6 +113,7 @@ function animate(
     document.removeEventListener('visibilitychange', sync);
     if (frame) cancelAnimationFrame(frame);
     frame = 0;
+    canvas.dataset.rendering = 'paused';
   };
 }
 
@@ -108,7 +127,7 @@ function observeCanvasResize(canvas: HTMLCanvasElement, onResize: () => void): (
   return () => window.removeEventListener('resize', onResize);
 }
 
-function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: number, flow: number): (() => void) | undefined {
+function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: number, flow: number, dotSize: number): (() => void) | undefined {
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const OFF = 83.0;
   const VS = [
@@ -121,6 +140,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     'uniform float u_time;',
     'uniform float u_theme;',
     'uniform float u_scale;',
+    'uniform float u_dotSize;',
     'uniform float u_live;',
     'uniform vec4 u_rip[4];',
     'uniform float u_ripScale;',
@@ -147,10 +167,10 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     '  float main_v=clamp(((n1*0.76+n2*0.18-0.008)-0.5)*1.04+0.5,0.0,1.0);',
     '  float speckles=ss(0.50,0.82,fine)*0.12*(1.0-ss(0.42,0.82,main_v));',
     '  float growth=pow(ss(0.31,0.81,min(1.0,main_v+speckles)),1.08);',
-    '  float r=1.0/(u_resolution.y/u_scale)*((0.028+growth*0.338)*(1.0+u_live*0.10)*(1.0+max(ripple,-0.7)*0.6)+max(ripple,0.0)*0.07);',
+    '  float r=((0.028+growth*0.338)*(1.0+u_live*0.10)*(1.0+max(ripple,-0.7)*0.6)+max(ripple,0.0)*0.07)*u_dotSize;',
     '  vec2 cell=fract(grid)-0.5;',
     '  float dist=length(cell);',
-    '  float dotAlpha=1.0-smoothstep(0.0,r*u_resolution.y/u_scale,dist*u_resolution.y/u_scale);',
+    '  float dotAlpha=1.0-smoothstep(0.0,r,dist);',
     '  vec3 darkDot=vec3(0.965,0.965,0.965);',
     '  vec3 dayDot=vec3(0.045,0.047,0.043);',
     '  vec3 dotColor=mix(darkDot,dayDot,u_theme);',
@@ -186,6 +206,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
   const uTime = gl.getUniformLocation(p, 'u_time');
   const uTheme = gl.getUniformLocation(p, 'u_theme');
   const uScale = gl.getUniformLocation(p, 'u_scale');
+  const uDotSize = gl.getUniformLocation(p, 'u_dotSize');
   const uLive = gl.getUniformLocation(p, 'u_live');
   const uRip = gl.getUniformLocation(p, 'u_rip');
   const uRipScale = gl.getUniformLocation(p, 'u_ripScale');
@@ -218,7 +239,8 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     gl.uniform2f(uRes, canvas.width, canvas.height);
     gl.uniform1f(uTime, simTime + OFF);
     gl.uniform1f(uTheme, isDay() ? 1 : 0);
-    gl.uniform1f(uScale, scale);
+    gl.uniform1f(uScale, Math.max(6, canvas.height / scale));
+    gl.uniform1f(uDotSize, dotSize);
     gl.uniform1f(uLive, live);
     gl.uniform1f(uFlow, flow);
     // Ripple centres in device pixels (GL origin is bottom-left); age in
@@ -226,10 +248,10 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
     const rect = canvas.getBoundingClientRect();
     const sx = canvas.width / Math.max(1, rect.width), sy = canvas.height / Math.max(1, rect.height);
     ripData.fill(0);
+    const now = performance.now();
     ripples.list().forEach((rp, i) => {
-      const age = (performance.now() - rp.start) / 1000;
-      const fade = Math.max(0, 1 - age * 1000 / RIPPLE_LIFE_MS);
-      ripData.set([rp.x * sx, canvas.height - rp.y * sy, age, fade * fade * (reduce ? 0.6 : 1)], i * 4);
+      const { age, amp } = rippleState(rp, now, reduce);
+      ripData.set([rp.x * sx, canvas.height - rp.y * sy, age, amp], i * 4);
     });
     gl.uniform4fv(uRip, ripData);
     gl.uniform1f(uRipScale, Math.hypot(canvas.width, canvas.height));
@@ -249,7 +271,7 @@ function initGL(canvas: HTMLCanvasElement, gl: WebGLRenderingContext, scale: num
   };
 }
 
-function init2D(canvas: HTMLCanvasElement, density: number, flow: number): (() => void) | undefined {
+function init2D(canvas: HTMLCanvasElement, density: number, flow: number, dotSize: number): (() => void) | undefined {
   const rawCtx = canvas.getContext('2d') as CanvasRenderingContext2D | null;
   if (!rawCtx) return undefined;
   const ctx: CanvasRenderingContext2D = rawCtx;
@@ -314,9 +336,8 @@ function init2D(canvas: HTMLCanvasElement, density: number, flow: number): (() =
     const now = performance.now();
     const diag = Math.hypot(w, h);
     const waves = ripples.list().map(rp => {
-      const age = (now - rp.start) / 1000;
-      const fade = Math.max(0, 1 - age * 1000 / RIPPLE_LIFE_MS);
-      return { x: rp.x, y: rp.y, front: age * diag * 0.55, width: diag * 0.045, amp: fade * fade * (reduce ? 0.6 : 1) };
+      const { age, amp } = rippleState(rp, now, reduce);
+      return { x: rp.x, y: rp.y, front: age * diag * 0.55, width: diag * (rp.soft ? 0.07 : 0.045), amp };
     });
     for (let y = -step; y < h + step; y += step) {
       for (let x = -step; x < w + step; x += step) {
@@ -339,7 +360,7 @@ function init2D(canvas: HTMLCanvasElement, density: number, flow: number): (() =
           ripple += lift;
           if (d > 0.5) { px += dx / d * lift * step * 0.4; py += dy / d * lift * step * 0.4; }
         }
-        const radius = step * ((0.028 + growth * 0.338) * (1 + live * 0.10) * (1 + Math.max(ripple, -0.7) * 0.6) + Math.max(ripple, 0) * 0.07);
+        const radius = dotSize * step * ((0.028 + growth * 0.338) * (1 + live * 0.10) * (1 + Math.max(ripple, -0.7) * 0.6) + Math.max(ripple, 0) * 0.07);
         if (radius <= 0.05) continue;
         ctx.globalAlpha = strength;
         ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI * 2); ctx.fill();
@@ -359,26 +380,31 @@ function init2D(canvas: HTMLCanvasElement, density: number, flow: number): (() =
   };
 }
 
-export const ParticleField = React.memo(function ParticleField({ scale = 60, flow = 0 }: Props): React.ReactElement {
+export const ParticleField = React.memo(function ParticleField({ scale = 60, flow = 0, dotSize = 1, active = true }: Props): React.ReactElement {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const [force2D, setForce2D] = React.useState(isDesktop);
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !active) return;
     // Desktop packaged app: disable hardware WebGL (can crash renderer during live-state changes).
-    const gl = isDesktop() ? null : canvas.getContext('webgl', { alpha: true, antialias: false, premultipliedAlpha: false });
-    const glCleanup = gl ? initGL(canvas, gl, scale, flow) : undefined;
+    const gl = force2D ? null : canvas.getContext('webgl', { alpha: true, antialias: false, premultipliedAlpha: false });
+    const glCleanup = gl ? initGL(canvas, gl, scale, flow, dotSize) : undefined;
     if (glCleanup) {
       canvas.dataset.renderer = 'webgl';
       return glCleanup;
     } else {
+      // A canvas that acquired WebGL cannot then acquire 2D. Remount it before
+      // falling back when WebGL is unavailable or a shader fails to link.
+      if (!force2D) { setForce2D(true); return; }
       canvas.dataset.renderer = '2d';
-      return init2D(canvas, scale, flow);
+      return init2D(canvas, scale, flow, dotSize);
     }
-  }, [scale, flow]);
+  }, [scale, flow, dotSize, active, force2D]);
 
   return (
     <canvas
+      key={force2D ? '2d' : 'webgl'}
       ref={canvasRef}
       className="field"
       data-scale={scale}

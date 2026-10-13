@@ -19,22 +19,30 @@ await esbuild.build({
 console.log('Prepared the unchanged production renderer and a separate Rust bridge.');
 
 // Render-only TypeScript runs during compilation; the shipped backend is Rust.
-const { rawTextPlugin } = await import('../../tools/raw-text-plugin.mjs');
+const { rawTextPlugin } = await import('../../tools/build/raw-text-plugin.mjs');
 const { tmpdir } = await import('node:os');
 const { pathToFileURL } = await import('node:url');
 const temporary = await mkdtemp(resolve(tmpdir(), 'xwx-native-assets-'));
 const moduleFile = resolve(temporary, 'render.mjs');
 const assets = resolve(root, 'test-results/native-assets');
 await mkdir(assets, { recursive: true });
+await cp(resolve(root,'assets/models-dev-capabilities.json'),resolve(assets,'models-dev-capabilities.json'));
 try {
-  await esbuild.build({ stdin: { contents: `export { renderTapViewerHtml } from './src/main/trace/webview/viewerHtml'; export { getPriceRules } from './src/main/trace/pricing'; export { OFFICIAL_MODEL_REGISTRY } from './src/main/app/officialModelRegistry'; export { setupWebsitesFor } from './src/shared/setupWebsites'; export { CLIENT_DOWNLOADS } from './src/shared/clientDownloads';`, resolveDir: root, loader: 'ts' }, outfile: moduleFile, bundle: true, platform: 'node', format: 'esm', plugins: [rawTextPlugin] });
-  const { renderTapViewerHtml, getPriceRules, OFFICIAL_MODEL_REGISTRY, setupWebsitesFor, CLIENT_DOWNLOADS } = await import(pathToFileURL(moduleFile).href);
+  await esbuild.build({ entryPoints: [resolve(root, 'tools/build/native-assets.ts')], outfile: moduleFile, bundle: true, platform: 'node', format: 'esm', plugins: [rawTextPlugin] });
+  const { normalizeCache, setCatalogPriceRules, renderTapViewerHtml, getPriceRules, OFFICIAL_MODEL_REGISTRY, setupWebsitesFor, CLIENT_DOWNLOADS } = await import(pathToFileURL(moduleFile).href);
+  // Never read normal user data during a build. Embed the checked repository
+  // catalog so native offline pricing is the same as the retained backend.
+  const priceCache = normalizeCache(JSON.parse(await readFile(resolve(root, 'assets/models-dev-pricing.json'), 'utf8')));
+  if (!priceCache) throw Error('Bundled model prices are missing or invalid.');
+  setCatalogPriceRules(priceCache.rules);
   let viewer=renderTapViewerHtml({ state: { active: false, rootPath: '', sessions: [], traces: [] }, mode: 'live' });
   const blocks=[...viewer.matchAll(/<(script|style)\b([^>]*)>([\s\S]*?)<\/\1>/gi)].reverse();
   for(const block of blocks){if(block[1]==='script'&&/application\/json/.test(block[2]))continue;const transformed=await esbuild.transform(block[3],{loader:block[1]==='script'?'js':'css',minify:true,legalComments:'inline',target:['safari15','chrome120']});viewer=viewer.slice(0,block.index)+`<${block[1]}${block[2]}>${transformed.code}</${block[1]}>`+viewer.slice(block.index+block[0].length);}
   await writeFile(resolve(assets, 'viewer.html'), viewer);
   await writeFile(resolve(assets, 'clients.json'), JSON.stringify(CLIENT_DOWNLOADS));
   await writeFile(resolve(assets, 'prices.json'), JSON.stringify(getPriceRules()));
+  // Retired capability tables must not remain in the embedded resource set.
+  for (const retired of ['builtin-models.json', 'probed-models.json']) await rm(resolve(assets, retired), { force: true });
   await writeFile(resolve(assets, 'official-models.json'), JSON.stringify(OFFICIAL_MODEL_REGISTRY));
   await writeFile(resolve(assets, 'setup-websites.json'), JSON.stringify(Object.fromEntries(['darwin','win32','linux'].map(platform=>[platform,Object.fromEntries(['arm64','x64'].map(arch=>[arch,setupWebsitesFor(platform,arch)]))]))));
 } finally { await rm(temporary, { recursive: true }); }

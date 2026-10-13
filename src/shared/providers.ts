@@ -40,6 +40,9 @@ export interface ProviderValidationResult {
   readonly status: ProviderValidationStatus;
   readonly providerId: string;
   readonly providerName: string;
+  readonly protocol?: string;
+  readonly httpStatus?: number | null;
+  readonly failureReason?: 'timeout' | 'connect' | 'transport' | 'refused' | 'empty-response' | 'model-not-enabled' | 'endpoint-required' | 'model-not-found' | 'endpoint-not-found' | 'not-found' | null;
   readonly suggestedBaseUrl?: string;
   readonly suggestedAdapter?: Exclude<ProviderAdapter, 'auto'>;
   readonly suggestionReason?: 'base-url' | 'protocol';
@@ -53,14 +56,12 @@ export function supportsProviderClient(provider: ProviderConnection, client: Pro
   return client === 'codex' || ['auto', 'anthropic-messages', 'responses', 'chat-completions'].includes(provider.adapter);
 }
 
-export function providerNameError(name: string, previousName?: string): string | undefined {
-  if (name === previousName && name.length > 0) return undefined;
-  if (!/^[A-Za-z0-9_-]{1,80}$/.test(name)) return '名称只能包含英文字母、数字、下划线和连字符，长度为 1–80 个字符。';
-  if (['openai', 'xwx_deck'].includes(name.toLowerCase())) return '此名称由客户端登录或会话归并使用，请换一个名称。';
+export function providerNameError(name: string, _previousName?: string): string | undefined {
+  if (!name.trim() || [...name].length > 80 || /[\u0000-\u001f\u007f-\u009f]/.test(name)) return '名称需为 1–80 个字符，不能包含控制字符。';
   return undefined;
 }
 
-/** Existing identities survive upgrades; only newly added/renamed connections use their name. */
+/** Display names never replace a registered connection identity. */
 export function providerCodexId(provider: Pick<ProviderConnection, 'displayName' | 'codexProviderId'>, unified = false): string {
   if (unified) return 'xwx_deck';
   return provider.codexProviderId || 'xwx_deck';

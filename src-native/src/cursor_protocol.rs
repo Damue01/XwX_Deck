@@ -128,7 +128,7 @@ fn any(b: &[u8], depth: u8) -> Result<Value> {
     if depth > 64 {
         return Err("Cursor 工具参数嵌套过深".into());
     }
-    for f in fields(b)? {
+    if let Some(f) = fields(b)?.into_iter().next() {
         return match f.num {
             1 => Ok(Value::Null),
             2 => Ok(json!(f64::from_le_bytes(
@@ -326,11 +326,9 @@ fn conversation(chat: &Value, tools: &[Value]) -> Result<(Vec<Vec<u8>>, String)>
     flush(&mut out, &mut pending, &mut results)?;
     Ok((out, last))
 }
-fn build(
-    chat: &Value,
-    tools: &[Value],
-    catalog: Option<&Value>,
-) -> Result<(Pb, HashMap<Vec<u8>, Vec<u8>>, Value)> {
+// Initial protobuf request, content-addressed blobs, and trace evidence.
+type BuiltRequest = (Pb, HashMap<Vec<u8>, Vec<u8>>, Value);
+fn build(chat: &Value, tools: &[Value], catalog: Option<&Value>) -> Result<BuiltRequest> {
     use sha2::{Digest, Sha256};
     let (mut blobs, mut state) = (HashMap::new(), Pb::default());
     let mut put = |data: Vec<u8>| {

@@ -1,3 +1,4 @@
+import { clearFreshCompatibleFixture } from './test-support.mjs';
 import { nativeTestBinary } from './test-support.mjs';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -22,7 +23,7 @@ function call(method,...args){return new Promise((resolve,reject)=>{const timer=
 async function rpc(method,...args){const r=await call(method,...args);assert.equal(r.ok,true,r.error);return r.result;}
 async function stop(){const done=once(child,'exit');child.stdin.end();assert.equal((await done)[0],0);}
 const magpie=join(root,'import-sources/.config/magpie/providers.json'),cc=join(root,'import-sources/.cc-switch/cc-switch.db'),legacy=join(root,'legacy.json');
-start();await rpc('getState');const initial=await rpc('previewConfigurationImport');check('fresh installs only discover empty sources without creating connections',initial.sources.every(s=>!s.found)&&(await rpc('getProviders')).connections.length===0);await stop();
+start();await rpc('getState');await clearFreshCompatibleFixture(rpc);const initial=await rpc('previewConfigurationImport');check('an empty saved registry only discovers empty sources without adding connections',initial.sources.every(s=>!s.found)&&(await rpc('getProviders')).connections.length===0);await stop();
 await mkdir(resolve(magpie,'..'),{recursive:true});await mkdir(resolve(cc,'..'),{recursive:true});
 const providers=[{id:'relay',name:'现有中转',responses:base+'/v1',anthropic:base+'/anthropic',key:'fixture-key-a',models:['old-model'],keys:[{name:'备用',key:'fixture-key-b',protocol:'responses',off:true}]},{id:'codex',models:['plan-model']},{name:'Loop',chat:'http://localhost:3425/v1',key:'fixture-loop-key'},{name:'Headers',chat:base+'/v1',key:'fixture-header-key',headers:{'x-required':'fixture'}},{name:'Keeper',responses:base+'/keeper',key:'fixture-keeper-key'}];
 await writeFile(magpie,JSON.stringify({providers}));
@@ -116,6 +117,6 @@ try{
  const chosenOld=oldSource.items.find(i=>i.status==='new');
  const importedOld=await rpc('importConfigurations',{sources:automatic.sources.map(({source,path})=>({source,path})),targetDigest:automatic.targetDigest,fingerprints:[chosenOld.fingerprint]});
  check('legacy Deck imports locally without activating it or losing its model',importedOld.added.length===1&&importedOld.providers.connections.some(p=>p.displayName==='LegacyDeck'&&p.codexModel==='legacy-model')&&importedOld.providers.active.codex===imported.id);
- await stop();start();await rpc('getState');fresh=await rpc('previewConfigurationImport');check('external metadata remains after restart',fresh.sources.length===5);
+ await stop();start();await rpc('getState');fresh=await rpc('previewConfigurationImport');check('external metadata remains after restart',fresh.sources.length===6);
  await stop();console.log(JSON.stringify({passed:true,checks,requestCount:requests.length,root}));
 }finally{if(child?.exitCode===null)child.kill('SIGTERM');server.closeAllConnections();server.close();}

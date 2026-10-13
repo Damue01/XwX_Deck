@@ -12,6 +12,30 @@ fn normalized(model: &str) -> String {
 fn family(id: &str, prefix: &str) -> bool {
     id == prefix || id.starts_with(&format!("{prefix}-"))
 }
+/// Ark's Responses reasoning effort does not consistently enable thinking.
+/// Preserve explicit provider-native controls; only translate an omitted toggle.
+pub(super) fn responses(out: &mut Value, provider: &Provider) {
+    let ark = provider.provider_preset == "volcengine-ark"
+        || reqwest::Url::parse(&provider.base_url).is_ok_and(|url| {
+            url.host_str()
+                .is_some_and(|host| host == "volces.com" || host.ends_with(".volces.com"))
+        });
+    if !ark || !out["thinking"].is_null() {
+        return;
+    }
+    let Some(effort) = out["reasoning"]["effort"].as_str() else {
+        return;
+    };
+    let id = normalized(text(out, "model"));
+    // Only the documented thinking-capable character generation needs this
+    // explicit pairing. Earlier character and unrelated models stay untouched.
+    if id != "doubao-seed-character-260628" {
+        return;
+    }
+    let enabled = !["none", "off", "disabled", "minimal"].contains(&effort);
+    out["thinking"] = json!({"type": if enabled { "enabled" } else { "disabled" }});
+}
+
 pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
     let effort = body["reasoning"]["effort"].as_str();
     let Some(effort) = effort else {
@@ -29,9 +53,7 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
         if family(&id, "gpt-5")
             || id.as_bytes().first() == Some(&b'o')
                 && id.as_bytes().get(1).is_some_and(|c| c.is_ascii_digit())
-        {
-            field = "reasoning_effort";
-        } else if family(&id, "glm-5-3")
+            || family(&id, "glm-5-3")
             || family(&id, "grok-4-3")
             || family(&id, "grok-4-5")
             || family(&id, "grok-4-6")
@@ -183,5 +205,44 @@ pub(super) fn messages(out: &mut Value, body: &Value) {
         for key in ["temperature", "top_p"] {
             out.as_object_mut().unwrap().remove(key);
         }
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+    #[test]
+    fn ark_character_pairs_effort_without_changing_explicit_controls() {
+        let provider: Provider = serde_json::from_value(json!({
+            "id":"ark", "baseUrl":"https://ark.cn-beijing.volces.com/api/v3"
+        }))
+        .unwrap();
+        for (effort, toggle) in [
+            ("low", "enabled"),
+            ("high", "enabled"),
+            ("minimal", "disabled"),
+        ] {
+            let mut body =
+                json!({"model":"doubao-seed-character-260628","reasoning":{"effort":effort}});
+            responses(&mut body, &provider);
+            assert_eq!(body["thinking"]["type"], toggle);
+            assert_eq!(body["reasoning"]["effort"], effort);
+        }
+        for mut body in [
+            json!({"model":"doubao-seed-character-260628","reasoning":{"effort":"low"},"thinking":{"type":"disabled"}}),
+            json!({"model":"doubao-seed-character-251128","reasoning":{"effort":"low"}}),
+            json!({"model":"doubao-seed-character-260628"}),
+        ] {
+            let original = body.clone();
+            responses(&mut body, &provider);
+            assert_eq!(body, original);
+        }
+        let other: Provider =
+            serde_json::from_value(json!({"id":"other","baseUrl":"https://example.com/v1"}))
+                .unwrap();
+        let mut body = json!({"model":"doubao-seed-character-260628","reasoning":{"effort":"low"}});
+        let original = body.clone();
+        responses(&mut body, &other);
+        assert_eq!(body, original);
     }
 }

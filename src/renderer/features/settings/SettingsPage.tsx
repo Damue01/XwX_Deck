@@ -1,8 +1,9 @@
+import { formatBytes } from '../../../shared/format-bytes.browser.js';
 import { changeLanguage, useLanguage, type Language, t } from '@/lib/i18n';
 import { ProvidersPanel } from './ProvidersPanel';
 import { DEFAULT_TRACE_LIMIT_GB, DEFAULT_TRACE_AUTO_CLEANUP } from '../../../shared/traceDefaults';
 import * as React from 'react';
-import { Trash2, Pencil, ChevronRight, ArrowDownToLine, Check, LoaderCircle, Sun, Moon, Plus } from 'lucide-react';
+import { Pencil, ChevronRight, ArrowDownToLine, Check, LoaderCircle, Plus } from 'lucide-react';
 import type { XwXDeckRuntimeState, XwXDeckUpdateState } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
 import { isDesktop } from '@/bridge/api';
@@ -10,7 +11,6 @@ import { openConfiguration, showErrorToast, showToast } from '@/lib/toast';
 import { updateFailureDescription } from '../../../shared/updateFeedback';
 import { useConfirm, useConfirmChecked } from '@/components/ui/confirm-dialog';
 import { hostFromUrl, isValidServiceUrl } from '@/lib/utils';
-import { useTheme } from '@/lib/theme';
 import { Toggle } from '@/features/shell/Toggle';
 import { Meter } from '@/components/ui/meter';
 import { Badge } from '@/components/ui/badge';
@@ -57,6 +57,19 @@ export function SettingsPage({ active }: Props): React.ReactElement {
     finally { setSavingAutomaticUpdates(false); }
   };
   const [busyReset, setBusyReset] = React.useState(false);
+  const [busyWebCrypto, setBusyWebCrypto] = React.useState(false);
+  const [webCryptoStorage, setWebCryptoStorage] = React.useState(bridge.runtime?.webCryptoStorage);
+  const migrateWebCrypto = async () => {
+    if (busyWebCrypto || !bridge.api.migrateWebCryptoKey) return;
+    if (!await confirm({ title: t('迁移网页登录密钥？'), body: t('这会读取一次旧的 WebKit 主密钥，系统可能要求输入钥匙串密码。迁移后保存在本地，原网页登录和 API Key 保留。'), confirmText: t('迁移到本地') })) return;
+    setBusyWebCrypto(true);
+    try {
+      const updated = await bridge.api.migrateWebCryptoKey();
+      setRuntime(updated); bridge.patch({ runtime: updated });
+      showToast(t('网页登录密钥已迁移'), 'success');
+    } catch (error) { showErrorToast(t('网页登录密钥未迁移'), error); }
+    finally { setBusyWebCrypto(false); }
+  };
   const [checkingUpdate, setCheckingUpdate] = React.useState(false);
   const [traceOpen, setTraceOpen] = useRememberedExpansion('trace');
   const [modelConfigOpen, setModelConfigOpen] = useRememberedExpansion('models');
@@ -66,15 +79,11 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   const limitCommitPending = React.useRef(false);
   const openModelConfig = React.useCallback(() => setModelConfigOpen(true), [setModelConfigOpen]);
   const promptedUpdateRef = React.useRef<string>('');
-  const persistTheme = React.useCallback(async (theme: 'day' | 'night') => {
-    try { return await bridge.api.setTheme(theme); }
-    catch (error) { showErrorToast(t('主题未保存'), error); throw error; }
-  }, [bridge.api]);
-  const [theme, setTheme] = useTheme(runtime?.theme, persistTheme);
   const confirm = useConfirm();
   const confirmChecked = useConfirmChecked();
 
   React.useEffect(() => { if (bridge.runtime) setRuntime(bridge.runtime); }, [bridge.runtime]);
+  React.useEffect(() => { if (bridge.runtime?.webCryptoStorage) setWebCryptoStorage(bridge.runtime.webCryptoStorage); }, [bridge.runtime?.webCryptoStorage]);
   React.useEffect(() => { if (bridge.updateState) setUpdateState(bridge.updateState); }, [bridge.updateState]);
   React.useEffect(() => {
     if (!editingLimit && runtime?.traceWarningGB !== undefined) setLimitDraft(String(runtime.traceWarningGB));
@@ -98,19 +107,15 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   const startupEnabled = startupSupported && (runtime?.startup?.desiredEnabled ?? runtime?.startup?.enabled) === true;
   const limitValue = Number(limitDraft);
   const limitValid = /^\d+$/.test(limitDraft) && Number.isSafeInteger(limitValue)
-    && limitValue >= 0 && limitValue <= 1024;
+    && limitValue >= 0;
   const storageExceeded = (runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB) > 0
     && (runtime?.traceStorageBytes ?? 0) > (runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB) * 1024 ** 3;
   const needsManualCleanup = storageExceeded && !runtime?.traceAutoCleanup;
-  const storageUsedText = runtime?.traceStorageBytes === undefined
-    ? '—'
-    : runtime.traceStorageBytes >= 1024 ** 3
-      ? `${(runtime.traceStorageBytes / 1024 ** 3).toFixed(1)} GB`
-      : runtime?.storageText.split(' / ')[0] ?? '—';
+  const storageUsedText = runtime?.traceStorageBytes === undefined ? '—' : formatBytes(runtime.traceStorageBytes);
   const storageLimitGB = runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB;
   const storagePercent = storageLimitGB === 0 ? 0
     : Math.min(100, Math.max(0, (runtime?.traceStorageBytes ?? 0) / (storageLimitGB * 1024 ** 3) * 100));
-  const saveStorage = React.useCallback(async (input: { limitGB?: number; autoCleanup?: boolean }) => {
+  const saveStorage = React.useCallback(async (input: { limitGB?: number; autoCleanup?: boolean; clearUsage?: boolean }) => {
     if (savingStorage) return;
     setSavingStorage(true);
     try {
@@ -132,28 +137,33 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       setEditingLimit(false);
       if (!limitValid) {
         setLimitDraft(String(storageLimitGB));
-        showToast(t('请输入 0–1024 GB 的整数'), 'info');
+        showToast(t('请输入非负整数，单位 GB'), 'info');
         return;
       }
-      if (limitValue === runtime?.traceWarningGB) return;
-      if (limitValue === 0) {
-        const proceed = await confirm({
-          title: t('只保留用量统计？'),
+      if (limitValue === runtime?.traceWarningGB && !runtime?.traceStorageNotice) return;
+      let clearUsage = false;
+      if (limitValue === 0 && runtime?.traceWarningGB !== 0) {
+        const proceed = await confirmChecked({
+          title: t('切换为仅用量模式？'),
           body: t('现有 Trace 详细记录将被永久删除。之后不再保存请求和响应内容，只保留 token 用量与费用统计。Gateway 仍会正常转发。'),
           confirmText: t('删除记录并切换'),
           cancelText: t('取消'),
-          tone: 'danger'
+          tone: 'danger',
+          checkboxLabel: t('同时删除已有 Token 用量和费用统计'),
+          checkboxDefaultChecked: false
         });
-        if (!proceed) {
+        if (!proceed.confirmed) {
           setLimitDraft(String(storageLimitGB));
           return;
         }
+        clearUsage = proceed.checked;
       }
-      await saveStorage({ limitGB: limitValue });
+      await saveStorage({ limitGB: limitValue, ...(clearUsage ? { clearUsage: true } : {}) });
+      await bridge.refreshStats();
     } finally {
       limitCommitPending.current = false;
     }
-  }, [confirm, limitValid, limitValue, runtime?.traceWarningGB, saveStorage, storageLimitGB]);
+  }, [confirmChecked, bridge.refreshStats, limitValid, limitValue, runtime?.traceWarningGB, saveStorage, storageLimitGB]);
 
   const limitControl = editingLimit ? (
     <span className="trace-storage-limit-editor">
@@ -161,7 +171,6 @@ export function SettingsPage({ active }: Props): React.ReactElement {
         id="traceWarningGB"
         type="number"
         min={0}
-        max={1024}
         step={1}
         value={limitDraft}
         aria-label={t("Trace 存储上限，单位 GB")}
@@ -239,24 +248,6 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       }
     }
   }, [bridge.api, bridge.patch, confirm, runtime?.tracingEnabled, runtime?.backgroundGatewayActive]);
-
-  const handleClear = React.useCallback(async () => {
-    if (!(await confirm({
-      title: t('清空所有 Trace 记录？'),
-      body: t('将永久删除全部 Trace 记录，无法撤销。'),
-      confirmText: t('清空'),
-      tone: 'danger',
-    }))) return;
-    try {
-      const next = await bridge.api.clearHistory();
-      setRuntime(next);
-      bridge.patch({ runtime: next });
-      showToast(bridge.runtime === null ? t('浏览器预览不会删除本地数据') : t('Trace 记录已清空'), 'success');
-    } catch (error) {
-      showErrorToast(t('无法清空 Trace 记录'), error);
-    }
-  }, [bridge.api, bridge.patch, bridge.runtime, confirm]);
-
 
   const saveStartup = React.useCallback(async (enabled: boolean) => {
     if (busyStartup) return;
@@ -400,6 +391,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       body: (
         <span className="reset-confirm-copy">
           <span>{t("将删除 XwX Deck 的设置、缓存、Trace 记录和运行日志，清空自定义 Trace、日志目录中的内容。")}</span>
+          {bridge.runtime?.applicationResetArchives && <span>{t("重置前会归档备份；备份仍占用磁盘空间。完成后会重新启动应用。")}</span>}
           <span className="reset-confirm-client-note">{t("勾选下面选项后，还会删除 Claude、ChatGPT／Codex 的核心配置。若客户端仍在运行，将弹窗询问是否强制关闭；未保存的工作会丢失。Skills、Agents 不受影响。")}</span>
         </span>
       ),
@@ -540,10 +532,6 @@ export function SettingsPage({ active }: Props): React.ReactElement {
                 <Pencil className="ic" size={18} />
               </button>
             </div>
-            <button type="button" className="trace-row danger" id="clearHistory" onClick={handleClear}>{t("清空记录")}<span className="trace-row-danger-icon" aria-hidden="true">
-                <Trash2 className="ic" size={18} strokeWidth={1.55} />
-              </span>
-            </button>
           </div>
         </div>
 
@@ -558,18 +546,13 @@ export function SettingsPage({ active }: Props): React.ReactElement {
             </button>
           </div>
           <div id="application-settings-content" hidden={!applicationOpen}>
-          <div className="field-row">
-            <label className="fr-label fr-label-action" htmlFor="themeToggle">{t("夜间模式")}</label>
-            <div className="fr-value">
-              <Toggle
-                id="themeToggle"
-                checked={theme === 'night'}
-                ariaLabel={t("夜间模式")}
-                thumb={<span className="theme-glyph" aria-hidden="true"><Sun className="theme-glyph-sun" /><Moon className="theme-glyph-moon" /></span>}
-                onToggle={() => setTheme(theme === 'night' ? 'day' : 'night')}
-              />
-            </div>
-          </div>
+          {webCryptoStorage?.status === 'migration-required' && <div className="field-row">
+            <span className="fr-label">{t('网页登录密钥')}</span>
+            <div className="fr-value"><button type="button" className="btn" disabled={busyWebCrypto}
+              title={webCryptoStorage.message} onClick={() => void migrateWebCrypto()}>
+              {busyWebCrypto ? t('迁移中…') : t('迁移到本地')}
+            </button></div>
+          </div>}
           <div className="field-row">
             <label className="fr-label fr-label-action" htmlFor="applicationLanguage">{t("语言")}</label>
             <div className="fr-value"><LanguagePicker value={language} busy={savingLanguage} onChange={next => void selectLanguage(next)} /></div>

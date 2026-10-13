@@ -45,9 +45,9 @@ function TokenReadout({ stats, period }: TokenReadoutProps): React.ReactElement 
   const nothingPriced = showCost && !slot.costComplete && slot.costUsd === 0;
   const partialCost = showCost && !slot.costComplete && !nothingPriced;
   const costHint = nothingPriced
-    ? t('这段时间使用的模型都没有可信价格可用，因此不给出金额。按输入长度分档或分时段计费的模型需要落盘时记录的分桶才能计算，升级前抓取的用量没有这份分桶；清空 Trace 记录后重新抓取即可恢复完整计费。')
+    ? t('缺少可靠的费率或用量，暂时无法计算费用；其他统计正常显示。')
     : partialCost
-      ? t('部分模型缺少可信价格或缺少缓存写 TTL 分档，未计入合计；显示的是已核验模型的下限。升级前记录的用量无法拆分缓存，清空 Trace 记录后重新抓取即可恢复完整计费。')
+      ? t('金额只合计已知费用；未计价请求的数量和原因可在仪表盘查看。')
       : pres.toggleHint;
 
   return (
@@ -60,10 +60,10 @@ function TokenReadout({ stats, period }: TokenReadoutProps): React.ReactElement 
         aria-label={t("切换 Token 与费用")}
         title={costHint}
         onClick={() => setShowCost(c => !c)}
-        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowCost(c => !c); } }}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
       >
         <div className="readout-eyebrow">
-          <span className="readout-label" id="readoutLabel">{pres.label}{partialCost ? t('（部分）') : nothingPriced ? t('（无可信价格）') : ''}</span>
+          <span className="readout-label" id="readoutLabel">{pres.label}{nothingPriced ? t('（无可信价格）') : ''}</span>
         </div>
         <div className="readout-value" id="readoutValue" data-range={range}>
           <ReadoutDigits
@@ -74,7 +74,6 @@ function TokenReadout({ stats, period }: TokenReadoutProps): React.ReactElement 
                 ? `${pres.value}${pres.unit}`
                 : pres.unit === '$' ? `$${pres.value}` : String(pres.value)}
           />
-          {partialCost ? <span className="readout-partial" aria-hidden="true">+</span> : null}
         </div>
       </div>
     </div>
@@ -133,17 +132,16 @@ export function SignalPage({ active }: Props): React.ReactElement {
   const initialRestartNoticeCheckedRef = React.useRef(false);
 
   const capturing = bridge.runtime?.tracingEnabled === true;
-  // Tray and connection-notice switches report through traceTransition and
+  // Tray and recovery Toast switches report through traceTransition and
   // get the same hidden-until-ready treatment.
   const transition = bridge.runtime?.traceTransition;
   const hidden = pending || !!transition;
   const clients = (bridge.runtime?.clients ?? []).filter(client =>
-    bridge.modelClients.some(id => client.id === 'claude-cli' ? modelClientRoute(id) === 'claude' : client.id === 'codex-cli' ? modelClientRoute(id) === 'codex' : id === client.id)
-    || (capturing && client.enabled));
+    bridge.modelClients.some(id => client.id === 'claude-cli' ? modelClientRoute(id) === 'claude' : client.id === 'codex-cli' ? modelClientRoute(id) === 'codex' : id === client.id));
   const series = bridge.traceStats?.series ?? [];
   const appearance = bridge.runtime?.traceAppearance;
   const skin = appearance?.skin ?? 'classic';
-  const showThroughput = appearance?.showThroughput !== false;
+  const showThroughput = appearance?.showThroughput === true;
 
   // The idle/live layout belongs to the Trace page, not to the classic
   // particle skin. Keep this global CSS state updated even when clean or
@@ -195,20 +193,21 @@ export function SignalPage({ active }: Props): React.ReactElement {
   }, [syncTimers]);
 
   const handleToggle = React.useCallback(async () => {
-    // Two surfaces can start this operation (this page and the connection
-    // notice), and the tray can start it from outside the renderer entirely.
+    // Two surfaces can start this operation (this page and the recovery
+    // Toast), and the tray can start it from outside the renderer entirely.
     // A transition reported by runtime means one is already in flight.
     if (togglingRef.current || bridge.runtime?.traceTransition) return;
     togglingRef.current = true;
     setPending(true);
     const startedAt = performance.now();
+    let cancelled = false;
     try {
       const next = await bridge.api.toggleTracing(!capturing);
-      bridge.patch({ runtime: next });
+      if (!bridge.patch({ runtime: next })) return;
       if (next.lastError) {
         showLifecycleNotice(lifecycleFailure(next.lastError, next.tracingEnabled ? t('接入 Trace') : t('恢复客户端配置')));
       } else if (next.tracingEnabled && next.clients.some(client => client.enabled && client.status === 'skipped')) {
-        // The persistent connection notice explains which client did not join.
+        // The shared recovery actions publish skipped-client guidance through Toast.
         clearLifecycleNotice();
       } else if (next.tracingEnabled) {
         showLifecycleNotice({
@@ -232,11 +231,11 @@ export function SignalPage({ active }: Props): React.ReactElement {
           confirmText: t('强制停止'),
           tone: 'danger'
         });
-        if (!force) return;
+        if (!force) { cancelled = true; return; }
         setPending(true);
         try {
           const next = await bridge.api.toggleTracing(false, true);
-          bridge.patch({ runtime: next });
+          if (!bridge.patch({ runtime: next })) return;
           showLifecycleNotice(next.lastError
             ? lifecycleFailure(next.lastError, t('恢复客户端配置'))
             : traceStoppedNotice(next.backgroundGatewayAction === 'close', next.claudeDesktopRestart, next.connectionNotice));
@@ -248,17 +247,30 @@ export function SignalPage({ active }: Props): React.ReactElement {
       showLifecycleNotice(lifecycleFailure(e, capturing ? t('停止 Trace') : t('开启 Trace')));
     } finally {
       const left = SWITCH_MIN_HIDDEN_MS - (performance.now() - startedAt);
-      if (left > 0) await new Promise(resolve => setTimeout(resolve, left));
+      if (!cancelled && left > 0) await new Promise(resolve => setTimeout(resolve, left));
       togglingRef.current = false;
       setPending(false);
     }
   }, [capturing, bridge.api, bridge.patch, bridge.runtime?.traceTransition, confirm]);
 
-  // Immediate response to the dial: a ripple leaves the button on this frame
-  // while the page fades out.
-  const handleDialClick = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    emitFieldRipple(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  // Native capture reaches rail actions and tabs before their actions run.
+  // The appearance panel keeps its controls independent of the dot field.
+  React.useEffect(() => {
+    if (!active) return;
+    const onClick = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest('#appearanceDrawer, .appearance-dismiss')) return;
+      const button = event.target.closest<HTMLElement>('button, [role="button"], [role="tab"], [role="switch"], [role="checkbox"], [role="radio"], [role="menuitem"], a[href]');
+      if (!button || button.closest(':disabled, [aria-disabled="true"], [data-disabled], [inert]')) return;
+      const rect = button.getBoundingClientRect();
+      emitFieldRipple(event.detail ? event.clientX : rect.left + rect.width / 2,
+        event.detail ? event.clientY : rect.top + rect.height / 2);
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
+  }, [active]);
+
+  const handleDialClick = React.useCallback(() => {
     void handleToggle();
   }, [handleToggle]);
 
@@ -309,7 +321,7 @@ export function SignalPage({ active }: Props): React.ReactElement {
           style={customBackgroundStyle(bridge.runtime)}
           aria-hidden="true"
         />
-        {skin === 'classic' ? <ParticleField /> : null}
+        {skin === 'classic' ? <ParticleField active={active} scale={96} dotSize={0.7} /> : null}
         {skin === 'custom' && appearance?.customImageUrl ? (
           <div
             id="traceCustomOverlay"

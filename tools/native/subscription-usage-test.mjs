@@ -32,7 +32,7 @@ try{
  start();let checks=0;
  for(const [platform,remaining] of [['copilot',72],['claude',60],['cursor',65],['grok',55]]){const snapshot=await rpc('refreshSubscriptionUsage',{platform});const account=snapshot.accounts.find(a=>a.platform===platform);assert.equal(account.quota.remainingPercent,remaining);assert.ok(account.quota.resetsAt>Date.now()/1000);checks++;console.log('PASS '+platform+' reads verified percentage/reset using its own credential and official request shape');}
  const at=calls.length;for(let i=0;i<10;i++)await rpc('getSubscriptionAccounts');assert.equal(calls.length,at);checks++;console.log('PASS account metadata polling does not issue quota network requests');
- await assert.rejects(rpc('refreshSubscriptionUsage',{platform:'chatgpt'}),/暂未提供/);assert.equal(calls.length,at);checks++;console.log('PASS ChatGPT OSS login never sends its token to an unverified Codex usage endpoint');
+ await assert.rejects(rpc('refreshSubscriptionUsage',{platform:'chatgpt'}),/没有已登录的订阅账号/);assert.equal(calls.length,at);checks++;console.log('PASS ChatGPT quota without a connected account is rejected before any network request');
  malformed=true;await assert.rejects(rpc('refreshSubscriptionUsage',{platform:'copilot'}),/没有可确认/);assert.equal((await rpc('getSubscriptionAccounts')).accounts.find(a=>a.platform==='copilot').quota.remainingPercent,72);checks++;console.log('PASS malformed quota does not overwrite the last verified reading with zero or unlimited');
  assert.ok(!JSON.stringify(await rpc('getSubscriptionAccounts')).includes('fixture-github'));assert.ok(!String(await readFile(join(root,'subscription-routing.json')).catch(()=>'' )).includes('fixture-github'));
  await stop();console.log(JSON.stringify({ok:true,checks,httpRequests:calls.length,root}));

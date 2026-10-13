@@ -36,7 +36,7 @@ fn executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        return fs::metadata(path).is_ok_and(|meta| meta.permissions().mode() & 0o111 != 0);
+        fs::metadata(path).is_ok_and(|meta| meta.permissions().mode() & 0o111 != 0)
     }
     #[cfg(not(unix))]
     {
@@ -257,15 +257,14 @@ mod tests {
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
+            let mut nonce = [0u8; 16];
+            getrandom::fill(&mut nonce).unwrap();
+            let nonce: String = nonce.iter().map(|value| format!("{value:02x}")).collect();
             let root = env::temp_dir().join(format!(
-                "xwx-client-discovery-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
+                "xwx-client-discovery-{}-{nonce}",
+                std::process::id()
             ));
-            fs::create_dir_all(&root).unwrap();
+            fs::create_dir(&root).unwrap();
             Self(root)
         }
         fn file(&self, path: &str, runnable: bool) {

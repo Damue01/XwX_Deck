@@ -21,6 +21,10 @@ struct ImportItem {
     adapter: String,
     status: String,
     reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_kind: Option<String>,
+    #[serde(skip)]
+    account: Option<imported_subscriptions::Registration>,
     #[serde(skip)]
     provider: Option<Provider>,
     #[serde(skip)]
@@ -50,7 +54,7 @@ fn field<'a>(v: &'a Value, keys: &[&str]) -> &'a str {
         .unwrap_or("")
         .trim()
 }
-fn json_file(path: &Path) -> Result<Value> {
+pub(super) fn json_file(path: &Path) -> Result<Value> {
     let meta = fs::metadata(path).map_err(|_| "无法读取配置文件")?;
     if !meta.is_file() || meta.len() > MAX_JSON {
         return Err("配置文件超过 8 MB 或不是普通文件".into());
@@ -83,6 +87,8 @@ fn skipped(name: &str, raw: &Value, reason: &str) -> ImportItem {
         adapter: String::new(),
         status: "unsupported".into(),
         reason: reason.into(),
+        account_kind: None,
+        account: None,
         provider: None,
         models: vec![],
     }
@@ -176,6 +182,8 @@ fn entry(
         adapter: provider.adapter.clone(),
         status: if disabled { "paused" } else { "new" }.into(),
         reason: if disabled { "来源中已停用" } else { "" }.into(),
+        account_kind: None,
+        account: None,
         provider: Some(provider),
         models,
     }
@@ -267,6 +275,7 @@ fn read_magpie(path: &Path) -> Result<Vec<ImportItem>> {
                     label.push_str(&format!(" ({api})"));
                 }
                 let provider = Provider {
+                    other: Default::default(),
                     base_url: text(raw, api).into(),
                     bearer_token: key.into(),
                     adapter: (*adapter).into(),
@@ -308,6 +317,7 @@ fn cc_entry(
         return skipped(name, raw, "含自定义请求覆盖，暂不支持完整导入");
     }
     let mut p = Provider {
+        other: Default::default(),
         claude_models: json!({"fable":"","opus":"","sonnet":"","haiku":""}),
         ..Default::default()
     };
@@ -565,24 +575,96 @@ fn read_cc(path: &Path) -> Result<Vec<ImportItem>> {
 }
 fn read_deck(path: &Path) -> Result<Vec<ImportItem>> {
     let config = json_file(path)?;
-    let rows = config["providers"]["connections"].as_array()
+    let rows = config["providers"]["connections"]
+        .as_array()
         .or_else(|| config["connections"].as_array())
         .ok_or("没有找到 XwX Deck 模型服务配置")?;
-    if rows.len() > 1000 { return Err("配置条目超过 1000 个上限".into()); }
+    if rows.len() > 1000 {
+        return Err("配置条目超过 1000 个上限".into());
+    }
     let mut out = vec![];
     for raw in rows {
         let name = field(raw, &["displayName", "id"]);
         if !text(raw, "subscriptionAccountId").is_empty() {
-            out.push(skipped(name, raw, "此条目需要重新登录订阅账号")); continue;
+            out.push(skipped(name, raw, "此条目需要重新登录订阅账号"));
+            continue;
         }
-        let mut p: Provider = serde_json::from_value(raw.clone()).map_err(|_| "旧版 Deck 配置格式不受支持，原文件已保留")?;
-        if p.adapter.is_empty() { p.adapter = if p.codex_api_format.is_empty() { "auto".into() } else { p.codex_api_format.clone() }; }
+        let mut p: Provider = serde_json::from_value(raw.clone())
+            .map_err(|_| "旧版 Deck 配置格式不受支持，原文件已保留")?;
+        if p.adapter.is_empty() {
+            p.adapter = if p.codex_api_format.is_empty() {
+                "auto".into()
+            } else {
+                p.codex_api_format.clone()
+            };
+        }
         let mut models = names(&config["importedProviderModels"][&p.id]);
-        if !p.codex_model.is_empty() { models.push(p.codex_model.clone()); }
-        models.sort(); models.dedup();
+        if !p.codex_model.is_empty() {
+            models.push(p.codex_model.clone());
+        }
+        models.sort();
+        models.dedup();
         out.push(entry(name.into(), p, models, raw, false, &[15721, 3425]));
     }
     Ok(out)
+}
+fn read_accounts(path: &Path) -> Result<Vec<ImportItem>> {
+    let document = json_file(path)?;
+    let rows = document.as_array().ok_or("没有找到 Magpie 账号列表")?;
+    let mut out = vec![];
+    for row in rows {
+        let agent = text(row, "agent");
+        if !["codex", "chatgpt-api"].contains(&agent) {
+            continue;
+        }
+        let name = text(row, "user");
+        match imported_subscriptions::Registration::new(path, row, agent, &row["auth"]) {
+            Ok(account) => out.push(account_item(
+                account,
+                row,
+                row["paused"] == true || row["on"] == false,
+            )),
+            Err(reason) => out.push(skipped(name, row, &reason)),
+        }
+    }
+    Ok(out)
+}
+fn account_item(
+    account: imported_subscriptions::Registration,
+    raw: &Value,
+    paused: bool,
+) -> ImportItem {
+    let problem = account.auth(Path::new("/"), false).err();
+    ImportItem {
+        fingerprint: fingerprint(&json!({"registration":account,"source":raw})),
+        name: account.label.clone(),
+        base_url: if account.label == account.email {
+            String::new()
+        } else {
+            account.email.clone()
+        },
+        adapter: String::new(),
+        status: if problem.is_some() {
+            "needs-login"
+        } else if paused {
+            "paused"
+        } else {
+            "new"
+        }
+        .into(),
+        reason: problem
+            .unwrap_or_else(|| "复用来源登录，原应用继续负责续期；移除仅解除关联".into()),
+        account_kind: Some(account.kind.clone()),
+        account: Some(account),
+        provider: None,
+        models: vec![],
+    }
+}
+fn read_official_auth(path: &Path) -> Result<Vec<ImportItem>> {
+    let auth = json_file(path)?;
+    let mut account = imported_subscriptions::Registration::new(path, &json!({}), "codex", &auth)?;
+    account.agent = "auth-file".into();
+    Ok(vec![account_item(account, &auth, false)])
 }
 fn detect_source(path: &Path) -> Result<&'static str> {
     match path.extension().and_then(|s| s.to_str()) {
@@ -591,15 +673,34 @@ fn detect_source(path: &Path) -> Result<&'static str> {
         _ => {}
     }
     let v = json_file(path)?;
-    if v["providers"].is_array() { return Ok("magpie"); }
-    if v["connections"].is_array() || v["providers"]["connections"].is_array() { return Ok("xwx-deck"); }
-    if v.as_object().is_some_and(|o| o.values().any(|s| s["providers"].is_object())) { return Ok("cc-switch"); }
-    if v["env"].is_object() { return Ok("claude"); }
+    if v.is_array()
+        && v.as_array()
+            .is_some_and(|rows| rows.iter().any(|r| r["agent"].is_string()))
+    {
+        return Ok("magpie-accounts");
+    }
+    if v["tokens"].is_object() {
+        return Ok("codex-auth");
+    }
+    if v["providers"].is_array() {
+        return Ok("magpie");
+    }
+    if v["connections"].is_array() || v["providers"]["connections"].is_array() {
+        return Ok("xwx-deck");
+    }
+    if v.as_object()
+        .is_some_and(|o| o.values().any(|s| s["providers"].is_object()))
+    {
+        return Ok("cc-switch");
+    }
+    if v["env"].is_object() {
+        return Ok("claude");
+    }
     Err("无法识别配置格式，原文件已保留".into())
 }
 // Compare physical paths on both sides. Windows canonical paths use the
 // extended \?\ prefix, so comparing one against an ordinary root rejects valid files.
-fn within_isolated_root(path: &Path, root: &Path) -> bool {
+pub(super) fn within_isolated_root(path: &Path, root: &Path) -> bool {
     if !path.starts_with(root)
         || path
             .components()
@@ -642,7 +743,16 @@ fn read_client(path: &Path, source: &str, isolated_root: Option<&Path>) -> Resul
         .get("model_provider")
         .and_then(Item::as_str)
         .unwrap_or("openai");
-    if selected == "xwx_deck" {
+    if selected == "xwx_deck"
+        || parsed
+            .get("model_catalog_json")
+            .and_then(Item::as_str)
+            .is_some_and(|p| {
+                Path::new(p)
+                    .file_name()
+                    .is_some_and(|n| n == "xwx-deck-model-catalog.json")
+            })
+    {
         // This is Deck's generated route, not an independent import source.
         return Ok(vec![]);
     }
@@ -673,6 +783,9 @@ fn read_client(path: &Path, source: &str, isolated_root: Option<&Path>) -> Resul
             api_key = field(&auth, &["OPENAI_API_KEY"]).into();
             if api_key.is_empty() && (auth["tokens"].is_object() || auth["auth_mode"] == "chatgpt")
             {
+                if let Ok(accounts) = read_official_auth(&auth_path) {
+                    return Ok(accounts);
+                }
                 return Ok(vec![skipped(
                     "Codex",
                     &json!({"config":config}),
@@ -733,7 +846,17 @@ impl Pilot {
                 serde_json::from_value(input["sources"].clone()).map_err(|_| "无效导入来源")?;
             if specs.len() > 8
                 || specs.iter().any(|s| {
-                    !["magpie", "cc-switch", "claude", "codex", "xwx-deck", "auto"].contains(&s.source.as_str())
+                    ![
+                        "magpie",
+                        "magpie-accounts",
+                        "codex-auth",
+                        "cc-switch",
+                        "claude",
+                        "codex",
+                        "xwx-deck",
+                        "auto",
+                    ]
+                    .contains(&s.source.as_str())
                         || !Path::new(&s.path).is_absolute()
                 })
             {
@@ -769,8 +892,15 @@ impl Pilot {
         } else {
             cc.join("cc-switch.db")
         };
-        Ok(vec![
-            SourceSpec { source: "xwx-deck".into(), path: self.root.join("settings-before-native-migration.json").to_string_lossy().into() },
+        let mut specs = vec![
+            SourceSpec {
+                source: "xwx-deck".into(),
+                path: self
+                    .root
+                    .join("settings-before-native-migration.json")
+                    .to_string_lossy()
+                    .into(),
+            },
             SourceSpec {
                 source: "magpie".into(),
                 path: config
@@ -781,6 +911,10 @@ impl Pilot {
             SourceSpec {
                 source: "cc-switch".into(),
                 path: cc_path.to_string_lossy().into(),
+            },
+            SourceSpec {
+                source: "magpie-accounts".into(),
+                path: config.join("magpie/logins.json").to_string_lossy().into(),
             },
             SourceSpec {
                 source: "claude".into(),
@@ -794,20 +928,39 @@ impl Pilot {
                 source: "codex".into(),
                 path: self.config_path().to_string_lossy().into(),
             },
-        ])
+        ];
+        let auth = self.config_path().with_file_name("auth.json");
+        if self.isolated && !within_isolated_root(&auth, &self.root) {
+            return Err("隔离验收不能读取外部账号文件".into());
+        }
+        if auth.exists() && json_file(&auth).is_ok_and(|v| v["tokens"].is_object()) {
+            specs.insert(
+                0,
+                SourceSpec {
+                    source: "codex-auth".into(),
+                    path: auth.to_string_lossy().into(),
+                },
+            );
+        }
+        Ok(specs)
     }
-    fn import_scan(&self, input: &Value) -> Result<Preview> {
+    async fn import_scan(&self, input: &Value) -> Result<Preview> {
         let disk = self.import_target()?;
+        let known = self.subscriptions.snapshot().await;
         let mut sources = vec![];
         for mut spec in self.import_specs(input)? {
             let path = Path::new(&spec.path);
-            if self.isolated && !within_isolated_root(path, &self.root) { return Err("隔离验收只能读取隔离目录中的来源文件".into()); }
-            if spec.source == "auto" { spec.source = detect_source(path)?.into(); }
+            if self.isolated && !within_isolated_root(path, &self.root) {
+                return Err("隔离验收只能读取隔离目录中的来源文件".into());
+            }
+            if spec.source == "auto" {
+                spec.source = detect_source(path)?.into();
+            }
             let found = path.exists();
             let mut source = ImportSource {
                 source: spec.source.clone(),
                 name: match spec.source.as_str() {
-                    "magpie" => "Magpie",
+                    "magpie" | "magpie-accounts" => "Magpie",
                     "cc-switch" => "CC Switch",
                     "claude" => "Claude",
                     "xwx-deck" => "旧版 XwX Deck",
@@ -831,6 +984,8 @@ impl Pilot {
                 }
                 match match spec.source.as_str() {
                     "magpie" => read_magpie(path),
+                    "magpie-accounts" => read_accounts(path),
+                    "codex-auth" => read_official_auth(path),
                     "cc-switch" => read_cc(path),
                     "xwx-deck" => read_deck(path),
                     _ => read_client(
@@ -851,6 +1006,17 @@ impl Pilot {
                                     item.reason = "已在 XwX Deck 中".into();
                                 }
                             }
+                            if let Some(account) = &item.account {
+                                if known["accounts"].as_array().is_some_and(|rows| {
+                                    rows.iter().any(|old| {
+                                        old["accountKey"] == account.identity
+                                            && old["authKind"] == account.kind
+                                    })
+                                }) {
+                                    item.status = "existing".into();
+                                    item.reason = "已在 XwX Deck 中复用此登录".into();
+                                }
+                            }
                         }
                         source.items = items;
                     }
@@ -862,9 +1028,21 @@ impl Pilot {
         let mut seen: HashSet<String> = HashSet::new();
         for source in &mut sources {
             for item in &mut source.items {
+                if let Some(account) = &item.account {
+                    if !seen.insert(format!("account:{}:{}", account.kind, account.identity)) {
+                        item.status = "duplicate".into();
+                    }
+                }
                 if let Some(p) = &item.provider {
-                    let identity = fingerprint(&json!([p.base_url.trim_end_matches('/'), p.bearer_token, p.adapter]));
-                    if !seen.insert(identity) { item.status = "duplicate".into(); item.reason = String::new(); }
+                    let identity = fingerprint(&json!([
+                        p.base_url.trim_end_matches('/'),
+                        p.bearer_token,
+                        p.adapter
+                    ]));
+                    if !seen.insert(identity) {
+                        item.status = "duplicate".into();
+                        item.reason = String::new();
+                    }
                 }
             }
         }
@@ -873,15 +1051,15 @@ impl Pilot {
             sources,
         })
     }
-    pub(super) fn preview_import(&self, input: &Value) -> Result<Value> {
-        serde_json::to_value(self.import_scan(input)?).map_err(err)
+    pub(super) async fn preview_import(&self, input: &Value) -> Result<Value> {
+        serde_json::to_value(self.import_scan(input).await?).map_err(err)
     }
-    pub(super) fn apply_import(&mut self, input: &Value) -> Result<Value> {
+    pub(super) async fn apply_import(&mut self, input: &Value) -> Result<Value> {
         if let Some(problem) = &self.settings_problem {
             return Err(problem.clone());
         }
         let expected = text(input, "targetDigest");
-        let scan = self.import_scan(input)?;
+        let scan = self.import_scan(input).await?;
         if expected != scan.target_digest {
             return Err("XwX Deck 配置已变化，请刷新导入列表；原配置已保留".into());
         }
@@ -891,6 +1069,7 @@ impl Pilot {
             return Err("请选择要导入的配置".into());
         }
         let mut candidates = vec![];
+        let mut accounts = vec![];
         let mut seen = HashSet::new();
         for selected in selected {
             if !seen.insert(selected.clone()) {
@@ -905,6 +1084,10 @@ impl Pilot {
             if item.status == "existing" || item.status == "duplicate" {
                 continue;
             }
+            if let Some(account) = &item.account {
+                accounts.push(account.clone());
+                continue;
+            }
             let p = item
                 .provider
                 .as_ref()
@@ -914,6 +1097,38 @@ impl Pilot {
         let old_connections = self.settings.connections.clone();
         let old_other = self.settings.other.clone();
         let mut added = vec![];
+        let mut added_accounts = vec![];
+        for account in accounts {
+            let value = self
+                .settings
+                .other
+                .entry(imported_subscriptions::KEY)
+                .or_insert(json!([]));
+            let rows = value
+                .as_array_mut()
+                .ok_or("导入账号记录无法读取，原设置已保留")?;
+            if rows.iter().any(|old| old["id"] == account.id) {
+                continue;
+            }
+            rows.push(serde_json::to_value(&account).map_err(err)?);
+            added_accounts.push(account.label.clone());
+            let provider = account.provider(
+                if account.kind == "official" {
+                    "https://chatgpt.com/backend-api"
+                } else {
+                    "https://api.openai.com/v1"
+                }
+                .into(),
+            );
+            if !self
+                .settings
+                .connections
+                .iter()
+                .any(|old| old.id == provider.id)
+            {
+                self.settings.connections.push(provider);
+            }
+        }
         for (mut p, models) in candidates {
             if self.settings.connections.iter().any(|old| same(old, &p)) {
                 continue;
@@ -956,7 +1171,7 @@ impl Pilot {
             if storage::digest(current.as_bytes()) != expected {
                 return Err("XwX Deck 配置已在外部修改，未覆盖原文件".into());
             }
-            if !added.is_empty() {
+            if !added.is_empty() || !added_accounts.is_empty() {
                 let backup = self
                     .root
                     .join(format!("settings-before-import-{}.json", millis()));
@@ -970,6 +1185,24 @@ impl Pilot {
             self.settings.other = old_other;
             return Err(error);
         }
-        Ok(json!({"providers":self.providers(),"added":added}))
+        Ok(json!({"providers":self.providers(),"added":added,"addedAccounts":added_accounts}))
+    }
+    pub(super) fn remove_imported_account(&mut self, id: &str) -> Result<Value> {
+        self.import_target()?;
+        let old = self.settings.other.clone();
+        if let Some(rows) = self
+            .settings
+            .other
+            .get_mut(imported_subscriptions::KEY)
+            .and_then(Value::as_array_mut)
+        {
+            rows.retain(|row| row["id"] != id);
+        }
+        if let Err(e) = self.persist() {
+            self.settings.other = old;
+            return Err(e);
+        }
+        self.subscriptions.pool.quota_failed(id, "");
+        Ok(json!({"revoked":false,"unlinked":true}))
     }
 }

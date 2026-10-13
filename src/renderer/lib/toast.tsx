@@ -1,3 +1,4 @@
+import { createToastQueue } from './toast-queue';
 import { t } from '@/lib/i18n';
 import type React from 'react';
 import { ToastProvider, toastManager } from '@/components/ui/toast';
@@ -6,13 +7,13 @@ import { userErrorMessage } from '../../shared/errors';
 
 export { ToastProvider };
 
-const APP_TOAST_SLOT_ID = 'xwx-deck-notification';
-let activeToastKey: string | undefined;
+const lifecycleToastKeys = new Set<string>();
+const lifecycleNotices = new Map<string, LifecycleNotice>();
+let lifecycleActionsBusy = false;
 let lastDiagnosticNotice: LifecycleNotice | undefined;
 export const DIAGNOSTIC_NOTICE_EVENT = 'xwxdeck:diagnostic-notice';
 export const OPEN_REPAIR_EVENT = 'xwxdeck:open-repair';
 export const RESTORE_CLIENT_CONFIG_EVENT = 'xwxdeck:restore-client-config';
-export const LIFECYCLE_NOTICE_EVENT = 'xwxdeck:lifecycle-notice';
 export const TRACE_ACTION_EVENT = 'xwxdeck:trace-action';
 export const REPAIR_SETTINGS_EVENT = 'xwxdeck:repair-settings';
 export const REPAIR_CODEX_CONFIG_EVENT = 'xwxdeck:repair-codex-config';
@@ -68,53 +69,61 @@ export function clearLastDiagnosticNotice(): void {
 }
 
 export function clearLifecycleNotice(): void {
+  for (const key of lifecycleToastKeys) closeToast(key);
+  lifecycleToastKeys.clear();
+  lifecycleNotices.clear();
   clearLastDiagnosticNotice();
-  window.dispatchEvent(new CustomEvent(LIFECYCLE_NOTICE_EVENT, { detail: null }));
 }
 
 export function showLifecycleNotice(notice: LifecycleNotice, key?: string): void {
-  if (notice.type === 'success') {
-    clearLifecycleNotice();
-    showToast(notice.message, 'success', key, {
-      description: notice.description
-    });
-    return;
-  }
-  if (!isPersistentLifecycleNotice(notice)) {
-    const action = notice.action;
-    showToast(notice.message, notice.type ?? 'error', key, {
-      description: notice.description,
-      actionProps: action ? {
-        type: 'button',
-        children: notice.actionLabel ?? noticeActionLabel(action),
-        onClick: () => {
-          closeToast(key);
-          runNoticeAction(action);
-        }
-      } : undefined
-    });
-    return;
-  }
-  // Lifecycle problems stay in the persistent top notice. Publishing the
-  // same problem as a Toast as well creates two competing prompts. Only
-  // safety/blocking states use this persistent surface.
-  closeToast();
+  if (notice.type === 'success') clearLifecycleNotice();
+  const persistent = isPersistentLifecycleNotice(notice);
+  const toastKey = key ?? (persistent ? 'runtime-lifecycle-issue' : `${notice.type}:${notice.message}`);
+  if (persistent) { lifecycleToastKeys.add(toastKey); lifecycleNotices.set(toastKey, notice); }
+  const action = (kind: LifecycleNotice['action'], label?: string) => kind ? {
+    type: 'button' as const, disabled: persistent && lifecycleActionsBusy, children: label ?? noticeActionLabel(kind),
+    onClick: () => { if (!persistent) closeToast(toastKey); runNoticeAction(kind); }
+  } : undefined;
+  showToast(notice.message, notice.type ?? 'error', toastKey, {
+    description: notice.description,
+    timeout: persistent ? 0 : undefined,
+    actionProps: action(notice.action, notice.actionLabel),
+    secondaryActionProps: action(notice.secondaryAction, notice.secondaryActionLabel)
+  });
   if (notice.type === 'error') {
     lastDiagnosticNotice = notice;
     window.dispatchEvent(new Event(DIAGNOSTIC_NOTICE_EVENT));
   }
-  window.dispatchEvent(new CustomEvent(LIFECYCLE_NOTICE_EVENT, { detail: notice }));
+}
+
+export function setLifecycleActionsBusy(busy: boolean): void {
+  lifecycleActionsBusy = busy;
+  for (const [key, notice] of lifecycleNotices) if (notifications.has(key)) showLifecycleNotice(notice, key);
 }
 
 interface ShowToastOptions {
   readonly description?: string;
   readonly timeout?: number;
   readonly actionProps?: React.ComponentPropsWithoutRef<'button'>;
+  readonly secondaryActionProps?: React.ComponentPropsWithoutRef<'button'>;
 }
+interface Notification extends ShowToastOptions {
+  title: string;
+  type: 'error' | 'info' | 'success' | 'warning';
+  timeout: number;
+}
+const toastData = (value: Notification) => ({ secondaryActionProps: value.secondaryActionProps });
+const notifications = createToastQueue<Notification>({
+  show: (id, value, onClose, onRemove) => toastManager.add({
+    ...value, id, data: toastData(value), onClose, onRemove
+  }),
+  update: (id, value) => toastManager.update(id, { ...value, data: toastData(value) }),
+  close: id => toastManager.close(id)
+});
 
 export function showToast(
   message: string,
-  type: 'error' | 'info' | 'success' | 'warning' = 'info',
+  type: Notification['type'] = 'info',
   key?: string,
   options: ShowToastOptions = {}
 ): void {
@@ -122,33 +131,27 @@ export function showToast(
     lastDiagnosticNotice = { message, description: options.description ? t(options.description) : undefined, type };
     window.dispatchEvent(new Event(DIAGNOSTIC_NOTICE_EVENT));
   }
+  // Short UI notifications omit the final sentence stop. Keep inner punctuation,
+  // ellipses and the original message/key used by lifecycle and deduplication.
+  const copy = (text: string) => text.replace(/(?<!\.)[。.]\s*$/u, '');
+  const title = copy(t(message));
+  const description = options.description ? copy(t(options.description)) : undefined;
+  const defaultTimeout = type === 'success' ? 3000 : type === 'info' ? 4000 : type === 'warning' ? 5000 : 6000;
+  // A queued notification starts its timer only on delivery. Longer copy gets
+  // reading time; blocking recovery remains until dismissed or resolved.
+  const timeout = options.timeout === 0 ? 0 : Math.min(30_000, Math.max(options.timeout ?? defaultTimeout,
+    Math.min(30_000, (title.length + (description?.length ?? 0)) * 70), options.actionProps ? 8000 : 0));
   const toastKey = key ?? `${type}:${message}`;
-  const defaultTimeout = type === 'success' ? 3000
-    : type === 'info' ? 4000
-      : type === 'warning' ? 5000
-        : 6000;
-  const maxTimeout = options.actionProps ? 8000 : defaultTimeout;
-  activeToastKey = toastKey;
-  toastManager.add({
-    id: APP_TOAST_SLOT_ID,
-    // Base UI merges stable-id updates. Always publish optional fields so a
-    // short follow-up notice cannot inherit the previous description, action,
-    // or extended timeout.
-    description: options.description ? t(options.description) : undefined,
-    timeout: Math.min(options.timeout ?? defaultTimeout, maxTimeout),
-    actionProps: options.actionProps,
-    onRemove: () => {
-      if (activeToastKey === toastKey) activeToastKey = undefined;
-    },
-    title: t(message),
-    type
+  const actionSignature = (props: ShowToastOptions['actionProps']) => typeof props?.children === 'string' || typeof props?.children === 'number'
+    ? props.children : props ? toastKey : undefined;
+  notifications.add({ key: toastKey,
+    signature: JSON.stringify([type, title, description, actionSignature(options.actionProps), actionSignature(options.secondaryActionProps), timeout]),
+    value: { ...options, title, description, type, timeout, actionProps: options.actionProps, secondaryActionProps: options.secondaryActionProps }
   });
 }
 
 export function closeToast(key?: string): void {
-  if (key && activeToastKey !== key) return;
-  activeToastKey = undefined;
-  toastManager.close(APP_TOAST_SLOT_ID);
+  notifications.close(key);
 }
 
 export function showErrorToast(title: string, error: unknown, key?: string, options: ShowToastOptions = {}): void {

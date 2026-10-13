@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "productionReady": false,
+  "blockers": [
+    "Verify packaged platform authorization and real subscription/client acceptance",
+    "Verify Windows storage and historical public renderer preference migration",
+    "Verify native WebView, safe shutdown and update installation on real platforms"
+  ]
+}

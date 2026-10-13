@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { formatBytes } from '../shared/format-bytes.browser.js';
 import { DEFAULT_TRACE_LIMIT_GB } from '../shared/traceDefaults';
 import { BridgeProvider, useBridge } from '@/bridge/store';
 import { clearLifecycleNotice, closeToast, showToast, showLifecycleNotice, ToastProvider } from '@/lib/toast';
@@ -11,7 +12,7 @@ import { ModelsPage } from '@/features/models/ModelsPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { OnboardingTour } from '@/features/onboarding/OnboardingTour';
 import { UpdateNotification } from '@/features/shell/UpdateNotification';
-import { ConnectionNotice } from '@/features/shell/ConnectionNotice';
+import { TraceRecoveryActions } from '@/features/shell/TraceRecoveryActions';
 import { restoreLanguage, useLanguage, t } from '@/lib/i18n';
 import { applyTheme } from '@/lib/theme';
 import { userErrorMessage } from '@/lib/errors';
@@ -22,6 +23,8 @@ function Shell(): React.ReactElement {
   React.useLayoutEffect(() => { if (bridge.runtime) restoreLanguage(bridge.runtime.language ?? undefined); }, [bridge.runtime?.language, bridge.booted]);
   const [activePage, setActivePage] = React.useState<PageId>('signal');
   const [windowState, setWindowState] = React.useState({ maximized: false, fullscreen: false, nativeFrame: document.documentElement.dataset.platform === 'darwin' });
+  const latestRuntime = React.useRef(bridge.runtime);
+  latestRuntime.current = bridge.runtime;
   const notifiedMissingProviders = React.useRef('');
   const notifiedRuntimeIssue = React.useRef('');
   const notifiedLoadIssues = React.useRef('');
@@ -53,6 +56,8 @@ function Shell(): React.ReactElement {
   }, []);
 
   React.useEffect(() => bridge.api.onNotice(notice => {
+    const runtime = latestRuntime.current;
+    if (notice.runtimeRevision !== undefined && runtime && notice.runtimeRevision < (runtime.revision ?? 0) && (notice.tracingEnabled !== runtime.tracingEnabled || runtime.traceTransition)) return;
     showLifecycleNotice(notice);
   }), [bridge.api]);
 
@@ -61,7 +66,7 @@ function Shell(): React.ReactElement {
   const connectionNotice = bridge.runtime?.connectionNotice;
   const traceStorageBytes = bridge.runtime?.traceStorageBytes ?? 0;
   const traceWarningGB = bridge.runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB;
-  const traceStorageText = bridge.runtime?.storageText ?? '0 B';
+  const traceStorageText = formatBytes(traceStorageBytes);
   React.useEffect(() => {
     if (!bridge.booted || !bridge.runtime) return;
     const id = 'trace-capacity-warning';
@@ -244,7 +249,7 @@ function Shell(): React.ReactElement {
       <div className="body">
         <Rail activePage={activePage} onNavigate={setActivePage} updateState={bridge.updateState} />
         <div className="content-column">
-          <ConnectionNotice />
+          <TraceRecoveryActions />
           <div className="stage">
           <SignalPage active={activePage === 'signal'} />
           <ModelsPage active={activePage === 'models'} />

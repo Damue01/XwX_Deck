@@ -12,7 +12,7 @@
     await wait(() => window.xwxDeck && document.querySelector('[data-page="models"]'), 'production renderer');
     await delay(300);
     document.querySelector('#onboarding-setup .tour-skip')?.click();
-    await wait(() => !document.querySelector('#onboarding-setup, .tour-root'), 'initial onboarding dismissed');
+    await wait(() => !document.querySelector('#onboarding-setup'), 'initial onboarding dismissed');
     const api = window.xwxDeck;
     if (!localStorage.getItem('xwx-universal-ui-seeded')) {
       const context = await invoke('smokeContext');
@@ -44,6 +44,8 @@
     document.querySelector('#add-configuration-dialog button.configuration-close[aria-label^="关闭"]').click();
     await wait(() => !document.querySelector('#add-configuration-dialog'), 'manager closed');
     check('closing the manager releases the modal', !document.querySelector('.setup-card-backdrop'));
+    // The traffic chart is off by default; this check covers its retained range, so turn it on first.
+    await api.setTraceAppearance({ showThroughput: true });
     document.querySelector('[data-page="signal"]').click(); document.querySelector('#captureBtn').click();
     await wait(async () => (await api.getState()).tracingEnabled && document.querySelector('[data-client="opencode-live"]'), 'Trace started');
     await delay(400);
@@ -69,6 +71,15 @@
     await wait(async () => !(await api.getClientRoute('opencode')).enabled, 'source paused');
     check('pausing one source preserves other routes', (await api.getClientRoute('cline')).enabled && (await api.getState()).tracingEnabled);
     await api.toggleTracing(false);
+    document.querySelector('[data-page="models"]').click();
+    document.querySelector('.models-manage-clients').click();
+    await wait(()=>document.querySelector('[data-client-download="oh-my-pi"]'),'independent CLI in manager');
+    document.querySelector('[data-client-download="oh-my-pi"]').click();
+    await wait(()=>[...document.querySelectorAll('.configuration-client-actions button')].some(button=>button.textContent==='添加到模型页'&&!button.disabled),'manual CLI can be added');
+    [...document.querySelectorAll('.configuration-client-actions button')].find(button=>button.textContent==='添加到模型页').click();
+    await wait(()=>!document.querySelector('#add-configuration-dialog')&&document.querySelector('[data-client-tab="oh-my-pi"][aria-selected="true"]'),'new CLI tab selected');
+    await wait(()=>document.querySelector('#client-panel-oh-my-pi .gateway-client-connection'),'manual connection settings');
+    check('manual CLI has an independent model panel and does not claim automatic configuration',(await api.getClientRoute('oh-my-pi')).automatic===false&&!!document.querySelector('[data-client-tab="opencode"]')&&!!document.querySelector('button[aria-label="oh-my-pi 使用的模型服务"]'));
     check('no framework overlay or console errors', !document.querySelector('vite-error-overlay') && window.__pilotErrors.length === 0);
     await window.__TAURI__.core.invoke('pilot_smoke_report', {report:{passed:true,checks,viewport:{width:innerWidth,height:innerHeight},errors:window.__pilotErrors,userAgent:navigator.userAgent}});
   } catch(error) {

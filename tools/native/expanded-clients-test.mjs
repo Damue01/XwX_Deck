@@ -1,3 +1,4 @@
+import { clearFreshCompatibleFixture } from './test-support.mjs';
 // Real Rust RPC + local HTTP upstream. Fixtures are client config formats, not actual CLI binaries.
 import assert from 'node:assert/strict';
 import {mkdtemp,realpath,mkdir,writeFile,readFile} from 'node:fs/promises';
@@ -25,7 +26,7 @@ async function raw(method,...args){return new Promise((resolve,reject)=>{const t
 async function rpc(method,...args){const r=await raw(method,...args);assert.equal(r.ok,true,r.error);return r.result;}
 const cleanJson=s=>JSON.parse(s.replace(/\/\/[^\n]*\n/g,'\n'));
 try{
- assert.equal((await rpc('getProviders')).connections.length,0);
+ await clearFreshCompatibleFixture(rpc);
  for(const pairs of Object.values(config))for(const[path,source]of pairs){await mkdir(dirname(join(home,path)),{recursive:true});await writeFile(join(home,path),source);}
  let installations=await rpc('detectClientInstallations');for(const client of all)assert.equal(installations.clients.find(x=>x.id===client).installed,false,'Config alone must not imply installed: '+client);
  await mkdir(join(home,'.local/bin'),{recursive:true});for(const command of Object.values(binaries))await writeCliFixture(join(home,'.local/bin',command),'process.exit(0);');

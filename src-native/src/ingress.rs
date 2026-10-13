@@ -44,7 +44,7 @@ pub(super) fn valid_client(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         && !["claude", "codex", "claude-cli", "codex-cli"].contains(&id)
 }
-fn chat_input(body: &Value) -> Result<Value> {
+pub(super) fn chat_input(body: &Value) -> Result<Value> {
     if body.get("n").is_some_and(|n| n != 1) {
         return Err("当前 Gateway 每次支持一个回答，请将 n 设为 1".into());
     }
@@ -163,6 +163,38 @@ fn gemini_schema(value: &Value) -> Value {
     }
 }
 pub(super) fn first_prompt(body: &Value) -> String {
+    if let Some(input) = body["input"].as_str() {
+        return input.into();
+    }
+    if let Some(items) = body["input"].as_array() {
+        for message in items.iter().filter(|m| m["role"] == "user") {
+            let value = message["content"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    message["content"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|p| p["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
+            let client_context = value.trim_start().starts_with("<environment_context>")
+                || value
+                    .trim_start()
+                    .starts_with("<external_codex_apps_open_page>")
+                || value.trim_start().starts_with("<codex_apps_")
+                || (value
+                    .trim_start()
+                    .starts_with("# AGENTS.md instructions for ")
+                    && value.contains("<INSTRUCTIONS>")
+                    && value.contains("</INSTRUCTIONS>"));
+            if !value.trim().is_empty() && !client_context {
+                return value;
+            }
+        }
+    }
     let message = body["messages"]
         .as_array()
         .and_then(|ms| ms.iter().find(|m| m["role"] == "user"));
@@ -323,7 +355,7 @@ pub(super) fn response_json(value: &Value, api: &str) -> Value {
             "function_call"=>parts.push(json!({"functionCall":{"id":item["call_id"],"name":item["name"],"args":serde_json::from_str::<Value>(text(item,"arguments")).unwrap_or(Value::Null)}})),_=>{}
         }
         }
-        return json!({"responseId":value["id"],"modelVersion":value["model"],"candidates":[{"index":0,"content":{"role":"model","parts":parts},"finishReason":if value["status"]=="incomplete"{"MAX_TOKENS"}else{"STOP"}}],"usageMetadata":if u.is_object(){json!({"promptTokenCount":u["input_tokens"],"candidatesTokenCount":u["output_tokens"],"totalTokenCount":u["total_tokens"],"cachedContentTokenCount":u["input_tokens_details"]["cached_tokens"]})}else{Value::Null}});
+        return json!({"responseId":value["id"],"modelVersion":value["model"],"candidates":[{"index":0,"content":{"role":"model","parts":parts},"finishReason":if value["status"]=="incomplete"{"MAX_TOKENS"}else{"STOP"}}],"usageMetadata":if u.is_object(){json!({"promptTokenCount":u["input_tokens"],"candidatesTokenCount":u["output_tokens"].as_u64().unwrap_or(0).saturating_sub(u["output_tokens_details"]["reasoning_tokens"].as_u64().unwrap_or(0)),"thoughtsTokenCount":u["output_tokens_details"]["reasoning_tokens"].as_u64().unwrap_or(0),"totalTokenCount":u["total_tokens"],"cachedContentTokenCount":u["input_tokens_details"]["cached_tokens"]})}else{Value::Null}});
     }
     let mut content = String::new();
     let mut thought = String::new();
@@ -359,7 +391,7 @@ async fn output(mut response: Response, api: String, streaming: bool) -> Respons
     if !streaming {
         return match to_bytes(body, 32 * 1024 * 1024)
             .await
-            .and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| axum::Error::new(e)))
+            .and_then(|b| serde_json::from_slice::<Value>(&b).map_err(axum::Error::new))
         {
             Ok(value) => {
                 parts
@@ -374,43 +406,88 @@ async fn output(mut response: Response, api: String, streaming: bool) -> Respons
         .headers
         .insert("content-type", "text/event-stream".parse().unwrap());
     let stream = async_stream::stream! {
-        let mut upstream=body.into_data_stream();let mut pending=Vec::new();let mut done=false;let mut tools=std::collections::BTreeMap::<String,usize>::new();let mut response_id=String::from("xwx-stream");let mut model=Value::Null;let created=millis() as u64/1000;let mut sent_text=String::new();let mut sent_thought=String::new();let mut sent_tools=std::collections::BTreeSet::<String>::new();
-        while let Some(chunk)=upstream.next().await{
-            let bytes=match chunk{Ok(b)=>b,Err(e)=>{yield Err::<axum::body::Bytes,_>(std::io::Error::other(e.to_string()));return;}};
-            pending.extend_from_slice(&bytes);if pending.len()>32*1024*1024{yield Err(std::io::Error::other("响应帧超过上限"));return;}
-            while let Some((end,len))=pending.windows(2).position(|w|w==b"\n\n").map(|p|(p,2)).or_else(||pending.windows(4).position(|w|w==b"\r\n\r\n").map(|p|(p,4))){
-                let block=pending.drain(..end+len).collect::<Vec<_>>();let raw=String::from_utf8_lossy(&block);let data=raw.lines().filter_map(|l|l.strip_prefix("data:").map(str::trim)).collect::<Vec<_>>().join("\n");
-                let Ok(v)=serde_json::from_str::<Value>(&data)else{continue;};let kind=text(&v,"type");
-                if let Some(id)=v["response"]["id"].as_str().or_else(||v["response_id"].as_str()){response_id=id.into();}if let Some(m)=v["response"]["model"].as_str(){model=json!(m);}
-                if kind=="error"||kind=="response.failed"||v.get("error").is_some(){yield Ok(stream_frame(json!({"error":v})));return;}
-                if kind=="response.completed"||kind=="response.incomplete"{
-                    let chat_final=response_json(&v["response"],"chat-completions");
-                    for (field,sent) in [("content",&sent_text),("reasoning_content",&sent_thought)] {
-                        let full=chat_final["choices"][0]["message"][field].as_str().unwrap_or("");
-                        if !full.starts_with(sent){yield Ok(stream_frame(json!({"error":{"message":"上游最终内容与流不一致，未覆盖已显示内容"}})));return;}
-                        if full.len()>sent.len(){let tail=&full[sent.len()..];if api=="gemini"{let part=if field=="content"{json!({"text":tail})}else{json!({"text":tail,"thought":true})};yield Ok(stream_frame(json!({"candidates":[{"index":0,"content":{"role":"model","parts":[part]}}]})));}else{yield Ok(stream_frame(json!({"id":response_id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[{"index":0,"delta":{field:tail},"finish_reason":null}]})));}}
-                    }
-                    for call in chat_final["choices"][0]["message"]["tool_calls"].as_array().into_iter().flatten(){if sent_tools.insert(text(call,"id").into()){if api=="gemini"{yield Ok(stream_frame(json!({"candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"id":call["id"],"name":call["function"]["name"],"args":serde_json::from_str::<Value>(text(&call["function"],"arguments")).unwrap_or(Value::Null)}}]}}]})));}else{let mut tool=call.clone();tool["index"]=json!(tools.len());yield Ok(stream_frame(json!({"id":response_id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[{"index":0,"delta":{"tool_calls":[tool]},"finish_reason":null}]})));}}}
-                    let final_value=response_json(&v["response"],&api);
-                    if api=="gemini"{let mut tail=final_value;tail["candidates"][0]["content"]["parts"]=json!([]);yield Ok(stream_frame(tail));}
-                    else{yield Ok(stream_frame(json!({"id":v["response"]["id"],"object":"chat.completion.chunk","model":v["response"]["model"],"choices":[{"index":0,"delta":{},"finish_reason":final_value["choices"][0]["finish_reason"]}]})));yield Ok(stream_frame(json!({"id":v["response"]["id"],"object":"chat.completion.chunk","model":v["response"]["model"],"choices":[],"usage":final_value["usage"]})));yield Ok(axum::body::Bytes::from_static(b"data: [DONE]\n\n"));}
-                    done=true;continue;
-                }
-                if kind=="response.output_text.delta"{sent_text.push_str(text(&v,"delta"));}if kind=="response.reasoning_summary_text.delta"{sent_thought.push_str(text(&v,"delta"));}
-                if api=="gemini"{
-                    let part=if kind=="response.output_text.delta"{Some(json!({"text":v["delta"]}))}else if kind=="response.reasoning_summary_text.delta"{Some(json!({"text":v["delta"],"thought":true}))}else if kind=="response.output_item.done"&&v["item"]["type"]=="function_call"{let item=&v["item"];sent_tools.insert(text(item,"call_id").into());Some(json!({"functionCall":{"id":item["call_id"],"name":item["name"],"args":serde_json::from_str::<Value>(text(item,"arguments")).unwrap_or(Value::Null)}}))}else{None};
-                    if let Some(part)=part{yield Ok(stream_frame(json!({"candidates":[{"index":0,"content":{"role":"model","parts":[part]}}]})));}
-                }else{
-                    let delta=if kind=="response.output_text.delta"{Some(json!({"content":v["delta"]}))}else if kind=="response.reasoning_summary_text.delta"{Some(json!({"reasoning_content":v["delta"]}))}else if kind=="response.output_item.added"&&v["item"]["type"]=="function_call"{let item=&v["item"];let index=tools.len();tools.insert(text(item,"id").into(),index);sent_tools.insert(text(item,"call_id").into());Some(json!({"tool_calls":[{"index":index,"id":item["call_id"],"type":"function","function":{"name":item["name"],"arguments":""}}]}))}else if kind=="response.function_call_arguments.delta"{tools.get(text(&v,"item_id")).map(|i|json!({"tool_calls":[{"index":i,"function":{"arguments":v["delta"]}}]}))}else{None};
-                    if let Some(delta)=delta{yield Ok(stream_frame(json!({"id":response_id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[{"index":0,"delta":delta,"finish_reason":null}]})));}
-                }
-            }
-        }
-        if !done{yield Ok(stream_frame(json!({"error":{"message":"响应流未完成，请保留当前上下文后重试"}})));}
-    };
+           let mut upstream=body.into_data_stream();let mut pending=Vec::new();let mut done=false;let mut tools=std::collections::BTreeMap::<String,usize>::new();let mut response_id=String::from("xwx-stream");let mut model=Value::Null;let created=millis() as u64/1000;let mut sent_text=String::new();let mut sent_thought=String::new();let mut sent_tools=std::collections::BTreeSet::<String>::new();
+           while let Some(chunk)=upstream.next().await{
+               let bytes=match chunk{Ok(b)=>b,Err(e)=>{yield Err::<axum::body::Bytes,_>(std::io::Error::other(e.to_string()));return;}};
+               pending.extend_from_slice(&bytes);if pending.len()>32*1024*1024{yield Err(std::io::Error::other("响应帧超过上限"));return;}
+               while let Some((end,len))=pending.windows(2).position(|w|w==b"\n\n").map(|p|(p,2)).or_else(||pending.windows(4).position(|w|w==b"\r\n\r\n").map(|p|(p,4))){
+                   let block=pending.drain(..end+len).collect::<Vec<_>>();let raw=String::from_utf8_lossy(&block);let data=raw.lines().filter_map(|l|l.strip_prefix("data:").map(str::trim)).collect::<Vec<_>>().join("\n");
+                   let Ok(v)=serde_json::from_str::<Value>(&data)else{continue;};let kind=text(&v,"type");
+                   if let Some(id)=v["response"]["id"].as_str().or_else(||v["response_id"].as_str()){response_id=id.into();}
+    if let Some(m)=v["response"]["model"].as_str(){model=json!(m);}
+                   if kind=="error"||kind=="response.failed"||!v["error"].is_null(){yield Ok(stream_frame(json!({"error":v})));return;}
+                   if kind=="response.completed"||kind=="response.incomplete"{
+                       let chat_final=response_json(&v["response"],"chat-completions");
+                       for (field,sent) in [("content",&sent_text),("reasoning_content",&sent_thought)] {
+                           let full=chat_final["choices"][0]["message"][field].as_str().unwrap_or("");
+                           if !full.starts_with(sent){yield Ok(stream_frame(json!({"error":{"message":"上游最终内容与流不一致，未覆盖已显示内容"}})));return;}
+                           if full.len()>sent.len(){let tail=&full[sent.len()..];if api=="gemini"{let part=if field=="content"{json!({"text":tail})}else{json!({"text":tail,"thought":true})};yield Ok(stream_frame(json!({"candidates":[{"index":0,"content":{"role":"model","parts":[part]}}]})));}else{yield Ok(stream_frame(json!({"id":response_id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[{"index":0,"delta":{field:tail},"finish_reason":null}]})));}}
+                       }
+                       for call in chat_final["choices"][0]["message"]["tool_calls"].as_array().into_iter().flatten(){if sent_tools.insert(text(call,"id").into()){if api=="gemini"{yield Ok(stream_frame(json!({"candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"id":call["id"],"name":call["function"]["name"],"args":serde_json::from_str::<Value>(text(&call["function"],"arguments")).unwrap_or(Value::Null)}}]}}]})));}else{let mut tool=call.clone();tool["index"]=json!(tools.len());yield Ok(stream_frame(json!({"id":response_id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[{"index":0,"delta":{"tool_calls":[tool]},"finish_reason":null}]})));}}}
+                       let final_value=response_json(&v["response"],&api);
+                       if api=="gemini"{let mut tail=final_value;tail["candidates"][0]["content"]["parts"]=json!([]);yield Ok(stream_frame(tail));}
+                       else{yield Ok(stream_frame(json!({"id":v["response"]["id"],"object":"chat.completion.chunk","model":v["response"]["model"],"choices":[{"index":0,"delta":{},"finish_reason":final_value["choices"][0]["finish_reason"]}]})));yield Ok(stream_frame(json!({"id":v["response"]["id"],"object":"chat.completion.chunk","model":v["response"]["model"],"choices":[],"usage":final_value["usage"]})));yield Ok(axum::body::Bytes::from_static(b"data: [DONE]\n\n"));}
+                       done=true;continue;
+                   }
+                   if kind=="response.output_text.delta"{sent_text.push_str(text(&v,"delta"));}
+    if kind=="response.reasoning_summary_text.delta"{sent_thought.push_str(text(&v,"delta"));}
+                   if api=="gemini"{
+                       let part=if kind=="response.output_text.delta"{Some(json!({"text":v["delta"]}))}else if kind=="response.reasoning_summary_text.delta"{Some(json!({"text":v["delta"],"thought":true}))}else if kind=="response.output_item.done"&&v["item"]["type"]=="function_call"{let item=&v["item"];sent_tools.insert(text(item,"call_id").into());Some(json!({"functionCall":{"id":item["call_id"],"name":item["name"],"args":serde_json::from_str::<Value>(text(item,"arguments")).unwrap_or(Value::Null)}}))}else{None};
+                       if let Some(part)=part{yield Ok(stream_frame(json!({"candidates":[{"index":0,"content":{"role":"model","parts":[part]}}]})));}
+                   }else{
+                       let delta=if kind=="response.output_text.delta"{Some(json!({"content":v["delta"]}))}else if kind=="response.reasoning_summary_text.delta"{Some(json!({"reasoning_content":v["delta"]}))}else if kind=="response.output_item.added"&&v["item"]["type"]=="function_call"{let item=&v["item"];let index=tools.len();tools.insert(text(item,"id").into(),index);sent_tools.insert(text(item,"call_id").into());Some(json!({"tool_calls":[{"index":index,"id":item["call_id"],"type":"function","function":{"name":item["name"],"arguments":""}}]}))}else if kind=="response.function_call_arguments.delta"{tools.get(text(&v,"item_id")).map(|i|json!({"tool_calls":[{"index":i,"function":{"arguments":v["delta"]}}]}))}else{None};
+                       if let Some(delta)=delta{yield Ok(stream_frame(json!({"id":response_id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[{"index":0,"delta":delta,"finish_reason":null}]})));}
+                   }
+               }
+           }
+           if !done{yield Ok(stream_frame(json!({"error":{"message":"响应流未完成，请保留当前上下文后重试"}})));}
+       };
     Response::from_parts(parts, Body::from_stream(stream))
 }
 pub(super) async fn forward(
+    routes: State<Arc<std::sync::RwLock<Route>>>,
+    mut request: Request,
+) -> Response {
+    let activity = match routes.0.read() {
+        Ok(route) => route.activity.clone(),
+        Err(_) => return protocol_error(503, "responses", "路由暂不可用"),
+    };
+    let lease = match activity.enter() {
+        Ok(lease) => Arc::new(lease),
+        Err(error) => return protocol_error(503, "responses", &error),
+    };
+    // The upgrade task retains the same lease beyond the HTTP handshake.
+    request.extensions_mut().insert(lease.clone());
+    if request.headers().contains_key("upgrade") {
+        return forward_inner(routes, request).await;
+    }
+    let evidence = storage::ClientEvidence::default();
+    request.extensions_mut().insert(evidence.clone());
+    let response = evidence.response(forward_inner(routes, request).await);
+    let (parts, body) = response.into_parts();
+    let expected = parts
+        .headers
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    let stream = async_stream::stream! {
+        let mut lease = Some(lease);
+        let mut remaining = expected;
+        let mut body = body.into_data_stream();
+        while let Some(chunk) = body.next().await {
+            if let (Some(left), Ok(bytes)) = (remaining.as_mut(), &chunk) {
+                *left = left.saturating_sub(bytes.len() as u64);
+                // Hyper need not poll EOF after the advertised final byte. End
+                // admission accounting when handing it that final body frame.
+                if *left == 0 { lease.take(); }
+            }
+            yield chunk;
+        }
+        drop(lease);
+    };
+    Response::from_parts(parts, Body::from_stream(stream))
+}
+async fn forward_inner(
     State(routes): State<Arc<std::sync::RwLock<Route>>>,
     request: Request,
 ) -> Response {
@@ -465,7 +542,18 @@ pub(super) async fn forward(
         let Some(provider) = provider else {
             return protocol_error(503, "anthropic-messages", "模型服务未配置");
         };
-        if resolve_wire(&route.root, provider, None, "anthropic-messages") != "anthropic-messages"
+        let mut payload = match serde_json::from_slice::<Value>(&body) {
+            Ok(value) if value.is_object() => value,
+            _ => return protocol_error(400, "anthropic-messages", "无效 Token 计数请求 JSON"),
+        };
+        let model = desktop::request_model(
+            &route.root,
+            provider,
+            text(&payload, "model"),
+            relative.starts_with("/claude-desktop/"),
+        );
+        if resolve_wire(&route.root, provider, Some(&model), "anthropic-messages")
+            != "anthropic-messages"
             || !provider.subscription_account_id.is_empty()
         {
             return protocol_error(
@@ -474,7 +562,8 @@ pub(super) async fn forward(
                 "当前上游没有可用的原生 Token 计数接口",
             );
         }
-        let base = Pilot::api_root(&provider.base_url);
+        payload["model"] = json!(model);
+        let base = Pilot::provider_api_root(provider);
         let endpoint = if base
             .rsplit('/')
             .next()
@@ -489,7 +578,7 @@ pub(super) async fn forward(
             .post(endpoint)
             .header("content-type", "application/json")
             .header("anthropic-version", "2023-06-01")
-            .body(body);
+            .body(payload.to_string());
         if !provider.bearer_token.is_empty() {
             upstream = upstream.header("x-api-key", &provider.bearer_token);
         }

@@ -23,7 +23,7 @@ try {
   const row = n => ({ id: 'r' + n, sessionId: 'fixture', source: 'codex', startedAt: '2026-10-09T00:00:00.000Z', completedAt: '2026-10-09T00:00:00.003Z', startedAtMs: 1791504000000, durationMs: 3, request: { model: 'fixture-model', body: { input: 'fixture input' } }, response: {}, usage: { totalTokens: n, inputTotalTokens: n - 2, inputUncachedTokens: n - 2, outputTokens: 2 } });
   const original = JSON.stringify(row(5)) + '\n' + JSON.stringify(row(7)) + '\n';
   await writeFile(jsonl, original);
-  const saved = { version: 1, retainedMetadata: 'keep', usageOnly: { totalTokens: 4 }, sessions: [{ id: 'fixture', jsonlPath: jsonl, traceCount: 2, totalTokens: 12, firstPrompt: 'retained title', customMetadata: 'keep' }] };
+  const saved = { version: 1, retainedMetadata: 'keep', usageOnly: { totalTokens: 4 }, sessions: [{ id: 'fixture', jsonlPath: jsonl, usageNormalizationVersion: 2, costSnapshotVersion: 1, traceCount: 2, totalTokens: 12, firstPrompt: 'retained title', customMetadata: 'keep' }] };
   await writeFile(index, JSON.stringify(saved));
   plan = await rpc('inspectTraceIndexRepair'); assert.equal(plan.indexStatus, 'valid'); assert.equal(plan.needsRepair, false); pass('a healthy on-disk index is recognized even after external edits');
   saved.sessions[0].traceCount = 1;

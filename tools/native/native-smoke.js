@@ -2,22 +2,75 @@
   const checks = [];
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   const wait = async (test, label) => {
-    for (let i = 0; i < 100; i++) { if (test()) return; await delay(100); }
-    throw new Error(`Timed out: ${label}; page=${document.querySelector('.page.current')?.id}; clients=${JSON.stringify([...document.querySelectorAll('[data-client-tab]')].map(tab=>({id:tab.dataset.clientTab,selected:tab.getAttribute('aria-selected')})))}; dialogs=${JSON.stringify([...document.querySelectorAll('[role=dialog]')].map(dialog=>dialog.id))}`);
+    void window.__TAURI__.core.invoke('pilot_smoke_progress', { checks: [...checks], pending: label }).catch(() => {});
+    for (let i = 0; i < 100; i++) { if (await test()) return; await delay(100); }
+    throw new Error(`Timed out: ${label}; page=${document.querySelector('.page.current')?.id}; clients=${JSON.stringify([...document.querySelectorAll('[data-client-tab]')].map(tab=>({id:tab.dataset.clientTab,selected:tab.getAttribute('aria-selected')})))}; dialogs=${JSON.stringify([...document.querySelectorAll('[role=dialog]:not([data-position])')].map(dialog=>dialog.id))}`);
   };
-  const check = (label, value) => { if (!value) throw new Error(label); checks.push(label); };
+  const check = (label, value) => { if (!value) throw new Error(label); checks.push(label); void window.__TAURI__.core.invoke('pilot_smoke_progress', {checks: [...checks]}).catch(() => {}); };
+  const layerEvidence = [], hotSwitchNotices = [];
+  const toastByTitle = text => [...document.querySelectorAll('[data-slot=toast-title]')].filter(title => !title.closest('[aria-hidden=true]')).find(title => title.textContent === text)?.closest('[data-position]');
+  const dismissToasts = async () => { for(let i=0; i<30; i++) { const titles=[...document.querySelectorAll('[data-slot=toast-title]')].filter(title=>!title.closest('[aria-hidden=true]')); if(!titles.length) return; for(const title of titles) title.closest('[data-position]')?.querySelector('[data-slot=toast-close]')?.click(); await delay(300); } };
+  const publishNotice = notice => window.__TAURI__.core.invoke('pilot_rpc', {method:'smokeNotice',args:[notice]});
+  const modelMenuReady = () => { const menu=document.querySelector('.model-choice-positioner:not([hidden])'); const popup=menu?.querySelector('.xwx-choice-popup'); return popup && getComputedStyle(menu).opacity === '1' && !popup.hasAttribute('data-starting-style') && popup.querySelector('[role=option]')?.getBoundingClientRect().height>0; };
   try {
     await wait(() => document.querySelector('#captureBtn') && window.xwxDeck, 'production renderer');
-    await wait(() => document.querySelector('#onboarding-setup'), 'onboarding setup');
-    check('fresh onboarding starts with client detection', document.querySelector('#onboarding-setup').textContent.includes('欢迎使用 XwX Deck'));
-    for (const label of ['download step', 'import step']) { document.querySelector('#onboarding-setup .onboarding-foot .btn.primary').click(); await delay(150); check(`onboarding reaches ${label}`, !!document.querySelector('#onboarding-setup')); }
-    await wait(() => document.querySelector('#onboarding-setup .configuration-import-actions .btn.primary')?.disabled === false, 'onboarding import scan');
-    check('fresh onboarding checks local configuration before the feature guide', document.querySelector('#onboarding-setup').textContent.includes('导入已有配置'));
-    document.querySelector('#onboarding-setup .configuration-import-actions .btn.primary').click();
-    await wait(() => document.querySelector('.tour-root') && !document.querySelector('#onboarding-setup'), 'continue to model guide');
-    check('onboarding proceeds to model configuration without automatically activating a service', document.querySelector('.tour-root').textContent.includes('一步切换模型服务') && (await window.xwxDeck.getProviders()).connections.length === 0);
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    await delay(300);
+    await wait(() => document.querySelector('#onboarding-setup .onboarding-panel[data-step="0"]'), 'full-window onboarding');
+    const onboardingProviders = JSON.stringify(await window.xwxDeck.getProviders());
+    const onboardingStep = () => Number(document.querySelector('#onboarding-setup .onboarding-panel')?.dataset.step);
+    const checkOnboardingLayout = async step => {
+      await wait(()=>document.querySelector(`#onboarding-setup .onboarding-panel[data-step="${step}"]`),'onboarding step '+step);
+      for(const [width,height] of [[1040,560],[780,480]]) {
+        await window.__TAURI__.core.invoke('pilot_rpc',{method:'smokeResizeWindow',args:[{width,height}]});await delay(300);
+        const setup=document.querySelector('#onboarding-setup');
+        const actions=[...setup.querySelectorAll('.onboarding-top button,.onboarding-start,.onboarding-foot button')].filter(button=>button.getBoundingClientRect().height>0);
+        check(`onboarding step ${step} actions fit ${width}x${height}`,actions.length>=2 && actions.every(button=>{const r=button.getBoundingClientRect();const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth&&(hit===button||button.contains(hit));}));
+        check(`onboarding step ${step} focuses inside its modal at ${width}x${height}`,setup.contains(document.activeElement));
+      }
+    };
+    await checkOnboardingLayout(0);
+    check('welcome contains its title, start and skip actions without an obsolete detection footer', !!document.querySelector('.onboarding-hello h1') && !!document.querySelector('.onboarding-start') && !!document.querySelector('.onboarding-top .tour-skip') && !document.querySelector('.onboarding-foot'));
+    const discovery = await window.xwxDeck.detectClientInstallations();
+    check('native read-only client discovery is available', discovery.available);
+    document.querySelector('.onboarding-start').click();
+    await wait(()=>onboardingStep()===1||onboardingStep()===2,'welcome advances after background detection');
+    if (onboardingStep()===1) {
+      await wait(()=>onboardingStep()===2||!document.querySelector('.onboarding-status'),'client recommendations settled');
+    }
+    if (onboardingStep()===1) {
+      await checkOnboardingLayout(1);
+      const missing = ['codex','claude'].filter(id=>!discovery.clients.some(client=>client.id===id&&client.installed));
+      check('recommendations show only missing ChatGPT and Claude clients', missing.length>0 && document.querySelectorAll('.onboarding-app').length===missing.length);
+      document.querySelector('#onboarding-setup .onboarding-foot .btn.primary').click();
+    }
+    const importContinue = () => [...document.querySelectorAll('#onboarding-setup .onboarding-foot .configuration-import-actions .btn.primary')].find(button => !button.disabled && button.getBoundingClientRect().height > 0);
+    await wait(()=>onboardingStep()===2&&importContinue(),'onboarding read-only import scan');
+    await checkOnboardingLayout(2);
+    check('client detection and import preview do not change services or activate a route',JSON.stringify(await window.xwxDeck.getProviders())===onboardingProviders);
+    document.querySelector('#onboarding-setup .onboarding-foot > .btn').click();
+    await wait(()=>onboardingStep()===0||onboardingStep()===1,'back from import preserves the conditional recommendation');
+    const backStep=onboardingStep();
+    check('back from import reaches welcome or still-missing recommendations',backStep===(discovery.clients.some(c=>c.id==='codex'&&c.installed)&&discovery.clients.some(c=>c.id==='claude'&&c.installed)?0:1));
+    document.querySelector(backStep===0?'.onboarding-start':'#onboarding-setup .onboarding-foot .btn.primary').click();
+    await wait(()=>document.querySelector('#onboarding-setup .onboarding-panel[data-step="2"]') && importContinue(),'return to import');
+    const continueButton = importContinue();
+    const continueRect = continueButton.getBoundingClientRect();
+    const continueHit = document.elementFromPoint(continueRect.x + continueRect.width / 2, continueRect.y + continueRect.height / 2);
+    check('returned import continuation is visible in the shared footer and receives pointer input', continueHit === continueButton || continueButton.contains(continueHit));
+    const skipImport=document.querySelector('#onboarding-setup .configuration-import-actions .btn:not(.primary)');
+    if(skipImport)skipImport.click();else continueButton.click();
+    await wait(()=>document.querySelector('.tour-root')&&!document.querySelector('#onboarding-setup'),'continue to real feature walkthrough');
+    check('skipping import preserves the saved provider registry',JSON.stringify(await window.xwxDeck.getProviders())===onboardingProviders);
+    const guideTitles=['添加配置','切换模型','按需开启 Trace','在仪表盘查看详情'];
+    check('public onboarding starts at adding configuration and has four focused steps',document.querySelector('.tour-title').textContent===guideTitles[0]&&document.querySelectorAll('.tour-dots i').length===4);
+    for(let index=0;index<4;index++) {
+      await wait(()=>document.querySelector('.tour-root')?.dataset.tourIndex===String(index)&&!!document.querySelector('.tour-spotlight'),'guide spotlight '+index);
+      check('onboarding explains the expected operation at step '+index,document.querySelector('.tour-title').textContent===guideTitles[index]);
+      check('onboarding bubble fits the minimum window at step '+index,document.querySelector('.tour-bubble').getBoundingClientRect().bottom<=innerHeight&&document.querySelector('.tour-bubble').getBoundingClientRect().top>=0);
+      document.querySelector('.tour-next').click();await delay(200);
+    }
+    await wait(()=>!document.querySelector('.tour-root'),'finish onboarding');
+    check('onboarding completion records public identity and returns to Trace without activation',localStorage.getItem('xwx-deck.onboardingSeen')==='true'&&document.querySelector('.page.current').id==='page-signal'&&!(await window.xwxDeck.getState()).tracingEnabled);
+    await window.__TAURI__.core.invoke('pilot_rpc',{method:'smokeResizeWindow',args:[{width:1040,height:560}]});await delay(200);
     check('page identity', document.title === 'XwX Deck');
     check('native bridge', document.body.dataset.runtime === 'desktop');
     check('nonblank production renderer', document.querySelector('.rail [data-page="signal"]')?.getBoundingClientRect().height > 0 && document.querySelector('#captureBtn')?.getBoundingClientRect().height > 0);
@@ -29,6 +82,7 @@
       await delay(400);
       check(`navigate ${page}`, document.querySelector(`.rail [data-page="${page}"]`).getAttribute('aria-current') === 'page');
     }
+    check('configuration synchronization page removed', !document.querySelector('.rail [data-page=sync]') && !document.querySelector('#page-sync'));
     check('tools page removed', !document.querySelector('.rail [data-page="tools"]') && !document.querySelector('#page-tools'));
     document.querySelector('.rail [data-page="models"]').click();
     await wait(() => document.querySelector('#page-models').classList.contains('current'), 'models page visible');
@@ -83,12 +137,19 @@
     await wait(()=>automaticUpdates.getAttribute('aria-checked')==='true'&&!automaticUpdates.disabled, 'automatic updates restored');
     const languageBounds=document.querySelector('#applicationLanguage').getBoundingClientRect();
     check('language value stays compact and has no permanent border', languageBounds.height <= 28 && getComputedStyle(document.querySelector('#applicationLanguage')).borderTopWidth === '0px');
+    document.querySelector('.rail-btn[data-page="signal"]').click();
+    await wait(() => document.querySelector('#page-signal.current'),'Trace appearance page');
+    document.querySelector('#appearanceTriggerIdle').click();
+    await wait(() => document.querySelector('#appearanceDrawer.open'),'appearance drawer');
     const dark = document.querySelector('#themeToggle');
     check('existing theme control', dark);
     dark.click(); await delay(600);
     check('theme via visible control', document.documentElement.dataset.theme === 'night');
     const runtime = await window.xwxDeck.getState();
     check('native theme authoritative', runtime.theme === 'night');
+    document.querySelector('.appearance-close').click();
+    document.querySelector('.rail-btn[data-page="settings"]').click();
+    await wait(() => document.querySelector('#page-settings.current'),'settings after theme');
     check('Trace default 1 GB and automatic cleanup', runtime.traceWarningGB === 1 && runtime.traceAutoCleanup);
     document.querySelector('[aria-controls="trace-settings-content"]').click(); await delay(150);
     await wait(() => getComputedStyle(document.querySelector('.trace-storage-limit')).textDecorationStyle === 'dashed', 'Trace capacity style ready');
@@ -107,7 +168,14 @@
     check('capacity saves on Enter without clearing automatic cleanup', (await window.xwxDeck.getState()).traceWarningGB === 2 && (await window.xwxDeck.getState()).traceAutoCleanup);
     await window.xwxDeck.setTraceStoragePolicy({ limitGB: 1 });
 
-    dark.click(); await delay(600);
+    document.querySelector('.rail-btn[data-page="signal"]').click();
+    await wait(() => document.querySelector('#page-signal.current'),'appearance restore');
+    document.querySelector('#appearanceTriggerIdle').click();
+    await wait(() => document.querySelector('#appearanceDrawer.open'),'appearance drawer restore');
+    document.querySelector('#themeToggle').click(); await delay(600);
+    document.querySelector('.appearance-close').click();
+    document.querySelector('.rail-btn[data-page="settings"]').click();
+    await wait(() => document.querySelector('#page-settings.current'),'settings after theme restore');
     check('theme restored', document.documentElement.dataset.theme === 'day');
     check('Trace settings no longer expose index repair', !document.querySelector('#trace-settings-content #inspectTraceIndex'));
     document.querySelector('#repairCenterTrigger').click();
@@ -130,7 +198,7 @@
       document.querySelector('#provider-add').click(); await delay(200);
       check('configuration categories have no search controls or tab divider', !document.querySelector('.configuration-dialog input[type=search]') && getComputedStyle(document.querySelector('.configuration-tabs')).borderBottomWidth === '0px');
       check('four configuration categories use one tab row', document.querySelectorAll('.configuration-header .configuration-tabs [role=tab]').length===4 && document.querySelector('#configuration-services-tab').textContent==='API 服务');
-      check('one configuration dialog with services selected by default', document.querySelectorAll('[role="dialog"]').length === 1 && document.querySelector('#configuration-services-tab').getAttribute('aria-selected') === 'true');
+      check('one configuration dialog with services selected by default', document.querySelectorAll('[role="dialog"]:not([data-position])').length === 1 && document.querySelector('#configuration-services-tab').getAttribute('aria-selected') === 'true');
       check('initial service grid contains icon and name for every preset', document.querySelectorAll('.configuration-grid [data-service]').length === 31 && [...document.querySelectorAll('.configuration-grid [data-service]')].every(button => button.querySelector('.provider-brand-icon')));
       const originalImportPreview = window.xwxDeck.previewConfigurationImport, originalImportFile = window.xwxDeck.chooseConfigurationImportFile, originalImportApply = window.xwxDeck.importConfigurations;
       const importRequests = [], fileRequests = [];
@@ -144,7 +212,7 @@
       window.xwxDeck.importConfigurations = async input => { importRequests.push(input); return {providers:await window.xwxDeck.getProviders(),added:['ui-fixture']}; };
       document.querySelector('.configuration-import-entry').click();
       await wait(() => document.querySelector('.configuration-import input[type=checkbox]') && !document.querySelector('.configuration-import-refresh').disabled, 'flat import list');
-      check('import is a single titled task without configuration tabs or a return link', document.querySelectorAll('[role=dialog]').length === 1 && !document.querySelector('.configuration-header .configuration-tabs') && document.querySelector('.configuration-header').textContent.includes('导入已有配置') && !document.querySelector('.configuration-back'));
+      check('import is a single titled task without configuration tabs or a return link', document.querySelectorAll('[role=dialog]:not([data-position])').length === 1 && !document.querySelector('.configuration-header .configuration-tabs') && document.querySelector('.configuration-header').textContent.includes('导入已有配置') && !document.querySelector('.configuration-back'));
       check('import lists unique detected configurations with inline sources and no missing-source placeholders', document.querySelectorAll('.configuration-import-item').length === 2 && document.querySelectorAll('.configuration-import input[type=checkbox]').length === 1 && !document.querySelector('.configuration-import').textContent.includes('Claude CLI') && [...document.querySelectorAll('.configuration-import-source-label')].map(item=>item.textContent).join(',')==='Magpie,CC Switch');
       const cancelImport = document.querySelector('.configuration-import-actions .btn:not(.primary)'), primaryImport = document.querySelector('.configuration-import-actions .primary');
       check('white Cancel and primary Import share one bottom action row', cancelImport.textContent==='取消' && primaryImport.textContent==='导入' && Math.abs(cancelImport.getBoundingClientRect().top-primaryImport.getBoundingClientRect().top)<1 && getComputedStyle(cancelImport).backgroundColor!==getComputedStyle(primaryImport).backgroundColor);
@@ -169,13 +237,14 @@
       document.querySelector('.configuration-import-actions .primary').click();
       await wait(() => !document.querySelector('.configuration-import'),'confirmed import');
       check('confirmation sends only selected eligible fingerprints and the reviewed digest', importRequests.length===1 && importRequests[0].fingerprints.join(',')==='import-new' && importRequests[0].targetDigest==='ui-fixture-digest');
-      check('successful import reports a compact success notification', document.querySelector('[data-slot=toast-title]')?.textContent==='已导入 1 个配置');
-      document.querySelector('[data-slot=toast-close]').click();
+      await wait(()=>toastByTitle('已导入 1 个配置与账号'),'confirmed one-item import notification');
+      check('successful import reports a compact success notification with the exact imported count', !!toastByTitle('已导入 1 个配置与账号'));
+      toastByTitle('已导入 1 个配置与账号').querySelector('[data-slot=toast-close]').click();
       await wait(() => !document.querySelector('[data-slot=toast-title]'), 'import notification dismissed');
       window.xwxDeck.previewConfigurationImport=originalImportPreview; window.xwxDeck.chooseConfigurationImportFile=originalImportFile; window.xwxDeck.importConfigurations=originalImportApply;
       await wait(() => document.querySelector('[data-service=deepseek]')?.disabled===false,'service directory ready after import');
       document.querySelector('[data-service="deepseek"]').click(); await delay(200);
-      check('selection replaces grid with list and configuration in same dialog', document.querySelectorAll('[role="dialog"]').length === 1 && document.querySelector('.configuration-list') && document.querySelector('#provider-url')?.value === 'https://api.deepseek.com');
+      check('selection replaces grid with list and configuration in same dialog', document.querySelectorAll('[role="dialog"]:not([data-position])').length === 1 && document.querySelector('.configuration-list') && document.querySelector('#provider-url')?.value === 'https://api.deepseek.com');
       check('visible production connection form without column or action dividers', document.querySelector('#provider-editor').getBoundingClientRect().height > 0 && getComputedStyle(document.querySelector('.configuration-content.has-detail .configuration-directory')).borderRightWidth === '0px' && getComputedStyle(document.querySelector('.configuration-detail .prov-save-bar')).borderTopWidth === '0px');
       check('default configuration fields are name URL and Key only', document.querySelectorAll('#provider-editor input').length === 3 && !document.querySelector('#provider-adapter') && document.querySelector('#provider-key').type === 'password');
       const fill = async (id, value) => {
@@ -201,32 +270,86 @@
       await wait(() => document.querySelector('.subscription-login-button') && !document.querySelector('.subscription-login-button').disabled, 'native account registry read');
       check('empty subscriptions show the sign-in action without redundant desktop or empty-state instructions', !document.querySelector('.subscription-empty') && !document.querySelector('#configuration-accounts').textContent.includes('请在桌面应用中添加订阅账号'));
       check('subscriptions use flat native account panel without key fields', document.querySelectorAll('[role=dialog]:not([data-position])').length===1 && !document.querySelector('#configuration-accounts input[type=password]') && !document.querySelector('.subscription-login-button').disabled);
+      const visibleLogin = () => [...document.querySelectorAll('#configuration-accounts .subscription-login-button')].find(button => button.getBoundingClientRect().height > 0);
+      const accountTab = name => [...document.querySelectorAll('#configuration-accounts [role=tab]')].find(tab => tab.textContent === name);
+      const emptyAccounts = await window.xwxDeck.getSubscriptionAccounts();
+      check('official account entry reflects actual CLI discovery without opening authorization', visibleLogin().textContent === (emptyAccounts.officialLoginInstalled === false ? '安装 Codex CLI' : '添加账号'));
+      check('ChatGPT uses two authorization tabs in one card', !!accountTab('官方账号登录') && !!accountTab('API 授权') && !document.querySelector('#configuration-accounts .official-chatgpt-account'));
+      const accountSnapshot = window.xwxDeck.getSubscriptionAccounts, usageRefresh = window.xwxDeck.refreshSubscriptionUsage, routingSave = window.xwxDeck.setSubscriptionRouting;
+      const accountPolicy = id => ({ strategy:'exhaust', fixedAccountId:'', excludedAccountIds:[], accountOrder:[id] });
+      const fixtureAccounts = { supported:true, officialLoginInstalled:true, accounts:[
+        { id:'official-chatgpt', label:'林青', email:'official@example.test', platform:'chatgpt', authKind:'official', accountKey:'synthetic-identity', externalLogin:true, status:'connected', quotaDetails:{httpStatus:200,windows:[{limitId:'codex',window:'primary_window',remainingPercent:77,usedPercent:23,windowSeconds:604800,resetsAt:1792240103}]} },
+        { id:'ui-api-fixture', label:'测试 API', email:'api@example.test', platform:'chatgpt', authKind:'api', status:'connected', quotaError:'API HTTP 401', quota:{remainingPercent:33} }
+      ], routing:{'chatgpt-official':accountPolicy('official-chatgpt'),chatgpt:accountPolicy('ui-api-fixture')} };
+      window.xwxDeck.getSubscriptionAccounts = async () => fixtureAccounts;
+      window.xwxDeck.refreshSubscriptionUsage = async () => fixtureAccounts;
+      window.xwxDeck.setSubscriptionRouting = async input => { fixtureAccounts.routing[input.platform] = input.policy; return fixtureAccounts; };
+      await wait(() => document.querySelector('[data-account-id="official-chatgpt"] [role=meter]'), 'official allowance rendered');
+      check('official account shows its name and actual allowance without a separate legacy card', document.querySelector('[data-account-id="official-chatgpt"] .subscription-account-identity strong').textContent==='林青' && document.querySelector('[data-account-id="official-chatgpt"] [role=meter]').getAttribute('aria-valuenow')==='77');
+      check('official quota shows reset date and common strategy control without invented plan labels', document.querySelector('#configuration-accounts .quota-reset').textContent.includes('重置') && !!document.querySelector('#configuration-accounts .chatgpt-policy .xwx-choice-trigger') && !document.querySelector('#configuration-accounts .subscription-account-avatar') && !document.querySelector('#configuration-accounts').textContent.includes('当前账号'));
+      document.querySelector('[aria-label="林青 的更多操作"]').click();
+      await wait(() => [...document.querySelectorAll('[role=menuitem]')].some(item => item.textContent==='退出登录'), 'shared official login exposes explicit logout');
+      check('shared official login has a user-controlled logout action', [...document.querySelectorAll('[role=menuitem]')].some(item => item.textContent==='退出登录'));
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+      await wait(() => !document.querySelector('[role=menuitem]'), 'close account menu without signing out');
+      accountTab('API 授权').click();
+      await wait(() => document.querySelector('[data-account-id="ui-api-fixture"]'), 'API authorization tab');
+      check('API authorization has its own account and add action', document.querySelector('[data-account-id="ui-api-fixture"] strong').textContent==='测试 API' && visibleLogin().textContent==='添加授权');
+      check('API tab never borrows official quota or exposes WHAM refresh, usage links or stale API errors', !document.querySelector('#configuration-accounts [role=meter]') && !document.querySelector('#configuration-accounts [aria-label="刷新额度"]') && !document.querySelector('#configuration-accounts .subscription-usage-link') && !document.querySelector('#configuration-accounts').textContent.includes('API HTTP 401'));
+      accountTab('官方账号登录').click();
+      await wait(() => document.querySelector('[data-account-id="official-chatgpt"] [role=meter]'), 'official tab retained');
+      check('switching authorization tabs preserves the official identity and quota', document.querySelector('[data-account-id="official-chatgpt"] [role=meter]').getAttribute('aria-valuenow')==='77');
+      window.xwxDeck.getSubscriptionAccounts = accountSnapshot; window.xwxDeck.refreshSubscriptionUsage = usageRefresh; window.xwxDeck.setSubscriptionRouting = routingSave;
+      await wait(() => !document.querySelector('#configuration-accounts [data-account-id="official-chatgpt"]'), 'native account snapshot restored after UI fixture');
+
       document.querySelector('[data-subscription-service="grok"]').click(); await delay(150);
       check('Grok requires the actual official CLI before account login', document.querySelector('.subscription-login-button').textContent.includes('安装 Grok Build'));
       check('subscription directory contains only implemented account sign-ins, never API presets', document.querySelectorAll('[data-subscription-service]').length === 5 && [...document.querySelectorAll('[data-subscription-service]')].every(button => ['chatgpt', 'grok', 'copilot', 'claude', 'cursor'].includes(button.dataset.subscriptionService)) && !document.querySelector('#configuration-accounts input[type=password]'));
-      for (const platform of ['chatgpt', 'grok', 'copilot', 'claude', 'cursor']) {
-        document.querySelector(`[data-subscription-service="${platform}"]`).click(); await delay(100);
-        document.querySelector('.subscription-usage-link').click(); await delay(100);
-        check(`${platform} usage shortcut opens its own approved official page`, opened.at(-1) === `subscription-${platform}-usage` && document.querySelector('.subscription-usage-link').href === window.xwxDeck.setupWebsites[`subscription-${platform}-usage`]);
+      for (const platform of ['grok', 'copilot', 'claude', 'cursor']) {
+        document.querySelector(`[data-subscription-service="${platform}"]`).click();
+        await wait(() => document.querySelector('.subscription-login-button'), platform+' account entry');
+        const accountButton = document.querySelector('.subscription-login-button');
+        check(`${platform} account entry uses the common add action or required official installation`, /^(添加账号|安装 )/.test(accountButton.textContent.trim()));
+        check(`${platform} empty registry has no dead refresh or usage shortcut`, !document.querySelector('#configuration-accounts .subscription-usage-link') && !document.querySelector('#configuration-accounts [aria-label="刷新额度"]'));
       }
-      check('Cursor directly offers account sign-in and its actual usage dashboard', document.querySelector('.subscription-login-button').textContent.includes('Continue with Cursor') && !document.querySelector('.subscription-login-button').disabled && window.xwxDeck.setupWebsites['subscription-cursor-usage'] === 'https://cursor.com/dashboard');
-      document.querySelector('[data-subscription-service="chatgpt"]').click(); await delay(150);
+      check('Cursor offers the common add account action with its approved dashboard available for recovery', document.querySelector('.subscription-login-button').textContent.trim()==='添加账号' && !document.querySelector('.subscription-login-button').disabled && window.xwxDeck.setupWebsites['subscription-cursor-usage'] === 'https://cursor.com/dashboard');
       check('new account registry has no placeholder connected accounts', (await window.xwxDeck.getSubscriptionAccounts()).accounts.length===0);
-      const accountSnapshot = window.xwxDeck.getSubscriptionAccounts, renameAccount = window.xwxDeck.renameSubscriptionAccount;
-      let fixtureLabel = '工作账号';
-      window.xwxDeck.getSubscriptionAccounts = async () => ({ supported: true, accounts: [{ id:'ui-fixture', label:fixtureLabel, email:'fixture@example.test', platform:'chatgpt', status:'connected' }] });
+      const renameAccount = window.xwxDeck.renameSubscriptionAccount;
+      let fixtureLabel = '工作账号', fixturePlatform = 'cursor', fixtureQuota = {remainingPercent:77,resetsAt:1792240103}, fixtureQuotaError;
+      const renamedSnapshot = () => ({ supported:true, accounts:[{id:'ui-fixture',label:fixtureLabel,email:'fixture@example.test',platform:fixturePlatform,status:'connected',quota:fixtureQuota,quotaError:fixtureQuotaError}], routing:{[fixturePlatform]:accountPolicy('ui-fixture')} });
+      window.xwxDeck.getSubscriptionAccounts = async () => renamedSnapshot();
+      window.xwxDeck.refreshSubscriptionUsage = async () => renamedSnapshot();
       window.xwxDeck.renameSubscriptionAccount = async input => { fixtureLabel=input.label; return window.xwxDeck.getProviders(); };
-      await wait(() => document.querySelector('.subscription-rename-trigger'), 'editable account name');
-      check('account name is the dashed text edit target without a pencil button', getComputedStyle(document.querySelector('.subscription-rename-trigger')).textDecorationStyle === 'dashed' && document.querySelector('.subscription-rename-trigger').textContent === fixtureLabel);
-      document.querySelector('.subscription-rename-trigger').click(); await delay(100);
-      await fill('[aria-label="账号名称"]', '个人账号');
+      for (const platform of ['grok','copilot','claude','cursor']) {
+        fixturePlatform=platform; fixtureQuota={remainingPercent:77,resetsAt:1792240103}; fixtureQuotaError=undefined;
+        document.querySelector(`[data-subscription-service="${platform}"]`).click();
+        await wait(() => document.querySelector('[data-account-id="ui-fixture"] .account-quota [role=meter]'), platform+' allowance');
+        check(`${platform} actual aggregate allowance has a reset date and no duplicate website`, document.querySelector('[data-account-id="ui-fixture"] [role=meter]').getAttribute('aria-valuenow')==='77' && document.querySelector('[data-account-id="ui-fixture"] .quota-reset').textContent.includes('重置') && !document.querySelector('#configuration-accounts .subscription-usage-link') && !!document.querySelector('#configuration-accounts .chatgpt-policy .xwx-choice-trigger'));
+        const disclosure=document.querySelector('[data-account-id="ui-fixture"] .account-disclosure'); disclosure.click();
+        await wait(()=>!document.querySelector('[data-account-id="ui-fixture"] .account-quota'),platform+' collapse');
+        disclosure.click(); await wait(()=>document.querySelector('[data-account-id="ui-fixture"] .account-quota [role=meter]'),platform+' expand');
+        fixtureQuota=undefined; fixtureQuotaError='isolated allowance failure';
+        document.querySelector('#configuration-accounts [aria-label="刷新额度"]').click();
+        await wait(()=>document.querySelectorAll('#configuration-accounts .subscription-usage-link').length===1 && document.querySelector('#configuration-accounts').textContent.includes(fixtureQuotaError),platform+' visible usage recovery');
+        const usageLink=document.querySelector('#configuration-accounts .subscription-usage-link'); usageLink.click();
+        await wait(()=>opened.at(-1)===`subscription-${platform}-usage`,platform+' approved usage page');
+        check(`${platform} missing allowance exposes one correct recovery link and no invented meter`, usageLink.href===window.xwxDeck.setupWebsites[`subscription-${platform}-usage`] && !document.querySelector('[data-account-id="ui-fixture"] [role=meter]'));
+      }
+      const openRename=async()=>{
+        document.querySelector(`[aria-label="${fixtureLabel} 的更多操作"]`).click();
+        await wait(()=>[...document.querySelectorAll('[role=menuitem]')].some(item=>item.textContent===`重命名 ${fixtureLabel}`),'rename menu');
+        [...document.querySelectorAll('[role=menuitem]')].find(item=>item.textContent===`重命名 ${fixtureLabel}`).click();
+        await wait(()=>document.querySelector('[aria-label="账号名称"]'),'rename form');
+      };
+      check('account identity is an allowance disclosure with rename only in the menu', !document.querySelector('.subscription-rename-trigger') && !!document.querySelector('[data-account-id="ui-fixture"] .account-disclosure'));
+      await openRename(); await fill('[aria-label="账号名称"]', '个人账号');
       document.querySelector('[aria-label="保存账号名称"]').click();
-      await wait(() => document.querySelector('.subscription-rename-trigger')?.textContent === '个人账号', 'inline account rename');
-      check('inline account name edit saves and restores the text control', fixtureLabel === '个人账号' && !document.querySelector('.subscription-rename input'));
-      document.querySelector('.subscription-rename-trigger').click(); await delay(100);
-      document.querySelector('[aria-label="账号名称"]').dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true })); await delay(150);
-      check('Escape cancels account rename without closing configuration', document.querySelectorAll('[role=dialog]:not([data-position])').length === 1 && document.querySelector('.subscription-rename-trigger')?.textContent === fixtureLabel && !document.querySelector('.subscription-rename input'));
-      window.xwxDeck.getSubscriptionAccounts = accountSnapshot; window.xwxDeck.renameSubscriptionAccount = renameAccount;
+      await wait(() => document.querySelector('[data-account-id="ui-fixture"] strong')?.textContent === '个人账号' && !document.querySelector('.subscription-rename input'), 'account rename saved');
+      check('menu rename saves the same identity and returns to the disclosure', fixtureLabel === '个人账号' && !!document.querySelector('[data-account-id="ui-fixture"] .account-disclosure'));
+      await openRename(); document.querySelector('[aria-label="账号名称"]').dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true }));
+      await wait(()=>!document.querySelector('.subscription-rename input'),'cancel rename');
+      check('Escape cancels account rename without closing configuration or losing the name', document.querySelectorAll('[role=dialog]:not([data-position])').length === 1 && document.querySelector('[data-account-id="ui-fixture"] strong').textContent === fixtureLabel);
+      window.xwxDeck.getSubscriptionAccounts = accountSnapshot; window.xwxDeck.renameSubscriptionAccount = renameAccount; window.xwxDeck.refreshSubscriptionUsage = usageRefresh;
 
       document.querySelector('#configuration-clients-tab').click(); await delay(150);
       document.querySelector('[data-client-download="codex"]').click(); await delay(150);
@@ -247,7 +370,7 @@
         links.querySelector(`[aria-label="${label} 官方下载"]`).click(); await delay(100);
         check(`${client} opens its own official installation page`, opened.at(-1) === `download-${client}`);
       }
-      for (const client of ['opencode', 'qwen-code']) {
+      for (const client of ['opencode']) {
         document.querySelector(`[data-client-download="${client}"]`).click(); await delay(100);
         check(`${client} labels the Desktop download and does not show commands`, document.querySelector('#configuration-clients .setup-card-download-version-heading h4').textContent.includes('Desktop') && [...document.querySelectorAll('#configuration-clients .setup-card-download-version-heading h4')].some(heading => heading.textContent.includes('CLI')) && !document.querySelector('#configuration-clients code'));
         const mac = [...document.querySelectorAll('#configuration-clients details')].find(item => item.querySelector('summary').textContent.startsWith('Mac'));
@@ -257,12 +380,29 @@
         link.click(); await delay(100);
         check(`${client} preserves explicitly selected Apple Silicon download`, opened.at(-1) === `${client}-mac-arm64-download`);
       }
+      document.querySelector('[data-client-download="qwen-code"]').click();
+      await wait(() => document.querySelector('#configuration-clients [aria-label="Qwen Code Desktop 官方下载"]'), 'Qwen Code official downloads');
+      check('Qwen Code keeps Desktop and CLI entries without redundant Mac download groups', !document.querySelector('#configuration-clients details') && !!document.querySelector('#configuration-clients [aria-label="Qwen Code CLI 官方下载"]'));
+      const qwenWebsite = document.querySelector('#configuration-clients [aria-label="Qwen Code Desktop 官方下载"]');
+      check('Qwen Code Desktop links to its official website', qwenWebsite.href === 'https://qwen.ai/qwencode');
+      qwenWebsite.click();
+      await wait(() => opened.at(-1) === 'download-qwen-code', 'Qwen Code official website action');
+      check('Qwen Code opens its approved official website', opened.at(-1) === 'download-qwen-code');
       window.xwxDeck.openSetupWebsite = openWebsite;
       document.querySelector('#configuration-services-tab').click(); await delay(150);
       document.querySelector('[data-service="deepseek"]').click(); await delay(150);
       check('download navigation retains service draft', document.querySelector('#provider-name').value === 'Retained_Draft');
-      document.querySelector('.provider-key-visibility').click(); await wait(() => document.querySelector('#provider-key').type === 'text', 'key visibility render');
-      check('temporary key visibility works', document.querySelector('#provider-key').type === 'text');
+      check('nonempty Key has one accessible reveal control and starts masked', document.querySelector('#provider-key').type === 'password' && document.querySelectorAll('.secret-input-visibility').length === 1 && document.querySelector('.secret-input-visibility').getAttribute('aria-label') === '显示 Key' && document.querySelector('.secret-input-visibility').getAttribute('aria-controls') === 'provider-key');
+      document.querySelector('.secret-input-visibility').click(); await delay(100);
+      check('reveal shows the retained Key without submitting or closing the editor', document.querySelector('#provider-key').type === 'text' && document.querySelector('#provider-key').value === 'isolated-draft-key' && document.querySelector('.secret-input-visibility').type === 'button' && document.querySelector('.secret-input-visibility').getAttribute('aria-pressed') === 'true' && document.querySelector('.secret-input-visibility').getAttribute('aria-label') === '隐藏 Key' && !!document.querySelector('#provider-editor'));
+      document.querySelector('.secret-input-visibility').click(); await delay(100);
+      check('second click masks Key', document.querySelector('#provider-key').type === 'password' && document.querySelector('.secret-input-visibility').getAttribute('aria-pressed') === 'false');
+      document.querySelector('.secret-input-visibility').click(); await delay(100);
+      document.querySelector('[data-service="kimi"]').click(); await delay(150);
+      check('switching to an empty draft removes reveal control', document.querySelector('#provider-key').value === '' && !document.querySelector('.secret-input-visibility'));
+      document.querySelector('[data-service="deepseek"]').click(); await delay(150);
+      check('switching back preserves Key but masks it again', document.querySelector('#provider-key').type === 'password' && document.querySelector('#provider-key').value === 'isolated-draft-key');
+      document.querySelector('.secret-input-visibility').click(); await delay(100);
       document.querySelector('[aria-label="关闭添加配置"]').click(); await delay(150);
       document.querySelector('#provider-add').click(); await delay(150);
       document.querySelector('[data-service="deepseek"]').click(); await delay(150);
@@ -279,12 +419,28 @@
       const plan = (await window.xwxDeck.getProviders()).connections[0];
       check('Coding Plan persists explicit profile and Chat protocol without automatic test messages', plan.providerPreset === 'qwen-coding-plan' && plan.adapter === 'chat-completions' && plan.baseUrl === context.upstream && validations === 0);
       window.xwxDeck.validateProvider = validate;
-      document.querySelector('.configuration-close').click(); await wait(() => !document.querySelector('[role=dialog]'), 'Coding Plan manager closed');
+      document.querySelector('.configuration-close').click(); await wait(() => !document.querySelector('[role=dialog]:not([data-position])'), 'Coding Plan manager closed');
       await window.xwxDeck.deleteProvider(plan.id);
       document.querySelector('#provider-add').click(); await delay(150);
       check('reopening starts at complete service grid', document.querySelector('#configuration-services .configuration-grid') && !document.querySelector('#configuration-services .configuration-detail'));
       document.querySelector('[data-service="custom"]').click(); await delay(150);
       check('custom form shows only name URL and key without advanced settings', !document.querySelector('.provider-advanced') && !document.querySelector('#provider-adapter') && document.querySelectorAll('#provider-editor input').length===3);
+      await fill('#provider-name', '测试服务');
+      await fill('#provider-url', context.upstream);
+      await fill('#provider-key', 'isolated-test-key');
+      document.querySelector('#provider-editor button[type="submit"]').click();
+      await wait(async()=> (await window.xwxDeck.getProviders()).connections.some(p=>p.displayName==='测试服务'), 'Chinese display name saved');
+      const chinese=(await window.xwxDeck.getProviders()).connections.find(p=>p.displayName==='测试服务');
+      check('Chinese display name creates an independent stable connection identity',chinese.id!=='测试服务' && /^provider-[a-z0-9-]+$/.test(chinese.id));
+      await wait(()=>document.querySelector('#provider-config-tab'), 'Chinese service stays in its editor');
+      await fill('#provider-name', '测试服务新名称');
+      document.querySelector('#provider-editor button[type="submit"]').click();
+      await wait(async()=> (await window.xwxDeck.getProviders()).connections.find(p=>p.id===chinese.id)?.displayName==='测试服务新名称', 'Chinese display rename');
+      check('renaming the Chinese service preserves its stable ID and never duplicates a connection',(await window.xwxDeck.getProviders()).connections.length===1);
+      document.querySelector('.configuration-close').click();await wait(()=>!document.querySelector('[role=dialog]:not([data-position])'),'Chinese service card closed');
+      await window.xwxDeck.deleteProvider(chinese.id);
+      document.querySelector('#provider-add').click();await delay(150);
+      document.querySelector('[data-service="custom"]').click();await delay(150);
       await fill('#provider-name', 'Native_Test');
       await fill('#provider-url', context.upstream);
       await fill('#provider-key', 'isolated-test-key');
@@ -297,16 +453,28 @@
       await wait(() => !!document.querySelector('[data-saved-provider="Native_Test"]'), 'save returns to configuration manager');
       check('saved connection stays in a shared manager without inline expansion', document.querySelectorAll('#provider-editor').length===1 && !disclosure.hasAttribute('aria-expanded') && document.querySelector('#configuration-saved-tab[aria-selected="true"]'));
       check('maintenance has quiet header checks and deletion, and matching sidebar actions', !!document.querySelector('#provider-models-tab') && !!document.querySelector('.prov-save-bar .configuration-destructive') && !document.querySelector('#providerList .provider-menu-trigger') && [...document.querySelectorAll('.configuration-management-actions button')].every(button=>button.className==='configuration-choice') && !document.querySelector('.provider-advanced'));
-      document.querySelector('#provider-models-tab').click(); await delay(100);
-      check('checks open in the same card and replace the form', !!document.querySelector('#provider-read-models') && !document.querySelector('#provider-editor') && document.querySelectorAll('[role=dialog]').length===1);
-      document.querySelector('#provider-config-tab').click(); await delay(100);
+      await wait(() => document.querySelector('#provider-models-tab')?.disabled === false, 'saved configuration ready for checks');
+      document.querySelector('#provider-models-tab').click();
+      await wait(() => document.querySelector('#provider-read-models') && !document.querySelector('#provider-editor'), 'model management replaces the configuration form');
+      check('checks open in the same card and replace the form', !!document.querySelector('#provider-read-models') && !document.querySelector('#provider-editor') && document.querySelectorAll('[role=dialog]:not([data-position])').length===1);
+      document.querySelector('#provider-config-tab').click();
+      await wait(() => document.querySelector('#provider-name') && document.activeElement.id==='provider-config-tab', 'editing form and tab focus restored');
       check('return to editing restores the selected configuration', document.querySelector('#provider-name').value==='Native_Test' && document.activeElement.id==='provider-config-tab');
       const validateSaved=window.xwxDeck.validateProvider; let draftChecks=0;
       window.xwxDeck.validateProvider=async args=>{draftChecks++;return validateSaved(args);};
+      await dismissToasts();
       await fill('#provider-url', context.upstream + '/draft');
       document.querySelector('#provider-models-tab').click(); await delay(100);
       await wait(()=>document.querySelector('.provider-model-action button'), 'automatic model directory');
-      document.querySelector('.provider-model-action button').click(); await delay(100);
+      document.querySelector('.provider-model-action button').click();
+      await wait(()=>toastByTitle('请先保存修改，再进行测试'), 'changed draft validation feedback');
+      const draftNotice=toastByTitle('请先保存修改，再进行测试'),draftDialog=document.querySelector('#add-configuration-dialog');
+      await wait(()=>!draftNotice.hasAttribute('data-starting-style'),'draft Toast settled');
+      const draftA=draftNotice.getBoundingClientRect(),draftB=draftDialog.getBoundingClientRect();
+      const draftX=(Math.max(draftA.left,draftB.left)+Math.min(draftA.right,draftB.right))/2,draftY=(Math.max(draftA.top,draftB.top)+Math.min(draftA.bottom,draftB.bottom))/2;
+      check('unsaved-draft Toast visibly overlaps and receives pointer input above the model card',Math.max(draftA.left,draftB.left)<Math.min(draftA.right,draftB.right)&&Math.max(draftA.top,draftB.top)<Math.min(draftA.bottom,draftB.bottom)&&draftNotice.contains(document.elementFromPoint(draftX,draftY)));
+      draftNotice.querySelector('[data-slot=toast-close]').click();
+      await wait(()=>!toastByTitle('请先保存修改，再进行测试'),'draft feedback closed');
       document.querySelector('#provider-config-tab').click(); await delay(100);
       check('testing a changed draft does not send a request or implicitly save', draftChecks===0 && document.querySelector('#provider-url').value===context.upstream+'/draft');
       window.xwxDeck.validateProvider=validateSaved;
@@ -314,16 +482,57 @@
       check('new catalog uses the shared saved tab instead of a return row', !!document.querySelector('.configuration-grid') && !!document.querySelector('#configuration-saved-tab') && !document.querySelector('.configuration-task-nav'));
       document.querySelector('#configuration-saved-tab').click(); await delay(100);
       check('return from catalog retains original selection and draft', document.querySelector('#provider-url').value===context.upstream+'/draft' && document.querySelector('[data-saved-provider="Native_Test"]').getAttribute('aria-pressed')==='true');
-      document.querySelector('.configuration-close').click(); await wait(() => !document.querySelector('[role=dialog]'), 'edit card closed');
+      document.querySelector('.configuration-close').click(); await wait(() => !document.querySelector('[role=dialog]:not([data-position])'), 'edit card closed');
+      await wait(() => document.activeElement.id === 'provider-add', 'manager entry focus restored');
       check('closing the manager returns focus to its entry', document.activeElement.id === 'provider-add');
-      disclosure.focus(); disclosure.click(); await delay(200);
+      disclosure.focus(); disclosure.click();
+      await wait(() => document.querySelector('#provider-url')?.value === context.upstream + '/draft', 'saved draft editor reopened');
       check('reopening the shared edit card retains unsaved fields', document.querySelector('#provider-url').value === context.upstream + '/draft' && document.querySelectorAll('#provider-editor').length === 1);
-      document.querySelector('.configuration-close').click(); await wait(() => !document.querySelector('[role=dialog]'), 'draft card closed');
+      document.querySelector('.configuration-close').click(); await wait(() => !document.querySelector('[role=dialog]:not([data-position])'), 'draft card closed');
 
       const retained = (await window.xwxDeck.getProviders()).connections.find(item=>item.id==='Native_Test');
       await window.xwxDeck.saveProvider({...retained,adapter:'responses'});
       await window.xwxDeck.switchClientProvider({ client: 'codex', providerId: 'Native_Test' });
       await window.xwxDeck.updateCodexConfig({ expectedProviderId: 'Native_Test', compatibleModel: 'pilot-model' });
+      check('explicit native fixture saves the expected model', (await window.xwxDeck.getCodexConfig()).compatible.model==='pilot-model');
+      // Direct test-only RPC writes bypass the UI commit path. Use the actual
+      // external-metadata refresh event before exercising the visible picker.
+      window.dispatchEvent(new Event('xwxdeck:metadata-changed'));
+      document.querySelector('.rail [data-page="models"]').click(); await delay(250);
+      await dismissToasts();
+      document.querySelector('[data-client-tab="codex"]').click();
+      await wait(() => document.querySelector('[data-codex-model]')?.dataset.value==='pilot-model' && document.querySelector('[data-codex-model] button')?.disabled===false && document.querySelector('button[aria-label="ChatGPT 使用的模型服务"]')?.textContent==='Native_Test', 'native fixture and visible model selection agree');
+      await publishNotice({message:'隔离菜单重叠验证',description:'保持这条恢复提示可见，再选择模型。'.repeat(35),type:'error',persistent:true,action:'repair'});
+      await wait(()=>!!toastByTitle('隔离菜单重叠验证'),'overlap fixture visible');
+      document.querySelector('[data-codex-model] button').click();
+      await wait(modelMenuReady,'model popup positioned below global Toast');
+      await wait(()=>toastByTitle('隔离菜单重叠验证').getBoundingClientRect().height>0,'overlap Toast measured');
+      const option=document.querySelector('.model-choice-positioner .xwx-choice-popup [role=option]'),optionBox=option.getBoundingClientRect(),noticeBox=toastByTitle('隔离菜单重叠验证').getBoundingClientRect();
+      const left=Math.max(optionBox.left,noticeBox.left),right=Math.min(optionBox.right,noticeBox.right),top=Math.max(optionBox.top,noticeBox.top),bottom=Math.min(optionBox.bottom,noticeBox.bottom);
+      const x=(left+right)/2,y=(top+bottom)/2,hit=document.elementFromPoint(x,y);
+      const menu=option.closest('.model-choice-positioner'),viewport=toastByTitle('隔离菜单重叠验证').closest('[data-slot=toast-viewport]');
+      layerEvidence.push({menuClass:menu.className,menuZ:getComputedStyle(menu).zIndex,toastZ:getComputedStyle(viewport).zIndex,optionBox:optionBox.toJSON(),toastBox:noticeBox.toJSON(),point:{x,y},hit:hit?{tag:hit.tagName,className:hit.className,role:hit.getAttribute('role')}:null,positioners:[...document.querySelectorAll('.xwx-choice-positioner')].map(node=>({className:node.className,hidden:node.hidden,zIndex:getComputedStyle(node).zIndex}))});
+      check('global Toast is above the model menu',Number(getComputedStyle(viewport).zIndex)>Number(getComputedStyle(menu).zIndex));
+      check('overlapping notification receives the pointer hit',left<right&&top<bottom&&toastByTitle('隔离菜单重叠验证').contains(hit));
+      const notification=toastByTitle('隔离菜单重叠验证');
+      const close=notification.querySelector('[data-slot="toast-close"]'),closeBox=close.getBoundingClientRect();
+      check('topmost notification close control remains reachable',close.contains(document.elementFromPoint(closeBox.left+closeBox.width/2,closeBox.top+closeBox.height/2)));
+      close.click();
+      await wait(()=>!toastByTitle('隔离菜单重叠验证'),'topmost recovery notice dismissed');
+      document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+      await wait(()=>!document.querySelector('.model-choice-positioner:not([hidden])'),'menu closed after notification');
+      document.querySelector('[data-codex-model] button').click();
+      await wait(modelMenuReady,'model menu reopened after feedback');
+      const nextOption=[...document.querySelectorAll('.model-choice-positioner .xwx-choice-popup [role=option]')].find(node=>node.querySelector('.model-option-id'));
+      const expectedModel=nextOption.querySelector('.model-option-id').textContent;
+      const nextBox=nextOption.getBoundingClientRect(),nx=nextBox.left+nextBox.width/2,ny=nextBox.top+nextBox.height/2;
+      nextOption.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerType:'mouse',button:0,buttons:1,clientX:nx,clientY:ny}));
+      nextOption.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerType:'mouse',button:0,buttons:0,clientX:nx,clientY:ny}));
+      nextOption.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,detail:1,button:0,clientX:nx,clientY:ny}));
+      await wait(()=>!document.querySelector('.model-choice-positioner:not([hidden])'),'model selected after notification dismissal');
+      await wait(async()=> (await window.xwxDeck.getCodexConfig()).compatible.model===expectedModel,'selected model persisted after notification');
+      check('model selection still works after notification dismissal',(await window.xwxDeck.getCodexConfig()).compatible.model===expectedModel);
+      await dismissToasts();
       document.querySelector('.rail [data-page="signal"]').click(); await delay(300);
       await window.xwxDeck.saveProvider({displayName:'Native_Second',baseUrl:context.upstream,bearerToken:'isolated-test-key',adapter:'responses',codexModel:'pilot-model'});
       document.querySelector('#captureBtn').click();
@@ -332,10 +541,14 @@
       const runningBase=(await window.xwxDeck.getState()).localBaseUrl;
       document.querySelector('.rail [data-page="models"]').click(); await delay(300);
       document.querySelector('[data-client-tab="codex"]').click(); await delay(150);
+      const observeHotSwitch=()=>{for(const title of document.querySelectorAll('[data-slot=toast-title]')) {const notice=title.closest('[data-position]');if(notice?.closest('[aria-hidden=true]'))continue;const entry={title:title.textContent,description:notice?.querySelector('[data-slot=toast-description]')?.textContent};if(!hotSwitchNotices.some(previous=>previous.title===entry.title&&previous.description===entry.description))hotSwitchNotices.push(entry);}};
+      const hotSwitchObserver=new MutationObserver(observeHotSwitch);hotSwitchObserver.observe(document.body,{childList:true,subtree:true,characterData:true});
       document.querySelector('button[aria-label="ChatGPT 使用的模型服务"]').click(); await delay(100);
       await wait(()=>[...document.querySelectorAll('[role=option]')].some(v=>v.textContent.includes('Native_Second')), 'new service option');
       [...document.querySelectorAll('[role=option]')].find(v=>v.textContent.includes('Native_Second')).click();
-      await wait(()=>document.body.textContent.includes('新请求使用所选服务，正在进行的回答继续完成。'), 'hot switch toast');
+      await wait(()=>hotSwitchNotices.some(notice=>notice.title==='模型服务已切换'), 'hot switch toast');
+      hotSwitchObserver.disconnect();
+      check('hot switch success matches the saved provider and model', (await window.xwxDeck.getProviders()).active.codex==='Native_Second' && (await window.xwxDeck.getCodexConfig()).compatible.model==='pilot-model');
       check('ordinary switch shows a toast and retains the listener without a confirmation', !document.querySelector('[role=alertdialog]') && (await window.xwxDeck.getState()).localBaseUrl===runningBase);
       document.querySelector('.rail [data-page="signal"]').click(); await delay(200);
       const request = await window.__TAURI__.core.invoke('pilot_rpc', { method: 'smokeRequest', args: [false] });
@@ -374,7 +587,8 @@
     check('English switch is saved in native preferences', (await window.xwxDeck.getState()).language === 'en');
     check('language switching preserves theme, client tabs and named services', document.documentElement.dataset.theme === 'day' && (await window.xwxDeck.getModelClients()).includes('opencode') && (await window.xwxDeck.getProviders()).connections.some(item => item.displayName === 'Native_Second'));
     document.querySelector('.rail [data-page="models"]').click(); await delay(150);
-    check('model page and shared controls update without remounting the selected client', document.querySelector('#page-models').textContent.includes('Model settings') && document.querySelector('.models-manage-clients').textContent.includes('Manage clients'));
+    await wait(()=>document.querySelector('#page-models .page-head h1')?.textContent==='Models' && document.querySelector('.models-manage-clients')?.textContent.includes('Manage clients'), 'current translated model page and shared controls');
+    check('model page and shared controls update without remounting the selected client', document.querySelector('#page-models .page-head h1').textContent==='Models' && document.querySelector('.models-manage-clients').textContent.includes('Manage clients') && !document.querySelector('.models-manage-clients').disabled && document.querySelector('[data-client-tab="codex"]').getAttribute('aria-selected')==='true' && document.querySelector('[data-codex-model]')?.dataset.value==='pilot-model' && (await window.xwxDeck.getProviders()).active.codex==='Native_Second' && (await window.xwxDeck.getCodexConfig()).compatible.model==='pilot-model');
     document.querySelector('.rail [data-page="settings"]').click(); await delay(150);
     await chooseLanguage('简体中文', 'zh-CN');
     await wait(() => document.documentElement.lang === 'zh-CN' && document.querySelector('#page-settings').textContent.includes('应用'), 'Chinese restored');
@@ -391,9 +605,9 @@
     document.querySelector('.rail [data-page="signal"]').click();await delay(100);
     check('no framework overlay', !document.querySelector('vite-error-overlay, nextjs-portal'));
     check('console health', window.__pilotErrors.length === 0);
-    const report = { passed: true, checks, title: document.title, url: location.href, viewport: { width: innerWidth, height: innerHeight }, runtime: document.body.dataset.runtime, errors: window.__pilotErrors, userAgent: navigator.userAgent };
+    const report = { passed: true, checks, layerEvidence, hotSwitchNotices, title: document.title, url: location.href, viewport: { width: innerWidth, height: innerHeight }, runtime: document.body.dataset.runtime, errors: window.__pilotErrors, userAgent: navigator.userAgent };
     await window.__TAURI__.core.invoke('pilot_smoke_report', { report });
   } catch (error) {
-    await window.__TAURI__.core.invoke('pilot_smoke_report', { report: { passed: false, checks, error: String(error), errors: window.__pilotErrors } });
+    await window.__TAURI__.core.invoke('pilot_smoke_report', { report: { passed: false, checks, layerEvidence, hotSwitchNotices, error: String(error), modelUi: { notices:[...document.querySelectorAll('[data-position]:not([aria-hidden=true])')].map(notice=>({title:notice.querySelector('[data-slot=toast-title]')?.textContent,description:notice.querySelector('[data-slot=toast-description]')?.textContent})), selectedService:document.querySelector('button[aria-label="ChatGPT 使用的模型服务"]')?.textContent, nativeProviders:await window.xwxDeck.getProviders().then(value=>({selected:value.selected,active:value.active,warning:value.warning})).catch(String), nativeModel:await window.xwxDeck.getCodexConfig().then(value=>({mode:value.mode,model:value.compatible?.model,warning:value.warning,activeBaseUrl:value.activeBaseUrl})).catch(String), nativeTrace:await window.xwxDeck.getState().then(value=>({tracingEnabled:value.tracingEnabled,backgroundGatewayActive:value.backgroundGatewayActive,localBaseUrl:value.localBaseUrl,lastError:value.lastError})).catch(String), selection:document.querySelector('[data-codex-model]')?.dataset.value, trigger:[...document.querySelectorAll('[data-codex-model] button')].map(button=>({text:button.textContent,disabled:button.disabled,expanded:button.getAttribute('aria-expanded'),rect:button.getBoundingClientRect().toJSON()})), menus:[...document.querySelectorAll('.model-choice-positioner')].map(menu=>({hidden:menu.hidden,opacity:getComputedStyle(menu).opacity,rect:menu.getBoundingClientRect().toJSON(),items:[...menu.querySelectorAll('[role=option]')].map(item=>item.textContent)})) }, errors: window.__pilotErrors } });
   }
 })();

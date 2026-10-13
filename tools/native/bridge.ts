@@ -6,6 +6,7 @@ if (!native?.core?.invoke) throw new Error('Rust pilot requires its native Tauri
 const platform = navigator.platform.startsWith('Mac') ? 'darwin' : navigator.platform.startsWith('Win') ? 'win32' : 'linux';
 document.documentElement.dataset.platform = platform;
 let windowState = { nativeFrame: platform === 'darwin', maximized: false, fullscreen: false };
+document.documentElement.dataset.nativeFrame = String(windowState.nativeFrame);
 const subscriptions = new Map<string, Set<(value: any) => void>>();
 const publish = (name: string, value: any) => subscriptions.get(name)?.forEach(listener => listener(value));
 const subscribe = (name: string, listener: (value: any) => void) => {
@@ -21,22 +22,21 @@ const rpc = async (method: string, args: any[] = []) => {
   return value;
 };
 const methods = [
-  'getClientRoute', 'setClientRoute', 'resumeTracing',
   'previewConfigurationImport', 'importConfigurations', 'chooseConfigurationImportFile',
   'getModelClients', 'addModelClient', 'removeModelClient', 'detectClientInstallations',
-  'setSubscriptionRouting', 'refreshSubscriptionUsage', 'getSubscriptionAccounts', 'beginSubscriptionSignIn', 'cancelSubscriptionSignIn', 'connectSubscriptionAccount', 'renameSubscriptionAccount', 'signOutSubscriptionAccount', 'openSubscriptionUsage',
+  'getOfficialChatgptAccount', 'getOfficialChatgptResetCredits', 'consumeOfficialChatgptResetCredit', 'setSubscriptionRouting', 'refreshSubscriptionUsage', 'getSubscriptionAccounts', 'beginSubscriptionSignIn', 'cancelSubscriptionSignIn', 'connectSubscriptionAccount', 'renameSubscriptionAccount', 'signOutSubscriptionAccount', 'openSubscriptionUsage',
   'getState', 'getTraceStats', 'getUpdateState', 'getClaudeModels', 'getClaudeDesktopSync',
   'getCodexConfig', 'getCodexEnhancements', 'getCompatibleServiceConfig', 'getModelServices',
-  'getProviders', 'saveProvider', 'deleteProvider', 'switchClientProvider', 'fetchProviderModels',
+  'getServiceSwitching', 'setServiceSwitching', 'updateProviderClientModel', 'getProviders', 'saveProvider', 'deleteProvider', 'switchClientProvider', 'fetchProviderModels',
   'fetchModels', 'validateProvider', 'getClaudeEnvironmentOverrides', 'isChatGptRunning',
   'setTheme', 'setLanguage', 'setAutomaticUpdates', 'setTraceAppearance', 'setTraceStoragePolicy', 'toggleTracing', 'toggleClient',
   'updateCodexConfig', 'setModelService', 'refresh', 'disableBreaksCodex',
   'minimizeWindow', 'toggleFullscreen', 'toggleMaximize', 'setManagerView', 'closeWindow',
   'moveWindowStart', 'moveWindow', 'moveWindowEnd', 'resizeWindowStart', 'resizeWindowMove', 'resizeWindowEnd',
   'openSetupWebsite', 'checkForUpdates', 'downloadUpdate', 'restartAndInstall', 'cancelUpdate',
-  'setStartupEnabled', 'chooseTraceBackground', 'clearTraceBackground', 'repairApplication',
+  'setStartupEnabled', 'chooseTraceBackground', 'clearTraceBackground', 'repairApplication', 'migrateWebCryptoKey',
   'repairUnreadableSettings', 'repairInvalidCodexConfiguration', 'repairClientProviderSwitch',
-  'resetApplication', 'updateCodexEnhancements', 'updateClaudeModels', 'updateClaudeDesktopSync',
+  'resetApplication', 'getApplicationResetResult', 'updateCodexEnhancements', 'updateClaudeModels', 'updateClaudeDesktopSync',
   'clearClaudeEnvironmentOverrides', 'updateCompatibleServiceConfig', 'chooseDirectory',
   'updateTraceDirectories', 'openDashboard', 'openDataFolder', 'openLogFolder', 'clearHistory',
   'inspectTraceIndexRepair', 'applyTraceIndexRepair', 'copyText'
@@ -48,6 +48,7 @@ bridge.onState = (listener: any) => subscribe('state', listener);
 bridge.onWindowState = (listener: any) => { listener(windowState); return subscribe('window', listener); };
 bridge.onUpdateState = (listener: any) => subscribe('update', listener);
 bridge.onShowUpdateDetails = (listener: any) => subscribe('showUpdate', listener);
+bridge.getPathForFile = () => ''; // Tauri supplies real paths through its native drag-drop event.
 bridge.onNotice = (listener: any) => subscribe('notice', listener);
 (window as any).xwxDeck = bridge;
 let lastSubscriptionNotice = 0;
@@ -70,6 +71,11 @@ setInterval(() => {
     noticesInitialized = true;
   }).catch(() => undefined).finally(() => { checkingNotices = false; });
 }, 2000);
+native.event.listen('pilot-metadata', () => window.dispatchEvent(new CustomEvent('xwxdeck:metadata-changed')));
+native.event.listen('pilot-trace-action', (event: any) => {
+  if (typeof event.payload === 'boolean') window.dispatchEvent(new CustomEvent('xwxdeck:trace-action', { detail: event.payload }));
+});
+native.event.listen('pilot-notice', (event: any) => publish('notice', event.payload));
 native.event.listen('pilot-state', (event: any) => publish('state', event.payload));
 native.event.listen('pilot-update', (event: any) => publish('update', event.payload));
 native.event.listen('pilot-window', (event: any) => { windowState = event.payload; publish('window', windowState); });

@@ -16,8 +16,9 @@
         "height": 560,
         "minWidth": 780,
         "minHeight": 480,
-        "decorations": false,
-        "backgroundColor": "#f5f5f7"
+        "decorations": true,
+        "backgroundColor": "#f5f5f7",
+        "titleBarStyle": "Visible"
       }
     ],
     "security": {

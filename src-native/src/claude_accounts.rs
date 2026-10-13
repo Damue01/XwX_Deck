@@ -176,6 +176,7 @@ impl ClaudeAccounts {
         command.creation_flags(0x08000000);
         command
     }
+    #[cfg(target_os = "macos")]
     fn service(&self, directory: &str) -> String {
         format!(
             "Claude Code-credentials-{}",
@@ -231,9 +232,10 @@ impl ClaudeAccounts {
     }
     pub async fn snapshot(&self) -> Value {
         let accounts = self.accounts.lock().await;
+        // Match publication's lock order and read the list and flow together.
+        let flow = self.flow.lock().await;
         let rows:Vec<_>=accounts.iter().map(|a|json!({"id":a.id,"label":a.label,"email":a.email,"platform":"claude","status":if a.signed_out{"signed-out"}else{"connected"}})).collect();
         drop(accounts);
-        let flow = self.flow.lock().await;
         json!({"accounts":rows,"installed":self.executable().is_some(),"flow":flow.as_ref().map(|f|json!({"id":f.id,"platform":"claude","status":f.status,"error":f.error,"accountId":f.account_id}))})
     }
     pub async fn cancel(&self) {
@@ -420,6 +422,13 @@ impl ClaudeAccounts {
                 {
                     return Err("登录的账号与原账号不一致，原登录已保留".into());
                 }
+                // CLI status has consumed the original JSON. Seal its file
+                // fallback before publishing a registration; Keychain remains
+                // owned by the official Claude Code service.
+                let path = dir.join(".credentials.json");
+                if let Some(source) = read(&path)? {
+                    write(&path, &source)?;
+                }
                 Ok(Account {
                     id: old
                         .as_ref()
@@ -493,6 +502,7 @@ impl ClaudeAccounts {
             .find(|a| a.id == id)
             .ok_or("Claude 账号不存在")?;
         Ok(Provider {
+            other: Default::default(),
             id: format!("subscription-{id}"),
             display_name: a.label.clone(),
             subscription_account_id: id.into(),

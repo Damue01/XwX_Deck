@@ -1,6 +1,7 @@
 import { GatewayClientModels } from './GatewayClientModels';
 import { t, getLanguage, useLanguage } from '@/lib/i18n';
 import { ProviderPicker } from './ProviderPicker';
+import { OfficialChatgptAccount } from './OfficialChatgptAccount';
 import { SlidersHorizontal } from 'lucide-react';
 import { ProviderIcon } from '../settings/ProviderIcon';
 import { ClientDownloads } from '../settings/ProviderSetupShortcuts';
@@ -14,8 +15,7 @@ import type {
   ModelCatalogEntry,
 } from '@/bridge/types';
 import { useBridge } from '@/bridge/store';
-import { clearLifecycleNotice, closeToast, openConfiguration, openProviderSettings, REPAIR_CODEX_CONFIG_EVENT, RESTORE_CLIENT_CONFIG_EVENT, runNoticeAction, showErrorToast, showLifecycleNotice, showToast } from '@/lib/toast';
-import { lifecycleFailure } from '../../../shared/lifecycleNotice';
+import { clearLifecycleNotice, closeToast, openConfiguration, openProviderSettings, REPAIR_CODEX_CONFIG_EVENT, RESTORE_CLIENT_CONFIG_EVENT, runNoticeAction, showErrorToast, showToast } from '@/lib/toast';
 import { normalizeErrorMessage } from '../../../shared/errors';
 import { modelCatalogFailureMessage } from '../../../shared/modelCatalogError';
 import { waitForModelCatalog } from '../../../shared/modelCatalogWait';
@@ -24,7 +24,7 @@ import { ModelPicker, type ModelPickerNote } from './ModelPicker';
 import { isClaudeDesktopCompatibleModelId } from '../../../shared/claudeDesktopModelId';
 import { CodexEnhancements } from './CodexEnhancements';
 import { ClaudeEnhancements } from './ClaudeEnhancements';
-import { isKnownNonConversationalModel, isOfficialCodexModelId, providerRequiresTrace, resolveClaudeModelProtocol } from '../../../main/app/codexProtocolPolicy';
+import { isKnownNonConversationalModel, isOfficialCodexModelId, providerRequiresTrace, resolveClaudeModelProtocol } from '../../../shared/codex-protocol-policy';
 import {
   codexContextVariants,
   formatContextWindow,
@@ -46,6 +46,9 @@ const CLAUDE_ROLES: Array<{ key: ClaudeRole; label: string }> = [
   { key: 'haiku', label: 'Haiku' },
 ];
 
+type ModelReadOutcome = 'ready' | 'superseded' | 'failed';
+type ScopedModelRead = { providerId: string | null; generation: number; promise: Promise<ModelReadOutcome>; reportFailure?: () => void };
+
 const EXTERNAL_CODEX_CATALOG_DESCRIPTION = '检测到其他工具留下的模型配置。请确认原工具已经退出，再重新接管。';
 
 function providerFailureAction(error: unknown, providerId: string | null, retryLabel: string, retry: () => void): React.ComponentPropsWithoutRef<'button'> {
@@ -62,6 +65,10 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   const [selectedClient, setSelectedClient] = React.useState<DownloadClientId>('claude');
   const clientTabsList = React.useRef<HTMLDivElement | null>(null);
   const shownClients = normalizeModelClients(bridge.modelClients);
+  const singleClient = shownClients.length === 1;
+  const singleClientPanelProps = singleClient
+    ? { role: 'region' as const, 'aria-labelledby': 'models-single-client', tabIndex: -1 }
+    : {};
   const clientRoute = modelClientRoute(selectedClient);
   const activeTab: ClientTab = clientRoute ?? 'claude';
   const clientActive = active && clientRoute !== null && shownClients.includes(selectedClient);
@@ -111,7 +118,10 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   const currentProviderIds = React.useRef({ codex: codexProviderId, claude: claudeProviderId });
   currentProviderIds.current = { codex: codexProviderId, claude: claudeProviderId };
   const selectionReadRequest = React.useRef({ codex: 0, claude: 0 });
+  const latestCatalogRead = React.useRef<Partial<Record<ClientTab, ScopedModelRead>>>({});
+  const latestSelectionRead = React.useRef<Partial<Record<ClientTab, ScopedModelRead>>>({});
   const unsavedClaudeModels = React.useRef<Partial<ClaudeModelSettings>>({});
+  const unsavedCodexChoice = React.useRef<{ providerId: string | null; config: CodexConfigSnapshot } | null>(null);
   // Model values use the guarded reads below. Unscoped store/bootstrap reads
   // cannot identify which provider or user action they preceded.
   React.useEffect(() => { if (bridge.codexEnhancements) setEnhancements(bridge.codexEnhancements); }, [bridge.codexEnhancements]);
@@ -133,30 +143,51 @@ export function ModelsPage({ active }: Props): React.ReactElement {
 
   // Re-entering the page reads current settings, without allowing a read that
   // started before a user action to replace that action's result.
-  const refreshModelSelection = React.useCallback(async (client: ClientTab, providerId: string | null) => {
+  const refreshModelSelection = React.useCallback(async (client: ClientTab, providerId: string | null): Promise<ModelReadOutcome> => {
     const request = ++selectionReadRequest.current[client];
     const generation = providerSwitchGeneration.current[client];
     const isCurrent = () => generation === providerSwitchGeneration.current[client]
       && request === selectionReadRequest.current[client]
       && currentProviderIds.current[client] === providerId;
-    try {
-      if (client === 'claude') {
-        const models = await bridge.api.getClaudeModels();
-        if (isCurrent()) { setClaudeModels({ ...models, ...unsavedClaudeModels.current }); bridge.patch({ claudeModels: models }); }
-      } else {
-        const config = await bridge.api.getCodexConfig();
-        if (isCurrent()) { setCodexConfig(config); bridge.patch({ codexConfig: config }); }
+    const promise = (async (): Promise<ModelReadOutcome> => {
+      try {
+        if (client === 'claude') {
+          const models = await bridge.api.getClaudeModels();
+          if (isCurrent()) { setClaudeModels({ ...models, ...unsavedClaudeModels.current }); bridge.patch({ claudeModels: models }); }
+        } else {
+          const config = await bridge.api.getCodexConfig();
+          if (isCurrent()) {
+            const pending = unsavedCodexChoice.current;
+            setCodexConfig(pending?.providerId === providerId ? pending.config : config);
+            bridge.patch({ codexConfig: config });
+          }
+        }
+        return isCurrent() ? 'ready' : 'superseded';
+      } catch (error) {
+        if (!isCurrent()) return 'superseded';
+        if (visibleClient.current === client) showErrorToast(t('模型配置暂未读取，服务选择保留'), error, undefined, {
+          actionProps: { type: 'button', children: t('重试'), onClick: () => {
+            if (isCurrent()) void refreshModelSelection(client, providerId);
+          } }
+        });
+        return 'failed';
       }
-      return isCurrent();
-    } catch (error) {
-      if (isCurrent() && visibleClient.current === client) showErrorToast(t('模型配置暂未读取，服务选择保留'), error, undefined, {
-        actionProps: { type: 'button', children: t('重试'), onClick: () => {
-          if (isCurrent()) void refreshModelSelection(client, providerId);
-        } }
-      });
-      return false;
-    }
+    })();
+    latestSelectionRead.current[client] = { providerId, generation, promise };
+    return promise;
   }, [bridge.api, bridge.patch]);
+  async function settleModelReadOutcome(reads: React.RefObject<Partial<Record<ClientTab, ScopedModelRead>>>, client: ClientTab, providerId: string | null, generation: number, initialRead: Promise<ModelReadOutcome>): Promise<ModelReadOutcome> {
+    let read = initialRead;
+    let outcome = await read;
+    while (outcome === 'superseded' && generation === providerSwitchGeneration.current[client]) {
+      const latest = reads.current[client];
+      if (!latest || latest.providerId !== providerId || latest.generation !== generation || latest.promise === read) break;
+      read = latest.promise;
+      outcome = await read;
+    }
+    if (outcome === 'failed' && generation === providerSwitchGeneration.current[client]) reads.current[client]?.reportFailure?.();
+    return outcome;
+  }
   React.useEffect(() => {
     const client = activeTab;
     const providerId = client === 'claude' ? claudeProviderId : codexProviderId;
@@ -247,12 +278,11 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       if (!isCurrent()) return;
       written = true;
       bridge.patch({ providers });
-      let modelReadFailed = false;
-      void refreshModelSelection(client, providerId).then(ok => { modelReadFailed = !ok; });
-      const result = await waitForModelCatalog(client === 'codex'
-        ? loadCodexCatalog(false, true, providerId)
-        : loadClaudeCatalog(providerId, true), startedAt);
-      if (isCurrent() && result !== 'failed' && !modelReadFailed) showToast(t('模型服务配置已修复'), result === 'ready' ? 'success' : 'info', undefined, {
+      const modelRead = refreshModelSelection(client, providerId);
+      const catalogRead = client === 'codex' ? loadCodexCatalog(false, true, providerId) : loadClaudeCatalog(providerId, true);
+      const result = await waitForModelCatalog(settleModelReadOutcome(latestCatalogRead, client, providerId, generation, catalogRead).then(outcome => outcome === 'ready'), startedAt);
+      const selectionRead = await settleModelReadOutcome(latestSelectionRead, client, providerId, generation, modelRead);
+      if (isCurrent() && result !== 'failed' && selectionRead !== 'failed') showToast(t('模型服务配置已修复'), result === 'ready' ? 'success' : 'info', undefined, {
         description: result === 'timeout' ? t('列表仍在加载，服务配置已保存，可继续操作。') : undefined
       });
     } catch (error) {
@@ -270,18 +300,23 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     return () => window.removeEventListener(REPAIR_CODEX_CONFIG_EVENT, handle);
   }, [repairCodexConfig]);
 
-  const loadCodexCatalog = React.useCallback(async (refresh: boolean, notify: boolean, providerId = codexProviderId): Promise<boolean> => {
+  const loadCodexCatalog = React.useCallback(async (refresh: boolean, notify: boolean, providerId = codexProviderId, backgroundRefresh = true): Promise<ModelReadOutcome> => {
     const request = ++codexCatalogRequest.current;
-    const isCurrent = () => request === codexCatalogRequest.current && currentProviderIds.current.codex === providerId;
+    const generation = providerSwitchGeneration.current.codex;
+    const isCurrent = () => generation === providerSwitchGeneration.current.codex && request === codexCatalogRequest.current && currentProviderIds.current.codex === providerId;
     const publish = (list: readonly ModelCatalogEntry[]) => {
       if (!isCurrent()) return false;
       setCatalog(list);
       bridge.patch({ modelCatalog: list });
       return true;
     };
-    const reportFailure = (error: unknown, background = false) => {
+    let reported = false, failure: unknown;
+    const reportFailure = (error: unknown, background = false, foreground = false) => {
+      if (reported) return;
       if (!isCurrent() || /服务连接已变化/.test(normalizeErrorMessage(error))) return;
-      if (notify && visibleClient.current === 'codex') showToast(
+      if ((notify || foreground) && visibleClient.current === 'codex') {
+        reported = true;
+        showToast(
         background ? t('模型列表刷新失败，已保留原列表') : t('模型列表未加载'), 'warning', undefined, {
           description: modelCatalogFailureMessage(error),
           actionProps: providerFailureAction(error, providerId, t('重试列表'), () => {
@@ -290,38 +325,48 @@ export function ModelsPage({ active }: Props): React.ReactElement {
             void loadCodexCatalog(true, true, providerId);
           })
         }
-      );
-    };
-    try {
-      const list = await bridge.api.fetchModels({ source: 'active', refresh, expectedProviderId: providerId });
-      if (!publish(list)) return false;
-      if (!refresh && providerId) {
-        // Capability enrichment is background work, outside the loading deadline.
-        void bridge.api.fetchModels({ source: 'active', refresh: true, expectedProviderId: providerId })
-          .then(publish).catch(error => {
-            // Let the switch-completed notice finish before reporting a fast failure.
-            setTimeout(() => reportFailure(error, true), 0);
-          });
+        );
       }
-      return true;
-    } catch (error) {
-      reportFailure(error);
-      return false;
-    }
+    };
+    const promise = (async (): Promise<ModelReadOutcome> => {
+      try {
+        const list = await bridge.api.fetchModels({ source: 'active', refresh, expectedProviderId: providerId });
+        if (!publish(list)) return 'superseded';
+        if (!refresh && providerId && backgroundRefresh) {
+          // Capability enrichment is background work, outside the loading deadline.
+          void bridge.api.fetchModels({ source: 'active', refresh: true, expectedProviderId: providerId })
+            .then(publish).catch(error => {
+              // Let the switch-completed notice finish before reporting a fast failure.
+              setTimeout(() => reportFailure(error, true), 0);
+            });
+        }
+        return 'ready';
+      } catch (error) {
+        if (!isCurrent()) return 'superseded';
+        failure = error; reportFailure(error);
+        return 'failed';
+      }
+    })();
+    latestCatalogRead.current.codex = { providerId, generation, promise, reportFailure: () => reportFailure(failure, false, true) };
+    return promise;
   }, [bridge.api, bridge.patch, codexProviderId]);
 
-  const loadClaudeCatalog = React.useCallback(async (providerId: string | null, notify: boolean, refresh = false): Promise<boolean> => {
+  const loadClaudeCatalog = React.useCallback(async (providerId: string | null, notify: boolean, refresh = false, backgroundRefresh = true): Promise<ModelReadOutcome> => {
     const request = ++claudeCatalogRequest.current;
-    const isCurrent = () => request === claudeCatalogRequest.current && currentProviderIds.current.claude === providerId;
-    if (!providerId) { setClaudeProviderCatalog([]); return true; }
+    const generation = providerSwitchGeneration.current.claude;
+    const isCurrent = () => generation === providerSwitchGeneration.current.claude && request === claudeCatalogRequest.current && currentProviderIds.current.claude === providerId;
     const publish = (list: readonly ModelCatalogEntry[]) => {
       if (!isCurrent()) return false;
       setClaudeProviderCatalog(list);
       return true;
     };
-    const reportFailure = (error: unknown, background = false) => {
+    let reported = false, failure: unknown;
+    const reportFailure = (error: unknown, background = false, foreground = false) => {
+      if (reported) return;
       if (!isCurrent()) return;
-      if (notify && visibleClient.current === 'claude') showToast(
+      if ((notify || foreground) && visibleClient.current === 'claude') {
+        reported = true;
+        showToast(
         background ? t('模型列表刷新失败，已保留原列表') : t('模型列表未加载'), 'warning', undefined, {
           description: modelCatalogFailureMessage(error),
           actionProps: providerFailureAction(error, providerId, t('重试列表'), () => {
@@ -330,27 +375,44 @@ export function ModelsPage({ active }: Props): React.ReactElement {
             void loadClaudeCatalog(providerId, true, true);
           })
         }
-      );
-    };
-    try {
-      const list = await bridge.api.fetchProviderModels({ providerId, refresh });
-      if (!publish(list)) return false;
-      if (!refresh) {
-        // Show the cache immediately, then discover newly published models.
-        void bridge.api.fetchProviderModels({ providerId, refresh: true })
-          .then(publish).catch(error => {
-            setTimeout(() => reportFailure(error, true), 0);
-          });
+        );
       }
-      return true;
-    } catch (error) {
-      reportFailure(error);
-      return false;
-    }
+    };
+    const promise = (async (): Promise<ModelReadOutcome> => {
+      try {
+        if (!providerId) { setClaudeProviderCatalog([]); return 'ready'; }
+        const list = await bridge.api.fetchProviderModels({ providerId, refresh });
+        if (!publish(list)) return 'superseded';
+        if (!refresh && backgroundRefresh) {
+          // Show the cache immediately, then discover newly published models.
+          void bridge.api.fetchProviderModels({ providerId, refresh: true })
+            .then(publish).catch(error => {
+              setTimeout(() => reportFailure(error, true), 0);
+            });
+        }
+        return 'ready';
+      } catch (error) {
+        if (!isCurrent()) return 'superseded';
+        failure = error; reportFailure(error);
+        return 'failed';
+      }
+    })();
+    latestCatalogRead.current.claude = { providerId, generation, promise, reportFailure: () => reportFailure(failure, false, true) };
+    return promise;
   }, [bridge.api]);
 
   // A tab change does not change the target service. Keep its pending request
   // alive; otherwise returning during a switch can leave the list empty.
+  React.useEffect(() => {
+    const changed = () => {
+      if (codexOperationRef.current || claudeOperationRef.current) return;
+      void loadCodexCatalog(false, false, currentProviderIds.current.codex, false);
+      void loadClaudeCatalog(currentProviderIds.current.claude, false, false, false);
+    };
+    window.addEventListener('xwxdeck:metadata-changed', changed);
+    return () => window.removeEventListener('xwxdeck:metadata-changed', changed);
+  }, [loadCodexCatalog, loadClaudeCatalog]);
+
   React.useEffect(() => {
     if (clientActive && activeTab === 'codex' && !codexOperationRef.current) void loadCodexCatalog(false, true);
   }, [loadCodexCatalog, clientActive, activeTab]);
@@ -367,10 +429,10 @@ export function ModelsPage({ active }: Props): React.ReactElement {
 
   const configuredIds = React.useMemo(() => {
     const ids = new Set<string>();
-    const id = codexConfig?.mode === 'compatible' ? codexConfig.compatible.model : codexConfig?.officialModel;
+    const id = codexProviderId ? codexConfig?.compatible.model : codexConfig?.officialModel;
     if (id) ids.add(id);
     return ids;
-  }, [codexConfig]);
+  }, [codexConfig, codexProviderId]);
 
   // Merge configured-but-uncatalogued models so they remain selectable.
   const mergedCatalog = React.useMemo(() => {
@@ -382,11 +444,8 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
   }, [catalog, configuredIds, getLanguage()]);
 
-  // Live CompatibleService verification on 2026-07-28: all 31 models returned by the
-  // Anthropic directory accepted Messages, while all 29 extra name-matched
-  // models failed with no upstream channel. Endpoint membership is therefore
-  // the automatic Claude boundary; free-text custom ids remain available.
-  // Models without Messages are listed too; the local Gateway converts them.
+  // Models come from the selected connection's catalog. Its declared protocol
+  // and adapter decide whether local Gateway conversion is needed.
   const claudeProviderAdapter = bridge.providers?.connections.find(provider => provider.id === claudeProviderId)?.adapter;
   const claudeBridgedIds = React.useMemo(() => new Set(claudeProviderCatalog.filter(m => {
     const protocol = resolveClaudeModelProtocol({ adapter: claudeProviderAdapter }, m);
@@ -407,10 +466,10 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     !isKnownNonConversationalModel(m.id)
     && (m.clients.includes('codex') || m.vendor === '已配置'));
   const activeCodexCatalog = React.useMemo(() => (
-    codexConfig?.mode === 'compatible'
+    codexProviderId
       ? codexCatalog
       : codexCatalog.filter(model => isOfficialCodexModelId(model.id))
-  ), [codexCatalog, codexConfig?.mode]);
+  ), [codexCatalog, codexProviderId]);
   const codexChoices = React.useMemo(() => {
     const choices = activeCodexCatalog.flatMap(model => (
       codexContextVariants(model).map(variant => ({
@@ -419,7 +478,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       }))
     ));
     const currentModelId = codexConfig
-      ? codexConfig.mode === 'compatible' ? codexConfig.compatible.model : codexConfig.officialModel
+      ? codexProviderId ? codexConfig.compatible.model : codexConfig.officialModel
       : '';
     const currentWindow = codexConfig?.modelContextWindow;
     const currentModel = activeCodexCatalog.find(model => model.id === currentModelId);
@@ -442,7 +501,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       });
     }
     return choices;
-  }, [activeCodexCatalog, codexConfig]);
+  }, [activeCodexCatalog, codexConfig, codexProviderId]);
   const codexChoiceByLabel = React.useMemo(() => new Map(
     codexChoices.map(choice => [choice.variant.label, choice.variant] as const)
   ), [codexChoices]);
@@ -513,6 +572,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     currentProviderIds.current[client] = providerId;
     setProviderChoice(previous => ({ ...previous, [client]: providerId }));
     if (client === 'codex') {
+      unsavedCodexChoice.current = null;
       codexCatalogRequest.current += 1;
       setCatalog([]);
       setCodexConfig(null);
@@ -528,7 +588,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       if (client === 'codex' && !takeOverExternalConfig && codexConfig?.configOwnership === 'external') {
         const accepted = await confirm({
           title: t('接管 ChatGPT 配置？'),
-          body: t('会备份当前配置，保留无关设置，再写入你选择的服务。官方登录文件保持不变。'),
+          body: t('会备份当前配置，保留无关设置，再写入您选择的服务。官方登录文件保持不变。'),
           confirmText: t('备份并切换'),
           cancelText: t('取消')
         });
@@ -553,9 +613,8 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       if (!isCurrent()) return;
       written = true;
       bridge.patch({ providers });
-      clearLifecycleNotice();
-      let modelReadFailed = false;
-      void refreshModelSelection(client, providerId).then(ok => { modelReadFailed = !ok; });
+      // Saving a service does not resolve unrelated Trace or settings failures.
+      const modelRead = refreshModelSelection(client, providerId);
       if (client === 'claude') {
         void bridge.api.getClaudeEnvironmentOverrides().then(environment => {
           if (!isCurrent() || !environment.overrides.length) return;
@@ -564,13 +623,14 @@ export function ModelsPage({ active }: Props): React.ReactElement {
           });
         }).catch(() => undefined);
       }
-      const catalogResult = await waitForModelCatalog(
-        client === 'codex' ? loadCodexCatalog(false, true, providerId) : loadClaudeCatalog(providerId, true),
-        startedAt
-      );
+      const catalogRead = client === 'codex' ? loadCodexCatalog(false, true, providerId) : loadClaudeCatalog(providerId, true);
+      const catalogResult = await waitForModelCatalog(settleModelReadOutcome(latestCatalogRead, client, providerId, generation, catalogRead).then(outcome => outcome === 'ready'), startedAt);
+      const selectionRead = await settleModelReadOutcome(latestSelectionRead, client, providerId, generation, modelRead);
       if (!isCurrent()) return;
+      // A newer read of the same service may supersede this one. Only a real
+      // read failure suppresses the committed service's success notice.
       // The loader already offered a specific retry/configuration action.
-      if (modelReadFailed || (catalogResult === 'failed' && !providers.warning)) return;
+      if (selectionRead === 'failed' || (catalogResult === 'failed' && !providers.warning)) return;
       showToast(providerId === null ? t('已恢复客户端连接') : t('模型服务已切换'), providers.warning || catalogResult !== 'ready' ? 'info' : 'success', undefined, {
         description: providers.warning ?? (catalogResult === 'timeout'
           ? t('列表仍在加载，服务配置已保存，可继续操作。')
@@ -592,8 +652,13 @@ export function ModelsPage({ active }: Props): React.ReactElement {
 
   React.useEffect(() => {
     const restore = (event: Event) => {
-      const client = (event as CustomEvent<string>).detail;
-      if (client === 'claude' || client === 'codex') void handleProviderChange(client, null);
+      const detail = (event as CustomEvent<string | { client: string; onComplete?: () => void }>).detail;
+      const client = typeof detail === 'string' ? detail : detail?.client;
+      if (client === 'claude' || client === 'codex') {
+        void handleProviderChange(client, null).finally(() => {
+          if (typeof detail === 'object') detail.onComplete?.();
+        });
+      }
     };
     window.addEventListener(RESTORE_CLIENT_CONFIG_EVENT, restore);
     return () => window.removeEventListener(RESTORE_CLIENT_CONFIG_EVENT, restore);
@@ -606,13 +671,23 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     const generation = ++providerSwitchGeneration.current.codex;
     const cfg = codexConfig;
     const provider = bridge.providers?.connections.find(item => item.id === codexProviderId);
-    const mode = cfg?.mode ?? 'official';
+    // The on-disk route can still be official while the selected subscription
+    // awaits Trace. Write to the user's selected service, not that route.
+    const mode = codexProviderId ? 'compatible' : 'official';
     const choice: CodexContextVariant = codexChoiceByLabel.get(selection) ?? {
       modelId: selection,
       label: selection,
       contextWindow: null
     };
     const modelId = choice.modelId;
+    const desired: CodexConfigSnapshot = {
+      ...cfg,
+      officialModel: mode === 'official' ? modelId : cfg.officialModel,
+      compatible: mode === 'compatible' ? { ...cfg.compatible, model: modelId } : cfg.compatible,
+      modelContextWindow: choice.contextWindow ?? undefined,
+    };
+    unsavedCodexChoice.current = { providerId: codexProviderId, config: desired };
+    setCodexConfig(desired);
     try {
       const saved = await bridge.api.updateCodexConfig({
         expectedProviderId: codexProviderId,
@@ -624,9 +699,14 @@ export function ModelsPage({ active }: Props): React.ReactElement {
         modelContextWindow: choice.contextWindow,
       });
       if (generation !== providerSwitchGeneration.current.codex) return;
+      const savedModel = codexProviderId ? saved.compatible.model : saved.officialModel;
+      if (savedModel !== modelId || (saved.modelContextWindow ?? null) !== choice.contextWindow) {
+        throw new Error(t('模型回读与选择不一致，请重试保存'));
+      }
+      unsavedCodexChoice.current = null;
       setCodexConfig(saved);
       bridge.patch({ codexConfig: saved });
-      clearLifecycleNotice();
+      // Keep unrelated recovery actions available beside the saved-model notice.
       if (saved.warning) {
         showToast(t('模型选择已保存'), 'info', undefined, { description: saved.warning,
           actionProps: saved.warning.includes(t('需要开启 Trace')) ? { type: 'button', children: t('开启 Trace'), onClick: () => runNoticeAction('start-trace') } : undefined });
@@ -639,7 +719,11 @@ export function ModelsPage({ active }: Props): React.ReactElement {
         showToast(t("已选择 {0}；协议由 XwX Deck 自动适配。", choice.label), 'success');
       }
     } catch (error) {
-      if (generation === providerSwitchGeneration.current.codex) showLifecycleNotice(lifecycleFailure(error, t('保存 ChatGPT 配置')));
+      if (generation === providerSwitchGeneration.current.codex) showErrorToast(t('ChatGPT 模型未完全写入，选择已保留'), error, undefined, {
+        actionProps: { type: 'button', children: t('重试'), onClick: () => {
+          if (generation === providerSwitchGeneration.current.codex) void handleCodexModelChange(selection);
+        } }
+      });
     } finally {
       if (generation === providerSwitchGeneration.current.codex) {
         codexOperationRef.current = false;
@@ -663,7 +747,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   }, [bridge.api, bridge.patch]);
 
   const codexModelId = codexConfig
-    ? (codexConfig.mode === 'compatible' ? codexConfig.compatible.model : codexConfig.officialModel)
+    ? (codexProviderId ? codexConfig.compatible.model : codexConfig.officialModel)
     : '';
   const selectedCodexProvider = bridge.providers?.connections.find(
     provider => provider.id === codexProviderId
@@ -675,7 +759,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   const traceEnabled = bridge.runtime?.tracingEnabled === true;
   const codexModelNote = React.useCallback((label: string): ModelPickerNote | undefined => {
     // Official mode does not use third-party protocol conversion.
-    if (codexConfig?.mode !== 'compatible') return undefined;
+    if (!codexProviderId) return undefined;
     const modelId = codexChoiceByLabel.get(label)?.modelId ?? label;
     const catalogEntry = activeCodexCatalog.find(item => item.id === modelId);
     if (catalogEntry?.vendor === '已配置') {
@@ -692,7 +776,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
         label: t('需 Trace'),
         hint: t("{0} 需要协议转换。选择会直接保存；调用时请开启 Trace。", modelId)
       };
-  }, [codexConfig?.mode, codexChoiceByLabel, selectedCodexProvider, bridge.compatibleServiceConfig, activeCodexCatalog, traceEnabled]);
+  }, [codexProviderId, codexChoiceByLabel, selectedCodexProvider, bridge.compatibleServiceConfig, activeCodexCatalog, traceEnabled]);
   const codexModelValue = React.useMemo(() => {
     if (!codexModelId) return '';
     const variants = codexChoices
@@ -715,15 +799,16 @@ export function ModelsPage({ active }: Props): React.ReactElement {
 
         <Tabs value={shownClients.includes(selectedClient) ? selectedClient : null} onValueChange={value => { if (value) setSelectedClient(value as DownloadClientId); }}>
           <div className="models-switch">
-            <TabsList ref={clientTabsList} aria-label={t("选择客户端")}>
+            {shownClients.length > 1 ? <TabsList ref={clientTabsList} aria-label={t("选择客户端")}>
               {shownClients.map(id => <TabsTab key={id} value={id} id={`client-tab-${id}`} data-client-tab={id}>{CLIENT_DOWNLOADS.find(client => client.id === id)?.label}</TabsTab>)}
-            </TabsList>
+            </TabsList> : singleClient ? <span className="model-client-name" id="models-single-client">{CLIENT_DOWNLOADS.find(client => client.id === shownClients[0])?.label}</span> : null}
             <button type="button" className="txt-action models-manage-clients" onClick={event => openConfiguration(event.currentTarget, 'clients')}><SlidersHorizontal size={15} aria-hidden="true" />{t("客户端管理")}</button>
           </div>
           {!shownClients.length && <p className="model-client-status">{t("从「管理客户端」添加已安装的客户端")}</p>}
 
           {/* Claude panel */}
           <TabsPanel value={clientRoute === 'claude' ? selectedClient : 'claude'} keepMounted
+            {...singleClientPanelProps}
             hidden={clientRoute !== 'claude' || !shownClients.includes(selectedClient)}
             className="config-block"
             id="client-panel-claude"
@@ -743,7 +828,6 @@ export function ModelsPage({ active }: Props): React.ReactElement {
                     catalog={claudeCatalog}
                     onChange={id => handleClaudeModelChange(key, id)}
                     noteFor={claudeModelNote}
-                    allowCustomValue={id => !isKnownNonConversationalModel(id)}
                     dataAttr={{ 'data-claude-model': key }}
                   />
                 </div>
@@ -759,6 +843,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
 
           {/* ChatGPT panel */}
           <TabsPanel value={clientRoute === 'codex' ? selectedClient : 'codex'} keepMounted
+            {...singleClientPanelProps}
             hidden={clientRoute !== 'codex' || !shownClients.includes(selectedClient)}
             className="config-block"
             id="client-panel-codex"
@@ -777,12 +862,13 @@ export function ModelsPage({ active }: Props): React.ReactElement {
                       catalog={codexChoiceCatalog}
                       onChange={handleCodexModelChange}
                       noteFor={codexModelNote}
-                      allowCustomValue={id => !isKnownNonConversationalModel(id)
-                        && (codexConfig?.mode === 'compatible' || isOfficialCodexModelId(id))}
+
                       dataAttr={{ 'data-codex-model': '' }}
                     />
               </div>
             </div>
+            {codexProviderId === null && <OfficialChatgptAccount active={active && clientRoute === 'codex'} />}
+            {selectedCodexProvider?.subscriptionAccountId?.startsWith('official-chatgpt') && <OfficialChatgptAccount key={selectedCodexProvider.subscriptionAccountId} accountId={selectedCodexProvider.subscriptionAccountId} active={active && clientRoute === 'codex'} />}
             {enhancements ? (
               <CodexEnhancements
                 enhancements={enhancements}
@@ -792,7 +878,8 @@ export function ModelsPage({ active }: Props): React.ReactElement {
                   void Promise.all([bridge.api.getCodexConfig(), bridge.api.getModelServices()])
                     .then(([config, nextServices]) => {
                       if (generation !== providerSwitchGeneration.current.codex) return;
-                      setCodexConfig(config);
+                      const pending = unsavedCodexChoice.current;
+                      setCodexConfig(pending?.providerId === codexProviderId ? pending.config : config);
                       bridge.patch({ codexConfig: config, modelServices: nextServices });
                     })
                     .catch(() => undefined);
@@ -808,7 +895,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
               </div>
             )}
           </TabsPanel>
-          {addedClients.filter(id => modelClientRoute(id) === null).map(id => <TabsPanel key={id} value={id} hidden={selectedClient !== id} keepMounted className="config-block model-client-setup" id={`client-panel-${id}`} data-client-panel={id}>
+          {addedClients.filter(id => modelClientRoute(id) === null).map(id => <TabsPanel key={id} value={id} hidden={selectedClient !== id} keepMounted {...singleClientPanelProps} className="config-block model-client-setup" id={`client-panel-${id}`} data-client-panel={id}>
             <GatewayClientModels client={id} active={active && selectedClient === id} />
           </TabsPanel>)}
         </Tabs>

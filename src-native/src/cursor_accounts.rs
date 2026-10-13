@@ -107,9 +107,10 @@ impl CursorAccounts {
     }
     pub async fn snapshot(&self) -> Value {
         let accounts = self.accounts.lock().await;
+        // Match publication's lock order and read the list and flow together.
+        let flow = self.flow.lock().await;
         let rows:Vec<_>=accounts.iter().map(|a|json!({"id":a.id,"label":a.label,"email":a.email,"platform":"cursor","status":if a.signed_out||a.expires<=millis() as u64{"signed-out"}else{"connected"}})).collect();
         drop(accounts);
-        let flow = self.flow.lock().await;
         json!({"accounts":rows,"flow":flow.as_ref().map(|f|json!({"id":f.id,"platform":"cursor","status":f.status,"error":f.error,"accountId":f.account_id}))})
     }
     pub async fn cancel(&self) {
@@ -313,6 +314,7 @@ impl CursorAccounts {
             .cloned()
             .ok_or("Cursor 账号不存在")?;
         Ok(Provider {
+            other: Default::default(),
             id: format!("subscription-{id}"),
             display_name: a.label,
             subscription_account_id: id.into(),

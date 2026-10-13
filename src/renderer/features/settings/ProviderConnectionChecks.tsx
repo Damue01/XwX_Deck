@@ -6,8 +6,18 @@ import { showToast } from '@/lib/toast';
 import { modelCatalogFailureMessage } from '../../../shared/modelCatalogError';
 import type { ProviderConnection, ProviderValidationResult } from '../../../shared/providers';
 import type { ModelCatalogEntry } from '@/bridge/types';
+import { isUnavailableModel, isNonConversationalModel } from '../../../shared/modelAvailability';
 
 function validationMessage(result: ProviderValidationResult): string {
+  if (result.failureReason === 'refused') return t('服务商拒绝了此测试请求，请核对服务商策略后重试');
+  if (result.failureReason === 'empty-response') return t('请求未返回文本，请重试或核对模型服务状态');
+  if (result.failureReason === 'model-not-enabled') return t('此账号尚未开通该模型，请到服务商控制台开通');
+  if (result.failureReason === 'endpoint-required') return t('此账号不能直接使用模型 ID，请填写有权限的推理接入点 ID');
+  if (result.failureReason === 'model-not-found') return t('模型或推理接入点不存在，或此账号无权访问');
+  if (result.failureReason === 'endpoint-not-found') return t('接口路径不存在，请核对基础地址和协议');
+  if (result.failureReason === 'not-found') return t('接口或模型不存在，请核对协议、模型 ID 和访问权限');
+  if (result.status === 'unavailable' && result.httpStatus) return `${t('连接测试未通过，请检查地址或网络后重试')} (HTTP ${result.httpStatus})`;
+  if (result.failureReason === 'timeout') return t('请求超时，请重试或核对模型服务状态');
   switch (result.status) {
     case 'valid': return t('模型请求通过');
     case 'authentication-error': return t('密钥无效或权限不足');
@@ -34,12 +44,12 @@ export function ProviderConnectionChecks({ provider, disabled, draftChanged }: {
   const testGeneration = React.useRef(0);
   const testLock = React.useRef(false);
   const catalogLock = React.useRef(false);
-  const loadModels = React.useCallback(async () => {
+  const loadModels = React.useCallback(async (refresh = true) => {
     if (catalogLock.current) return;
     const generation = ++catalogGeneration.current;
     catalogLock.current = true; setLoading(true); setCatalogError('');
     try {
-      const result = await api.fetchProviderModels({ providerId: provider.id, refresh: true });
+      const result = await api.fetchProviderModels({ providerId: provider.id, refresh });
       if (generation === catalogGeneration.current) setModels([...new Map(result.map(model => [model.id, model])).values()]);
     } catch (error) {
       if (generation === catalogGeneration.current) setCatalogError(modelCatalogFailureMessage(error));
@@ -53,6 +63,11 @@ export function ProviderConnectionChecks({ provider, disabled, draftChanged }: {
     void loadModels();
     return () => { catalogGeneration.current++; testGeneration.current++; };
   }, [loadModels, provider.codexModel]);
+  React.useEffect(() => {
+    const changed = () => { void loadModels(false); };
+    window.addEventListener('xwxdeck:metadata-changed', changed);
+    return () => window.removeEventListener('xwxdeck:metadata-changed', changed);
+  }, [loadModels]);
   async function test(model: string) {
     if (disabled || testLock.current) return;
     if (draftChanged) { showToast(t('请先保存修改，再进行测试'), 'info'); return; }
@@ -68,9 +83,10 @@ export function ProviderConnectionChecks({ provider, disabled, draftChanged }: {
       if (generation === testGeneration.current) { testLock.current = false; setPendingModel(null); }
     }
   }
-  const ids = models?.map(model => model.id) ?? [];
+  const ids = models?.filter(model => !isUnavailableModel(model) && !isNonConversationalModel(model)).map(model => model.id) ?? [];
   const defaultModel = provider.codexModel || provider.claudeModels.sonnet;
-  const retainedModel = defaultModel && !ids.includes(defaultModel) ? defaultModel : null;
+  const retainedEntry = models?.find(model => model.id === defaultModel);
+  const retainedModel = defaultModel && !isUnavailableModel(retainedEntry ?? {}) && !isNonConversationalModel(retainedEntry ?? { id: defaultModel }) && !ids.includes(defaultModel) ? defaultModel : null;
   const allModels = retainedModel ? [retainedModel, ...ids] : ids;
   const filterEnabled = allModels.length > 12;
   const effectiveQuery = filterEnabled ? query.trim().toLocaleLowerCase() : '';

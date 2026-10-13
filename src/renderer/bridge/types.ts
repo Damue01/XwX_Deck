@@ -1,34 +1,10 @@
-import type { ProviderSnapshot, ProviderInput, ProviderClient, ProviderValidationResult } from '../../shared/providers';
+import type { ProviderPresetId } from "../../shared/providerProfiles";
 import type { SetupWebsite, SetupWebsites } from '../../shared/setupWebsites';
+import type { ProviderValidationResult } from '../../shared/providers';
+import type { ProviderSnapshot, ProviderInput, ProviderClient } from '../../shared/providers';
 // Shared data shapes for the window.xwxDeck bridge surface.
 // All types are plain serialisable objects; nothing from Electron is imported here.
-import type { ProviderPresetId } from '../../shared/providerProfiles';
-export interface TraceIndexRepairCandidate {
-  readonly id: string;
-  readonly jsonlPath: string;
-  readonly validRecords: number;
-  readonly malformedRecords: number;
-}
 
-export interface TraceIndexRepairPlan {
-  readonly rootPath: string;
-  readonly indexPath: string;
-  readonly indexStatus: 'valid' | 'missing' | 'invalid';
-  readonly indexSha256: string;
-  readonly indexedSessions: number;
-  readonly needsRepair?: boolean;
-  readonly unindexedFiles?: readonly string[];
-  readonly staleIndexedFiles?: readonly string[];
-  readonly jsonlFiles: number;
-  readonly missingIndexedFiles: readonly string[];
-  readonly candidates: readonly TraceIndexRepairCandidate[];
-}
-
-export interface AppliedTraceIndexRepair extends TraceIndexRepairPlan {
-  readonly applied: true;
-  readonly backupIndexPath?: string;
-  readonly recoveredSessions: number;
-}
 
 export type ClientId = 'claude-cli' | 'codex-cli';
 
@@ -39,7 +15,6 @@ export type UpdateStatus =
   | 'downloading' | 'ready' | 'installing' | 'error' | 'portable';
 
 export interface XwXDeckUpdateState {
-  readonly background?: boolean;
   readonly status: UpdateStatus;
   readonly currentVersion: string;
   readonly targetVersion?: string;
@@ -56,11 +31,13 @@ export interface XwXDeckUpdateState {
   readonly total?: number;
   readonly bytesPerSecond?: number;
   readonly error?: string;
+
+readonly background?: boolean;
 }
 
 // ---- Startup ---------------------------------------------------------------
 
-export type AppTheme = 'day' | 'night';
+export type AppTheme = 'day' | 'night' | 'system';
 export type TraceSkin = 'classic' | 'clean' | 'custom';
 export type TraceBackgroundFit = 'cover' | 'contain';
 
@@ -85,7 +62,7 @@ export interface StartupSettingsSnapshot {
 // ---- Runtime state ---------------------------------------------------------
 
 export interface ClientStateRow {
-  readonly id: ClientId | import("../../shared/clientDownloads").DownloadClientId;
+  readonly id: ClientId;
   readonly label: string;
   readonly enabled: boolean;
   readonly status: 'idle' | 'taken' | 'skipped' | 'off';
@@ -113,7 +90,9 @@ export interface TraceRuntimeReadiness {
 }
 
 export interface XwXDeckRuntimeState {
-  readonly missingCodexHistoryProviders?: readonly string[];
+  readonly waitingTools?: number;
+  readonly applicationResetArchives?: boolean;
+  readonly revision?: number;
   readonly connectionNotice?: import('../../shared/lifecycleNotice').LifecycleNotice;
   readonly traceTransition?: 'starting' | 'stopping';
   readonly lifecycleNotice?: import('../../shared/lifecycleNotice').LifecycleNotice;
@@ -131,6 +110,7 @@ export interface XwXDeckRuntimeState {
   readonly chatGptRestartRecommended: boolean;
   /** Claude Desktop must restart to use (`local`) or leave (`direct`) Deck's Gateway. */
   readonly claudeDesktopRestart?: 'local' | 'direct';
+  readonly missingCodexHistoryProviders?: readonly string[];
   readonly externalTracePort?: number;
   readonly sessions: number;
   readonly traces: number;
@@ -141,12 +121,14 @@ export interface XwXDeckRuntimeState {
   readonly traceStorageNotice?: string;
   readonly clients: readonly ClientStateRow[];
   readonly lastError?: string;
+  readonly webCryptoStorage?: { readonly status: 'ready' | 'migration-required'; readonly message?: string };
   readonly theme: AppTheme;
-  readonly automaticUpdates?: boolean;
-  readonly language?: import('@/lib/i18n').Language | null;
   readonly traceAppearance: TraceAppearanceSnapshot;
   readonly startup?: StartupSettingsSnapshot;
   readonly update?: XwXDeckUpdateState;
+
+readonly automaticUpdates?: boolean;
+readonly language?: import('@/lib/i18n').Language | null;
 }
 
 export type AppNotice = import('../../shared/lifecycleNotice').LifecycleNotice;
@@ -219,8 +201,9 @@ export interface CodexConfigSnapshot {
   readonly authMode: CodexAuthMode;
   readonly activeProvider: string;
   readonly activeBaseUrl: string;
+  readonly configuredProviders?: readonly string[];
   readonly officialModel: string;
-  readonly modelCatalogSource: 'none' | 'xwx' | 'external';
+  readonly modelCatalogSource: 'none' | 'compatible' | 'external';
   /** Authoritative verdict from the main process; absent means "not evaluated". */
   readonly configOwnership?: 'deck' | 'external';
   readonly modelContextWindow?: number;
@@ -230,6 +213,7 @@ export interface CodexConfigSnapshot {
     readonly baseUrl: string;
     readonly bearerToken: string;
   };
+
 }
 
 export interface CodexEnhancementsSnapshot {
@@ -249,16 +233,6 @@ export interface CodexEnhancementsSnapshot {
   };
 }
 
-// ---- 兼容服务 config -------------------------------------------------------
-
-export interface CompatibleServiceConfigSnapshot {
-  readonly displayName: string;
-  readonly providerPreset: ProviderPresetId;
-  readonly baseUrl: string;
-  readonly bearerToken: string;
-  readonly codexApiFormat: 'responses' | 'chat-completions' | 'anthropic-messages';
-}
-
 // ---- Claude models ---------------------------------------------------------
 
 export interface ClaudeModelSettings {
@@ -275,45 +249,13 @@ export interface ClaudeDesktopSyncSnapshot {
   readonly modelCount: number;
   readonly configPath?: string;
   readonly detail?: string;
+  readonly warning?: string;
 }
 
 // ---- Model catalog ---------------------------------------------------------
 
-export type ModelProtocol =
-  | 'anthropic-messages' | 'openai-responses' | 'chat-completions' | 'gemini';
-export type ModelClient = 'claude' | 'codex';
-export type ModelCapabilitySource = 'compatible' | 'official' | 'models.dev' | 'litellm' | 'builtin' | 'fallback';
-export type ModelCapabilityField =
-  | 'contextWindow'
-  | 'maxOutputTokens'
-  | 'inputModalities'
-  | 'vision'
-  | 'reasoning'
-  | 'toolCalling'
-  | 'structuredOutput'
-  | 'interleavedThinking';
-
-export interface ModelCatalogEntry {
-  readonly id: string;
-  readonly vendor: string;
-  readonly protocols: readonly ModelProtocol[];
-  readonly protocolsDeclared?: boolean;
-  readonly catalogEndpoints?: readonly ('openai' | 'anthropic' | 'gemini')[];
-  readonly officialProtocols?: readonly ModelProtocol[];
-  readonly vision?: boolean;
-  readonly clients: readonly ModelClient[];
-  readonly reasoningLevels?: readonly string[];
-  readonly defaultReasoningLevel?: string;
-  readonly contextWindow?: number;
-  readonly maxOutputTokens?: number;
-  readonly inputModalities?: readonly string[];
-  readonly reasoning?: boolean;
-  readonly toolCalling?: boolean;
-  readonly structuredOutput?: boolean;
-  readonly interleavedThinking?: boolean;
-  readonly capabilitySources?: Partial<Record<ModelCapabilityField, ModelCapabilitySource>>;
-  readonly missingCapabilities?: readonly ModelCapabilityField[];
-}
+import type { ModelProtocol, ModelClient, ModelCapabilitySource, ModelCapabilityField, ModelCatalogEntry } from '../../shared/model-catalog';
+export type { ModelProtocol, ModelClient, ModelCapabilitySource, ModelCapabilityField, ModelCatalogEntry } from '../../shared/model-catalog';
 
 // ---- Window state ----------------------------------------------------------
 
@@ -343,42 +285,13 @@ export interface TraceRetentionRepairResult {
 
 // ---- XwXDeck API surface -------------------------------------------------
 
-export interface GatewayClientRoute {
-  readonly client: string;
-  readonly providerId: string | null;
-  readonly model: string;
-  readonly enabled: boolean;
-  readonly automatic: boolean;
-  readonly baseUrl: string | null;
-  readonly configDigest: string;
-  readonly requiresTakeover: boolean;
-  readonly configPaths: readonly string[];
-}
-
 export interface XwXDeckApi {
-  getClientRoute?(client: string): Promise<GatewayClientRoute>;
-  setClientRoute?(input: { client: string; providerId: string; model: string; configDigest: string; takeoverConfirmed?: boolean }): Promise<GatewayClientRoute>;
-  toggleGatewayClient?(client: string): Promise<XwXDeckRuntimeState>;
-  previewConfigurationImport?(input?: import('../../shared/configImport').ConfigurationImportInput): Promise<import('../../shared/configImport').ConfigurationImportPreview>;
-  importConfigurations?(input: import('../../shared/configImport').ConfigurationImportInput & { targetDigest: string; fingerprints: readonly string[] }): Promise<import('../../shared/configImport').AppliedConfigurationImport>;
-  chooseConfigurationImportFile?(): Promise<string | null>;
-  detectClientInstallations?(): Promise<import('../../shared/clientDownloads').ClientInstallationSnapshot>;
-  getModelClients?(): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
-  addModelClient?(id: import('../../shared/clientDownloads').DownloadClientId): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
-  removeModelClient?(id: import('../../shared/clientDownloads').DownloadClientId): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
-  setSubscriptionRouting?(input: { platform: import('../../shared/subscriptionAccounts').SubscriptionPlatform; policy: import('../../shared/subscriptionAccounts').SubscriptionRoutingPolicy }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
-  refreshSubscriptionUsage?(input: { platform: import('../../shared/subscriptionAccounts').SubscriptionPlatform }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
-  getSubscriptionAccounts?(): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
-  beginSubscriptionSignIn?(input: { accountId?: string; platform?: 'chatgpt' | 'grok' | 'copilot' | 'claude' | 'cursor' }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
-  renameSubscriptionAccount?(input: { accountId: string; label: string }): Promise<ProviderSnapshot>;
-  cancelSubscriptionSignIn?(): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
-  connectSubscriptionAccount?(id: string): Promise<ProviderSnapshot>;
-  signOutSubscriptionAccount?(id: string): Promise<{ revoked: boolean; warning?: string }>;
-  openSubscriptionUsage?(platform?: 'chatgpt' | 'grok' | 'copilot' | 'claude' | 'cursor'): Promise<void>;
-  readonly setupWebsites: SetupWebsites;
-  openSetupWebsite(site: SetupWebsite): Promise<void>;
   getProviders(): Promise<ProviderSnapshot>;
   saveProvider(input: ProviderInput): Promise<ProviderSnapshot>;
+  getServiceSwitching?(): Promise<import('../../shared/serviceSwitching').ServiceSwitchingConfig>;
+  setServiceSwitching?(input: { client: import('../../shared/serviceSwitching').ServiceSwitchingClient; policy: import('../../shared/serviceSwitching').ServiceSwitchingPolicy }): Promise<import('../../shared/serviceSwitching').ServiceSwitchingConfig>;
+  updateProviderClientModel?(input: { providerId: string; client: import('../../shared/serviceSwitching').ServiceSwitchingClient; model: string; role?: string }): Promise<ProviderSnapshot>;
+
   deleteProvider(id: string): Promise<ProviderSnapshot>;
   switchClientProvider(input: {
     client: ProviderClient;
@@ -390,6 +303,7 @@ export interface XwXDeckApi {
   clearClaudeEnvironmentOverrides(input: { names: readonly string[] }): Promise<ClaudeEnvironmentCleanupResult>;
   // State
   getState(): Promise<XwXDeckRuntimeState>;
+  migrateWebCryptoKey?(): Promise<XwXDeckRuntimeState>;
   getTraceStats(): Promise<ManagerTraceStats>;
   getUpdateState(): Promise<XwXDeckUpdateState>;
   checkForUpdates(): Promise<XwXDeckUpdateState>;
@@ -397,9 +311,8 @@ export interface XwXDeckApi {
   restartAndInstall(): Promise<XwXDeckUpdateState>;
   cancelUpdate(): Promise<XwXDeckUpdateState>;
   setStartupEnabled(enabled: boolean): Promise<XwXDeckRuntimeState>;
-  setAutomaticUpdates?(enabled: boolean): Promise<XwXDeckRuntimeState>;
-  setLanguage?(language: import('@/lib/i18n').Language): Promise<XwXDeckRuntimeState>;
   setTheme(theme: AppTheme): Promise<XwXDeckRuntimeState>;
+  setTraceStoragePolicy(input: { limitGB?: number; autoCleanup?: boolean; clearUsage?: boolean }): Promise<XwXDeckRuntimeState>;
   setTraceAppearance(payload: Partial<Omit<TraceAppearanceSnapshot, 'customImageUrl'>>): Promise<XwXDeckRuntimeState>;
   chooseTraceBackground(): Promise<XwXDeckRuntimeState | undefined>;
   clearTraceBackground(): Promise<XwXDeckRuntimeState>;
@@ -408,6 +321,14 @@ export interface XwXDeckApi {
     removedBytes: number;
     chromiumCacheCleared: boolean;
     refreshedModels?: number;
+    settingsBackupPath?: string | null;
+    preservedModelCatalogs?: number;
+    metadataRefresh?: {
+      status: 'ready' | 'partial' | 'error' | 'skipped';
+      reason?: string;
+      errors?: readonly string[];
+      refreshedModels?: number;
+    };
     traceRetention: TraceRetentionRepairResult;
   }>;
   repairUnreadableSettings(): Promise<{ backupPath: string; lostProviderSettings: boolean }>;
@@ -416,7 +337,7 @@ export interface XwXDeckApi {
     mode: 'official' | 'compatible';
     conflicts: readonly string[];
   }>;
-  repairClientProviderSwitch(input: { client: 'claude' | 'codex'; providerId: string | null }): Promise<ProviderSnapshot>;
+  repairClientProviderSwitch(input: { client: 'claude' | 'codex'; providerId?: string | null }): Promise<ProviderSnapshot>;
   resetApplication(payload: { resetClientConfigs: boolean }): Promise<void>;
   toggleTracing(enabled?: boolean, force?: boolean): Promise<XwXDeckRuntimeState>;
   toggleClient(client: ClientId): Promise<XwXDeckRuntimeState>;
@@ -428,16 +349,6 @@ export interface XwXDeckApi {
   updateCodexEnhancements(payload: Record<string, unknown>): Promise<CodexEnhancementsSnapshot>;
   updateCodexConfig(payload: Record<string, unknown>): Promise<CodexConfigSnapshot>;
   copyText(value: string): Promise<void>;
-
-  // 兼容服务
-  getProviders(): Promise<ProviderSnapshot>;
-  saveProvider(input: ProviderInput): Promise<ProviderSnapshot>;
-  deleteProvider(id: string): Promise<ProviderSnapshot>;
-  switchClientProvider(input: { client: ProviderClient; providerId: string | null }): Promise<ProviderSnapshot>;
-  fetchProviderModels(input: { providerId: string; refresh?: boolean }): Promise<readonly ModelCatalogEntry[]>;
-  validateProvider(input: { providerId: string; model?: string }): Promise<ProviderValidationResult>;
-  getCompatibleServiceConfig(): Promise<CompatibleServiceConfigSnapshot>;
-  updateCompatibleServiceConfig(payload: Record<string, unknown>): Promise<CompatibleServiceConfigSnapshot>;
 
   // Models
   getModelServices(): Promise<ModelServiceSnapshot>;
@@ -460,9 +371,6 @@ export interface XwXDeckApi {
   openDataFolder(): Promise<void>;
   openLogFolder(): Promise<void>;
   clearHistory(): Promise<XwXDeckRuntimeState>;
-  setTraceStoragePolicy(input: { limitGB?: number; autoCleanup?: boolean }): Promise<XwXDeckRuntimeState>;
-  inspectTraceIndexRepair(): Promise<TraceIndexRepairPlan>;
-  applyTraceIndexRepair(expectedIndexSha256?: string): Promise<AppliedTraceIndexRepair>;
   /** True when stopping tracing would break the active ChatGPT (chat-completions bridge) model. */
   disableBreaksCodex(): Promise<boolean>;
   refresh(): Promise<XwXDeckRuntimeState>;
@@ -486,4 +394,83 @@ export interface XwXDeckApi {
   onUpdateState(listener: (state: XwXDeckUpdateState) => void): () => void;
   onShowUpdateDetails(listener: () => void): () => void;
   onNotice(listener: (notice: AppNotice) => void): () => void;
+
+getClientRoute?(client: string): Promise<GatewayClientRoute>;
+setClientRoute?(input: { client: string; providerId: string; model: string; configDigest: string; takeoverConfirmed?: boolean }): Promise<GatewayClientRoute>;
+toggleGatewayClient?(client: string): Promise<XwXDeckRuntimeState>;
+previewConfigurationImport?(input?: import('../../shared/configImport').ConfigurationImportInput): Promise<import('../../shared/configImport').ConfigurationImportPreview>;
+importConfigurations?(input: import('../../shared/configImport').ConfigurationImportInput & { targetDigest: string; fingerprints: readonly string[] }): Promise<import('../../shared/configImport').AppliedConfigurationImport>;
+chooseConfigurationImportFile?(): Promise<string | null>;
+detectClientInstallations?(): Promise<import('../../shared/clientDownloads').ClientInstallationSnapshot>;
+getModelClients?(): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
+addModelClient?(id: import('../../shared/clientDownloads').DownloadClientId): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
+removeModelClient?(id: import('../../shared/clientDownloads').DownloadClientId): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
+setSubscriptionRouting?(input: { platform: import('../../shared/subscriptionAccounts').SubscriptionRoutingGroup; policy: import('../../shared/subscriptionAccounts').SubscriptionRoutingPolicy }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
+getOfficialChatgptAccount?(input?: { refresh?: boolean }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccount>;
+getOfficialChatgptResetCredits?(accountId: string): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccount>;
+consumeOfficialChatgptResetCredit?(input: { accountId: string; accountKey: string; creditId: string; idempotencyKey: string }): Promise<{ outcome: string }>;
+refreshSubscriptionUsage?(input: { platform: import('../../shared/subscriptionAccounts').SubscriptionRoutingGroup }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
+getSubscriptionAccounts?(): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
+beginSubscriptionSignIn?(input: { accountId?: string; platform?: import('../../shared/subscriptionAccounts').SubscriptionRoutingGroup }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
+renameSubscriptionAccount?(input: { accountId: string; label: string }): Promise<ProviderSnapshot>;
+cancelSubscriptionSignIn?(): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
+connectSubscriptionAccount?(id: string): Promise<ProviderSnapshot>;
+signOutSubscriptionAccount?(id: string | { accountId: string; accountKey: string }): Promise<{ revoked: boolean; localCredentialsCleared?: boolean; warning?: string }>;
+openSubscriptionUsage?(platform?: 'chatgpt' | 'grok' | 'copilot' | 'claude' | 'cursor'): Promise<void>;
+readonly setupWebsites: SetupWebsites;
+openSetupWebsite(site: SetupWebsite): Promise<void>;
+setAutomaticUpdates?(enabled: boolean): Promise<XwXDeckRuntimeState>;
+setLanguage?(language: import('@/lib/i18n').Language): Promise<XwXDeckRuntimeState>;
+validateProvider(input: { providerId: string; model?: string }): Promise<ProviderValidationResult>;
+getCompatibleServiceConfig(): Promise<CompatibleServiceConfigSnapshot>;
+updateCompatibleServiceConfig(payload: Record<string, unknown>): Promise<CompatibleServiceConfigSnapshot>;
+inspectTraceIndexRepair(): Promise<TraceIndexRepairPlan>;
+applyTraceIndexRepair(expectedIndexSha256?: string): Promise<AppliedTraceIndexRepair>;
+}
+
+export interface TraceIndexRepairCandidate {
+  readonly id: string;
+  readonly jsonlPath: string;
+  readonly validRecords: number;
+  readonly malformedRecords: number;
+}
+
+export interface TraceIndexRepairPlan {
+  readonly rootPath: string;
+  readonly indexPath: string;
+  readonly indexStatus: 'valid' | 'missing' | 'invalid';
+  readonly indexSha256: string;
+  readonly indexedSessions: number;
+  readonly needsRepair?: boolean;
+  readonly unindexedFiles?: readonly string[];
+  readonly staleIndexedFiles?: readonly string[];
+  readonly jsonlFiles: number;
+  readonly missingIndexedFiles: readonly string[];
+  readonly candidates: readonly TraceIndexRepairCandidate[];
+}
+
+export interface AppliedTraceIndexRepair extends TraceIndexRepairPlan {
+  readonly applied: true;
+  readonly backupIndexPath?: string;
+  readonly recoveredSessions: number;
+}
+
+export interface CompatibleServiceConfigSnapshot {
+  readonly displayName: string;
+  readonly providerPreset?: ProviderPresetId;
+  readonly baseUrl: string;
+  readonly bearerToken: string;
+  readonly codexApiFormat: 'responses' | 'chat-completions' | 'anthropic-messages';
+}
+
+export interface GatewayClientRoute {
+  readonly client: string;
+  readonly providerId: string | null;
+  readonly model: string;
+  readonly enabled: boolean;
+  readonly automatic: boolean;
+  readonly baseUrl: string | null;
+  readonly configDigest: string;
+  readonly requiresTakeover: boolean;
+  readonly configPaths: readonly string[];
 }

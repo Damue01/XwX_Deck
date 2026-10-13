@@ -1,6 +1,6 @@
-import { nativeTestBinary } from './test-support.mjs';
+import { nativeTestBinary, clearFreshCompatibleFixture } from './test-support.mjs';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -46,7 +46,8 @@ function rpc(method, ...args) { return new Promise((resolve, reject) => {
 }); }
 try {
   assert.equal(OFFICIAL_PROVIDERS.length, Object.keys(expectedPaths).length);
-  assert.deepEqual((await rpc('getProviders')).connections, []);
+  assert.equal(OFFICIAL_PROVIDERS[0].id, 'deepseek');
+  await clearFreshCompatibleFixture(rpc);
   for (const preset of OFFICIAL_PROVIDERS) {
     const draft = newProviderDraft([], preset.id);
     assert.equal(draft.bearerToken, '');
@@ -60,6 +61,7 @@ try {
     assert.equal(isCodingPlanConnection(connection), 'codingPlan' in preset);
     await rpc('switchClientProvider', { client: 'codex', providerId: connection.id });
     const runtime = await rpc('toggleTracing', true);
+    assert.equal((await rpc('getCodexConfig')).mode, 'compatible');
     const response = await fetch(runtime.localBaseUrl + '/v1/responses', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'preset-fixture-model', input: 'interactive local fixture', max_output_tokens: 32 }) });
     assert.equal(response.status, 200, await response.clone().text());
     assert.match(JSON.stringify(await response.json()), /preset fixture/);
@@ -69,7 +71,7 @@ try {
     if (preset.adapter === 'anthropic-messages') assert.equal(request.headers['x-api-key'], 'fixture-' + preset.id);
     assert.equal(request.body.model, 'preset-fixture-model');
     await rpc('toggleTracing', false);
-    assert.equal((await rpc('getCodexConfig')).activeBaseUrl, local.baseUrl);
+    const directSnapshot=await rpc('getCodexConfig');assert.equal(directSnapshot.compatible.baseUrl,local.baseUrl);if(preset.adapter==='responses')assert.equal(directSnapshot.activeBaseUrl,local.baseUrl);else{assert.equal(directSnapshot.mode,'official');assert.equal((await rpc('getProviders')).selected.codex,connection.id);assert.equal((await rpc('getState')).connectionNotice.action,'start-trace');}
     if ('local' in preset) {
       assert.equal((await rpc('validateProvider', { providerId: connection.id })).status, 'valid');
       const validation = calls.at(-1);
@@ -86,4 +88,5 @@ try {
 } finally {
   if (child.exitCode === null) child.kill();
   upstream.closeAllConnections(); await new Promise(resolve => upstream.close(resolve));
+  await rm(root, { recursive: true, force: true });
 }

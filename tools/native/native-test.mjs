@@ -2,14 +2,15 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, realpath, mkdir, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 
 const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-rust-pilot-native-'));
 const installations=join(root,'installations');
-const binary = process.env.XWX_NATIVE_TEST_BINARY ? resolve(process.env.XWX_NATIVE_TEST_BINARY) : resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwX Deck Rust Pilot.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
+const binary = process.env.XWX_NATIVE_TEST_BINARY ? resolve(process.env.XWX_NATIVE_TEST_BINARY) : resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwXDeck Rust Validation.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
+const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
 const requests = [];
 const updatePayload=Buffer.from('isolated update download fixture');let updateDownloads=0;
 const upstream = createServer(async (req, res) => {
@@ -20,7 +21,7 @@ const upstream = createServer(async (req, res) => {
   requests.push({ path: req.url, authorization: req.headers.authorization, body: JSON.parse(body) });
   res.writeHead(200, { 'content-type': 'text/event-stream' });
   res.write('event: response.output_text.delta\ndata: {"delta":"native"}\n\n');
-  setTimeout(() => res.end('event: response.completed\ndata: {"type":"response.completed"}\n\n'), 150);
+  setTimeout(() => res.end('event: response.completed\ndata: '+JSON.stringify({type:'response.completed',response:{id:'native-public-smoke',object:'response',status:'completed',model:'pilot-model',output:[],usage:{input_tokens:100,output_tokens:5,total_tokens:105,input_tokens_details:{cached_tokens:60,cache_write_tokens:20}}}})+'\n\n'), 150);
 });
 upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
 const base = `http://127.0.0.1:${upstream.address().port}/v1`;
@@ -30,15 +31,33 @@ try {
   // The fresh isolated root is validated before installing test-only discovery fixtures.
   for(let i=0;i<100;i++){try{await readFile(join(root,'.xwx-rust-pilot'));break;}catch{await new Promise(resolve=>setTimeout(resolve,50));}}
   for (const name of ['Cursor.app/Contents/MacOS/Cursor', 'OpenCode.app/Contents/MacOS/OpenCode']) { const path=join(installations,'Applications',name); await mkdir(resolve(path,'..'),{recursive:true}); await writeFile(path,'isolated discovery fixture'); await chmod(path,0o755); }
+  if(process.platform==='darwin' && process.env.XWX_NATIVE_TEST_ACTIVATE==='1') {
+    // Activate only the exact child created above; never search by an app name.
+    let activated=false, activationError='';
+    for(let attempt=0;attempt<100;attempt++) {
+      if(child.exitCode!==null || child.signalCode!==null) throw Error('Candidate exited before registration: '+(child.exitCode??child.signalCode));
+      const result=spawnSync('/usr/bin/osascript',['-l','JavaScript','-e',`ObjC.import('AppKit'); const candidate=$.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}); if(typeof candidate?.activateWithOptions!=='function') throw Error('Candidate PID not registered yet'); candidate.activateWithOptions(3);`],{encoding:'utf8',timeout:1000});
+      if(result.status===0){activated=true;break;}
+      activationError=result.stderr||result.error?.message||'Candidate not registered';
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    assert.equal(activated,true,activationError);
+  }
   let report;
   for (let i = 0; i < 1800; i++) {
     try { report = JSON.parse(await readFile(join(root, 'native-smoke.json'), 'utf8')); break; } catch { /* Native WebKit is still rendering. */ }
     if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Native host exited: ${child.exitCode ?? child.signalCode}`);
     await new Promise(resolve => setTimeout(resolve, 100));
   }
+  if(!report) { const progress=await readFile(join(root,'native-smoke-progress.json'),'utf8').then(JSON.parse).catch(()=>({checks:[]})); report={...progress,passed:false,error:'Native smoke timed out'}; }
+  await mkdir(resolve('test-results'),{recursive:true});
+  await writeFile(resolve('test-results/native-webview-summary.json'),JSON.stringify({...report,binarySha256,nativeHttpRequests:requests.length,controlledActivation:process.env.XWX_NATIVE_TEST_ACTIVATE==='1',syntheticUpstream:true},null,2)+'\n');
   assert.ok(report, `Native smoke timed out; sandbox ${root}`);
   assert.equal(report.passed, true, JSON.stringify({ ...report, sandbox: root }));
   assert.equal(requests.length, 2);
+  const viewer=JSON.parse(await readFile(join(root,'traces/native-viewer-smoke.json'),'utf8'));
+  assert.equal(viewer.passed,true,JSON.stringify(viewer));
+  await writeFile(resolve('test-results/native-viewer-summary.json'),JSON.stringify({...viewer,binarySha256},null,2)+'\n');
   assert.equal(updateDownloads,0,'notification checks must not automatically download an installer');
   for (const request of requests) {
     assert.equal(request.authorization, 'Bearer isolated-test-key'); assert.equal(request.path, '/v1/responses'); assert.equal(request.body.model, 'pilot-model');

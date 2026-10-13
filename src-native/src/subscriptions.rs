@@ -33,6 +33,8 @@ struct Account {
     earliest_refresh_at: u64,
     #[serde(default)]
     needs_login: bool,
+    #[serde(default)]
+    chatgpt_account_id: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,21 +69,32 @@ struct Inner {
     flow: Option<Flow>,
 }
 #[derive(Clone)]
-pub(super) struct Accounts {
-    pub pool: subscription_routing::Pool,
+pub(crate) struct Accounts {
+    pub(super) pool: subscription_routing::Pool,
     inner: Arc<Mutex<Inner>>,
     path: PathBuf,
     issuer: String,
     api: String,
     client: reqwest::Client,
     test: bool,
+    isolated: bool,
+    root: PathBuf,
     grok: grok_accounts::GrokAccounts,
     copilot: copilot_accounts::CopilotAccounts,
     claude: claude_accounts::ClaudeAccounts,
     cursor: cursor_accounts::CursorAccounts,
+    official: official_accounts::OfficialAccounts,
     current_platform: Arc<Mutex<String>>,
 }
 impl Accounts {
+    pub(super) fn official_usage_url(&self) -> String {
+        let base = if self.test {
+            self.issuer.as_str()
+        } else {
+            "https://chatgpt.com"
+        };
+        format!("{base}/backend-api/wham/usage")
+    }
     pub fn open(root: &Path, isolated: bool) -> Result<Self> {
         let path = root.join("subscription-accounts.json");
         let vault = match read(&path)? {
@@ -140,7 +153,20 @@ impl Accounts {
         let copilot = copilot_accounts::CopilotAccounts::open(root, test, &issuer)?;
         let claude = claude_accounts::ClaudeAccounts::open(root, test, &issuer)?;
         let cursor = cursor_accounts::CursorAccounts::open(root, test, &issuer)?;
+        let official_usage_url = format!(
+            "{}/backend-api/wham/usage",
+            if test {
+                issuer.as_str()
+            } else {
+                "https://chatgpt.com"
+            }
+        );
+        let official =
+            official_accounts::OfficialAccounts::open(root, isolated, test, official_usage_url)?;
         Ok(Self {
+            isolated,
+            root: root.into(),
+            official,
             pool: subscription_routing::Pool::open(root)?,
             inner: Arc::new(Mutex::new(Inner { vault, flow: None })),
             path,
@@ -169,6 +195,13 @@ impl Accounts {
         }
     }
     pub async fn endpoint_for(&self, id: &str) -> Result<String> {
+        if official_accounts::is_official(id) {
+            return Ok(if self.test {
+                format!("{}/backend-api", self.issuer)
+            } else {
+                "https://chatgpt.com/backend-api".into()
+            });
+        }
         if id.starts_with("cursor-") {
             Ok(self.cursor.api().into())
         } else if id.starts_with("claude-subscription-") {
@@ -179,9 +212,21 @@ impl Accounts {
             Ok(self.api_for(id).into())
         }
     }
+    pub(super) async fn has_registered_api_account(&self, id: &str) -> bool {
+        self.inner
+            .lock()
+            .await
+            .vault
+            .accounts
+            .iter()
+            .any(|account| account.id == id)
+    }
     pub async fn snapshot(&self) -> Value {
         let inner = self.inner.lock().await;
-        let mut accounts:Vec<_>=inner.vault.accounts.iter().map(|a|json!({"id":a.id,"label":a.label,"email":a.email,"platform":"chatgpt","status":if a.needs_login||a.refresh.is_empty(){"signed-out"}else{"connected"}})).collect();
+        // An explicit API sign-out clears refresh credentials. Keep the sealed
+        // registration for identity matching on reauthorization, but omit its
+        // empty row. Expired registrations retain credentials and a login action.
+        let mut accounts:Vec<_>=inner.vault.accounts.iter().filter(|a| !a.refresh.is_empty()).map(|a|json!({"id":a.id,"label":a.label,"email":a.email,"platform":"chatgpt","authKind":"api","accountKey":imported_subscriptions::api_identity(&a.subject,&a.email,&a.chatgpt_account_id),"status":if a.needs_login{"signed-out"}else{"connected"}})).collect();
         let flow = inner
             .flow
             .as_ref()
@@ -194,6 +239,20 @@ impl Accounts {
                     .map(|f| json!({"id":f.id,"platform":"chatgpt","status":"failed","error":f.error}))
             });
         drop(inner);
+        let official = self.official.snapshot().await;
+        accounts.extend(official["accounts"].as_array().cloned().unwrap_or_default());
+        for account in imported_subscriptions::registrations(&self.root)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|a| a.kind == "api")
+        {
+            if !accounts
+                .iter()
+                .any(|old| old["accountKey"] == account.identity)
+            {
+                accounts.push(account.metadata(&self.root, self.isolated));
+            }
+        }
         let grok = self.grok.snapshot().await;
         accounts.extend(grok["accounts"].as_array().cloned().unwrap_or_default());
         let claude = self.claude.snapshot().await;
@@ -203,13 +262,14 @@ impl Accounts {
         let cursor = self.cursor.snapshot().await;
         accounts.extend(cursor["accounts"].as_array().cloned().unwrap_or_default());
         let flow = match self.current_platform.lock().await.as_str() {
+            "chatgpt-official" => official["flow"].clone(),
             "cursor" => cursor["flow"].clone(),
             "grok" => grok["flow"].clone(),
             "copilot" => copilot["flow"].clone(),
             "claude" => claude["flow"].clone(),
             _ => flow.unwrap_or(Value::Null),
         };
-        let mut snapshot = json!({"accounts":accounts,"flow":flow,"grokInstalled":grok["installed"],"claudeInstalled":claude["installed"]});
+        let mut snapshot = json!({"accounts":accounts,"flow":flow,"grokInstalled":grok["installed"],"claudeInstalled":claude["installed"],"officialLoginInstalled":official["installed"]});
         self.pool.decorate(&mut snapshot);
         snapshot
     }
@@ -225,6 +285,25 @@ impl Accounts {
         self.credential(&lease.id).await?;
         Ok(())
     }
+    pub async fn model_catalog(&self, provider: &Provider) -> Result<Value> {
+        let snapshot = self.snapshot().await;
+        let lease = self.pool.choose(
+            &provider.subscription_account_id,
+            &snapshot,
+            "",
+            "",
+            &std::collections::HashSet::new(),
+        )?;
+        let actual = self.provider(&lease.id).await?;
+        let result = clients::subscription_catalog(
+            self,
+            self.path.parent().ok_or("账号目录不可用")?,
+            &actual,
+        )
+        .await?;
+        self.pool.catalog(&lease.id, &result);
+        Ok(result)
+    }
     pub async fn refresh_usage(&self, platform: &str) -> Result<()> {
         self.pool.usage_refresh_started(platform);
         let snapshot = self.snapshot().await;
@@ -232,13 +311,58 @@ impl Accounts {
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|a| a["platform"] == platform && a["status"] == "connected")
+            .filter(|a| {
+                subscription_routing::group(text(a, "id")) == platform && a["status"] == "connected"
+            })
             .map(|a| text(a, "id").into())
             .collect();
-        if !["copilot", "claude", "cursor", "grok"].contains(&platform) {
+        if ![
+            "chatgpt",
+            "chatgpt-official",
+            "copilot",
+            "claude",
+            "cursor",
+            "grok",
+        ]
+        .contains(&platform)
+        {
             return Err("此登录方式暂未提供可读取的套餐额度，请查看官方用量页面".into());
         }
+        if ids.is_empty() {
+            return Err("没有已登录的订阅账号，请先在此应用中登录".into());
+        }
         let results = futures_util::future::join_all(ids.iter().map(|id| async {
+            if platform == "chatgpt-official" {
+                let result = self.official.usage(id).await;
+                match &result {
+                    Ok(account) => {
+                        if let Some(left) = account["quota"]["remainingPercent"].as_f64() {
+                            self.pool.quota(
+                                id,
+                                left,
+                                account["quota"]["resetsAt"].as_u64().unwrap_or(0),
+                            );
+                        } else {
+                            self.pool.quota_failed(id, text(account, "quotaError"));
+                        }
+                        if account["quotaDetails"].is_object() {
+                            let mut details = account["quotaDetails"].clone();
+                            details["accountKey"] = account["accountKey"].clone();
+                            details["cached"] = json!(account["quotaCached"] == true);
+                            self.pool.quota_details(id, details);
+                        }
+                    }
+                    Err(error) => self.pool.quota_failed(id, error),
+                }
+                return result.map(|_| ());
+            }
+            if platform == "chatgpt" {
+                let result = self.chatgpt_usage(id).await;
+                if let Err(error) = &result {
+                    self.pool.quota_read_failed(id, error);
+                }
+                return result;
+            }
             let data = match platform {
                 "copilot" => self.copilot.usage(id).await?,
                 "claude" => self.claude.usage(id).await?,
@@ -339,11 +463,93 @@ impl Accounts {
         results.into_iter().collect::<Result<Vec<_>>>()?;
         Ok(())
     }
+    async fn chatgpt_usage(&self, id: &str) -> Result<()> {
+        // Codex's WHAM reader is separate from SiWC's public /v1 inference route.
+        // A SiWC grant may not authorize WHAM; retain the actual safe HTTP error.
+        // https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs
+        self.pool.quota_details(
+            id,
+            json!({"source":"chatgpt-wham","httpStatus":null,"windows":[]}),
+        );
+        let token = self.credential(id).await?;
+        let account_id = self
+            .inner
+            .lock()
+            .await
+            .vault
+            .accounts
+            .iter()
+            .find(|a| a.id == id)
+            .ok_or("订阅账号不存在")?
+            .chatgpt_account_id
+            .clone();
+        let base = if self.test {
+            self.issuer.as_str()
+        } else {
+            "https://chatgpt.com"
+        };
+        let mut request = self
+            .client
+            .get(format!("{base}/backend-api/wham/usage"))
+            .bearer_auth(token)
+            .header("user-agent", "XwX-Deck/1.1.7")
+            .timeout(Duration::from_secs(8));
+        if !account_id.is_empty() {
+            request = request.header("ChatGPT-Account-Id", account_id);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| "读取 ChatGPT 额度失败，请检查网络后重试")?;
+        let status = response.status().as_u16();
+        self.pool.quota_details(
+            id,
+            json!({"source":"chatgpt-wham","httpStatus":status,"windows":[]}),
+        );
+        if !response.status().is_success() {
+            return Err(format!("读取 ChatGPT 额度失败（HTTP {status}），当前授权可能不支持此额度接口；可继续选择模型并查看官方用量页面"));
+        }
+        let data = self.json(response).await?;
+        let (details, aggregate) = chatgpt_usage::parse(&data);
+        self.pool.quota_details(id, details);
+        let (remaining, reset) = aggregate
+            .ok_or("官方返回中没有完整可确认的 ChatGPT 额度窗口（HTTP 200），可继续选择模型")?;
+        self.pool.quota(id, remaining, reset);
+        Ok(())
+    }
+    pub async fn official_credits(&self, id: &str) -> Result<Value> {
+        self.official.credits(id).await
+    }
+    pub async fn consume_official_credit(&self, input: &Value) -> Result<Value> {
+        self.official
+            .consume(
+                text(input, "accountId"),
+                text(input, "creditId"),
+                text(input, "idempotencyKey"),
+                text(input, "accountKey"),
+            )
+            .await
+    }
     pub async fn begin_for(&self, platform: &str, id: &str) -> Result<Value> {
-        if !["", "chatgpt", "grok", "copilot", "claude", "cursor"].contains(&platform) {
+        if ![
+            "",
+            "chatgpt",
+            "chatgpt-official",
+            "grok",
+            "copilot",
+            "claude",
+            "cursor",
+        ]
+        .contains(&platform)
+        {
             return Err("暂不支持此订阅账号的授权".into());
         }
         self.cancel().await;
+        if platform == "chatgpt-official" || official_accounts::is_official(id) {
+            *self.current_platform.lock().await = "chatgpt-official".into();
+            self.official.begin(id).await?;
+            return Ok(self.snapshot().await);
+        }
         let platform = if id.starts_with("cursor-") || platform == "cursor" {
             "cursor"
         } else if id.starts_with("claude-subscription-") || platform == "claude" {
@@ -475,6 +681,9 @@ impl Accounts {
         Ok(self.snapshot().await)
     }
     pub async fn authorization_url(&self) -> Result<String> {
+        if *self.current_platform.lock().await == "chatgpt-official" {
+            return self.official.url().await;
+        }
         if *self.current_platform.lock().await == "cursor" {
             return self.cursor.authorization_url().await;
         }
@@ -503,6 +712,7 @@ impl Accounts {
         self.authorization_url().await
     }
     pub async fn cancel(&self) -> Value {
+        self.official.cancel().await;
         self.claude.cancel().await;
         self.cursor.cancel().await;
         self.copilot.cancel().await;
@@ -519,6 +729,33 @@ impl Accounts {
             let _ = f.cancel.send(true);
         }
         self.snapshot().await
+    }
+    pub(super) async fn assert_reset_idle(&self) -> Result<()> {
+        let active = |status: &Value| {
+            matches!(
+                status.as_str(),
+                Some("waiting" | "exchanging" | "cancelled")
+            )
+        };
+        if self.inner.lock().await.flow.as_ref().is_some_and(|flow| {
+            ["waiting", "exchanging", "cancelled"].contains(&flow.status.as_str())
+        }) {
+            return Err("授权尚未完成；请完成授权，或取消后退出并重启应用，再重置".into());
+        }
+        for snapshot in [
+            self.official.snapshot().await,
+            self.grok.snapshot().await,
+            self.claude.snapshot().await,
+            self.copilot.snapshot().await,
+            self.cursor.snapshot().await,
+        ] {
+            if active(&snapshot["flow"]["status"]) {
+                return Err(
+                    "授权进程尚未确认退出；请完成授权，或取消后退出并重启应用，再重置".into(),
+                );
+            }
+        }
+        Ok(())
     }
     async fn json(&self, response: reqwest::Response) -> Result<Value> {
         use futures_util::StreamExt;
@@ -684,11 +921,23 @@ impl Accounts {
             expires: 0,
             earliest_refresh_at: 0,
             needs_login: false,
+            chatgpt_account_id: text(&claims["https://api.openai.com/auth"], "chatgpt_account_id")
+                .into(),
         };
         Self::apply_tokens(&mut account, &t)?;
         Ok(account)
     }
     pub async fn credential(&self, id: &str) -> Result<String> {
+        if id.starts_with("chatgpt-api-import-") {
+            return Ok(text(
+                &imported_subscriptions::find(&self.root, id)?.auth(&self.root, self.isolated)?,
+                "access",
+            )
+            .into());
+        }
+        if official_accounts::is_official(id) {
+            return self.official.credential(id).await;
+        }
         if id.starts_with("cursor-") {
             return self.cursor.credential(id).await;
         }
@@ -758,17 +1007,32 @@ impl Accounts {
             return self.cursor.catalog(id).await;
         }
         let token = self.credential(id).await?;
-        let mut request = self
-            .client
-            .get(format!("{}/models", self.endpoint_for(id).await?))
-            .bearer_auth(token);
-        for (name, value) in self.headers(id).await? {
+        let base = self.endpoint_for(id).await?;
+        let url = if official_accounts::is_official(id) {
+            format!(
+                "{base}/codex/models?client_version={}",
+                env!("CARGO_PKG_VERSION")
+            )
+        } else {
+            format!("{base}/models")
+        };
+        let mut request = self.client.get(url).bearer_auth(&token);
+        for (name, value) in self.bound_headers(id, &token).await? {
             request = request.header(name, value);
         }
         let response = request.send().await.map_err(|_| "订阅模型目录请求失败")?;
         self.json(response).await
     }
     pub async fn provider(&self, id: &str) -> Result<Provider> {
+        if id.starts_with("chatgpt-api-import-") {
+            return Ok(imported_subscriptions::find(&self.root, id)?.provider(self.api.clone()));
+        }
+        if official_accounts::is_official(id) {
+            return self
+                .official
+                .provider(id, self.endpoint_for(id).await?)
+                .await;
+        }
         if id.starts_with("cursor-") {
             return self.cursor.provider(id).await;
         }
@@ -789,6 +1053,7 @@ impl Accounts {
             .find(|a| a.id == id)
             .ok_or("订阅账号不存在")?;
         Ok(Provider {
+            other: Default::default(),
             id: format!("subscription-{}", a.id),
             display_name: a.label.clone(),
             subscription_account_id: a.id.clone(),
@@ -802,7 +1067,26 @@ impl Accounts {
             ..Default::default()
         })
     }
+    pub async fn sign_out_official(&self, id: &str, account_key: &str) -> Result<Value> {
+        if !official_accounts::is_official(id) {
+            return Err("无效官方账号".into());
+        }
+        let result = self.official.sign_out(id, Some(account_key)).await?;
+        self.pool.quota_failed(id, "");
+        Ok(result)
+    }
+    pub async fn sign_out_input(&self, input: &Value) -> Result<Value> {
+        if input.is_object() {
+            self.sign_out_official(text(input, "accountId"), text(input, "accountKey"))
+                .await
+        } else {
+            self.sign_out(input.as_str().ok_or("无效订阅账号")?).await
+        }
+    }
     pub async fn sign_out(&self, id: &str) -> Result<Value> {
+        if official_accounts::is_official(id) {
+            return self.official.sign_out(id, None).await;
+        }
         if id.starts_with("cursor-") {
             return self.cursor.sign_out(id).await;
         }
@@ -876,6 +1160,9 @@ impl Accounts {
         )
     }
     pub async fn rename(&self, id: &str, label: &str) -> Result<()> {
+        if official_accounts::is_official(id) {
+            return Err("官方账号名称由登录信息提供".into());
+        }
         if id.starts_with("cursor-") {
             return self.cursor.rename(id, label).await;
         }
@@ -901,6 +1188,9 @@ impl Accounts {
         Ok(())
     }
     pub async fn headers(&self, id: &str) -> Result<Vec<(&'static str, String)>> {
+        if official_accounts::is_official(id) {
+            return self.official.headers(id, None).await;
+        }
         if id.starts_with("cursor-") {
             Ok(cursor_accounts::CursorAccounts::headers())
         } else if id.starts_with("claude-subscription-") {
@@ -911,6 +1201,17 @@ impl Accounts {
             self.grok.headers().await
         } else {
             Ok(vec![])
+        }
+    }
+    pub async fn bound_headers(
+        &self,
+        id: &str,
+        token: &str,
+    ) -> Result<Vec<(&'static str, String)>> {
+        if official_accounts::is_official(id) {
+            self.official.headers(id, Some(token)).await
+        } else {
+            self.headers(id).await
         }
     }
 }

@@ -1,4 +1,3 @@
-import { t, useLanguage } from '@/lib/i18n';
 import type { ProviderSnapshot } from '../../shared/providers';
 import * as React from 'react';
 import { getApi, isDesktop } from './api';
@@ -16,10 +15,10 @@ import type {
   XwXDeckUpdateState,
   CompatibleServiceConfigSnapshot,
 } from './types';
-import { operationError } from '@/lib/errors';
 
 export interface BridgeState {
   readonly modelClients: readonly import('../../shared/clientDownloads').DownloadClientId[];
+  readonly compatibleServiceConfig: CompatibleServiceConfigSnapshot | null;
   readonly providers: ProviderSnapshot | null;
   readonly api: ReturnType<typeof getApi>;
   readonly runtime: XwXDeckRuntimeState | null;
@@ -29,13 +28,12 @@ export interface BridgeState {
   readonly claudeDesktopSync: ClaudeDesktopSyncSnapshot | null;
   readonly codexConfig: CodexConfigSnapshot | null;
   readonly codexEnhancements: CodexEnhancementsSnapshot | null;
-  readonly compatibleServiceConfig: CompatibleServiceConfigSnapshot | null;
   readonly modelServices: ModelServiceSnapshot | null;
   readonly modelCatalog: readonly ModelCatalogEntry[];
   readonly loadIssues: readonly string[];
   readonly booted: boolean;
   /** Publish committed API results so every page observes one coherent snapshot. */
-  readonly patch: (partial: BridgePatch) => void;
+  readonly patch: (partial: BridgePatch) => boolean;
   /** Fetch fresh trace stats and push them into the store. */
   readonly refreshStats: () => Promise<void>;
   readonly retryInitialData: () => void;
@@ -59,10 +57,10 @@ interface Props {
 const BOOT_REQUEST_TIMEOUT_MS = 8_000;
 
 export function BridgeProvider({ children }: Props): React.ReactElement {
-  useLanguage();
   const api = React.useMemo(() => getApi(), []);
   const [state, setState] = React.useState<BridgeData>({
-    modelClients: ['claude', 'codex'],
+    modelClients: ["claude", "codex"],
+    compatibleServiceConfig: null,
     providers: null,
     runtime: null,
     traceStats: null,
@@ -71,32 +69,66 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
     claudeDesktopSync: null,
     codexConfig: null,
     codexEnhancements: null,
-    compatibleServiceConfig: null,
     modelServices: null,
     modelCatalog: [],
     loadIssues: [],
     booted: false,
   });
+  const stateRef = React.useRef(state);
   const stateIssuesRef = React.useRef<readonly string[]>([]);
   stateIssuesRef.current = state.loadIssues;
   const retryInitialDataRef = React.useRef<() => void>(() => undefined);
   const retryInitialData = React.useCallback(() => retryInitialDataRef.current(), []);
+  const mountedRef = React.useRef(true);
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const revisionRef = React.useRef(0);
+  const fieldRevisionsRef = React.useRef(new Map<string, number>());
+  const commit = React.useCallback((partial: Partial<BridgeData>, startedAt?: number) => {
+    if (!mountedRef.current) return false;
+    const incoming = partial.runtime;
+    const current = stateRef.current.runtime;
+    const staleRuntime = !!(incoming && current && (incoming.revision ?? 0) < (current.revision ?? 0));
+    const accepted = Object.fromEntries(Object.entries(partial).filter(([key]) => (
+      (startedAt === undefined || (fieldRevisionsRef.current.get(key) ?? 0) <= startedAt)
+      && (key !== 'runtime' || !staleRuntime)
+    ))) as Partial<BridgeData>;
+    // A newer push of the same completed action may precede its IPC result.
+    // Preserve that notice, but suppress results of an obsolete action.
+    const noticeCurrent = !incoming || !!accepted.runtime || !!(current
+      && incoming.tracingEnabled === current.tracingEnabled
+      && incoming.traceTransition === current.traceTransition
+      && incoming.lastError === current.lastError
+      && JSON.stringify(incoming.connectionNotice) === JSON.stringify(current.connectionNotice));
+    const keys = Object.keys(accepted);
+    if (!keys.length) return noticeCurrent;
+    // Reads keep their start order, so an earlier read finishing first cannot
+    // suppress a later one. Explicit patches/push events advance that order.
+    const revision = startedAt ?? ++revisionRef.current;
+    for (const key of keys) fieldRevisionsRef.current.set(key, revision);
+    stateRef.current = { ...stateRef.current, ...accepted };
+    setState(previous => ({ ...previous, ...accepted }));
+    return noticeCurrent;
+  }, []);
 
   const patch = React.useCallback((partial: BridgePatch) => {
-    setState(previous => ({ ...previous, ...partial }));
-  }, []);
+    return commit(partial);
+  }, [commit]);
 
   React.useEffect(() => {
     let alive = true;
     let lastStatsKey = '';
-    const update = (partial: Partial<BridgeData>) => {
-      if (alive) setState(prev => ({ ...prev, ...partial }));
+    const update = (partial: Partial<BridgeData>, startedAt?: number) => {
+      if (alive) commit(partial, startedAt);
     };
 
     // A slow client IPC must not hold back data already available from the
     // other clients. Each result updates its own slice as soon as it arrives.
     const jobs = new Map<string, () => void>();
     const generations = new Map<string, number>();
+    const timers = new Set<ReturnType<typeof setTimeout>>();
     const setIssue = (label: string, issue: string | null) => {
       if (!alive) return;
       setState(previous => ({
@@ -106,24 +138,26 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
           : previous.loadIssues.filter(item => !item.startsWith(`${label}：`))
       }));
     };
-    const load = <T,>(request: () => Promise<T>, label: string, apply: (value: T) => void) => {
+    const load = <T,>(request: () => Promise<T>, label: string, project: (value: T) => Partial<BridgeData>) => {
       const run = () => {
+        const startedAt = ++revisionRef.current;
         const generation = (generations.get(label) ?? 0) + 1;
         generations.set(label, generation);
         setIssue(label, null);
         const timer = setTimeout(() => {
-          if (generations.get(label) === generation) setIssue(label, t('仍在加载，可继续使用其他功能或重试'));
+          if (generations.get(label) === generation) setIssue(label, '仍在加载，可继续使用其他功能或重试');
         }, BOOT_REQUEST_TIMEOUT_MS);
+        timers.add(timer);
         void request().then(value => {
           if (alive && generations.get(label) === generation) {
-            apply(value);
+            update(project(value), startedAt);
             setIssue(label, null);
           }
         }).catch(error => {
           if (generations.get(label) !== generation) return;
-          setIssue(label, t('加载失败，可重试'));
+          setIssue(label, '加载失败，可重试');
           if (label === '加载应用状态') showLifecycleNotice(lifecycleFailure(error, label));
-        }).finally(() => clearTimeout(timer));
+        }).finally(() => { clearTimeout(timer); timers.delete(timer); });
       };
       jobs.set(label, run);
       run();
@@ -132,17 +166,17 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
       for (const issue of stateIssuesRef.current) jobs.get(issue.split('：', 1)[0])?.();
     };
     update({ booted: true });
-    load(() => api.getState(), t('加载应用状态'), runtime => update({ runtime }));
-    load(() => api.getTraceStats(), t('加载 Trace 统计'), traceStats => update({ traceStats }));
-    load(() => api.getUpdateState(), t('加载更新状态'), updateState => update({ updateState }));
-    load(() => api.getClaudeModels(), t('加载 Claude 模型'), claudeModels => update({ claudeModels }));
-    load(() => api.getClaudeDesktopSync(), t('加载 Claude Desktop 设置'), claudeDesktopSync => update({ claudeDesktopSync }));
-    load(() => api.getCodexConfig(), t('加载 ChatGPT 配置'), codexConfig => update({ codexConfig }));
-    load(() => api.getCodexEnhancements(), t('加载 ChatGPT 增强设置'), codexEnhancements => update({ codexEnhancements }));
-    load(() => api.getCompatibleServiceConfig(), t('加载模型服务配置'), compatibleServiceConfig => update({ compatibleServiceConfig }));
-    load(() => api.getModelServices(), t('加载模型服务'), modelServices => update({ modelServices }));
-    if (api.getModelClients) load(() => api.getModelClients!(), t('加载客户端'), modelClients => update({ modelClients }));
-    load(() => api.getProviders(), t('加载模型服务列表'), providers => update({ providers }));
+    load(() => api.getState(), '加载应用状态', runtime => ({ runtime }));
+    load(() => api.getTraceStats(), '加载 Trace 统计', traceStats => ({ traceStats }));
+    load(() => api.getUpdateState(), '加载更新状态', updateState => ({ updateState }));
+    load(() => api.getClaudeModels(), '加载 Claude 模型', claudeModels => ({ claudeModels }));
+    load(() => api.getClaudeDesktopSync(), '加载 Claude Desktop 设置', claudeDesktopSync => ({ claudeDesktopSync }));
+    load(() => api.getCodexConfig(), '加载 ChatGPT 配置', codexConfig => ({ codexConfig }));
+    load(() => api.getCodexEnhancements(), '加载 ChatGPT 增强设置', codexEnhancements => ({ codexEnhancements }));
+    load(() => api.getCompatibleServiceConfig(), '加载模型服务配置', compatibleServiceConfig => ({ compatibleServiceConfig }));
+    load(() => api.getModelServices(), '加载模型服务', modelServices => ({ modelServices }));
+    if (api.getModelClients) load(() => api.getModelClients!(), "加载客户端", modelClients => ({ modelClients }));
+    load(() => api.getProviders(), '加载模型服务列表', providers => ({ providers }));
 
     // Subscriptions
     const unsubState = api.onState(async (incoming) => {
@@ -152,8 +186,9 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
       const statsKey = `${incoming.traceRoot}:${incoming.sessions}:${incoming.traces}:${incoming.tracingEnabled}`;
       if (statsKey === lastStatsKey) return;
       lastStatsKey = statsKey;
+      const startedAt = ++revisionRef.current;
       const stats = await api.getTraceStats().catch(() => null);
-      if (stats && statsKey === lastStatsKey) update({ traceStats: stats });
+      if (stats && statsKey === lastStatsKey) update({ traceStats: stats }, startedAt);
     });
     const unsubUpdate = api.onUpdateState((incoming) => {
       update({ updateState: incoming });
@@ -164,25 +199,33 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
       window.dispatchEvent(new CustomEvent('xwxdeck:show-update-details'));
     });
 
+    const metadataChanged = () => {
+      for (const label of ['加载 Claude 模型', '加载 ChatGPT 配置', '加载模型服务配置', '加载模型服务列表']) jobs.get(label)?.();
+    };
+    window.addEventListener('xwxdeck:metadata-changed', metadataChanged);
+
     // Mark runtime on body for smoke tests.
     document.body.dataset.runtime = isDesktop() ? 'desktop' : 'preview';
 
     return () => {
       alive = false;
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear();
       retryInitialDataRef.current = () => undefined;
       unsubState();
       unsubUpdate();
       unsubShowUpdate();
+      window.removeEventListener('xwxdeck:metadata-changed', metadataChanged);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api]);
+  }, [api, commit]);
 
   const refreshStats = React.useCallback(async () => {
+    const startedAt = ++revisionRef.current;
     try {
       const stats = await api.getTraceStats();
-      setState(prev => ({ ...prev, traceStats: stats }));
+      commit({ traceStats: stats }, startedAt);
     } catch { /* silent */ }
-  }, [api]);
+  }, [api, commit]);
 
   // Trace stop can restore a different direct provider; keep the model page
   // consistent with the configuration that actually committed.
@@ -190,11 +233,12 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
   React.useEffect(() => {
     if (tracingEnabled === undefined) return;
     let alive = true;
-    void api.getCodexConfig().then(codexConfig => { if (alive) patch({ codexConfig }); }).catch(() => undefined);
-    void api.getModelServices().then(modelServices => { if (alive) patch({ modelServices }); }).catch(() => undefined);
-    void api.getProviders().then(providers => { if (alive) patch({ providers }); }).catch(() => undefined);
+    const startedAt = ++revisionRef.current;
+    void api.getCodexConfig().then(codexConfig => { if (alive) commit({ codexConfig }, startedAt); }).catch(() => undefined);
+    void api.getModelServices().then(modelServices => { if (alive) commit({ modelServices }, startedAt); }).catch(() => undefined);
+    void api.getProviders().then(providers => { if (alive) commit({ providers }, startedAt); }).catch(() => undefined);
     return () => { alive = false; };
-  }, [api, patch, tracingEnabled]);
+  }, [api, commit, tracingEnabled]);
 
   const value = React.useMemo(
     (): BridgeState => ({ api, ...state, patch, refreshStats, retryInitialData }),

@@ -1,12 +1,26 @@
 //! Small, reversible client configuration edits. Comments and unrelated fields survive.
 use super::*;
 use sha2::{Digest, Sha256};
-const CLIENTS: &[&str] = &["opencode", "gemini-cli", "qwen-code", "pi", "mimo-code", "crush", "qoder", "droid", "codebuddy-code", "workbuddy"];
+const CLIENTS: &[&str] = &[
+    "opencode",
+    "gemini-cli",
+    "qwen-code",
+    "pi",
+    "mimo-code",
+    "crush",
+    "qoder",
+    "droid",
+    "codebuddy-code",
+    "workbuddy",
+];
 
 pub(super) fn checked_model(id: &str, model: &str) -> Result<()> {
     // Crush expands environment variables and shell substitutions in config strings.
-    if model.trim().is_empty() || model.len() > 256 || model.chars().any(char::is_control)
-        || (id == "crush" && model.contains(['$', '`'])) {
+    if model.trim().is_empty()
+        || model.len() > 256
+        || model.chars().any(char::is_control)
+        || (id == "crush" && model.contains(['$', '`']))
+    {
         return Err("请设置有效模型".into());
     }
     Ok(())
@@ -154,11 +168,14 @@ fn unique_keys(b: &[u8], at: usize) -> Result<()> {
     }
     Ok(())
 }
-fn object(
-    b: &[u8],
-    at: usize,
-    key: &str,
-) -> Result<Option<(usize, usize, usize, Option<usize>, Option<usize>)>> {
+struct ObjectField {
+    key_start: usize,
+    value_start: usize,
+    value_end: usize,
+    previous_comma: Option<usize>,
+    next_comma: Option<usize>,
+}
+fn object(b: &[u8], at: usize, key: &str) -> Result<Option<ObjectField>> {
     let mut i = ws(b, at);
     if b.get(i) != Some(&b'{') {
         return Err("客户端配置字段不是对象".into());
@@ -186,7 +203,13 @@ fn object(
             None
         };
         if name == key {
-            return Ok(Some((key_start, value_start, value_end, previous, next)));
+            return Ok(Some(ObjectField {
+                key_start,
+                value_start,
+                value_end,
+                previous_comma: previous,
+                next_comma: next,
+            }));
         }
         if let Some(comma) = next {
             previous = Some(comma);
@@ -197,12 +220,14 @@ fn object(
     }
 }
 fn patch(source: &str, path: &[&str], value: Option<&Value>) -> Result<String> {
-    if path.is_empty() { return Ok(value.map(Value::to_string).unwrap_or_else(||"{}".into())); }
+    if path.is_empty() {
+        return Ok(value.map(Value::to_string).unwrap_or_else(|| "{}".into()));
+    }
     let bytes = clean(source)?;
     let mut parent = 0;
     for (depth, key) in path[..path.len() - 1].iter().enumerate() {
         match object(&bytes, parent, key)? {
-            Some((_, start, _, _, _)) => parent = start,
+            Some(field) => parent = field.value_start,
             None => {
                 if value.is_none() {
                     return Ok(source.into());
@@ -214,7 +239,14 @@ fn patch(source: &str, path: &[&str], value: Option<&Value>) -> Result<String> {
         }
     }
     let key = path.last().ok_or("空配置字段")?;
-    if let Some((key_start, start, finish, previous, next)) = object(&bytes, parent, key)? {
+    if let Some(ObjectField {
+        key_start,
+        value_start: start,
+        value_end: finish,
+        previous_comma: previous,
+        next_comma: next,
+    }) = object(&bytes, parent, key)?
+    {
         let (a, b, replacement) = if let Some(value) = value {
             (start, finish, value.to_string())
         } else if let Some(next) = next {
@@ -240,8 +272,7 @@ fn patch(source: &str, path: &[&str], value: Option<&Value>) -> Result<String> {
     while meaningful > 0 && bytes[meaningful - 1].is_ascii_whitespace() {
         meaningful -= 1;
     }
-    let trailing = source[..close]
-        .as_bytes()
+    let trailing = source.as_bytes()[..close]
         .iter()
         .enumerate()
         .skip(meaningful)
@@ -314,16 +345,18 @@ fn env_patch(source: &str, key: &str, value: Option<&str>) -> String {
         lines.join("\n") + "\n"
     }
 }
-fn json_plan(path: &Path, options: Vec<(Vec<&str>,Value)>) -> Result<Value> {
-    let source=read(path)?.unwrap_or("{}".into());
-    let value=parsed(&source)?;
-    let mut content=source.clone();
-    let mut patches=vec![];
-    for (keys,managed) in options {
+fn json_plan(path: &Path, options: Vec<(Vec<&str>, Value)>) -> Result<Value> {
+    let source = read(path)?.unwrap_or("{}".into());
+    let value = parsed(&source)?;
+    let mut content = source.clone();
+    let mut patches = vec![];
+    for (keys, managed) in options {
         patches.push(json!({"path":keys,"before":value_at(&value,&keys),"existed":value_at(&value,&keys).is_some(),"managed":managed}));
-        content=patch(&content,&keys,Some(&managed))?;
+        content = patch(&content, &keys, Some(&managed))?;
     }
-    Ok(json!({"file":path,"before":source,"beforeExisted":path.exists(),"content":content,"patches":patches,"env":false}))
+    Ok(
+        json!({"file":path,"before":source,"beforeExisted":path.exists(),"content":content,"patches":patches,"env":false}),
+    )
 }
 impl Pilot {
     fn client_home(&self) -> PathBuf {
@@ -334,10 +367,25 @@ impl Pilot {
         }
     }
     fn wiring_directory(&self, variable: &str, fallback: PathBuf) -> PathBuf {
-        if self.isolated { return fallback; }
-        std::env::var_os(variable).map(PathBuf::from).map(|path| {
-            if path.starts_with("~") { Self::home().join(path.strip_prefix("~").unwrap().strip_prefix("/").unwrap_or(path.strip_prefix("~").unwrap())) } else { path }
-        }).filter(|path|path.is_absolute()).unwrap_or(fallback)
+        if self.isolated {
+            return fallback;
+        }
+        std::env::var_os(variable)
+            .map(PathBuf::from)
+            .map(|path| {
+                if path.starts_with("~") {
+                    Self::home().join(
+                        path.strip_prefix("~")
+                            .unwrap()
+                            .strip_prefix("/")
+                            .unwrap_or(path.strip_prefix("~").unwrap()),
+                    )
+                } else {
+                    path
+                }
+            })
+            .filter(|path| path.is_absolute())
+            .unwrap_or(fallback)
     }
     fn wiring_paths(&self, id: &str) -> Vec<PathBuf> {
         let home = self.client_home();
@@ -372,27 +420,53 @@ impl Pilot {
                 vec![dir.join("models.json"), dir.join("settings.json")]
             }
             "mimo-code" => {
-                let mut dir = self.wiring_directory("XDG_CONFIG_HOME", home.join(".config")).join("mimocode");
+                let mut dir = self
+                    .wiring_directory("XDG_CONFIG_HOME", home.join(".config"))
+                    .join("mimocode");
                 if !self.isolated && std::env::var_os("MIMOCODE_HOME").is_some() {
-                    dir = self.wiring_directory("MIMOCODE_HOME", home.join(".mimocode")).join("config");
+                    dir = self
+                        .wiring_directory("MIMOCODE_HOME", home.join(".mimocode"))
+                        .join("config");
                 }
                 let jsonc = dir.join("mimocode.jsonc");
-                vec![if jsonc.exists() { jsonc } else { dir.join("mimocode.json") }]
+                vec![if jsonc.exists() {
+                    jsonc
+                } else {
+                    dir.join("mimocode.json")
+                }]
             }
-            "qoder" => vec![self.wiring_directory("QODER_CONFIG_DIR",home.join(".qoder")).join("settings.json")],
-            "droid" => vec![self.wiring_directory("FACTORY_HOME_OVERRIDE",home.clone()).join(".factory/settings.json")],
+            "qoder" => vec![self
+                .wiring_directory("QODER_CONFIG_DIR", home.join(".qoder"))
+                .join("settings.json")],
+            "droid" => vec![self
+                .wiring_directory("FACTORY_HOME_OVERRIDE", home.clone())
+                .join(".factory/settings.json")],
             "codebuddy-code" => {
                 let dir = self.wiring_directory("CODEBUDDY_CONFIG_DIR", home.join(".codebuddy"));
-                vec![dir.join("models.json"),dir.join("settings.json")]
+                vec![dir.join("models.json"), dir.join("settings.json")]
             }
-            "workbuddy" => vec![self.wiring_directory("WORKBUDDY_CONFIG_DIR",home.join(".workbuddy")).join("models.json")],
+            "workbuddy" => vec![self
+                .wiring_directory("WORKBUDDY_CONFIG_DIR", home.join(".workbuddy"))
+                .join("models.json")],
             "crush" => {
-                let config = self.wiring_directory("CRUSH_GLOBAL_CONFIG",self.wiring_directory("XDG_CONFIG_HOME",home.join(".config")).join("crush")).join("crush.json");
-                let data_directory = if cfg!(windows)&&!self.isolated {
-                    self.wiring_directory("LOCALAPPDATA",home.join("AppData/Local")).join("crush")
-                } else { self.wiring_directory("XDG_DATA_HOME",home.join(".local/share")).join("crush") };
-                let data = self.wiring_directory("CRUSH_GLOBAL_DATA",data_directory).join("crush.json");
-                vec![config,data]
+                let config = self
+                    .wiring_directory(
+                        "CRUSH_GLOBAL_CONFIG",
+                        self.wiring_directory("XDG_CONFIG_HOME", home.join(".config"))
+                            .join("crush"),
+                    )
+                    .join("crush.json");
+                let data_directory = if cfg!(windows) && !self.isolated {
+                    self.wiring_directory("LOCALAPPDATA", home.join("AppData/Local"))
+                        .join("crush")
+                } else {
+                    self.wiring_directory("XDG_DATA_HOME", home.join(".local/share"))
+                        .join("crush")
+                };
+                let data = self
+                    .wiring_directory("CRUSH_GLOBAL_DATA", data_directory)
+                    .join("crush.json");
+                vec![config, data]
             }
             _ => vec![],
         }
@@ -425,10 +499,26 @@ impl Pilot {
                         "gemini-cli" => v["security"]["auth"]["selectedType"]
                             .as_str()
                             .is_some_and(|v| v != "gemini-api-key"),
-                        "pi" => v.get("defaultModel").is_some() || v["defaultProvider"].as_str().is_some_and(|v|v != "xwx_deck") || v["providers"].get("xwx_deck").is_some(),
-                        "crush" => v["models"].get("large").is_some() || v["models"].get("small").is_some() || v["providers"].get("xwx_deck").is_some(),
-                        "droid" => v["sessionDefaultSettings"].get("model").is_some() || v.get("model").is_some() || v.get("customModels").is_some(),
-                        "codebuddy-code" | "workbuddy" => v.get("models").is_some() || v.is_array() || v.get("model").is_some(),
+                        "pi" => {
+                            v.get("defaultModel").is_some()
+                                || v["defaultProvider"]
+                                    .as_str()
+                                    .is_some_and(|v| v != "xwx_deck")
+                                || v["providers"].get("xwx_deck").is_some()
+                        }
+                        "crush" => {
+                            v["models"].get("large").is_some()
+                                || v["models"].get("small").is_some()
+                                || v["providers"].get("xwx_deck").is_some()
+                        }
+                        "droid" => {
+                            v["sessionDefaultSettings"].get("model").is_some()
+                                || v.get("model").is_some()
+                                || v.get("customModels").is_some()
+                        }
+                        "codebuddy-code" | "workbuddy" => {
+                            v.get("models").is_some() || v.is_array() || v.get("model").is_some()
+                        }
                         _ => v["model"]["name"].as_str().is_some_and(|v| !v.is_empty()),
                     };
                 }
@@ -501,57 +591,114 @@ impl Pilot {
                 (vec!["security", "auth", "selectedType"], json!("xwx_deck")),
                 (vec!["model", "name"], json!(model)),
             ],
-            "pi" => vec![(vec!["providers","xwx_deck"],json!({"baseUrl":format!("{base}/v1"),"api":"openai-completions","apiKey":"xwx-deck","models":[{"id":model,"name":model}]}))],
+            "pi" => vec![(
+                vec!["providers", "xwx_deck"],
+                json!({"baseUrl":format!("{base}/v1"),"api":"openai-completions","apiKey":"xwx-deck","models":[{"id":model,"name":model}]}),
+            )],
             "qoder" => vec![
-                (vec!["providers","xwx_deck"],json!({"displayName":"XwX Deck","protocol":"openai","baseUrl":format!("{base}/v1"),"apiKey":"xwx-deck","model":model,"models":[{"model":model,"displayName":model,"capabilities":{"tools":true}}]})),
-                (vec!["model","name"],json!(format!("xwx_deck/{model}")))
+                (
+                    vec!["providers", "xwx_deck"],
+                    json!({"displayName":"XwX Deck","protocol":"openai","baseUrl":format!("{base}/v1"),"apiKey":"xwx-deck","model":model,"models":[{"model":model,"displayName":model,"capabilities":{"tools":true}}]}),
+                ),
+                (vec!["model", "name"], json!(format!("xwx_deck/{model}"))),
             ],
             "droid" => {
                 let v = parsed(&read(&paths[0])?.unwrap_or("{}".into()))?;
                 let mut models = match v.get("customModels") {
-                    Some(value) => value.as_array().ok_or("Droid customModels 必须是数组")?.clone(), None => vec![]
+                    Some(value) => value
+                        .as_array()
+                        .ok_or("Droid customModels 必须是数组")?
+                        .clone(),
+                    None => vec![],
                 };
-                models.retain(|m|!text(m,"id").starts_with("custom:xwx_deck/"));
+                models.retain(|m| !text(m, "id").starts_with("custom:xwx_deck/"));
                 models.push(json!({"id":format!("custom:xwx_deck/{model}"),"model":model,"displayName":format!("XwX Deck {model}"),"baseUrl":format!("{base}/v1"),"apiKey":"xwx-deck","provider":"generic-chat-completion-api"}));
-                vec![(vec!["customModels"],json!(models)),(vec!["sessionDefaultSettings","model"],json!(format!("custom:xwx_deck/{model}")))]
+                vec![
+                    (vec!["customModels"], json!(models)),
+                    (
+                        vec!["sessionDefaultSettings", "model"],
+                        json!(format!("custom:xwx_deck/{model}")),
+                    ),
+                ]
             }
             "codebuddy-code" | "workbuddy" => {
                 let v = parsed(&read(&paths[0])?.unwrap_or("{}".into()))?;
-                let source = if v.is_array() { Some(&v) } else { v.get("models") };
-                let mut models = match source { Some(value) => value.as_array().ok_or("models 必须是数组")?.clone(),None=>vec![] };
-                models.retain(|m|text(m,"vendor")!="xwx_deck");
+                let source = if v.is_array() {
+                    Some(&v)
+                } else {
+                    v.get("models")
+                };
+                let mut models = match source {
+                    Some(value) => value.as_array().ok_or("models 必须是数组")?.clone(),
+                    None => vec![],
+                };
+                models.retain(|m| text(m, "vendor") != "xwx_deck");
                 models.push(json!({"id":format!("xwx_deck/{model}"),"name":format!("XwX Deck {model}"),"vendor":"xwx_deck","apiKey":"xwx-deck","url":format!("{base}/v1/chat/completions"),"supportsToolCall":true}));
-                let mut options = vec![(if v.is_array() {vec![]} else {vec!["models"]},json!(models))];
-                if let Some(allowed)=v.get("availableModels") {
-                    let mut allowed=allowed.as_array().ok_or("availableModels 必须是数组")?.clone();
-                    let selected=json!(format!("xwx_deck/{model}"));
-                    if !allowed.contains(&selected) {allowed.push(selected);}
-                    options.push((vec!["availableModels"],json!(allowed)));
+                let mut options = vec![(
+                    if v.is_array() { vec![] } else { vec!["models"] },
+                    json!(models),
+                )];
+                if let Some(allowed) = v.get("availableModels") {
+                    let mut allowed = allowed
+                        .as_array()
+                        .ok_or("availableModels 必须是数组")?
+                        .clone();
+                    let selected = json!(format!("xwx_deck/{model}"));
+                    if !allowed.contains(&selected) {
+                        allowed.push(selected);
+                    }
+                    options.push((vec!["availableModels"], json!(allowed)));
                 }
                 options
             }
-            "crush" => vec![(vec!["providers","xwx_deck"],json!({"type":"openai-compat","name":"XwX Deck","base_url":format!("{base}/v1"),"api_key":"xwx-deck","models":[{"id":model,"name":model}]}))],
+            "crush" => vec![(
+                vec!["providers", "xwx_deck"],
+                json!({"type":"openai-compat","name":"XwX Deck","base_url":format!("{base}/v1"),"api_key":"xwx-deck","models":[{"id":model,"name":model}]}),
+            )],
             _ => vec![],
         };
-        plans.push(json_plan(&paths[0],options)?);
+        plans.push(json_plan(&paths[0], options)?);
         if id == "pi" {
-            let settings=parsed(&read(&paths[1])?.unwrap_or("{}".into()))?;
-            let mut options=vec![(vec!["defaultProvider"],json!("xwx_deck")),(vec!["defaultModel"],json!(model))];
-            if let Some(enabled)=settings.get("enabledModels") {
-                let mut enabled=enabled.as_array().ok_or("Pi enabledModels 必须是数组")?.clone();
+            let settings = parsed(&read(&paths[1])?.unwrap_or("{}".into()))?;
+            let mut options = vec![
+                (vec!["defaultProvider"], json!("xwx_deck")),
+                (vec!["defaultModel"], json!(model)),
+            ];
+            if let Some(enabled) = settings.get("enabledModels") {
+                let mut enabled = enabled
+                    .as_array()
+                    .ok_or("Pi enabledModels 必须是数组")?
+                    .clone();
                 if !enabled.is_empty() {
-                    let selected=json!(format!("xwx_deck/{model}"));
-                    if !enabled.contains(&selected) { enabled.push(selected); }
-                    options.push((vec!["enabledModels"],json!(enabled)));
+                    let selected = json!(format!("xwx_deck/{model}"));
+                    if !enabled.contains(&selected) {
+                        enabled.push(selected);
+                    }
+                    options.push((vec!["enabledModels"], json!(enabled)));
                 }
             }
-            plans.push(json_plan(&paths[1],options)?);
+            plans.push(json_plan(&paths[1], options)?);
         }
         if id == "codebuddy-code" {
-            plans.push(json_plan(&paths[1],vec![(vec!["model"],json!(format!("xwx_deck/{model}")))])?);
+            plans.push(json_plan(
+                &paths[1],
+                vec![(vec!["model"], json!(format!("xwx_deck/{model}")))],
+            )?);
         }
         if id == "crush" {
-            plans.push(json_plan(&paths[1],vec![(vec!["models","large"],json!({"provider":"xwx_deck","model":model})),(vec!["models","small"],json!({"provider":"xwx_deck","model":model}))])?);
+            plans.push(json_plan(
+                &paths[1],
+                vec![
+                    (
+                        vec!["models", "large"],
+                        json!({"provider":"xwx_deck","model":model}),
+                    ),
+                    (
+                        vec!["models", "small"],
+                        json!({"provider":"xwx_deck","model":model}),
+                    ),
+                ],
+            )?);
         }
         if id == "gemini-cli" {
             let source = read(&paths[1])?.unwrap_or_default();

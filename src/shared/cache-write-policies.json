@@ -1,0 +1,40 @@
+[
+  {
+    "providerId": "openai",
+    "modelPattern": "^(?:gpt-(?:3(?:\\.5)?|4(?:o|\\.1|\\.5)?|5(?:\\.[1-5])?)(?:-|$)|o[134](?:-|$))",
+    "policy": "input",
+    "sourceUrl": "https://developers.openai.com/api/docs/guides/prompt-caching"
+  },
+  {
+    "providerId": "deepseek",
+    "modelPattern": "",
+    "policy": "input",
+    "sourceUrl": "https://api-docs.deepseek.com/guides/kv_cache/"
+  },
+  {
+    "providerId": "xai",
+    "modelPattern": "",
+    "policy": "input",
+    "sourceUrl": "https://docs.x.ai/developers/advanced-api-usage/prompt-caching"
+  },
+  {
+    "providerId": "volcengine",
+    "modelPattern": "",
+    "policy": "input",
+    "storageScope": "explicit",
+    "sourceUrl": "https://docs.volcengine.com/docs/ark/context-cache?lang=zh"
+  },
+  {
+    "providerId": "bytedance-seed",
+    "modelPattern": "",
+    "policy": "input",
+    "storageScope": "explicit",
+    "sourceUrl": "https://docs.volcengine.com/docs/ark/context-cache?lang=zh"
+  },
+  {
+    "providerId": "google",
+    "modelPattern": "",
+    "policy": "storage",
+    "sourceUrl": "https://ai.google.dev/gemini-api/docs/caching"
+  }
+]

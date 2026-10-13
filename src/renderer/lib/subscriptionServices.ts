@@ -17,14 +17,15 @@ export function subscriptionServiceIcon(id: string) {
 }
 
 /** Keep account IDs intact; grouping affects navigation only. */
-export function groupSubscriptionConnections(connections: readonly ProviderConnection[], selectedId?: string): readonly ProviderConnection[] {
+export function groupSubscriptionConnections(connections: readonly ProviderConnection[], selectedId?: string, splitChatgptAuth = false): readonly ProviderConnection[] {
   const selected = connections.find(item => item.id === selectedId && item.subscriptionAccountId);
-  const selectedPlatform = selected?.subscriptionAccountId ? subscriptionPlatformForAccount(selected.subscriptionAccountId) : null;
-  const seen = new Set<SubscriptionPlatform>();
+  const groupFor = (id: string) => splitChatgptAuth && id.startsWith('official-chatgpt') ? 'chatgpt-official' : subscriptionPlatformForAccount(id);
+  const selectedPlatform = selected?.subscriptionAccountId ? groupFor(selected.subscriptionAccountId) : null;
+  const seen = new Set<string>();
   const grouped: ProviderConnection[] = [];
   for (const item of connections) {
     if (!item.subscriptionAccountId) { grouped.push(item); continue; }
-    const platform = subscriptionPlatformForAccount(item.subscriptionAccountId);
+    const platform = groupFor(item.subscriptionAccountId);
     if (seen.has(platform)) continue;
     seen.add(platform);
     grouped.push(selectedPlatform === platform && selected ? selected : item);

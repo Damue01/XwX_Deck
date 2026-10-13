@@ -7,15 +7,19 @@ publish = false
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+manual-acceptance = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+cc = "1"
 
 [dependencies]
 tauri = { version = "2", default-features = false, features = ["wry", "compression", "common-controls-v6", "tray-icon"] }
 tauri-runtime = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+regex = "1"
+unicode-normalization = "0.1"
 tokio = { version = "1", features = ["net", "sync", "time", "io-util", "rt-multi-thread", "process"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws"] }
 reqwest = { version = "0.12", default-features = false, features = ["native-tls", "system-proxy", "stream", "json", "http2", "native-tls-alpn"] }
@@ -27,17 +31,26 @@ tauri-plugin-opener = "2"
 tauri-plugin-autostart = "2"
 base64 = "0.22"
 getrandom = "0.3"
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+zeroize = "1"
+zstd = { version = "0.13", default-features = false }
 jsonwebtoken = { version = "9.3", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
 async-stream = "0.3"
-rusqlite = { version = "0.40", features = ["backup"] }
+rusqlite = { version = "0.40", features = ["backup", "hooks"] }
+rusty-leveldb = { version = "4.0.1", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSDate", "NSSet", "NSString"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord", "block2"] }
 
 [target.'cfg(windows)'.dependencies]
 rusqlite = { version = "0.40", features = ["backup", "bundled"] }
+webview2-com = "0.39.1"
+windows-core = "0.62.2"
 
 [profile.release]
 opt-level = "z"

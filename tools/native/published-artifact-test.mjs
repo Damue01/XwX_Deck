@@ -47,7 +47,7 @@ if (platform === 'windows') {
     const app = join(root, 'XwX Deck.app'); await cp(join(mount, 'XwX Deck.app'), app, { recursive: true });
     binary = join(app, 'Contents/MacOS/xwx-deck-native');
     command('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
-    command('/usr/bin/lipo', ['-verify_arch', 'arm64', binary]);
+    command('/usr/bin/lipo', [binary, '-verify_arch', 'arm64']);
     assert.ok((await readFile(join(app, 'Contents/Info.plist'), 'utf8')).includes('app.xwxdeck.desktop'));
   } finally { command('/usr/bin/hdiutil', ['detach', mount]); }
 }

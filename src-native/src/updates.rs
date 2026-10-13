@@ -2,7 +2,7 @@ use super::*;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 #[derive(Clone)]
-pub(super) struct Updates {
+pub(crate) struct Updates {
     inner: Arc<std::sync::Mutex<Update>>,
     root: PathBuf,
 }
@@ -11,6 +11,7 @@ struct Update {
     artifact: Value,
     manifest: Value,
     generation: u64,
+    installing: bool,
 }
 fn version(s: &str) -> Option<Vec<u64>> {
     let s = s.strip_prefix('v').unwrap_or(s);
@@ -39,18 +40,34 @@ fn validate_url(value: &str) -> Result<reqwest::Url> {
 }
 impl Updates {
     pub fn new(root: PathBuf) -> Self {
+        let state = json!({"status":"idle","currentVersion":env!("CARGO_PKG_VERSION"),"channel":"release","portable":cfg!(target_os="windows"),"installMode":if cfg!(target_os="macos"){"manual-dmg"}else{"automatic"},"supported":cfg!(any(target_os="macos",target_os="windows")),"updateAvailable":false});
         Self {
             root,
             inner: Arc::new(std::sync::Mutex::new(Update {
-                state: json!({"status":"idle","currentVersion":env!("CARGO_PKG_VERSION"),"channel":"release","portable":cfg!(target_os="windows"),"installMode":if cfg!(target_os="macos"){"manual-dmg"}else{"automatic"},"supported":cfg!(any(target_os="macos",target_os="windows")),"updateAvailable":false}),
+                state,
                 artifact: Value::Null,
                 manifest: Value::Null,
                 generation: 0,
+                installing: false,
             })),
         }
     }
     pub fn state(&self) -> Value {
         self.inner.lock().unwrap().state.clone()
+    }
+    pub(super) fn clear_idle_cache(&self) -> Result<Option<u64>> {
+        // Hold the updater lock through removal. A new download cannot move
+        // from available to downloading while its directory is being cleared.
+        let inner = self.inner.lock().map_err(err)?;
+        if inner.installing
+            || ["downloading", "installing", "ready"].contains(&text(&inner.state, "status"))
+            || inner.state["downloadPath"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        {
+            return Ok(None);
+        }
+        application_repair::remove_cache(&self.root.join("updates"))
     }
     fn feed(&self) -> Result<String> {
         let feed = std::env::var("XWX_DECK_UPDATE_SERVER_URL")
@@ -98,6 +115,9 @@ impl Updates {
     pub async fn check(&self) -> Result<Value> {
         {
             let mut inner = self.inner.lock().unwrap();
+            if inner.installing {
+                return Ok(inner.state.clone());
+            }
             if inner.state["status"] == "downloading" {
                 return Ok(inner.state.clone());
             }
@@ -105,6 +125,9 @@ impl Updates {
         }
         let fetched = self.manifest().await;
         let mut inner = self.inner.lock().unwrap();
+        if inner.installing {
+            return Ok(inner.state.clone());
+        }
         let manifest = match fetched {
             Ok(v) => v,
             Err(e) => {
@@ -127,7 +150,8 @@ impl Updates {
         } else {
             "x64"
         };
-        let newer = version(text(&manifest, "version")) > version(env!("CARGO_PKG_VERSION"));
+        let newer =
+            version(text(&manifest, "version")) > version(text(&inner.state, "currentVersion"));
         let artifact = manifest["files"]
             .as_array()
             .and_then(|files| {
@@ -171,6 +195,9 @@ impl Updates {
     }
     pub fn cancel(&self) -> Result<Value> {
         let mut inner = self.inner.lock().unwrap();
+        if inner.installing {
+            return Err("更新正在安装，请等待完成".into());
+        }
         inner.generation += 1;
         let declined = inner.state["targetVersion"].clone();
         write(
@@ -186,8 +213,11 @@ impl Updates {
         Ok(inner.state.clone())
     }
     pub fn download(&self) -> Result<Value> {
-        let (artifact, generation, target) = {
+        let (artifact, generation, target, selected) = {
             let mut inner = self.inner.lock().unwrap();
+            if inner.installing {
+                return Err("更新正在安装，请等待完成".into());
+            }
             if inner.state["status"] == "downloading" {
                 return Ok(inner.state.clone());
             }
@@ -204,6 +234,7 @@ impl Updates {
                 inner.artifact.clone(),
                 inner.generation,
                 text(&inner.state, "targetVersion").to_string(),
+                inner.manifest.clone(),
             )
         };
         let this = self.clone();
@@ -211,6 +242,12 @@ impl Updates {
             let directory = this.root.join("updates");
             let temp = directory.join(format!("download-{generation}.part"));
             let result = async {
+                if this.manifest().await? != selected {
+                    return Err("更新源或版本已更改，请重新检查；未继续下载".into());
+                }
+                if this.inner.lock().unwrap().generation != generation {
+                    return Err("下载已取消".into());
+                }
                 fs::create_dir_all(&directory).map_err(err)?;
                 let url = validate_url(text(&artifact, "url"))?;
                 let response = reqwest::Client::builder()

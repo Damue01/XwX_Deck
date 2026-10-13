@@ -15,7 +15,7 @@ export interface CodexContextCapableModel {
 export interface CodexContextVariant {
   readonly modelId: string;
   readonly label: string;
-  /** `null` means remove XwX Deck's explicit Codex context override. */
+  /** `null` means remove XwX's explicit Codex context override. */
   readonly contextWindow: number | null;
 }
 
@@ -53,7 +53,7 @@ export function codexContextVariants(model: CodexContextCapableModel): readonly 
   }];
 }
 
-/** Default operational window written into XwX Deck's compatible Codex catalog. */
+/** Default operational window written into XwX's 兼容服务 Codex catalog. */
 export function codexDefaultContextWindow(model: CodexContextCapableModel): number | undefined {
   const verifiedWindow = verifiedContextWindow(model);
   if (verifiedWindow === undefined) return undefined;

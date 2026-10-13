@@ -2,7 +2,24 @@ use super::*;
 use chrono::{DateTime, Local, Utc};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+#[path = "trace_classification.rs"]
+mod trace_classification;
+#[path = "trace_pricing.rs"]
+mod trace_pricing;
+#[cfg(test)]
+use trace_pricing::{model_cost, model_cost_parts};
+use trace_pricing::{needs_ark_cost_repair, repaired_cost_point, usage_cost_point};
 
+pub(super) fn provider_price(store: &Store, model: &str, snapshot: Value) -> Value {
+    trace_pricing::provider_price(&store.lock().unwrap().prices, model, snapshot)
+}
+pub(super) fn reference_price(store: &Store, model: &str) -> Value {
+    trace_pricing::reference_price(&store.lock().unwrap().prices, model)
+}
+pub(super) fn freeze_reference_price(store: &Store, record: &mut Value) {
+    record["referencePriceVersion"] = json!(1);
+    record["referencePrice"] = reference_price(store, text(&record["request"], "model"));
+}
 pub(super) type Store = Arc<std::sync::Mutex<TraceStore>>;
 pub(super) fn iso(at: u128) -> String {
     DateTime::<Utc>::from_timestamp_millis(at as i64)
@@ -15,6 +32,56 @@ pub(super) fn digest(bytes: &[u8]) -> String {
 fn empty_index() -> Value {
     json!({"version":1,"sessions":[]})
 }
+fn usage_summary(session: &Value) -> Value {
+    let mut summary = json!({});
+    for key in ["totalTokens", "dailyUsage", "recentRatePoints"] {
+        if let Some(value) = session.get(key) {
+            summary[key] = value.clone();
+        }
+    }
+    summary
+}
+// Protect only the conversations with requests in flight, not every session
+// merely because the Gateway is enabled. The last completion applies 0 GB.
+pub(super) struct DetailLease {
+    store: Store,
+    id: String,
+}
+impl DetailLease {
+    pub fn new(store: Store, key: &str) -> Self {
+        let id = format!("session-{}", &digest(key.as_bytes())[..24]);
+        *store
+            .lock()
+            .unwrap()
+            .recording
+            .entry(id.clone())
+            .or_default() += 1;
+        Self { store, id }
+    }
+}
+impl Drop for DetailLease {
+    fn drop(&mut self) {
+        let mut store = self.store.lock().unwrap();
+        if let Some(count) = store.recording.get_mut(&self.id) {
+            *count -= 1;
+            if *count == 0 {
+                store.recording.remove(&self.id);
+            }
+        }
+        if store.limit == 0 {
+            store.apply_retention();
+        }
+    }
+}
+fn trace_error(record: &Value) -> bool {
+    if record["auxiliary"] == "count" && record["response"]["statusCode"] == 404 {
+        return false;
+    }
+    !record["error"].is_null()
+        || record["response"]["statusCode"]
+            .as_u64()
+            .is_some_and(|s| s >= 400)
+}
 fn records(path: &Path) -> Result<Vec<Value>> {
     let Some(source) = read(path)? else {
         return Ok(vec![]);
@@ -26,171 +93,155 @@ fn records(path: &Path) -> Result<Vec<Value>> {
         .collect()
 }
 fn usage(value: &Value, wire: &str) -> Value {
-    let u = &value["usage"];
-    if !u.is_object() {
-        return json!({"incompleteFields":["input","cacheRead","cacheWrite","output","total"]});
-    }
-    let input = u
-        .get("input_tokens")
-        .or_else(|| u.get("prompt_tokens"))
-        .and_then(Value::as_u64);
-    let output = u
-        .get("output_tokens")
-        .or_else(|| u.get("completion_tokens"))
-        .and_then(Value::as_u64);
-    let read = if wire == "anthropic-messages" {
-        u["cache_read_input_tokens"].as_u64()
-    } else {
-        u["input_tokens_details"]["cached_tokens"]
-            .as_u64()
-            .or_else(|| u["prompt_tokens_details"]["cached_tokens"].as_u64())
-    };
-    let write = if wire == "anthropic-messages" {
-        u["cache_creation_input_tokens"].as_u64()
-    } else {
-        u["input_tokens_details"]["cache_write_tokens"]
-            .as_u64()
-            .or_else(|| u["prompt_tokens_details"]["cache_write_tokens"].as_u64())
-    };
-    let read = read.unwrap_or(0);
-    let write = write.unwrap_or(0);
-    let input_total = input.map(|i| {
-        if wire == "anthropic-messages" {
-            i + read + write
-        } else {
-            i
-        }
-    });
-    let uncached = input.map(|i| {
-        if wire == "anthropic-messages" {
-            i
-        } else {
-            i.saturating_sub(read + write)
-        }
-    });
-    let mut incomplete = vec![];
-    if input.is_none() {
-        incomplete.push("input");
-        incomplete.push("total");
-    }
-    if output.is_none() {
-        incomplete.push("output");
-        if !incomplete.contains(&"total") {
-            incomplete.push("total");
-        }
-    }
-    json!({"inputTokens":input,"inputUncachedTokens":uncached,"inputTotalTokens":input_total,"outputTokens":output,"cacheReadTokens":read,"cacheCreationTokens":write,"cacheCreation5mTokens":u["cache_creation"]["ephemeral_5m_input_tokens"],"cacheCreation1hTokens":u["cache_creation"]["ephemeral_1h_input_tokens"],"totalTokens":input_total.zip(output).map(|(i,o)|i+o),"inputIncludesCache":wire!="anthropic-messages","incompleteFields":incomplete})
+    trace_usage::normalize(value, wire)
 }
-fn model_cost(model: &str, usage: &Value, at: u128) -> Option<f64> {
-    if usage["incompleteFields"]
-        .as_array()
-        .is_some_and(|a| !a.is_empty())
-    {
-        return None;
-    }
-    let prices: Vec<Value> =
-        serde_json::from_str(include_str!("../../test-results/native-assets/prices.json")).ok()?;
-    let lower = model.to_lowercase();
-    let price = prices.iter().find(|p| {
-        if p["match"] == "exact" {
-            let exact = p["modelId"]
-                .as_str()
-                .or_else(|| p["tokens"][0].as_str())
-                .unwrap_or("")
-                .to_lowercase();
-            lower == exact || lower.ends_with(&format!("/{exact}"))
-        } else {
-            p["tokens"].as_array().is_some_and(|ts| {
-                ts.iter()
-                    .all(|t| lower.contains(&t.as_str().unwrap_or("").to_lowercase()))
-            })
-        }
-    })?;
-    let total = usage["inputTotalTokens"].as_u64().unwrap_or(0);
-    let tier = price["tiers"].as_array().and_then(|tiers| {
-        tiers
-            .iter()
-            .rev()
-            .find(|t| t["fromInputTokens"].as_u64().unwrap_or(0) <= total)
-    });
-    let output = usage["outputTokens"].as_u64().unwrap_or(0);
-    let hour = ((at / 1000 / 3600) % 24) as u64;
-    let windows = price["peak"]["peakWindowsUtc"].as_array();
-    let off_peak = windows.is_some_and(|windows| {
-        !windows.is_empty()
-            && !windows
-                .iter()
-                .any(|w| hour >= w[0].as_u64().unwrap_or(0) && hour < w[1].as_u64().unwrap_or(24))
-    });
-    let scale = if off_peak {
-        price["peak"]["offPeakMultiplier"].as_f64().unwrap_or(1.0)
+fn record_usage(value: &Value, wire: &str, record: &Value) -> Value {
+    let request = if record["upstream"]["requestBody"].is_object() {
+        &record["upstream"]["requestBody"]
     } else {
-        1.0
+        &record["request"]["body"]
     };
-    let rate = |key: &str| {
-        tier.and_then(|p| p[key].as_f64())
-            .or_else(|| price[key].as_f64())
-    };
-    let output_rate = tier
-        .and_then(|p| {
-            if output <= p["shortOutput"]["atMostTokens"].as_u64().unwrap_or(0) {
-                p["shortOutput"]["output"].as_f64()
-            } else {
-                None
-            }
+    trace_usage::normalize_for_request(value, wire, request)
+}
+pub(super) fn load_prices(root: &Path) -> Vec<Value> {
+    let bundled: Vec<Value> =
+        serde_json::from_str(include_str!("../../test-results/native-assets/prices.json"))
+            .unwrap_or_default();
+    let cache = read(&root.join("pricing-cache/models-dev-pricing.json"))
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .filter(|v| v["version"] == 2)
+        .unwrap_or(Value::Null);
+    let rows: Vec<Value> = cache["rules"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| {
+            r["match"] == "exact"
+                && r["source"] == "models.dev"
+                && r["referenceOnly"] == true
+                && r["tokens"]
+                    .as_array()
+                    .is_some_and(|a| a.len() == 1 && a[0].is_string())
+                && ["input", "output"]
+                    .iter()
+                    .all(|k| r[*k].as_f64().is_some_and(|n| n.is_finite() && n >= 0.0))
         })
-        .or_else(|| rate("output"))?;
-    let mut cost = usage["inputUncachedTokens"].as_u64().unwrap_or(0) as f64 * rate("input")?
-        + output as f64 * output_rate;
-    let cache_read = usage["cacheReadTokens"].as_u64().unwrap_or(0);
-    if cache_read > 0 {
-        cost += cache_read as f64 * rate("cacheRead")?;
+        .cloned()
+        .map(model_metadata::normalize_cached_price)
+        .collect();
+    if rows.is_empty() {
+        bundled
+    } else {
+        rows
     }
-    let cache_write = usage["cacheCreationTokens"].as_u64().unwrap_or(0);
-    if cache_write > 0 {
-        let one_hour = usage["cacheCreation1hTokens"].as_u64().unwrap_or(0);
-        let other = cache_write.saturating_sub(one_hour);
-        let policy = price["cacheWritePolicy"].as_str().unwrap_or("");
-        let rate_write = rate("cacheWrite").or_else(|| match policy {
-            "free" => Some(0.0),
-            "input" => rate("input"),
-            _ => {
-                if ["openai", "deepseek", "xai"]
-                    .contains(&price["providerId"].as_str().unwrap_or(""))
-                {
-                    rate("input")
-                } else {
-                    None
-                }
-            }
-        })?;
-        cost += other as f64 * rate_write;
-        if one_hour > 0 {
-            cost += one_hour as f64
-                * price["cacheWrite1h"].as_f64().or_else(|| {
-                    if price["protocol"] == "anthropic" {
-                        rate("input").map(|r| r * 2.0)
-                    } else {
-                        None
-                    }
-                })?;
+}
+
+fn accumulate_model_usage(by_model: &mut Value, record: &Value) {
+    let model = text(&record["request"], "model");
+    let u = &record["usage"];
+    let m = &mut by_model[model];
+    if !m.is_object() {
+        *m = json!({"version":2,"input":0,"inputTotal":0,"inputTotalComplete":true,"output":0,"cacheRead":0,"cacheCreation":0,"total":0,"apiType":record["request"]["apiType"]});
+    }
+    let point = &record["costSnapshot"];
+    let previous = m["capturedCost"]["cost"].as_f64();
+    let known = point["knownCostUsd"].as_f64();
+    let first = m.get("capturedCost").is_none();
+    m["capturedCost"] = json!({
+        "cost": if previous.is_some() || known.is_some() { Some(previous.unwrap_or(0.0) + known.unwrap_or(0.0)) } else { None },
+        "complete": (first || m["capturedCost"]["complete"] == true) && point["costComplete"] == true
+    });
+    if m["inputTotal"].is_null() {
+        m["inputTotalComplete"] = json!(false);
+    }
+    for (key, value) in [
+        ("input", "inputUncachedTokens"),
+        ("inputTotal", "inputTotalTokens"),
+        ("output", "outputTokens"),
+        ("cacheRead", "cacheReadTokens"),
+        ("cacheCreation", "cacheCreationTokens"),
+        ("total", "totalTokens"),
+    ] {
+        m[key] = json!(m[key].as_u64().unwrap_or(0) + u[value].as_u64().unwrap_or(0));
+    }
+    m["reasoningComplete"] = json!(
+        (m["reasoningComplete"].is_null() || m["reasoningComplete"] == true)
+            && (u["reasoningTokens"].is_number() || u["outputTokens"] == 0)
+    );
+    let mut incomplete = m["incompleteFields"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for field in u["incompleteFields"].as_array().into_iter().flatten() {
+        if !incomplete.contains(field) {
+            incomplete.push(field.clone());
         }
     }
-    Some(cost * scale / 1_000_000.0)
+    for (field, key) in [
+        ("input", "inputUncachedTokens"),
+        ("cacheRead", "cacheReadTokens"),
+        ("cacheWrite", "cacheCreationTokens"),
+        ("output", "outputTokens"),
+        ("total", "totalTokens"),
+    ] {
+        if u[key].as_u64().is_none() && !incomplete.iter().any(|v| v == field) {
+            incomplete.push(json!(field));
+        }
+    }
+    m["incompleteFields"] = json!(incomplete);
+    let mut invalid = m["invalidFields"].as_array().cloned().unwrap_or_default();
+    for field in u["invalidFields"].as_array().into_iter().flatten() {
+        if !invalid.contains(field) {
+            invalid.push(field.clone());
+        }
+    }
+    m["invalidFields"] = json!(invalid);
+    if u["inputTotalTokens"].as_u64().is_none()
+        || u["inputIncludesCache"] != true
+            && m["incompleteFields"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|v| v == "cacheRead" || v == "cacheWrite"))
+    {
+        m["inputTotalComplete"] = json!(false);
+    } else if m["inputTotalComplete"].is_null() {
+        m["inputTotalComplete"] = json!(true);
+    }
+    for (target, source) in [
+        ("cacheCreation5m", "cacheCreation5mTokens"),
+        ("cacheCreation1h", "cacheCreation1hTokens"),
+        ("reasoning", "reasoningTokens"),
+    ] {
+        if u[source].as_u64().is_some() || m[target].as_u64().is_some() {
+            m[target] = json!(m[target].as_u64().unwrap_or(0) + u[source].as_u64().unwrap_or(0));
+        }
+    }
 }
 
 pub(super) struct TraceStore {
+    data_root: PathBuf,
     pub root: PathBuf,
+    pub prices: Vec<Value>,
     pub active: bool,
+    pub theme: String,
+    pub language: String,
     pub events: tokio::sync::broadcast::Sender<String>,
     index: Value,
+    index_source: Option<String>,
+    legacy_annotations: BTreeMap<String, Value>,
+    legacy_costs: BTreeMap<String, Value>,
+    writer: Option<super::trace_writer::Lease>,
     pub limit: u64,
     pub auto_cleanup: bool,
+    recording: BTreeMap<String, usize>,
+    pub retention_notice: Option<String>,
     pub read_problem: Option<String>,
 }
 impl TraceStore {
-    pub fn open(root: PathBuf, limit: u64, auto: bool) -> Result<Store> {
+    pub fn open(root: PathBuf, limit: u64, auto: bool, data_root: &Path) -> Result<Store> {
         let source = read(&root.join("index.json"))?;
+        let index_source = source.clone();
         let (index, read_problem) = match source {
             Some(source) => match serde_json::from_str::<Value>(&source) {
                 Ok(value) if value["sessions"].is_array() => (value, None),
@@ -201,15 +252,112 @@ impl TraceStore {
             },
             None => (empty_index(), None),
         };
-        Ok(Arc::new(std::sync::Mutex::new(Self {
+        // Read legacy annotation evidence once. This is a view projection:
+        // never rewrite JSONL or repair a missing/damaged index automatically.
+        let mut legacy_annotations = BTreeMap::new();
+        for session in index["sessions"].as_array().into_iter().flatten() {
+            if session["captureClassificationVersion"] == 1 {
+                continue;
+            }
+            let path = PathBuf::from(text(session, "jsonlPath"));
+            if path.parent() != Some(root.as_path()) {
+                continue;
+            }
+            if let Ok(file) = fs::File::open(&path) {
+                use std::io::{BufRead, BufReader};
+                let mut line = String::new();
+                if BufReader::new(file).read_line(&mut line).is_ok() {
+                    if let Ok(record) = serde_json::from_str::<Value>(&line) {
+                        legacy_annotations.insert(
+                            text(session, "id").into(),
+                            trace_classification::annotations(&record),
+                        );
+                    }
+                }
+            }
+        }
+        let store = Arc::new(std::sync::Mutex::new(Self {
+            data_root: data_root.to_path_buf(),
+            prices: load_prices(data_root),
             root,
             active: false,
+            theme: "day".into(),
+            language: crate::language::system_language(),
             events: tokio::sync::broadcast::channel(16).0,
             index,
+            index_source,
+            legacy_annotations,
+            legacy_costs: BTreeMap::new(),
+            writer: None,
             limit,
             auto_cleanup: auto,
+            recording: BTreeMap::new(),
+            retention_notice: None,
             read_problem,
-        })))
+        }));
+        store.lock().map_err(err)?.refresh_legacy_costs();
+        if limit == 0 {
+            store.lock().map_err(err)?.apply_retention();
+        }
+        Ok(store)
+    }
+    pub(super) fn begin_writer(&mut self) -> Result<()> {
+        let writer = super::trace_writer::Lease::acquire(&self.root)?;
+        // Another writer may have completed while this window was read-only.
+        // Adopt its complete index only after taking exclusive ownership.
+        let source = read(&self.root.join("index.json"))?;
+        let index = source
+            .as_ref()
+            .map(|s| {
+                serde_json::from_str::<Value>(s)
+                    .map_err(|_| "Trace 索引损坏，请先手动检查并修复".to_string())
+            })
+            .transpose()?
+            .unwrap_or_else(empty_index);
+        if !index["sessions"].is_array() {
+            return Err("Trace 索引无效，未开始写入".into());
+        }
+        self.index = index;
+        self.index_source = source;
+        self.refresh_legacy_costs();
+        self.read_problem = None;
+        self.writer = Some(writer);
+        Ok(())
+    }
+    pub(super) fn end_writer(&mut self) {
+        self.writer = None;
+    }
+    fn validate_index(&self) -> Result<()> {
+        if read(&self.root.join("index.json"))? != self.index_source {
+            return Err("Trace 索引已被外部修改，未覆盖历史；请停止 Trace 后重新检查索引".into());
+        }
+        Ok(())
+    }
+    fn with_writer<T>(
+        &mut self,
+        check_index: bool,
+        operation: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let temporary = self.writer.is_none();
+        if temporary {
+            self.writer = Some(super::trace_writer::Lease::acquire(&self.root)?);
+        }
+        let result = (|| {
+            self.writer.as_ref().unwrap().validate()?;
+            if check_index {
+                self.validate_index()?;
+            }
+            operation(self)
+        })();
+        if self.active {
+            if let Err(ref error) = result {
+                self.read_problem = Some(error.clone());
+            }
+        }
+        if temporary {
+            self.writer = None;
+        }
+        result
     }
     pub fn totals(&self) -> (usize, u64, u64) {
         let sessions = self.index["sessions"].as_array().unwrap();
@@ -228,12 +376,132 @@ impl TraceStore {
             .flatten()
             .flatten()
             .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .filter(|e| {
+                !["trace-writer.lock", ".native-trace-writer.lock", "tap.lock"]
+                    .contains(&e.file_name().to_string_lossy().as_ref())
+            })
             .filter_map(|e| e.metadata().ok())
             .map(|m| m.len())
             .sum()
     }
+    fn display_record(&self, mut row: Value) -> Value {
+        if row["startedAtMs"].as_u64().is_none() {
+            if let Ok(at) = chrono::DateTime::parse_from_rfc3339(text(&row, "startedAt")) {
+                row["startedAtMs"] = json!(at.timestamp_millis());
+            }
+        }
+        if needs_ark_cost_repair(&row["costSnapshot"])
+            || (row["costSnapshot"]["version"] == 1 && row["costSnapshot"]["costComplete"] == false)
+        {
+            let evidence = &row["usageEvidence"]["upstream"];
+            if evidence["raw"].is_object() {
+                let wire = text(evidence, "protocol").to_owned();
+                row["usage"] = record_usage(&json!({"usage":evidence["raw"]}), &wire, &row);
+            }
+            row["costSnapshot"] = repaired_cost_point(&self.prices, &row);
+            row["costViewBasis"] = json!("frozen-rate-correction");
+        } else if row["costSnapshot"]["version"] != 1 {
+            let mut raw = row["usageEvidence"]["upstream"]["raw"].clone();
+            if !raw.is_object() {
+                raw = row["sse"]["events"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .rev()
+                    .find_map(|e| {
+                        e["json"]["response"]
+                            .get("usage")
+                            .or_else(|| e["json"].get("usage"))
+                            .filter(|v| v.is_object())
+                            .cloned()
+                    })
+                    .unwrap_or(Value::Null);
+            }
+            if raw.is_object() {
+                let wire = row["usageEvidence"]["upstream"]["protocol"]
+                    .as_str()
+                    .or_else(|| row["protocol"].as_str())
+                    .unwrap_or("openai-responses")
+                    .to_owned();
+                row["usage"] = record_usage(&json!({"usage":raw}), &wire, &row);
+            }
+            row["costViewBasis"] = json!("legacy-current-reference");
+            row["costSnapshot"] = usage_cost_point(&self.prices, &row);
+        }
+        row
+    }
+    /// Rebuild only display aggregates; raw logs, index bytes and frozen prices
+    /// are untouched. Legacy rows use today's explicitly labelled reference.
+    pub(super) fn refresh_legacy_costs(&mut self) {
+        self.legacy_costs.clear();
+        for session in self.index["sessions"].as_array().into_iter().flatten() {
+            let frozen_correction = session["nativeUsage"].as_array().is_some_and(|points| {
+                points.iter().any(|point| {
+                    needs_ark_cost_repair(point)
+                        || (point["costComplete"] == false && point["priceRule"].is_object())
+                })
+            });
+            if session["costSnapshotVersion"] == 1 && !frozen_correction {
+                continue;
+            }
+            let path = PathBuf::from(text(session, "jsonlPath"));
+            if path.parent() != Some(self.root.as_path()) {
+                continue;
+            }
+            let Ok(rows) = records(&path) else {
+                continue;
+            };
+            if rows.is_empty() {
+                continue;
+            }
+            let mut by_model = json!({});
+            let mut points = vec![];
+            for row in rows {
+                let row = self.display_record(row);
+                accumulate_model_usage(&mut by_model, &row);
+                points.push(row["costSnapshot"].clone());
+            }
+            if session["traceCount"]
+                .as_u64()
+                .is_some_and(|n| n != points.len() as u64)
+            {
+                for model in by_model
+                    .as_object_mut()
+                    .into_iter()
+                    .flat_map(|m| m.values_mut())
+                {
+                    model["capturedCost"]["complete"] = json!(false);
+                }
+                for point in &mut points {
+                    point["costComplete"] = json!(false);
+                }
+            }
+            let tokens: u64 = points.iter().filter_map(|p| p["tokens"].as_u64()).sum();
+            self.legacy_costs.insert(text(session,"id").into(),json!({"usageByModel":by_model,"nativeUsage":points,"totalTokens":tokens,"costViewBasis":if frozen_correction {"frozen-rate-correction"} else {"legacy-current-reference"}}));
+        }
+    }
+    fn view_sessions(&self) -> Vec<Value> {
+        let mut sessions = self.index["sessions"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for session in &mut sessions {
+            if let Some(costs) = self.legacy_costs.get(text(session, "id")) {
+                for (key, value) in costs.as_object().into_iter().flatten() {
+                    session[key] = value.clone();
+                }
+            }
+            if let Some(annotation) = self.legacy_annotations.get(text(session, "id")) {
+                for (key, value) in annotation.as_object().into_iter().flatten() {
+                    session[key] = value.clone();
+                }
+            }
+        }
+        trace_classification::associate_titles(&mut sessions);
+        sessions
+    }
     pub fn state(&self, active: bool) -> Value {
-        json!({"active":active,"rootPath":self.root,"generatedAt":iso(millis()),"sessions":self.index["sessions"],"traces":[],"storage":{"rootPath":self.root,"totalBytes":self.size(),"maxBytes":self.limit}})
+        json!({"theme":self.theme,"language":self.language,"active":active,"rootPath":self.root,"generatedAt":iso(millis()),"sessions":self.view_sessions(),"traces":[],"storage":{"rootPath":self.root,"totalBytes":self.size(),"maxBytes":self.limit}})
     }
     pub fn stats(&self) -> Value {
         let now = millis();
@@ -242,12 +510,13 @@ impl TraceStore {
         let mut day = total.clone();
         let mut week = total.clone();
         let mut series = vec![];
-        for session in self.index["sessions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .chain(self.index.get("usageOnly"))
-        {
+        let sessions = self.view_sessions();
+        for session in sessions.iter().chain(self.index.get("usageOnly")).chain(
+            self.index["usageOnly"]["legacy"]
+                .as_array()
+                .into_iter()
+                .flatten(),
+        ) {
             if !session["nativeUsage"].is_array() {
                 let tokens = session["totalTokens"].as_u64().unwrap_or(0);
                 total["tokens"] = json!(total["tokens"].as_u64().unwrap_or(0) + tokens);
@@ -293,7 +562,12 @@ impl TraceStore {
             for point in session["nativeUsage"].as_array().into_iter().flatten() {
                 let at = point["atMs"].as_u64().unwrap_or(0) as u128;
                 let tokens = point["tokens"].as_u64().unwrap_or(0);
-                let cost = point["costUsd"].as_f64();
+                let cost = point["knownCostUsd"]
+                    .as_f64()
+                    .or_else(|| point["costUsd"].as_f64());
+                let complete = point["costComplete"]
+                    .as_bool()
+                    .unwrap_or(point["costUsd"].as_f64().is_some());
                 for period in [&mut total, &mut day, &mut week]
                     .iter_mut()
                     .enumerate()
@@ -313,7 +587,7 @@ impl TraceStore {
                     period["tokens"] = json!(period["tokens"].as_u64().unwrap_or(0) + tokens);
                     period["costUsd"] =
                         json!(period["costUsd"].as_f64().unwrap_or(0.0) + cost.unwrap_or(0.0));
-                    if cost.is_none() {
+                    if !complete {
                         period["costComplete"] = json!(false);
                     }
                 }
@@ -326,52 +600,219 @@ impl TraceStore {
         }
         json!({"total":total,"today":day,"week":week,"series":series})
     }
-    pub fn page(&self, id: &str, offset: Option<usize>, limit: usize) -> Result<Option<Value>> {
-        let Some(session) = self.index["sessions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|s| s["id"] == id)
-        else {
+    #[cfg(test)]
+    pub fn page(
+        &self,
+        id: &str,
+        offset: Option<usize>,
+        before: Option<usize>,
+        limit: usize,
+    ) -> Result<Option<Value>> {
+        self.page_projection(id, offset, before, limit, false, None)
+    }
+    fn page_projection(
+        &self,
+        id: &str,
+        offset: Option<usize>,
+        before: Option<usize>,
+        limit: usize,
+        summary_only: bool,
+        request_id: Option<&str>,
+    ) -> Result<Option<Value>> {
+        let sessions = self.view_sessions();
+        let Some(session) = sessions.iter().find(|s| s["id"] == id) else {
             return Ok(None);
         };
-        let file = PathBuf::from(session["jsonlPath"].as_str().ok_or("索引路径无效")?);
-        if file.parent() != Some(self.root.as_path()) {
-            return Err("索引路径越界，已拒绝读取".into());
+        let mut records = Vec::new();
+        for member in sessions.iter().filter(|s| {
+            s["id"] == id
+                || (!text(session, "clientConversationKey").is_empty()
+                    && s["clientConversationKey"] == session["clientConversationKey"]
+                    && s["source"] == session["source"])
+        }) {
+            let file = PathBuf::from(member["jsonlPath"].as_str().ok_or("索引路径无效")?);
+            if file.parent() != Some(self.root.as_path()) {
+                return Err("索引路径越界，已拒绝读取".into());
+            }
+            for mut record in super::storage::records(&file)? {
+                let annotation = trace_classification::annotations(&record);
+                if let Some(kind) = annotation.get("auxiliary") {
+                    record["auxiliary"] = kind.clone();
+                }
+                records.push(self.display_record(record));
+            }
         }
-        let records = records(&file)?;
+        records.sort_by(|a, b| {
+            text(a, "startedAt")
+                .cmp(text(b, "startedAt"))
+                .then_with(|| text(a, "id").cmp(text(b, "id")))
+        });
+        let mut main_ordinal = 0;
+        for (at, record) in records.iter_mut().enumerate() {
+            record["physicalSessionId"] = record["sessionId"].clone();
+            record["sessionId"] = json!(id);
+            record["turn"] = json!(at + 1);
+            if record["auxiliary"].is_null() && record["subagent"].is_null() {
+                main_ordinal += 1;
+                record["mainOrdinal"] = json!(main_ordinal);
+            }
+        }
+        let offset = if let Some(request_id) = request_id {
+            let Some(index) = records.iter().position(|record| record["id"] == request_id) else {
+                return Ok(None);
+            };
+            Some(index)
+        } else {
+            offset
+        };
+        if summary_only {
+            for record in &mut records {
+                let mut summary = json!({"summaryOnly":true});
+                for key in [
+                    "id",
+                    "sessionId",
+                    "physicalSessionId",
+                    "turn",
+                    "logicalTurn",
+                    "mainOrdinal",
+                    "startedAt",
+                    "startedAtMs",
+                    "completedAt",
+                    "durationMs",
+                    "source",
+                    "client",
+                    "clientConversationKey",
+                    "provider",
+                    "providerTransition",
+                    "auxiliary",
+                    "subagent",
+                    "subagentInfo",
+                    "compact",
+                    "routedBy",
+                    "usage",
+                    "costSnapshot",
+                    "error",
+                ] {
+                    if let Some(value) = record.get(key) {
+                        summary[key] = value.clone();
+                    }
+                }
+                for key in ["model", "apiType", "method", "path", "headers"] {
+                    if let Some(value) = record["request"].get(key) {
+                        summary["request"][key] = value.clone();
+                    }
+                }
+                for key in ["statusCode", "statusMessage", "protocolEnded", "bodyEnded"] {
+                    if let Some(value) = record["response"].get(key) {
+                        summary["response"][key] = value.clone();
+                    }
+                }
+                for key in ["baseUrl", "url"] {
+                    if let Some(value) = record["upstream"].get(key) {
+                        summary["upstream"][key] = value.clone();
+                    }
+                }
+                *record = summary;
+            }
+        }
         let total = records.len();
-        let limit = limit.clamp(1, 200);
-        let offset = offset.unwrap_or(total.saturating_sub(limit)).min(total);
-        let end = (offset + limit).min(total);
+        let limit = if request_id.is_some() {
+            1
+        } else {
+            limit.clamp(1, 200)
+        };
+        let tail = before.is_some() || offset.is_none();
+        let upper = before.unwrap_or(total).min(total);
+        let offset = if tail {
+            upper.saturating_sub(limit)
+        } else {
+            offset.unwrap_or(0).min(total)
+        };
+        let end = if tail {
+            upper
+        } else {
+            (offset + limit).min(total)
+        };
         let mut bytes = 0usize;
-        let traces: Vec<_> = records[offset..end]
-            .iter()
-            .take_while(|r| {
-                bytes += r.to_string().len();
-                bytes <= 24 * 1024 * 1024
-            })
-            .cloned()
-            .collect();
+        let mut traces = Vec::new();
+        if tail {
+            for record in records[offset..end].iter().rev() {
+                let size = record.to_string().len();
+                if !traces.is_empty() && bytes + size > 24 * 1024 * 1024 {
+                    break;
+                }
+                bytes += size;
+                traces.push(record.clone());
+            }
+            traces.reverse();
+        } else {
+            for record in &records[offset..end] {
+                let size = record.to_string().len();
+                if !traces.is_empty() && bytes + size > 24 * 1024 * 1024 {
+                    break;
+                }
+                bytes += size;
+                traces.push(record.clone());
+            }
+        }
+        let offset = if tail { end - traces.len() } else { offset };
         let end = offset + traces.len();
         Ok(Some(
             json!({"id":id,"traces":traces,"offset":offset,"limit":limit,"total":total,"hasMoreBefore":offset>0,"hasMoreAfter":end<total}),
         ))
     }
-    pub fn delete(&mut self, id: &str) -> Result<bool> {
-        let sessions = self.index["sessions"].as_array_mut().unwrap();
-        let Some(at) = sessions.iter().position(|s| s["id"] == id) else {
-            return Ok(false);
-        };
-        let file = PathBuf::from(sessions[at]["jsonlPath"].as_str().ok_or("索引路径无效")?);
-        if file.parent() != Some(self.root.as_path()) {
+    fn session_file(&self, id: &str) -> Result<PathBuf> {
+        let sessions = self.view_sessions();
+        let session = sessions
+            .iter()
+            .find(|s| s["id"] == id)
+            .ok_or("session not found")?;
+        let file = PathBuf::from(session["jsonlPath"].as_str().ok_or("索引路径无效")?);
+        if !file.is_file() || file.parent() != Some(self.root.as_path()) {
+            return Err("会话日志文件已不存在".into());
+        }
+        let canonical = file.canonicalize().map_err(err)?;
+        if canonical.parent() != Some(self.root.canonicalize().map_err(err)?.as_path()) {
             return Err("索引路径越界".into());
         }
-        read(&file)?;
-        if file.exists() {
-            fs::remove_file(&file).map_err(err)?;
+        Ok(canonical)
+    }
+    pub fn delete(&mut self, id: &str) -> Result<bool> {
+        self.with_writer(true, |store| store.delete_owned(id))
+    }
+    fn delete_owned(&mut self, id: &str) -> Result<bool> {
+        let view = self.view_sessions();
+        let Some(target) = view.iter().find(|s| s["id"] == id) else {
+            return Ok(false);
+        };
+        let targets: Vec<_> = view
+            .iter()
+            .filter(|s| {
+                s["id"] == id
+                    || (!text(target, "clientConversationKey").is_empty()
+                        && s["clientConversationKey"] == target["clientConversationKey"]
+                        && s["source"] == target["source"])
+            })
+            .collect();
+        let mut paths = Vec::new();
+        for target in &targets {
+            let file = PathBuf::from(target["jsonlPath"].as_str().ok_or("索引路径无效")?);
+            if file.parent() != Some(self.root.as_path()) {
+                return Err("索引路径越界".into());
+            }
+            read(&file)?;
+            paths.push(file);
         }
-        sessions.remove(at);
+        for file in paths {
+            if file.exists() {
+                fs::remove_file(file).map_err(err)?;
+            }
+        }
+        let ids: Vec<_> = targets.iter().map(|s| s["id"].clone()).collect();
+        self.index["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|s| !ids.contains(&s["id"]));
         self.persist()?;
         Ok(true)
     }
@@ -463,16 +904,34 @@ impl TraceStore {
             })
             .map(|c| c["jsonlPath"].clone())
             .collect();
-        let needs_repair = index_status == "invalid"
+        let usage_refresh: Vec<_> = indexed
+            .iter()
+            .filter(|s| {
+                s["usageNormalizationVersion"] != 2
+                    || s["costSnapshotVersion"] != 1
+                    || s["nativeUsage"]
+                        .as_array()
+                        .is_some_and(|points| points.iter().any(needs_ark_cost_repair))
+                    || s["nativeUsage"]
+                        .as_array()
+                        .is_some_and(|a| a.iter().any(|p| p.get("costComplete").is_none()))
+            })
+            .map(|s| s["jsonlPath"].clone())
+            .collect();
+        let needs_repair = !usage_refresh.is_empty()
+            || index_status == "invalid"
             || !unindexed.is_empty()
             || !missing.is_empty()
             || !stale.is_empty();
         Ok(
-            json!({"rootPath":self.root,"indexPath":index_path,"indexStatus":index_status,"indexSha256":index_sha,"indexedSessions":indexed.len(),"jsonlFiles":total,"missingIndexedFiles":missing,"unindexedFiles":unindexed,"staleIndexedFiles":stale,"needsRepair":needs_repair,"candidates":candidates}),
+            json!({"rootPath":self.root,"indexPath":index_path,"indexStatus":index_status,"indexSha256":index_sha,"indexedSessions":indexed.len(),"jsonlFiles":total,"missingIndexedFiles":missing,"unindexedFiles":unindexed,"staleIndexedFiles":stale,"usageRefreshFiles":usage_refresh,"needsRepair":needs_repair,"candidates":candidates}),
         )
     }
 
     pub fn apply_repair(&mut self, expected: Option<&str>) -> Result<Value> {
+        self.with_writer(false, |store| store.apply_repair_owned(expected))
+    }
+    fn apply_repair_owned(&mut self, expected: Option<&str>) -> Result<Value> {
         let plan = self.inspect_repair()?;
         if expected.is_some_and(|e| plan["indexSha256"] != e) {
             return Err("索引已被外部修改，请重新检查".into());
@@ -497,13 +956,36 @@ impl TraceStore {
                 .filter(|v| {
                     v["id"].is_string() && v["request"].is_object() && v["response"].is_object()
                 })
+                .map(|mut row| {
+                    let evidence = &row["usageEvidence"]["upstream"];
+                    let wire = text(evidence, "protocol");
+                    if evidence["raw"].is_object()
+                        && [
+                            "responses",
+                            "openai-responses",
+                            "chat-completions",
+                            "openai-chat-completions",
+                            "messages",
+                            "anthropic-messages",
+                        ]
+                        .contains(&wire)
+                    {
+                        row["usage"] = record_usage(&json!({"usage":evidence["raw"]}), wire, &row);
+                    }
+                    row["costSnapshot"] = repaired_cost_point(&self.prices, &row);
+                    row
+                })
                 .collect();
             if rows.is_empty() {
                 continue;
             }
+            let mut usage_by_model = json!({});
+            for row in &rows {
+                accumulate_model_usage(&mut usage_by_model, row);
+            }
             let first = &rows[0];
             let last = rows.last().unwrap();
-            let native_usage:Vec<_>=rows.iter().map(|r|json!({"atMs":r["startedAtMs"],"tokens":r["usage"]["totalTokens"],"costUsd":model_cost(text(&r["request"],"model"),&r["usage"],r["startedAtMs"].as_u64().unwrap_or(0)as u128)})).collect();
+            let native_usage: Vec<_> = rows.iter().map(|r| r["costSnapshot"].clone()).collect();
             let mut summary = prior["sessions"]
                 .as_array()
                 .unwrap()
@@ -512,15 +994,14 @@ impl TraceStore {
                 .filter(|s| s.is_object())
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let recovered = json!({"id":candidate["id"],"startedAt":first["startedAt"],"updatedAt":last["completedAt"],"source":first["source"],"clientConversationKey":first["clientConversationKey"],"firstPrompt":first["request"]["body"]["input"].as_str().unwrap_or(""),"firstModel":first["request"]["model"],"jsonlPath":path,"traceCount":rows.len(),"totalTokens":rows.iter().filter_map(|r|r["usage"]["totalTokens"].as_u64()).sum::<u64>(),"totalDurationMs":rows.iter().filter_map(|r|r["durationMs"].as_u64()).sum::<u64>(),"usageByModel":{},"nativeUsage":native_usage});
+            let recovered = json!({"id":candidate["id"],"startedAt":first["startedAt"],"updatedAt":last["completedAt"],"source":first["source"],"clientConversationKey":first["clientConversationKey"],"firstPrompt":first["request"]["body"]["input"].as_str().unwrap_or(""),"firstModel":first["request"]["model"],"jsonlPath":path,"traceCount":rows.len(),"totalTokens":rows.iter().filter_map(|r|r["usage"]["totalTokens"].as_u64()).sum::<u64>(),"totalDurationMs":rows.iter().filter_map(|r|r["durationMs"].as_u64()).sum::<u64>(),"usageByModel":usage_by_model,"usageNormalizationVersion":2,"nativeUsage":native_usage});
             for (key, value) in recovered.as_object().unwrap() {
-                if ["firstPrompt", "usageByModel"].contains(&key.as_str())
-                    && summary.get(key).is_some()
-                {
+                if key == "firstPrompt" && summary.get(key).is_some() {
                     continue;
                 }
                 summary[key] = value.clone();
             }
+            summary["costSnapshotVersion"] = json!(1);
             sessions.push(summary);
         }
         let current = read(&index)?.unwrap_or_default();
@@ -540,11 +1021,18 @@ impl TraceStore {
         let mut repaired = prior;
         repaired["version"] = json!(1);
         repaired["sessions"] = json!(sessions);
-        write(
-            &index,
-            &serde_json::to_string_pretty(&repaired).map_err(err)?,
-        )?;
+        self.writer
+            .as_ref()
+            .ok_or("缺少 Trace 修复租约")?
+            .validate()?;
+        if read(&index)? != prior_source {
+            return Err("Trace 索引在修复前发生外部变化，原历史和备份已保留".into());
+        }
+        let next = serde_json::to_string_pretty(&repaired).map_err(err)?;
+        write_checked(&index, prior_source.as_deref().unwrap_or_default(), &next)?;
+        self.index_source = Some(next);
         self.index = repaired;
+        self.refresh_legacy_costs();
         self.read_problem = None;
         let mut result = plan;
         result["applied"] = json!(true);
@@ -553,6 +1041,9 @@ impl TraceStore {
         Ok(result)
     }
     pub fn clear(&mut self) -> Result<()> {
+        self.with_writer(true, |store| store.clear_owned())
+    }
+    fn clear_owned(&mut self) -> Result<()> {
         let ids: Vec<_> = self.index["sessions"]
             .as_array()
             .unwrap()
@@ -560,27 +1051,213 @@ impl TraceStore {
             .filter_map(|s| s["id"].as_str().map(str::to_string))
             .collect();
         for id in ids {
-            self.delete(&id)?;
+            self.delete_owned(&id)?;
+        }
+        self.index.as_object_mut().unwrap().remove("usageOnly");
+        self.persist()?;
+        Ok(())
+    }
+    pub fn reset_usage(&mut self) -> Result<()> {
+        self.with_writer(true, |store| {
+            store.index.as_object_mut().unwrap().remove("usageOnly");
+            store.index["usageResetAt"] = json!(millis());
+            for session in store.index["sessions"].as_array_mut().unwrap() {
+                session["nativeUsage"] = json!([]);
+                session["usageByModel"] = json!({});
+                session["dailyUsage"] = json!({});
+                session["totalTokens"] = json!(0);
+            }
+            store.persist()
+        })
+    }
+    fn usage_only(&mut self) -> &mut Value {
+        let usage = &mut self.index["usageOnly"];
+        if !usage["nativeUsage"].is_array() {
+            let legacy = usage_summary(usage);
+            *usage = json!({"nativeUsage":[],"legacy":[]});
+            if legacy["totalTokens"].as_u64().unwrap_or(0) > 0 {
+                usage["legacy"].as_array_mut().unwrap().push(legacy);
+            }
+        }
+        usage
+    }
+    pub fn set_retention(&mut self, limit: u64, auto_cleanup: bool) {
+        self.limit = limit;
+        self.auto_cleanup = auto_cleanup;
+        self.apply_retention();
+    }
+    fn apply_retention(&mut self) {
+        if self.limit != 0 {
+            self.retention_notice = None;
+            return;
+        }
+        let result = self.with_writer(true, |store| store.purge_completed_details());
+        self.retention_notice = match result {
+            Err(error) => Some(format!(
+                "设置已保存，详细记录清理未完成：{error}；请重新应用存储设置"
+            )),
+            Ok(()) if !self.recording.is_empty() => {
+                Some("已清理结束的记录，正在生成的记录将在结束后清理".into())
+            }
+            Ok(()) => None,
+        };
+    }
+    fn purge_completed_details(&mut self) -> Result<()> {
+        if let Some(ref problem) = self.read_problem {
+            return Err(problem.clone());
+        }
+        let completed: Vec<_> = self.index["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| !self.recording.contains_key(text(s, "id")))
+            .cloned()
+            .collect();
+        for session in completed {
+            let path = PathBuf::from(session["jsonlPath"].as_str().ok_or("索引路径无效")?);
+            if path.parent() != Some(self.root.as_path()) {
+                return Err("索引路径越界".into());
+            }
+            read(&path)?;
+            let before = self.index.clone();
+            let usage = self.usage_only();
+            if let Some(points) = session["nativeUsage"].as_array() {
+                usage["nativeUsage"]
+                    .as_array_mut()
+                    .unwrap()
+                    .extend(points.iter().cloned());
+            } else {
+                if !usage["legacy"].is_array() {
+                    usage["legacy"] = json!([]);
+                }
+                usage["legacy"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(usage_summary(&session));
+            }
+            self.index["sessions"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|s| s["id"] != session["id"]);
+            // Commit accounting before unlinking details. A retry removes the
+            // leftover native file without counting that session a second time.
+            if let Err(error) = self.persist() {
+                self.index = before;
+                return Err(error);
+            }
+            if path.exists() {
+                fs::remove_file(path).map_err(err)?;
+            }
+        }
+        for entry in fs::read_dir(&self.root).map_err(err)?.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(id) = name.strip_suffix(".jsonl") else {
+                continue;
+            };
+            if id
+                .strip_prefix("session-")
+                .is_some_and(|hash| hash.len() == 24 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+                && !self.recording.contains_key(id)
+            {
+                read(&entry.path())?;
+                fs::remove_file(entry.path()).map_err(err)?;
+            }
         }
         Ok(())
     }
-    fn persist(&self) -> Result<()> {
-        write(
+    fn persist(&mut self) -> Result<()> {
+        self.writer
+            .as_ref()
+            .ok_or("缺少 Trace 写入租约")?
+            .validate()?;
+        self.validate_index()?;
+        let source = serde_json::to_string_pretty(&self.index).map_err(err)?;
+        write_checked(
             &self.root.join("index.json"),
-            &serde_json::to_string_pretty(&self.index).map_err(err)?,
+            self.index_source.as_deref().unwrap_or_default(),
+            &source,
         )?;
+        self.index_source = Some(source);
         let _ = self.events.send("event: reset\ndata: {}\n\n".into());
         Ok(())
     }
-    pub fn append(&mut self, mut record: Value, key: &str) -> Result<()> {
+    pub fn append(&mut self, record: Value, key: &str) -> Result<()> {
+        self.with_writer(true, |store| store.append_owned(record, key))
+    }
+    fn append_owned(&mut self, mut record: Value, key: &str) -> Result<()> {
         if let Some(ref problem) = self.read_problem {
             return Err(problem.clone());
+        }
+        let annotation = trace_classification::annotations(&record);
+        if let Some(kind) = annotation.get("auxiliary") {
+            record["auxiliary"] = kind.clone();
+        }
+        let reset_at = self.index["usageResetAt"].as_u64().unwrap_or(0);
+        let record_at = record["startedAtMs"]
+            .as_u64()
+            .or_else(|| {
+                chrono::DateTime::parse_from_rfc3339(text(&record, "startedAt"))
+                    .ok()
+                    .map(|t| t.timestamp_millis() as u64)
+            })
+            .unwrap_or(0);
+        if self.limit == 0 {
+            if reset_at > 0 && record_at <= reset_at {
+                return Ok(());
+            }
+            let point = usage_cost_point(&self.prices, &record);
+            self.usage_only()["nativeUsage"]
+                .as_array_mut()
+                .unwrap()
+                .push(point);
+            self.persist()?;
+            return Ok(());
         }
         let id = format!("session-{}", &digest(key.as_bytes())[..24]);
         let file = self.root.join(format!("{id}.jsonl"));
         let sessions = self.index["sessions"].as_array_mut().unwrap();
-        let at=sessions.iter().position(|s|s["id"]==id).unwrap_or_else(||{sessions.push(json!({"id":id,"startedAt":record["startedAt"],"updatedAt":record["completedAt"],"source":record["source"],"clientConversationKey":key,"firstPrompt":record["request"]["body"]["input"].as_str().or_else(||record["clientFirstPrompt"].as_str()).unwrap_or(""),"firstModel":record["request"]["model"],"jsonlPath":file,"traceCount":0,"totalTokens":0,"totalDurationMs":0,"usageByModel":{},"nativeUsage":[]}));sessions.len()-1});
+        let at=sessions.iter().position(|s|s["id"]==id).unwrap_or_else(||{sessions.push(json!({"id":id,"startedAt":record["startedAt"],"updatedAt":record["completedAt"],"source":record["source"],"clientConversationKey":key,"firstPrompt":record["request"]["body"]["input"].as_str().or_else(||record["clientFirstPrompt"].as_str()).unwrap_or(""),"firstModel":record["request"]["model"],"jsonlPath":file,"traceCount":0,"totalTokens":0,"totalDurationMs":0,"usageByModel":{},"usageNormalizationVersion":2,"nativeUsage":[]}));sessions.len()-1});
         let summary = &mut sessions[at];
+        if let Some(legacy) = self.legacy_annotations.remove(&id) {
+            for (key, value) in legacy.as_object().into_iter().flatten() {
+                summary[key] = value.clone();
+            }
+        }
+        let auxiliary = annotation["auxiliary"].is_string();
+        summary["captureClassificationVersion"] = json!(1);
+        if !auxiliary {
+            summary["hidden"] = json!(false);
+            if summary["hasMainTurn"] != true || text(summary, "firstPrompt").is_empty() {
+                summary["firstPrompt"] = annotation["firstPrompt"].clone();
+            }
+            summary["hasMainTurn"] = json!(true);
+        } else {
+            if summary["hasMainTurn"] != true {
+                summary["hidden"] = json!(true);
+                summary["firstPrompt"] = json!("");
+            }
+            for field in ["title", "titlePromptHash"] {
+                if let Some(value) = annotation.get(field) {
+                    summary[field] = value.clone();
+                }
+            }
+            let kind = annotation["auxiliary"].as_str().unwrap();
+            if !summary["auxiliaryCounts"].is_object() {
+                summary["auxiliaryCounts"] = json!({});
+            }
+            summary["auxiliaryCounts"][kind] =
+                json!(summary["auxiliaryCounts"][kind].as_u64().unwrap_or(0) + 1);
+        }
+        if summary["errorCount"].as_u64().is_none() {
+            summary["errorCount"] =
+                json!(records(&file)?.iter().filter(|r| trace_error(r)).count());
+        }
+        let is_error = trace_error(&record);
+        summary["errorCount"] =
+            json!(summary["errorCount"].as_u64().unwrap_or(0) + u64::from(is_error));
+        if record["auxiliary"].is_null() && record["subagent"].is_null() {
+            summary["lastTurnError"] = json!(is_error);
+        }
         let turn = summary["traceCount"].as_u64().unwrap_or(0) + 1;
         record["sessionId"] = json!(id);
         record["turn"] = json!(turn);
@@ -592,31 +1269,27 @@ impl TraceStore {
             summary["totalDurationMs"].as_u64().unwrap_or(0)
                 + record["durationMs"].as_u64().unwrap_or(0)
         );
-        let model = text(&record["request"], "model");
-        let u = &record["usage"];
-        let cost = model_cost(
-            model,
-            u,
-            record["startedAtMs"].as_u64().unwrap_or(0) as u128,
-        );
-        let m = &mut summary["usageByModel"][model];
-        if !m.is_object() {
-            *m = json!({"version":2,"input":0,"output":0,"cacheRead":0,"cacheCreation":0,"total":0,"apiType":record["request"]["apiType"]});
+        record["costSnapshot"] = usage_cost_point(&self.prices, &record);
+        // A legacy aggregate cannot claim complete monetary coverage until its
+        // original requests have been rebuilt by the backed-up index repair.
+        if summary["costSnapshotVersion"] != 1 && turn > 1 {
+            for model in summary["usageByModel"]
+                .as_object_mut()
+                .into_iter()
+                .flat_map(|m| m.values_mut())
+            {
+                if model.get("capturedCost").is_none() {
+                    model["capturedCost"] = json!({"cost":null,"complete":false});
+                }
+            }
+        } else {
+            summary["costSnapshotVersion"] = json!(1);
         }
-        for (key, value) in [
-            ("input", "inputUncachedTokens"),
-            ("output", "outputTokens"),
-            ("cacheRead", "cacheReadTokens"),
-            ("cacheCreation", "cacheCreationTokens"),
-            ("total", "totalTokens"),
-        ] {
-            m[key] = json!(m[key].as_u64().unwrap_or(0) + u[value].as_u64().unwrap_or(0));
-        }
-        m["incompleteFields"] = u["incompleteFields"].clone();
+        accumulate_model_usage(&mut summary["usageByModel"], &record);
         summary["nativeUsage"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"atMs":record["startedAtMs"],"tokens":tokens,"costUsd":cost}));
+            .push(record["costSnapshot"].clone());
         read(&file)?;
         let mut output = fs::OpenOptions::new()
             .append(true)
@@ -633,6 +1306,9 @@ impl TraceStore {
         use std::io::Write;
         writeln!(&mut output, "{record}").map_err(err)?;
         output.sync_all().map_err(err)?;
+        if self.legacy_costs.contains_key(&id) {
+            self.refresh_legacy_costs();
+        }
         self.persist()?;
         if self.auto_cleanup && self.limit > 0 {
             while self.size() > self.limit && !self.index["sessions"].as_array().unwrap().is_empty()
@@ -662,7 +1338,536 @@ impl TraceStore {
     }
 }
 
+// Capture upstream accounting independently from the outermost HTTP body. The
+// latter may still be converted by ingress after a Capture has finished/dropped.
+// Either side can drop first (including an entirely unpolled client body).
+#[derive(Clone, Default)]
+pub(super) struct ClientEvidence(Arc<std::sync::Mutex<ClientEvidenceState>>);
+#[derive(Default)]
+struct ClientEvidenceState {
+    raw: Vec<u8>,
+    overflow: bool,
+    status: u16,
+    headers: Value,
+    finished: bool,
+    ended: bool,
+    sse: bool,
+    protocol_ended: bool,
+    terminal_seen: bool,
+    captures: usize,
+    pending: Vec<(Store, String, Value)>,
+    tools: Option<super::tool_wait::Observer>,
+}
+impl ClientEvidence {
+    pub fn tools(&self, observer: super::tool_wait::Observer) {
+        self.0.lock().unwrap().tools = Some(observer);
+    }
+    pub fn capture(&self) -> Self {
+        self.0.lock().unwrap().captures += 1;
+        self.clone()
+    }
+    pub fn response(&self, response: Response) -> Response {
+        use futures_util::StreamExt;
+        {
+            let state = self.0.lock().unwrap();
+            if state.captures == 0 && state.pending.is_empty() {
+                return response;
+            }
+        }
+        let (parts, body) = response.into_parts();
+        {
+            let mut state = self.0.lock().unwrap();
+            state.status = parts.status.as_u16();
+            let sse = parts
+                .headers
+                .get("content-type")
+                .and_then(|h| h.to_str().ok())
+                .is_some_and(|h| h.contains("text/event-stream"));
+            state.sse = sse;
+            if let Some(tools) = state.tools.as_mut() {
+                tools.transport(sse);
+            }
+            state.headers = json!(parts
+                .headers
+                .iter()
+                .filter(|(name, _)| ![
+                    "authorization",
+                    "proxy-authorization",
+                    "x-api-key",
+                    "x-goog-api-key",
+                    "cookie",
+                    "set-cookie"
+                ]
+                .contains(&name.as_str()))
+                .map(|(name, value)| (name.to_string(), json!(value.to_str().unwrap_or(""))))
+                .collect::<serde_json::Map<_, _>>());
+        }
+        let guard = ClientBodyGuard(self.clone());
+        let expected = parts
+            .headers
+            .get("content-length")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|h| h.parse::<usize>().ok());
+        let stream = async_stream::stream! {
+            // Constructed outside the generator so Drop also runs before polling.
+            let guard = guard;
+            let mut body = body.into_data_stream();
+            while let Some(chunk) = body.next().await {
+                if let Ok(bytes) = &chunk {
+                    let mut state = guard.0.0.lock().unwrap();
+                    let remaining = (32 * 1024 * 1024usize).saturating_sub(state.raw.len());
+                    state.raw.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+                    state.overflow |= bytes.len() > remaining;
+                    let detected_sse = !state.sse && protocol::is_sse_body(&state.raw);
+                    state.sse |= detected_sse;
+                    if state.sse && !state.protocol_ended && !state.overflow {
+                        let tail=&state.raw[state.raw.len().saturating_sub(bytes.len()+64)..];
+                        state.terminal_seen |= tail.windows(b"response.completed".len()).any(|w|w==b"response.completed") || tail.windows(b"response.incomplete".len()).any(|w|w==b"response.incomplete");
+                        if state.terminal_seen {
+                            state.protocol_ended=protocol::collapse_sse(&String::from_utf8_lossy(&state.raw),"responses","").is_ok();
+                        }
+                    }
+                    if !state.sse && !state.protocol_ended && !state.overflow
+                        && bytes.iter().rev().find(|b| !b.is_ascii_whitespace()) == Some(&b'}') {
+                        state.protocol_ended = serde_json::from_slice::<Value>(&state.raw).is_ok_and(|value|
+                            (value["status"] == "completed" && protocol::validate_response(&value,"responses").is_ok())
+                            || value["object"] == "response.compaction");
+                    }
+                    if let Some(mut tools) = state.tools.take() {
+                        if (200..300).contains(&state.status) {
+                            if detected_sse { tools.transport(true); }
+                            tools.chunk(if detected_sse { &state.raw } else { bytes },&state.raw,state.overflow);
+                            if expected == Some(state.raw.len()) || state.protocol_ended { tools.finish(&state.raw,state.overflow); }
+                        }
+                        state.tools = Some(tools);
+                    }
+                }
+                let failed = chunk.is_err();
+                yield chunk;
+                if failed { return; }
+            }
+            let mut state = guard.0.0.lock().unwrap();
+            if let Some(mut tools) = state.tools.take() {
+                if (200..300).contains(&state.status) { tools.finish(&state.raw,state.overflow); }
+                state.tools = Some(tools);
+            }
+            state.ended = true;
+        };
+        Response::from_parts(parts, Body::from_stream(stream))
+    }
+    fn publish(&self, store: Store, key: String, record: Value) {
+        {
+            let mut state = self.0.lock().unwrap();
+            state.pending.push((store, key, record));
+            state.captures -= 1;
+        }
+        self.flush();
+    }
+    fn flush(&self) {
+        let records = {
+            let mut state = self.0.lock().unwrap();
+            if !state.finished || state.captures != 0 {
+                return;
+            }
+            let last = state.pending.len().saturating_sub(1);
+            let pending = std::mem::take(&mut state.pending);
+            pending.into_iter().enumerate().map(|(index, (store, key, mut record))| {
+                let delivered = index == last;
+                // Definite account refusals consumed internally remain separate
+                // upstream attempts, never copies of the final client's stream.
+                if !delivered {
+                    record["attemptResponse"] = record["response"].take();
+                    record["response"] = json!({"forwardedToClient":false,"rawBody":"","statusCode":null,"headers":{}});
+                } else {
+                    record["response"]["statusCode"] = json!(state.status);
+                    record["response"]["headers"] = state.headers.clone();
+                    record["response"]["rawBody"] = json!(String::from_utf8_lossy(&state.raw));
+                    record["response"]["forwardedToClient"] = json!(true);
+                    record["response"]["bodyFormat"] = json!("wire");
+                    record["response"]["captureBoundary"] = json!("gateway-http-body");
+                    record["response"]["bodyEnded"] = json!(state.ended);
+                    record["response"]["protocolEnded"] = json!(state.protocol_ended);
+                    if let Ok(body) = serde_json::from_slice::<Value>(&state.raw) {
+                        record["response"]["body"] = body;
+                    } else if record.get("error").is_some() {
+                        record["response"].as_object_mut().unwrap().remove("body");
+                    }
+                    if state.overflow {
+                        record["response"]["bodyTruncated"] = json!(true);
+                        record["error"] = json!("客户端响应记录超过 32 MB，已截断；网络转发保持完整");
+                    } else if !state.ended && !state.protocol_ended && record.get("error").is_none() {
+                        record["error"] = json!("客户端响应未读取到结束；已保留 Gateway 输出的前缀");
+                    }
+                }
+                (store, key, record)
+            }).collect::<Vec<_>>()
+        };
+        // Never hold the evidence mutex while taking the shared writer mutex.
+        for (store, key, record) in records {
+            let mut store = store.lock().unwrap();
+            if let Err(error) = store.append(record, &key) {
+                store.read_problem = Some(format!(
+                    "Trace 最终响应未能保存：{error}；请检查历史目录并手动修复索引"
+                ));
+                eprintln!("Trace capture failed: {error}");
+            }
+        }
+    }
+}
+struct ClientBodyGuard(ClientEvidence);
+impl Drop for ClientBodyGuard {
+    fn drop(&mut self) {
+        self.0 .0.lock().unwrap().finished = true;
+        self.0.flush();
+    }
+}
+
+#[cfg(test)]
+mod client_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_cost_view_rebuilds_raw_usage_without_writing_evidence() {
+        let root = std::env::temp_dir().join(format!(
+            "xwx-legacy-cost-{}-{}",
+            std::process::id(),
+            millis()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("legacy.jsonl");
+        let frozen = json!({"version":1,"atMs":1,"tokens":2,"knownCostUsd":0.123,"costUsd":0.123,"costComplete":true});
+        let row = |input| json!({"startedAt":"2026-10-13T00:00:00Z","protocol":"openai-responses","request":{"model":"legacy-fixture"},"usage":{"totalTokens":0},"usageEvidence":{"upstream":{"protocol":"responses","raw":{"input_tokens":input,"output_tokens":5,"input_tokens_details":{"cached_tokens":if input==100 {60} else {0},"cache_write_tokens":0}}}}});
+        let source=[row(100),row(101),json!({"request":{"model":"legacy-fixture"},"usage":{"version":2,"inputUncachedTokens":1,"inputTotalTokens":1,"outputTokens":1,"cacheReadTokens":0,"cacheCreationTokens":0,"totalTokens":2},"costSnapshot":frozen})].iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+        fs::write(&file, &source).unwrap();
+        let index=json!({"version":1,"sessions":[{"id":"legacy","jsonlPath":file,"traceCount":3,"captureClassificationVersion":1,"totalTokens":0,"usageByModel":{}}]}).to_string();
+        fs::write(root.join("index.json"), &index).unwrap();
+        let store = TraceStore::open(root.clone(), u64::MAX, false, &root).unwrap();
+        {
+            let mut store = store.lock().unwrap();
+            store.prices = vec![
+                json!({"modelId":"legacy-fixture","input":2,"output":10,"cacheRead":0.1,"cacheWrite":2,"tiers":[{"fromInputTokens":0,"input":2,"output":10,"cacheRead":0.1,"cacheWrite":2},{"fromInputTokens":101,"input":4,"output":15,"cacheRead":0.2,"cacheWrite":4}]}),
+            ];
+            store.refresh_legacy_costs();
+            let view = &store.view_sessions()[0];
+            assert_eq!(view["costViewBasis"], "legacy-current-reference");
+            assert_eq!(view["totalTokens"], 213);
+            assert_eq!(
+                view["usageByModel"]["legacy-fixture"]["capturedCost"]["complete"],
+                true
+            );
+            assert!(
+                (view["usageByModel"]["legacy-fixture"]["capturedCost"]["cost"]
+                    .as_f64()
+                    .unwrap()
+                    - 0.123615)
+                    .abs()
+                    < 1e-12
+            );
+            assert_eq!(view["nativeUsage"][2], frozen);
+            assert!(view["nativeUsage"][0]["atMs"].as_u64().is_some());
+            assert_eq!(store.index["sessions"][0]["totalTokens"], 0);
+            let page = store.page("legacy", Some(0), None, 200).unwrap().unwrap();
+            assert_eq!(page["traces"][1]["usage"]["inputTotalTokens"], 100);
+            assert_eq!(
+                page["traces"][1]["costViewBasis"],
+                "legacy-current-reference"
+            );
+            store.index["sessions"][0]["traceCount"] = json!(4);
+            store.refresh_legacy_costs();
+            assert_eq!(
+                store.view_sessions()[0]["usageByModel"]["legacy-fixture"]["capturedCost"]
+                    ["complete"],
+                false
+            );
+        }
+        assert_eq!(fs::read_to_string(&file).unwrap(), source);
+        assert_eq!(fs::read_to_string(root.join("index.json")).unwrap(), index);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn large_pages_are_contiguous_from_both_edges_and_keep_latest() {
+        let root = std::env::temp_dir().join(format!(
+            "xwx-page-boundary-{}-{}",
+            std::process::id(),
+            millis()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("large.jsonl");
+        let payload = "x".repeat(9 * 1024 * 1024);
+        let source = (0..5).map(|n| json!({"id":format!("large-{n}"),"sessionId":"large","startedAt":format!("2026-10-13T00:00:0{n}Z"),"request":{"body":{"input":payload}}}).to_string()).collect::<Vec<_>>().join("\n");
+        fs::write(&file, &source).unwrap();
+        fs::write(root.join("index.json"),json!({"version":1,"sessions":[{"id":"large","jsonlPath":file,"traceCount":5,"captureClassificationVersion":1,"source":"codex-cli"}]}).to_string()).unwrap();
+        let store = TraceStore::open(root.clone(), u64::MAX, false, &root).unwrap();
+        {
+            let store = store.lock().unwrap();
+            let tail = store.page("large", None, None, 200).unwrap().unwrap();
+            assert_eq!(tail["offset"], 3);
+            assert_eq!(tail["traces"][1]["id"], "large-4");
+            let before = store.page("large", None, Some(3), 200).unwrap().unwrap();
+            assert_eq!(before["offset"], 1);
+            assert_eq!(before["traces"][0]["turn"], 2);
+            assert_eq!(before["traces"][1]["id"], "large-2");
+            let first = store.page("large", None, Some(1), 200).unwrap().unwrap();
+            assert_eq!(first["offset"], 0);
+            assert_eq!(first["traces"][0]["id"], "large-0");
+            let forward = store.page("large", Some(1), None, 200).unwrap().unwrap();
+            assert_eq!(forward["offset"], 1);
+            assert_eq!(forward["traces"][1]["id"], "large-2");
+            let summary = store
+                .page_projection("large", Some(0), None, 200, true, None)
+                .unwrap()
+                .unwrap();
+            assert_eq!(summary["offset"], 0);
+            assert_eq!(summary["traces"].as_array().unwrap().len(), 5);
+            assert_eq!(summary["traces"][0]["id"], "large-0");
+            assert_eq!(summary["traces"][4]["turn"], 5);
+            assert_eq!(summary["traces"][0]["summaryOnly"], true);
+            assert!(summary["traces"][0]["request"]["body"].is_null());
+            assert!(summary.to_string().len() < 10_000);
+            let selected = store
+                .page_projection("large", None, None, 200, false, Some("large-4"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(selected["traces"].as_array().unwrap().len(), 1);
+            assert_eq!(selected["traces"][0]["id"], "large-4");
+            assert_eq!(
+                selected["traces"][0]["request"]["body"]["input"]
+                    .as_str()
+                    .unwrap()
+                    .len(),
+                payload.len()
+            );
+            assert_eq!(fs::read_to_string(&file).unwrap(), source);
+            assert_eq!(
+                store.session_file("large").unwrap(),
+                file.canonicalize().unwrap()
+            );
+            assert!(store.session_file("../outside").is_err());
+        }
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn native_embeds_repository_prices_for_offline_billing() {
+        let rules: Vec<Value> =
+            serde_json::from_str(include_str!("../../test-results/native-assets/prices.json"))
+                .unwrap();
+        assert!(
+            !rules.is_empty()
+                && rules
+                    .iter()
+                    .all(|r| r["referenceOnly"] == true && r["source"] == "models.dev"),
+            "native build must embed only the standard reference catalog"
+        );
+        let price = rules
+            .iter()
+            .find(|r| r["modelId"] == "mimo-v2.6-pro")
+            .expect("new provider included offline");
+        let usage = json!({"inputUncachedTokens":40,"inputTotalTokens":100,"outputTokens":5,"cacheReadTokens":60,"cacheCreationTokens":0});
+        let expected = (40.0 * price["input"].as_f64().unwrap()
+            + 5.0 * price["output"].as_f64().unwrap()
+            + 60.0 * price["cacheRead"].as_f64().unwrap())
+            / 1_000_000.0;
+        assert!((model_cost(&rules, "mimo-v2.6-pro", &usage, 0).unwrap() - expected).abs() < 1e-12);
+    }
+    #[test]
+    fn billing_uses_relevant_counters_and_keeps_unknowns() {
+        let price = json!({"match":"exact","modelId":"fixture","protocol":"openai","input":1,"output":2,"cacheRead":0.1,"cacheWritePolicy":"input"});
+        let raw = json!({"usage":{"input_tokens":100,"output_tokens":5,"input_tokens_details":{"cached_tokens":60}}});
+        let u = usage(&raw, "responses");
+        assert_eq!(u["incompleteFields"], json!(["cacheWrite"]));
+        assert!(
+            (model_cost(std::slice::from_ref(&price), "fixture", &u, 0).unwrap() - 0.000056).abs()
+                < 1e-12
+        );
+        let mut premium = price.clone();
+        premium["cacheWrite"] = json!(1.25);
+        assert!(model_cost(&[premium.clone()], "fixture", &u, 0).is_none());
+        let unknown_read = usage(
+            &json!({"usage":{"input_tokens":100,"output_tokens":5,"input_tokens_details":{"cache_write_tokens":0}}}),
+            "responses",
+        );
+        assert!(model_cost(std::slice::from_ref(&price), "fixture", &unknown_read, 0).is_none());
+        let mut uniform = price.clone();
+        uniform["cacheRead"] = json!(1);
+        assert!(
+            (model_cost(&[uniform], "fixture", &unknown_read, 0).unwrap() - 0.00011).abs() < 1e-12
+        );
+        let ttl = usage(
+            &json!({"usage":{"input_tokens":20,"output_tokens":5,"cache_read_input_tokens":60,"cache_creation_input_tokens":20,"cache_creation":{"ephemeral_5m_input_tokens":10,"ephemeral_1h_input_tokens":10}}}),
+            "messages",
+        );
+        premium["protocol"] = json!("anthropic");
+        assert!(
+            (model_cost(&[premium.clone()], "fixture", &ttl, 0).unwrap() - 0.0000685).abs() < 1e-12
+        );
+        let mut unknown_ttl = ttl.clone();
+        unknown_ttl["cacheCreation5mTokens"] = Value::Null;
+        unknown_ttl["cacheCreation1hTokens"] = Value::Null;
+        assert!(model_cost(&[premium.clone()], "fixture", &unknown_ttl, 0).is_none());
+        let mut storage_price = premium;
+        storage_price["cacheStoragePerHour"] = json!(1);
+        assert!(model_cost(&[storage_price], "fixture", &ttl, 0).is_none());
+        let mut absent_total = u.clone();
+        absent_total["incompleteFields"] = json!(["total", "cacheWrite"]);
+        assert!(model_cost(&[price], "fixture", &absent_total, 0).is_some());
+        let family = json!({"tokens":["gpt-5"],"protocol":"openai","input":1,"output":2,"cacheRead":0.1,"cacheWritePolicy":"input"});
+        assert!(model_cost(std::slice::from_ref(&family), "gpt-5-codex", &u, 0).is_none());
+        assert!(
+            model_cost(&[family], "gpt-5.7", &u, 0).is_none(),
+            "new model versions must not inherit a generic legacy price"
+        );
+    }
+
+    #[test]
+    fn exact_prices_prefer_source_qualification_and_keep_first_tie() {
+        let usage = json!({"inputUncachedTokens":10,"inputTotalTokens":10,"outputTokens":0,"cacheReadTokens":0,"cacheCreationTokens":0});
+        let bare = json!({"match":"exact","modelId":"fixture","input":1,"output":2});
+        let qualified = json!({"match":"exact","modelId":"relay/fixture","input":9,"output":2});
+        let later = json!({"match":"exact","modelId":"relay/fixture","input":99,"output":2});
+        let cost = model_cost(
+            &[bare, qualified.clone(), later],
+            "relay/fixture",
+            &usage,
+            0,
+        )
+        .unwrap();
+        assert!((cost - 0.00009).abs() < 1e-12);
+        assert!(model_cost(&[qualified], "fixture", &usage, 0).is_none());
+    }
+
+    #[test]
+    fn shared_partial_cost_corpus() {
+        let cases: Vec<Value> = serde_json::from_str(include_str!(
+            "../../tools/shared-core/trace-cost-cases.json"
+        ))
+        .unwrap();
+        for case in cases {
+            let u = &case["usage"];
+            let mut usage = json!({"inputIncludesCache":u["apiType"] != "messages"});
+            for (from, to) in [
+                ("input", "inputUncachedTokens"),
+                ("inputTotal", "inputTotalTokens"),
+                ("output", "outputTokens"),
+                ("cacheRead", "cacheReadTokens"),
+                ("cacheCreation", "cacheCreationTokens"),
+                ("cacheCreation5m", "cacheCreation5mTokens"),
+                ("cacheCreation1h", "cacheCreation1hTokens"),
+                ("incompleteFields", "incompleteFields"),
+                ("invalidFields", "invalidFields"),
+                ("reasoning", "reasoningTokens"),
+                ("reasoningComplete", "reasoningComplete"),
+            ] {
+                usage[to] = u[from].clone();
+            }
+            let mut price = case["price"].clone();
+            price["tokens"] = json!(["fixture"]);
+            price["match"] = json!("exact");
+            let (cost, complete) = model_cost_parts(&[price], "fixture", &usage, 0);
+            assert_eq!(
+                complete,
+                case["complete"].as_bool().unwrap(),
+                "{}",
+                case["name"]
+            );
+            assert!(
+                (cost.unwrap() - case["cost"].as_f64().unwrap()).abs() < 1e-12,
+                "{}: {:?}",
+                case["name"],
+                cost
+            );
+        }
+    }
+
+    #[test]
+    fn cache_usage_preserves_protocol_semantics_and_unknown_buckets() {
+        let openai = usage(
+            &json!({"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":60}}}),
+            "openai-chat-completions",
+        );
+        assert_eq!(openai["inputUncachedTokens"], 40);
+        assert_eq!(openai["inputTotalTokens"], 100);
+        assert_eq!(openai["cacheReadTokens"], 60);
+        assert_eq!(openai["cacheCreationTokens"], 0);
+        assert_eq!(openai["incompleteFields"], json!([]));
+        let messages = usage(
+            &json!({"usage":{"input_tokens":20,"output_tokens":5,"cache_read_input_tokens":60,"cache_creation_input_tokens":20}}),
+            "anthropic-messages",
+        );
+        assert_eq!(messages["inputUncachedTokens"], 20);
+        assert_eq!(messages["inputTotalTokens"], 100);
+        assert_eq!(messages["incompleteFields"], json!([]));
+        let unknown = usage(
+            &json!({"usage":{"input_tokens":20,"output_tokens":5}}),
+            "anthropic-messages",
+        );
+        assert_eq!(unknown["incompleteFields"], json!([]));
+        let explicit_zero = usage(
+            &json!({"usage":{"input_tokens":20,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}),
+            "anthropic-messages",
+        );
+        assert_eq!(explicit_zero["incompleteFields"], json!([]));
+    }
+
+    #[test]
+    fn unpolled_client_body_still_runs_finalizer() {
+        let evidence = ClientEvidence::default();
+        let _capture = evidence.capture();
+        let response = evidence.response(Response::new(Body::from("unread")));
+        assert!(!evidence.0.lock().unwrap().finished);
+        drop(response);
+        let state = evidence.0.lock().unwrap();
+        assert!(state.finished);
+        assert!(!state.ended);
+        assert!(state.raw.is_empty());
+    }
+
+    #[test]
+    fn transport_failure_keeps_only_the_forwarded_prefix() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let evidence = ClientEvidence::default();
+                let _capture = evidence.capture();
+                let chunks = futures_util::stream::iter([
+                    Ok(axum::body::Bytes::from_static(b"visible prefix")),
+                    Err(std::io::Error::other("fixture failure")),
+                ]);
+                let response = evidence.response(Response::new(Body::from_stream(chunks)));
+                assert!(to_bytes(response.into_body(), 1024).await.is_err());
+                let state = evidence.0.lock().unwrap();
+                assert!(state.finished);
+                assert!(!state.ended);
+                assert_eq!(state.raw, b"visible prefix");
+            });
+    }
+
+    #[test]
+    fn eof_is_distinct_from_dropping_a_body() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let evidence = ClientEvidence::default();
+                let _capture = evidence.capture();
+                let response = evidence.response(Response::new(Body::from("complete")));
+                assert_eq!(
+                    &to_bytes(response.into_body(), 1024).await.unwrap()[..],
+                    b"complete"
+                );
+                let state = evidence.0.lock().unwrap();
+                assert!(state.finished && state.ended);
+            });
+    }
+}
+
 pub(super) struct Capture {
+    pub _detail_lease: Option<DetailLease>,
     pub store: Store,
     pub record: Value,
     pub wire: String,
@@ -671,12 +1876,16 @@ pub(super) struct Capture {
     pub chunk_receipts: Vec<(usize, u128)>,
     pub overflow: bool,
     pub done: bool,
+    pub client_evidence: Option<ClientEvidence>,
 }
 impl Capture {
     pub fn chunk(&mut self, bytes: &[u8]) {
         if self.raw.len() + bytes.len() <= 32 * 1024 * 1024 {
             self.raw.extend_from_slice(bytes);
-            self.chunk_receipts.push((self.raw.len(), millis().saturating_sub(self.record["startedAtMs"].as_u64().unwrap_or(0) as u128)));
+            self.chunk_receipts.push((
+                self.raw.len(),
+                millis().saturating_sub(self.record["startedAtMs"].as_u64().unwrap_or(0) as u128),
+            ));
         } else {
             self.overflow = true;
         }
@@ -686,6 +1895,11 @@ impl Capture {
         self.save(value);
     }
     fn save(&mut self, value: Option<Value>) {
+        // Codex WS prewarm creates a response with generate=false. It still
+        // participates in continuation caching, but is not a generated turn.
+        if self.record["request"]["body"]["generate"] == false {
+            return;
+        }
         let end = millis();
         self.record["completedAt"] = json!(iso(end));
         self.record["durationMs"] =
@@ -701,9 +1915,29 @@ impl Capture {
                 )
                 .ok()
             });
+        if self.done && !self.overflow {
+            let status = self.record["upstream"]["statusCode"].as_u64().unwrap_or(0) as u16;
+            let value = parsed.as_ref().unwrap_or(&Value::Null);
+            let success = ((200..300).contains(&status)
+                || self.record["request"]["method"] == "WS")
+                && parsed.is_some()
+                && super::retired_models::successful(&self.wire, value);
+            let root = self.store.lock().unwrap().data_root.clone();
+            if let Err(error) = super::retired_models::observe(
+                &root,
+                text(&self.record["provider"], "id"),
+                text(&self.record, "catalogIdentity"),
+                text(&self.record["request"], "model"),
+                status,
+                value,
+                success,
+            ) {
+                eprintln!("{error}");
+            }
+        }
         self.record["usage"] = parsed
             .as_ref()
-            .map(|v| usage(v, &self.wire))
+            .map(|v| record_usage(v, &self.wire, &self.record))
             .unwrap_or_else(|| usage(&Value::Null, &self.wire));
         self.record["upstream"]["rawBody"] = json!(raw);
         self.record["response"]["rawBody"] = self
@@ -720,16 +1954,17 @@ impl Capture {
             self.record["usageEvidence"] =
                 json!({"upstream":{"protocol":self.wire,"raw":v["usage"]}});
         }
-        let client_protocol=text(&self.record["contextChanges"],"clientProtocol").to_string();
-        if ["chat-completions","gemini"].contains(&client_protocol.as_str()) {
-            let body=self.record["response"]["body"].clone();
-            if body["object"]=="response" {
-                self.record["intermediateResponse"]=json!({"protocol":"responses","body":body,"rawBody":self.record["response"]["rawBody"]});
-                self.record["response"]["body"]=super::ingress::response_json(&body,&client_protocol);
-                self.record["response"]["rawBody"]=Value::Null;
-                self.record["response"]["bodyFormat"]=json!("assembled");
+        let client_protocol = text(&self.record["contextChanges"], "clientProtocol").to_string();
+        if ["chat-completions", "gemini"].contains(&client_protocol.as_str()) {
+            let body = self.record["response"]["body"].clone();
+            if body["object"] == "response" {
+                self.record["intermediateResponse"] = json!({"protocol":"responses","body":body,"rawBody":self.record["response"]["rawBody"]});
+                self.record["response"]["body"] =
+                    super::ingress::response_json(&body, &client_protocol);
+                self.record["response"]["rawBody"] = Value::Null;
+                self.record["response"]["bodyFormat"] = json!("assembled");
             }
-            self.record["response"]["protocol"]=json!(client_protocol);
+            self.record["response"]["protocol"] = json!(client_protocol);
         }
         let mut events = vec![];
         let mut block = String::new();
@@ -738,21 +1973,49 @@ impl Capture {
         for line in raw.split_inclusive('\n') {
             offset += line.len();
             if line.trim_matches(['\r', '\n']).is_empty() {
-                let data = block.lines().filter_map(|l| l.strip_prefix("data:").map(str::trim_start)).collect::<Vec<_>>().join("\n");
+                let data = block
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("data:").map(str::trim_start))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 if !data.is_empty() {
-                    while receipt + 1 < self.chunk_receipts.len() && self.chunk_receipts[receipt].0 < offset { receipt += 1; }
+                    while receipt + 1 < self.chunk_receipts.len()
+                        && self.chunk_receipts[receipt].0 < offset
+                    {
+                        receipt += 1;
+                    }
                     let timestamp = self.chunk_receipts.get(receipt).map(|(_, at)| *at);
                     events.push(json!({"event":block.lines().find_map(|l|l.strip_prefix("event:").map(str::trim)),"data":data,"json":serde_json::from_str::<Value>(&data).ok(),"timestampMs":timestamp}));
                 }
                 block.clear();
-            } else { block.push_str(line); }
+            } else {
+                block.push_str(line);
+            }
         }
-        self.record["sse"] = json!({"events":events,"timingBasis":"relative-upstream-chunk-receipt"});
+        self.record["sse"] =
+            json!({"events":events,"timingBasis":"relative-upstream-chunk-receipt"});
         if self.overflow {
             self.record["error"] = json!("记录正文超过 32 MB，已截断；网络转发保持完整");
         }
         if !self.done {
             self.record["error"] = json!("客户端断开或上游流中断，记录为未完成");
+        } else if parsed.is_none()
+            && self.record["upstream"]["statusCode"]
+                .as_u64()
+                .is_some_and(|status| (200..300).contains(&status))
+        {
+            self.record["error"] =
+                json!("上游正文或协议流未完整结束，未将 HTTP 成功视为模型请求成功");
+        }
+        if parsed
+            .as_ref()
+            .is_some_and(|v| [json!("failed"), json!("incomplete")].contains(&v["status"]))
+        {
+            self.record["error"] = json!("上游响应未完成");
+        }
+        if let Some(evidence) = &self.client_evidence {
+            evidence.publish(self.store.clone(), self.key.clone(), self.record.clone());
+            return;
         }
         if let Err(e) = self
             .store
@@ -772,7 +2035,20 @@ impl Drop for Capture {
     }
 }
 
-pub(super) async fn dashboard(State(store): State<Store>, request: Request) -> Response {
+#[derive(Clone)]
+pub(super) struct DashboardState {
+    pub store: Store,
+    pub stopped: tokio::sync::watch::Receiver<bool>,
+}
+pub(super) async fn dashboard(State(context): State<DashboardState>, request: Request) -> Response {
+    if *context.stopped.borrow() {
+        return protocol_error(
+            410,
+            "responses",
+            "Trace directory changed; reopen the dashboard",
+        );
+    }
+    let store = context.store;
     let path = request.uri().path();
     let method = request.method();
     let host = request
@@ -825,9 +2101,11 @@ pub(super) async fn dashboard(State(store): State<Store>, request: Request) -> R
             Ok(store) => store.events.subscribe(),
             Err(_) => return protocol_error(500, "responses", "Trace store unavailable"),
         };
+        let mut stopped = context.stopped;
         let stream = async_stream::stream! {
             yield Ok::<_,std::convert::Infallible>(": connected\n\n".to_string());
-            loop{tokio::select!{
+            loop{if *stopped.borrow(){break;}tokio::select!{
+                _=stopped.changed()=>break,
                 event=receiver.recv()=>{match event{Ok(event)=>yield Ok(event),Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>yield Ok("event: reset\ndata: {}\n\n".into()),Err(_)=>break,}}
                 _=tokio::time::sleep(Duration::from_secs(10))=>{yield Ok(": heartbeat\n\n".into());}
             }}
@@ -843,21 +2121,67 @@ pub(super) async fn dashboard(State(store): State<Store>, request: Request) -> R
         let mut store = store.lock().map_err(err)?;
         if ["/", "/dashboard", "/index.html"].contains(&path) {
             let mut html = include_str!("../../test-results/native-assets/viewer.html").to_string();
+            let preference = serde_json::to_string(&store.theme)
+                .map_err(err)?
+                .replace('<', "\\u003c");
+            html = html.replacen(
+                "applyViewerTheme(state.theme);",
+                &format!("state.theme={preference};applyViewerTheme(state.theme);"),
+                1,
+            );
             if std::env::args().any(|a| a == "--smoke") {
                 html = html.replace(
                     "</body>",
                     &format!(
                         "<script>{}</script></body>",
-                        include_str!("../../tools/native/viewer-smoke.js")
+                        if std::env::args().any(|a| a == "--smoke-window-lifecycle") {
+                            include_str!("../../tools/native/window-lifecycle-viewer-smoke.js")
+                        } else if std::env::args().any(|a| a == "--smoke-theme") {
+                            include_str!("../../tools/native/theme-viewer-smoke.js")
+                        } else {
+                            include_str!("../../tools/native/viewer-smoke.js")
+                        }
                     ),
                 );
             }
             return Ok((html, "text/html; charset=utf-8"));
         }
+        if path == "/api/theme" {
+            return Ok((
+                json!({"theme":store.theme,"language":store.language}).to_string(),
+                "application/json",
+            ));
+        }
         if path == "/api/state" {
             return Ok((store.state(store.active).to_string(), "application/json"));
         }
         if let Some(id) = path.strip_prefix("/api/session/") {
+            if let Some(id) = id.strip_suffix("/reveal") {
+                if method != axum::http::Method::POST {
+                    return Err("method not allowed".into());
+                }
+                let file = store.session_file(id)?;
+                #[cfg(target_os = "macos")]
+                let status = std::process::Command::new("/usr/bin/open")
+                    .arg("-R")
+                    .arg(&file)
+                    .status()
+                    .map_err(err)?;
+                #[cfg(target_os = "windows")]
+                let status = std::process::Command::new("explorer.exe")
+                    .arg(format!("/select,{}", file.display()))
+                    .status()
+                    .map_err(err)?;
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                let status = std::process::Command::new("xdg-open")
+                    .arg(file.parent().ok_or("日志目录无效")?)
+                    .status()
+                    .map_err(err)?;
+                if !status.success() {
+                    return Err("无法打开日志所在文件夹".into());
+                }
+                return Ok((json!({"ok":true}).to_string(), "application/json"));
+            }
             if method == axum::http::Method::DELETE {
                 return Ok((
                     json!({"ok":store.delete(id)?}).to_string(),
@@ -868,12 +2192,15 @@ pub(super) async fn dashboard(State(store): State<Store>, request: Request) -> R
                 reqwest::Url::parse(&format!("http://localhost{}", request.uri())).map_err(err)?;
             let params: BTreeMap<_, _> = pairs.query_pairs().into_owned().collect();
             let offset = params.get("offset").and_then(|v| v.parse().ok());
+            let before = params.get("before").and_then(|v| v.parse().ok());
             let limit = params
                 .get("limit")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(80);
+            let summary_only = params.get("summary").is_some_and(|value| value == "1");
+            let request_id = params.get("requestId").map(|value| value.as_ref());
             return store
-                .page(id, offset, limit)?
+                .page_projection(id, offset, before, limit, summary_only, request_id)?
                 .map(|v| (v.to_string(), "application/json"))
                 .ok_or("session not found".into());
         }

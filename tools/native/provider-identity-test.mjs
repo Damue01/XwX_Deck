@@ -1,7 +1,8 @@
+import { clearFreshCompatibleFixture } from './test-support.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, realpath } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,6 +37,7 @@ async function stop() { const exited = once(child, 'exit'); child.stdin.end(); a
 const input = (name, type, key) => ({ displayName: name, providerPreset: type, baseUrl, bearerToken: key, adapter: 'responses', codexModel: `model-${key}` });
 try {
   start();
+  await clearFreshCompatibleFixture(rpc);
   for (const [name, type, key] of [['Custom', 'custom', 'custom-a'], ['Custom-2', 'custom', 'custom-b'], ['DeepSeek', 'deepseek', 'deepseek-a'], ['DeepSeek-2', 'deepseek', 'deepseek-b']]) await rpc('saveProvider', input(name, type, key));
   const original = await rpc('getProviders');
   assert.equal(new Set(original.connections.map(p => p.id)).size, 4);
@@ -49,9 +51,32 @@ try {
   assert.notEqual(replacement.id, first.id);
   assert.deepEqual(reused.connections.find(p => p.id === first.id), renamed.connections.find(p => p.id === first.id));
   assert.deepEqual(reused.connections.find(p => p.displayName === 'Custom-2'), original.connections.find(p => p.displayName === 'Custom-2'));
-  await assert.rejects(rpc('saveProvider', input('DeepSeek', 'deepseek', 'overwrite')), /连接名称已存在/);
-  assert.deepEqual(await rpc('getProviders'), reused, 'duplicate creation must not change any configuration');
-  for (const provider of reused.connections) {
+  const sameName = await rpc('saveProvider', input('DeepSeek', 'deepseek', 'same-name'));
+  assert.equal(sameName.connections.length,6);
+  const duplicates=sameName.connections.filter(p=>p.displayName==='DeepSeek');
+  assert.equal(new Set(duplicates.map(p=>p.id)).size,2);
+  assert.equal(new Set(duplicates.map(p=>p.codexProviderId)).size,2);
+  assert.deepEqual(sameName.connections.slice(0,5),reused.connections, 'duplicate creation preserves existing configurations');
+  const unicodeName='中文显示名';
+  const unicode=await rpc('saveProvider',input(unicodeName,'custom','unicode-a'));
+  const firstUnicode=unicode.connections.at(-1);
+  assert.equal(firstUnicode.displayName,unicodeName);
+  assert.match(firstUnicode.id,/^provider-[a-f0-9]{12}$/);
+  assert.match(firstUnicode.codexProviderId,/^[A-Za-z0-9_-]+$/);
+  await rpc('switchClientProvider',{client:'codex',providerId:firstUnicode.id});
+  const renamedUnicode=await rpc('saveProvider',{...firstUnicode,displayName:'中文改名 带空格'});
+  const retainedUnicode=renamedUnicode.connections.find(provider=>provider.id===firstUnicode.id);
+  assert.equal(retainedUnicode.codexProviderId,firstUnicode.codexProviderId);
+  assert.equal(retainedUnicode.codexModel,firstUnicode.codexModel);
+  assert.equal(renamedUnicode.selected.codex,firstUnicode.id);
+  const unicodeAgain=await rpc('saveProvider',input(unicodeName,'custom','unicode-b'));
+  assert.notEqual(unicodeAgain.connections.at(-1).id,firstUnicode.id);
+  assert.deepEqual(unicodeAgain.connections.find(provider=>provider.id===firstUnicode.id),retainedUnicode);
+  assert.deepEqual(unicodeAgain.connections.slice(0,6),sameName.connections);
+  const beforeInvalid=await rpc('getProviders');
+  for(const name of ['   ','bad\nname','中'.repeat(81)])await assert.rejects(rpc('saveProvider',input(name,'custom','invalid')),/1–80|控制字符/);
+  assert.deepEqual(await rpc('getProviders'),beforeInvalid);
+  for (const provider of unicodeAgain.connections) {
     await rpc('switchClientProvider', { client: 'codex', providerId: provider.id });
     assert.equal((await rpc('getProviders')).selected.codex, provider.id);
     assert.equal((await rpc('validateProvider', { providerId: provider.id })).status, 'valid');
@@ -61,8 +86,9 @@ try {
   const persisted = await rpc('getProviders'); await stop(); start();
   assert.deepEqual(await rpc('getProviders'), persisted, 'identities, names and selection survive restart');
   await stop();
-  console.log('PASS multiple Custom/DeepSeek configurations, live identities across rename, old-name reuse, duplicate rejection, five actual requests and restart persistence');
+  console.log('PASS multiple Custom/DeepSeek configurations, live identities across rename, old-name reuse, same-name independent aliases, Unicode names, display rename independent from stable IDs, eight actual requests and restart persistence');
 } finally {
   if (child?.exitCode === null) child.kill('SIGKILL');
   await new Promise(resolve => server.close(resolve));
+  await rm(root,{recursive:true,force:true});
 }

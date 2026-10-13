@@ -2,10 +2,13 @@ import { normalizeErrorMessage, userErrorMessage } from './errors';
 
 /** User-facing lifecycle guidance. Raw errors stay in the runtime log. */
 export interface LifecycleNotice {
+  /** Tray result provenance, used to ignore results overtaken by a newer switch. */
+  readonly runtimeRevision?: number;
+  readonly tracingEnabled?: boolean;
   readonly message: string;
   readonly description?: string;
   readonly type?: 'success' | 'error' | 'info';
-  /** Only safety/blocking states should occupy the persistent top notice. */
+  /** Blocking recovery actions remain available in the Toast queue. */
   readonly persistent?: boolean;
   readonly action?: 'repair' | 'repair-settings' | 'repair-codex-config' | 'models' | 'start-trace' | 'stop-trace';
   readonly secondaryAction?: LifecycleNotice['action'];
@@ -40,7 +43,9 @@ export function lifecycleFailure(error: unknown, operation: string): LifecycleNo
     description = '本地转发已停止，客户端可能仍连接旧端口。请重新开启 Trace，或恢复直连配置后重开客户端。';
     action = 'start-trace';
   } else if (/需要 Trace.*协议转换|开启 Trace 后/.test(reason)) {
-    description = '此模型需要开启 Trace 才能调用。';
+    // The model page remembers the rejected choice, so opening Trace from this
+    // notice completes it. Promising a manual re-selection would be wrong now.
+    description = '所选模型需要 Trace 提供协议转换。开启 Trace 后会自动继续刚才的选择；也可以改用支持 Responses 直连的模型。';
     action = 'start-trace';
   } else if (/环境变量|environment.override/i.test(reason)) {
     description = '客户端正在使用环境变量中的连接，本地设置不会优先生效。请检查并移除或修正相关环境变量，再重新打开客户端和 Deck 后重试。';
@@ -152,5 +157,5 @@ export function traceStoppedNotice(
 
 /** A normal stop would interrupt replies the user is waiting for. */
 export function isTraceStopBusyError(error: unknown): boolean {
-  return /个回复正在生成|等待工具调用继续/.test(normalizeErrorMessage(error));
+  return /个回复正在生成|等待工具调用继续|个工具调用仍在等待/.test(normalizeErrorMessage(error));
 }

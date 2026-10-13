@@ -208,9 +208,10 @@ impl CopilotAccounts {
     }
     pub async fn snapshot(&self) -> Value {
         let accounts = self.accounts.lock().await;
+        // Match publication's lock order and read the list and flow together.
+        let flow = self.flow.lock().await;
         let rows:Vec<_>=accounts.iter().map(|a|json!({"id":a.id,"label":a.label,"email":a.login,"platform":"copilot","status":if a.needs_login||a.github.is_empty(){"signed-out"}else{"connected"}})).collect();
         drop(accounts);
-        let flow = self.flow.lock().await;
         json!({"accounts":rows,"flow":flow.as_ref().map(|f|json!({"id":f.id,"platform":"copilot","status":f.status,"error":f.error,"accountId":f.account_id,"userCode":f.code}))})
     }
     pub async fn cancel(&self) {
@@ -287,7 +288,8 @@ impl CopilotAccounts {
     match text(&result,"error"){"authorization_pending"=>continue,"slow_down"=>{interval=(interval+5).min(60);continue;},""=>{},"access_denied"=>return Err("GitHub 授权已取消".into()),_=>return Err("GitHub 设备授权失败，请重试".into())}
     let github=text(&result,"access_token").to_string();if github.is_empty(){return Err("GitHub 没有返回账号凭证".into());}
     let user=engine.json(engine.client.get(format!("{}/user",engine.github)).bearer_auth(&github).header("user-agent","XwX Deck").send().await.map_err(|_|"GitHub 账号身份读取失败")?).await?;
-    let subject=user["id"].to_string();let login=text(&user,"login");if subject=="null"||login.is_empty(){return Err("GitHub 没有返回账号身份".into());}if old.as_ref().is_some_and(|a|a.subject!=subject){return Err("登录的账号与原账号不一致，原登录已保留".into());}
+    let subject=user["id"].to_string();let login=text(&user,"login");if subject=="null"||login.is_empty(){return Err("GitHub 没有返回账号身份".into());}
+ if old.as_ref().is_some_and(|a|a.subject!=subject){return Err("登录的账号与原账号不一致，原登录已保留".into());}
     let session=engine.session(&github).await?;let access=text(&session,"token");if access.is_empty(){return Err("此 GitHub 账号没有可用的 Copilot 套餐授权".into());}
     return Ok(Account{id:old.as_ref().map(|a|a.id.clone()).unwrap_or(format!("copilot-{}",random_id()?)),label:old.as_ref().map(|a|a.label.clone()).unwrap_or(format!("Copilot-{login}")),subject,login:login.into(),github,access:access.into(),expires:session["expires_at"].as_u64().unwrap_or(now()+1200),api:engine.endpoint(&session)?,needs_login:false});
    }}.await;
@@ -365,6 +367,7 @@ impl CopilotAccounts {
             .find(|a| a.id == id)
             .ok_or("Copilot 账号不存在")?;
         Ok(Provider {
+            other: Default::default(),
             id: format!("subscription-{id}"),
             display_name: account.label.clone(),
             subscription_account_id: id.into(),

@@ -1,4 +1,4 @@
-import { nativeTestBinary } from './test-support.mjs';
+import { nativeTestBinary, stopUnexecutedToolFixtures } from './test-support.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,realpath,readFile,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';import{join,resolve}from'node:path';import{spawn}from'node:child_process';import{createServer}from'node:http';import{createInterface}from'node:readline';import{once}from'node:events';
@@ -16,7 +16,14 @@ const upstream=createServer(async(req,res)=>{
  res.writeHead(200,{'content-type':'text/event-stream'});
  if(req.url==='/v1/chat/completions'){
    res.write('data: '+JSON.stringify({id:'chat-1',model:body.model,choices:[{delta:{role:'assistant',content:'本地 '},finish_reason:null}]})+'\n\n');
-   setTimeout(()=>{res.write('data: '+JSON.stringify({id:'chat-1',model:body.model,choices:[{delta:{content:'protocol fixture',tool_calls:response.choices[0].message.tool_calls.map((call,index)=>({index,...call}))},finish_reason:'tool_calls'}],usage:response.usage})+'\n\n');res.end('data: [DONE]\n\n');},60);
+   setTimeout(()=>{
+     const tools=response.choices[0].message.tool_calls;
+     const chunk=(delta,finish=null,usage)=>'data: '+JSON.stringify({id:'chat-1',model:body.model,choices:[{delta,finish_reason:finish}],usage})+'\n\n';
+     res.write(chunk({content:'protocol fixture',tool_calls:tools.map((call,index)=>({index,...call,function:{...call.function,arguments:call.function.arguments.slice(0,2)}}))}));
+     res.write(chunk({tool_calls:tools.map((call,index)=>({index,id:call.id,function:{name:'',arguments:call.function.arguments.slice(2)}}))}));
+     res.write(chunk({tool_calls:tools.map((_,index)=>({index,id:'',function:{arguments:null}}))},'tool_calls',response.usage));
+     res.end('data: [DONE]\n\n');
+   },60);
  }else if(req.url==='/v1/responses'){
    res.write('event: response.output_text.delta\ndata: '+JSON.stringify({type:'response.output_text.delta',delta:'本地 '})+'\n\n');setTimeout(()=>res.end('event: response.completed\ndata: '+JSON.stringify({type:'response.completed',response})+'\n\n'),60);
  }else{
@@ -33,15 +40,21 @@ try{
  let state=await select('chat-completions','codex');
  let value=await post(state,'codex',{model:'fixture-model',instructions:'fixture system',input:[{role:'developer',content:'second system'},{role:'user',content:[{type:'input_text',text:'fixture'}]}],tools:[tool]});
  assert.equal(value.object,'response');assert.equal(value.output[0].content[0].text,content);assert.equal(value.output[1].type,'function_call');assert.equal(value.output[1].name,'lookup');assert.equal(value.usage.input_tokens,13);assert.equal(value.usage.input_tokens_details.cached_tokens,4);assert.equal(calls.at(-1).body.messages[0].content,'fixture system\n\nsecond system');pass('Responses → Chat JSON text, function tools, cache usage and merged system instructions');
- value=await post(state,'codex',{model:'fixture-model',input:'fixture',tools:[{type:'namespace',name:'fixture',tools:[tool]}],stream:true});assert.match(value,/response.completed/);assert.match(value,/"namespace":"fixture"/);assert.equal(calls.at(-1).body.tools[0].function.name,'fixture__lookup');assert.equal(calls.at(-1).body.stream_options.include_usage,true);pass('Chat SSE → Responses SSE restores namespace tools and requests usage');
+ value=await post(state,'codex',{model:'fixture-model',input:'fixture',tools:[{type:'namespace',name:'fixture',tools:[tool]}],stream:true});assert.match(value,/response.completed/);assert.match(value,/"namespace":"fixture"/);assert.equal(calls.at(-1).body.tools[0].function.name,'fixture__lookup');assert.equal(calls.at(-1).body.stream_options.include_usage,true);
+ const streamed=value.split('\n').filter(line=>line.startsWith('data: ')).map(line=>JSON.parse(line.slice(6)));
+ const completedTool=streamed.find(e=>e.type==='response.completed').response.output.find(item=>item.type==='function_call');
+ assert.equal(completedTool.call_id,'call-1');
+ assert.deepEqual(JSON.parse(completedTool.arguments),{q:'fixture'});
+ assert.ok(streamed.filter(e=>e.type==='response.function_call_arguments.delta').every(e=>e.item_id===completedTool.id));
+ pass('Chat SSE repeated full tool IDs retain one call and stable argument delta identity');
  value=await post(state,'codex',{model:'fixture-model',input:'fixture',tools:[{type:'custom',name:'rawtool',description:'fixture shell'}]});assert.equal(value.output[1].type,'custom_tool_call');assert.equal(value.output[1].input,'echo fixture');pass('custom tool raw input survives request and response conversion');
- await rpc('toggleTracing',false);state=await select('anthropic-messages','codex');
+ await stopUnexecutedToolFixtures(rpc,3);state=await select('anthropic-messages','codex');
  value=await post(state,'codex',{model:'fixture-model',input:[{role:'user',content:'fixture'},{type:'function_call',call_id:'old-call',name:'lookup',arguments:'{"q":"old"}'},{type:'function_call_output',call_id:'old-call',output:'old-result'}],tools:[tool],max_output_tokens:64});assert.equal(value.output[1].name,'lookup');assert.equal(value.usage.input_tokens,15);assert.equal(value.usage.input_tokens_details.cache_write_tokens,2);assert.equal(calls.at(-1).body.messages[1].content[0].type,'tool_use');assert.equal(calls.at(-1).body.messages[2].content[0].type,'tool_result');assert.equal(calls.at(-1).body.max_tokens,64);pass('Responses → Messages preserves tool call/results, token ceiling and separate cache buckets');
  value=await post(state,'codex',{model:'fixture-model',input:'fixture',tools:[tool],stream:true});assert.match(value,/response.function_call_arguments.done/);assert.match(value,/response.completed/);pass('Messages SSE → Responses text and tool completion events');
- await rpc('toggleTracing',false);state=await select('chat-completions','claude');
+ await stopUnexecutedToolFixtures(rpc,2);state=await select('chat-completions','claude');
  value=await post(state,'claude',{model:'sonnet',system:[{type:'text',text:'fixture system'}],messages:[{role:'user',content:'fixture'}],tools:[{name:'lookup',input_schema:tool.parameters}],max_tokens:32});assert.equal(value.type,'message');assert.equal(value.content[0].text,content);assert.equal(value.content[1].type,'tool_use');assert.equal(value.stop_reason,'tool_use');assert.equal(value.usage.input_tokens,9);assert.equal(calls.at(-1).body.model,'fixture-model');pass('Claude Messages → Chat → Messages with actual alias, tools and uncached input usage');
  value=await post(state,'claude',{model:'sonnet',messages:[{role:'user',content:'fixture'}],max_tokens:32,stream:true});assert.match(value,/event: message_start/);assert.match(value,/event: message_stop/);pass('Chat SSE → Claude native message event sequence');
- await rpc('toggleTracing',false);state=await select('responses','claude');
+ await stopUnexecutedToolFixtures(rpc,1);state=await select('responses','claude');
  value=await post(state,'claude',{model:'sonnet',messages:[{role:'user',content:'fixture'}],max_tokens:32,stream:true});assert.match(value,/event: message_delta/);assert.match(value,/protocol fixture/);assert.equal(calls.at(-1).path,'/v1/responses');pass('Claude → Responses → Claude SSE actual upstream path and text');
  await rpc('toggleTracing',false);
  for(const call of calls)assert.match(call.auth,/^Bearer key-/);pass('every conversion injects the selected upstream credential');
@@ -61,6 +74,15 @@ try{
  const compact=await fetch(state.localBaseUrl+'/v1/responses/compact',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'fixture-model',input:'context to compact',tools:[tool]})});assert.equal(compact.status,200,await compact.clone().text());const compactValue=await compact.json();assert.equal(compactValue.object,'response.compaction');assert.match(compactValue.output[0].encrypted_content,/^xwxc1:/);assert.equal(calls.at(-1).path,'/v1/chat/completions');assert.equal(calls.at(-1).body.tools,undefined);
  await post(state,'codex',{model:'fixture-model',input:[compactValue.output[0],{role:'user',content:'resume checkpoint'}]});assert.match(calls.at(-1).body.messages[0].content,/context checkpoint/);assert.match(calls.at(-1).body.messages[0].content,/protocol fixture/);pass('synthetic compaction calls the real selected model and restores its checkpoint');
  await rpc('updateCodexConfig',{expectedProviderId:'Protocol_chat_completions',compatibleModel:'active-change',modelContextWindow:64000});assert.equal((await rpc('getState')).backgroundGatewayActive,true);assert.equal((await rpc('getCodexConfig')).compatible.model,'active-change');await post(await rpc('getState'),'codex',{model:'active-change',input:'active change fixture'});assert.equal(calls.at(-1).body.model,'active-change');pass('active model writes restart the native route and retain explicit context window');
+ const toolImageUrl='data:image/png;base64,fixture';
+ await post(await rpc('getState'),'codex',{model:'active-change',input:[
+  {type:'function_call',call_id:'call-image',name:'read_image',arguments:'{}'},
+  {type:'function_call_output',call_id:'call-image',output:[{type:'input_text',text:'tool image result'},...['low','high','auto',undefined].map(detail=>({type:'input_image',image_url:toolImageUrl,...detail===undefined?{}:{detail}}))]}
+ ]});
+ const imageMessages=calls.at(-1).body.messages;
+ assert.equal(imageMessages[1].tool_call_id,'call-image');assert.equal(imageMessages[1].content,'tool image result');
+ assert.deepEqual(imageMessages[2].content.map(part=>part.image_url),['low','high','auto','auto'].map(detail=>({url:toolImageUrl,detail})));
+ pass('tool-result image payload and explicit low/high/auto detail survive the actual Chat route; omitted detail defaults to auto');
  await rpc('toggleTracing',false);
  child.stdin.end();const[code]=await once(child,'exit');assert.equal(code,0);console.log(JSON.stringify({passed:true,checks,sandbox:root,requests:calls.length}));
 }finally{if(child.exitCode===null)child.kill();await new Promise(resolve=>upstream.close(resolve));}

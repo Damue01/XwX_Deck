@@ -2,9 +2,17 @@
 
 ## Pull Request
 
-`.github/workflows/ci.yml` 运行 React 与构建时 TypeScript 资源编译、原有 Core / Gateway / Controller 对照回归、上游修复回归、文档与公开边界检查。在原生 Windows x64 和 macOS arm64 Runner 构建 Rust / Tauri，运行隔离目录内的真实后端请求、导入、订阅轮换和更新校验；macOS 另外验证真实 WebKit 窗口。
+`.github/workflows/ci.yml` 检查当前源码。
+Ubuntu 运行完整工程门禁、文档和公开边界检查。
+Windows 和 macOS Runner 构建 Rust/Tauri 隔离候选。
+随后运行原生后端请求与生命周期回归。
+macOS 另行验证实际 WebKit 窗口。
 
-旧 TypeScript 后端用于回归对照和生成 Viewer / 价格资源，不进入正式安装包。
+后端统一使用 Rust。
+React、TypeScript 和 Node.js 用于界面、构建和测试。
+旧 TypeScript 后端已移除。
+Viewer 与价格资源由当前共享模块生成。
+真实授权、账单和物理操作另行验收。
 
 ## 文档
 
@@ -30,7 +38,7 @@ Release workflow 在原生 Windows / macOS Runner 构建正式 EXE / DMG，并�
 
 ## 更新行为
 
-Windows 下载和安装前复查清单及 SHA-256，替换可写目录中的原路径 EXE并保留恢复备份。夜间更新在 02:00–05:00 且空闲至少 15 分钟、Gateway 关闭和退出恢复成功时才安装；已取消版本跨重启保持取消。
+Windows 下载和安装前复查清单及 SHA-256，替换可写目录中的原路径 EXE 并保留恢复备份。夜间更新在 02:00–05:00 且空闲至少 15 分钟、Gateway 关闭和退出恢复成功时才安装；已取消版本跨重启保持取消。
 
 macOS 只下载并校验 DMG，用户确认后打开安装包、安全退出，再手动替换。当前没有 Developer ID 签名或 Apple 公证，不提供静默安装。首次打开见 [macOS 安装说明](macos-first-run.md)。
 

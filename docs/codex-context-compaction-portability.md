@@ -298,12 +298,20 @@ flowchart TD
 
 ## 11. 实现与验证入口
 
-- 请求可移植性与 rollout 恢复：`src/main/trace/codexConversationPortability.ts`
-- Compact 触发识别与合成摘要：`src/main/trace/codexCompaction.ts`
-- 转发前转换、来源观察与失败隔离：`src/main/trace/tapProxy.ts`
-- 官方/兼容服务 配置和路由切换：`src/main/app/xwxDeckController.ts`
-- 模型目录窗口与 Compact 能力：`src/main/trace/codexModelCatalogManager.ts`
-- 隔离回归矩阵：`tools/core-smoke.ts`
+当前后端使用 Rust。
+以下入口分别处理续接、转换与配置恢复。
+
+- 可见上下文与响应来源恢复：[continuation.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/continuation.rs)。
+- Compact 内容和协议转换：[protocol.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/protocol.rs)。
+- HTTP 转发前处理与失败隔离：[core.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/core.rs)。
+- WebSocket 请求与来源观察：[websocket.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/websocket.rs)。
+- 客户端配置与路由恢复：[client_wiring.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/client_wiring.rs)。
+- 模型目录和上下文窗口：[catalog.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/catalog.rs)。
+- 隔离续接回归：[portability-test.mjs](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/portability-test.mjs)。
+- 原生线程归类回归：[trace-native-sessions-test.mjs](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/trace-native-sessions-test.mjs)。
+
+程序回归与真实客户端验收分开记录。
+旧客户端版本或历史测试不证明当前包全部通过。
 
 ## 12. 跨 Provider 续接的薄状态层
 

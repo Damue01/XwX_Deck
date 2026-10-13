@@ -18,8 +18,6 @@ export const CLIENT_DOWNLOAD_WEBSITES = {
   'opencode-mac-x64-download': 'https://github.com/anomalyco/opencode/releases/latest/download/opencode-desktop-mac-x64.dmg',
   'opencode-windows-x64-download': 'https://github.com/anomalyco/opencode/releases/latest/download/opencode-desktop-win-x64.exe',
   'opencode-windows-arm64-download': 'https://github.com/anomalyco/opencode/releases/latest/download/opencode-desktop-win-arm64.exe',
-  'qwen-code-mac-arm64-download': 'https://github.com/QwenLM/qwen-code/releases/download/desktop-latest/Qwen-Code-Desktop-arm64.dmg',
-  'qwen-code-mac-x64-download': 'https://github.com/QwenLM/qwen-code/releases/download/desktop-latest/Qwen-Code-Desktop-x64.dmg',
   'opencode-cli-official': 'https://opencode.ai/docs/#install',
   'qwen-code-cli-official': 'https://qwenlm.github.io/qwen-code-docs/en/users/quickstart/'
 } as const;

@@ -1,3 +1,4 @@
+import { clearFreshCompatibleFixture } from './test-support.mjs';
 import { nativeTestBinary } from './test-support.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -31,13 +32,26 @@ const stop=async()=>{const done=once(child,'exit');child.stdin.end();assert.equa
 let checks=0;const pass=label=>{checks++;console.log('PASS '+label);};
 const policy=(strategy='exhaust',fixedAccountId='',excludedAccountIds=[])=>rpc('setSubscriptionRouting',{platform:'chatgpt',policy:{strategy,fixedAccountId,excludedAccountIds}});
 try{
- start();assert.deepEqual((await rpc('getProviders')).connections,[]);await stop();
+ start();await clearFreshCompatibleFixture(rpc);assert.deepEqual((await rpc('getProviders')).connections,[]);await stop();
  await writeFile(join(root,'subscription-accounts.json'),JSON.stringify({hostId:'fixture-host',accounts:['a','b','c'].map(id=>({id,label:id,subject:id,email:id+'@example.test',clientId:'fixture',access:'fixture-'+id,refresh:'fixture-refresh',idToken:'fixture',scopes:['chatgpt.tokens.use.direct'],expires:Math.floor(Date.now()/1000)+3600}))}));
  start();for(const id of ['a','b','c'])await rpc('connectSubscriptionAccount',id);
  const providers=await rpc('getProviders'),a=providers.connections.find(p=>p.subscriptionAccountId==='a');
  await rpc('switchClientProvider',{client:'codex',providerId:a.id});await rpc('updateCodexConfig',{expectedProviderId:a.id,compatibleModel:'model'});await rpc('toggleClient','claude-cli');
  const runtime=await rpc('toggleTracing',true);const send=(session,input='fixture',stream=false)=>fetch(runtime.localBaseUrl+'/v1/responses',{method:'POST',headers:{'content-type':'application/json',...(session?{'x-session-id':session}:{})},body:JSON.stringify({model:'model',input,stream})});
  mode='quota';let response=await send('conversation-1');assert.equal(response.status,200);assert.equal((await response.json()).output[0].content[0].text,'b');assert.deepEqual(attempts.filter(a=>a.body).map(a=>a.id),['a','b']);assert.ok((await rpc('getSubscriptionNotices')).some(notice=>notice.message.includes('b')));pass('quota rejection retries the unchanged model on the next account before any client output and queues an informational notice');
+ const dashboard=await rpc('getDashboardUrl');
+ const snapshotAfterRetry=await (await fetch(dashboard+'api/state')).json();
+ const retrySession=snapshotAfterRetry.sessions.find(s=>s.clientConversationKey.endsWith(':conversation-1'));
+ const retryRecords=(await (await fetch(dashboard+'api/session/'+retrySession.id)).json()).traces;
+ assert.equal(retryRecords.length,2);
+ assert.equal(retryRecords[0].upstream.statusCode,429);
+ assert.equal(retryRecords[0].response.forwardedToClient,false);
+ assert.equal(retryRecords[0].response.rawBody,'');
+ assert.equal(retryRecords[0].response.statusCode,null);
+ assert.match(retryRecords[0].attemptResponse.rawBody,/quota exhausted/);
+ assert.equal(retryRecords[1].response.forwardedToClient,true);
+ assert.equal(JSON.parse(retryRecords[1].response.rawBody).output[0].content[0].text,'b');
+ pass('internal refusal evidence stays separate from the final client response after safe account retry');
  mode='ok';let at=attempts.length;response=await send('conversation-1','tool result');await response.text();assert.equal(attempts[at].id,'b');assert.equal((await rpc('getProviders')).selected.codex,a.id);assert.equal((await rpc('getProviders')).connections.find(p=>p.id===a.id).codexModel,'model');pass('same conversation/tool continuation stays on the replacement account without rewriting service/model choices');
  let snapshot=await rpc('getSubscriptionAccounts');assert.equal(snapshot.accounts.find(a=>a.id==='a').routingStatus,'额度已用完');assert.ok(snapshot.accounts.every(a=>!a.quota));pass('real quota rejection has a distinct cooldown; unknown quota never becomes a fictional percentage');
  await policy('fixed','a');at=attempts.length;response=await send('fixed');assert.equal(response.status,503);await response.text();assert.equal(attempts.length,at);await rpc('connectSubscriptionAccount','a');mode='fixed-quota';at=attempts.length;response=await send('fixed2');assert.equal(response.status,429);await response.text();assert.equal(attempts.length,at+1);pass('fixed account never falls through to another account even when quota is spent');
@@ -55,7 +69,11 @@ try{
  await policy('exhaust','',['a','b']);
  await assert.rejects(policy('fixed','foreign-account'));assert.equal((await rpc('getSubscriptionAccounts')).routing.chatgpt.strategy,'exhaust');pass('invalid cross-category/fixed account choice cannot overwrite saved policy');
  await policy();await rpc('signOutSubscriptionAccount','a');const afterLogout=await rpc('getState');assert.equal(afterLogout.tracingEnabled,true);assert.equal(afterLogout.localBaseUrl,runtime.localBaseUrl);at=attempts.length;response=await send('after-account-logout');assert.equal(response.status,200);await response.text();assert.equal(attempts[at].id,'b');assert.equal((await rpc('getProviders')).selected.codex,a.id);pass('signing out one pool member keeps Gateway running and routes new requests to an eligible account');
+ assert.ok(!(await rpc('getSubscriptionAccounts')).accounts.some(account=>account.id==='a'),'signed-out API row is hidden');
  await policy('exhaust','',['a','b']);
+ assert.ok(!(await rpc('getSubscriptionAccounts')).accounts.some(account=>account.id==='a'),'saving retained routing metadata does not restore the signed-out row');
+ await assert.rejects(policy('exhaust','',['foreign-account']),/不属于此订阅/);
+ pass('hidden signed-out registrations remain valid routing metadata without restoring login; foreign IDs stay rejected');
  await rpc('toggleTracing',false);await stop();start();assert.deepEqual((await rpc('getSubscriptionAccounts')).routing.chatgpt.excludedAccountIds,['a','b']);assert.equal((await rpc('getProviders')).selected.codex,a.id);pass('restart retains category policy and explicit model service selection');
  const beforePolicy=(await rpc('getSubscriptionAccounts')).routing.chatgpt;
  const policyPath=join(root,'subscription-routing.json'),backup=policyPath+'.fixture-backup';await rename(policyPath,backup);await mkdir(policyPath);

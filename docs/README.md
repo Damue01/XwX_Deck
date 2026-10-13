@@ -16,3 +16,11 @@
 - [Codex 第三方模型网关](codex-desktop-third-party-model-gateway.md)
 - [Codex 上下文可移植性](codex-context-compaction-portability.md)
 - [Codex 接入 Anthropic Messages](codex-claude-anthropic-messages-integration.md)
+
+## 当前工程文档
+
+- [运行架构](architecture.md)。
+- [功能与测试点](core-functional-acceptance-checklist.md)。
+- [测试执行方式](testing-strategy.md)。
+- [公开版整合验收](public-sync-acceptance.md)。
+- [中文写作准则](documentation-style-guide.md)。

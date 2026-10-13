@@ -1,33 +1,54 @@
-# 架构与维护
+# 运行架构
 
-## 主链路
+XwX Deck 使用 Rust 和 Tauri 运行。
+前端使用 React、TypeScript 和 Tailwind CSS。
+组件统一使用 Base UI/COSS。
+发行包使用系统 WebView。
 
-`React Renderer -> Tauri 原生桥接 -> Rust 后端 -> upstream`
+## 源码职责
 
-- 原有 React 页面通过窄 API 调用 `src-native/src/main.rs`，远端 Viewer 窗口不能调用配置写入接口。
-- `core.rs` 与 `clients.rs` 管理客户端配置、明确选择、字段恢复账本和 Gateway 生命周期。
-- `protocol.rs`、`reasoning.rs`、`live.rs`、`websocket.rs` 和 `continuation.rs` 管理协议、SSE、WebSocket 与续接。
-- `storage.rs` 保存 Trace 和索引，按实际用量分桶估价；`history.rs` 只在用户发起时归并和恢复历史元数据；`desktop.rs` 管理 Claude Desktop。
-- `updates.rs` 校验不可变更新清单、下载大小及 SHA-256，`portable_update.rs` 执行 Windows 原生文件替换。Mac 使用手动 DMG。
-- 关闭窗口后 Gateway 留在原生进程中，托盘和 macOS Dock 可重新打开。退出前恢复直连；冲突保留外部修改及账本，崩溃后重试恢复。
-- macOS 使用原生标题栏、红黄绿按钮、系统 WebKit / TLS / SQLite。包内没有 Electron、Node 或 Chromium。
-- 旧 `src/main` 实现保留为迁移回归对照及构建时资源生成来源，不进入原生发行包。
+| 目录 | 职责 |
+| --- | --- |
+| `src-native` | 配置、账号、Gateway、协议、Trace 和更新。 |
+| `src/renderer` | 模型、设置、仪表盘和请求详情界面。 |
+| `src/shared` | 浏览器格式、类型及模型参考数据。 |
+| `tools/build` | 前端样式和原生资源生成。 |
+| `tools/native` | 原生构建及隔离回归。 |
 
-## 独立版边界
+旧 TypeScript 后端已移除。
+默认依赖不包含 Electron。
+Node.js 仅用于开发、构建与测试。
+文档使用 VitePress 构建。
+这些开发工具不进入应用运行环境。
 
-| 项目 | 值 |
-|---|---|
-| appId | `app.xwxdeck.desktop` |
-| userData | `xwx-deck` |
-| Gateway 端口 | `45233-45242` |
-| 配置同步 | 不包含 |
-| 工具页与对话诊断 | 已移除 |
-| 默认更新服务 | 独立 GitHub Releases；元数据推送默认关闭 |
+## 身份与数据
 
-## 改动检查
+应用 ID 为 `app.xwxdeck.desktop`。
+配置目录名为 `xwx-deck`。
+Gateway 端口为 `45233` 至 `45242`。
+新安装不预置 API 服务。
+已有配置和外部修改按所有权保护。
 
-1. 修改原生 API 时同步更新桥接、共享类型、预览 API 和 smoke。
-2. 修改 Gateway 时验证活动请求、续接、配置恢复、崩溃恢复和客户端重新附着。
-3. 修改 Renderer 时运行实际系统 WebView 交互检查，并确认控制台无错误。
-4. 运行 `npm run build:rust:pilot`、`npm run test:rust`；Windows 系统集成需要原生 Windows 主机验证。
-5. 公共构建前运行 `npm run check:public-boundary`。
+每条请求保留原始数据与价格快照。
+会话身份以客户端原生标识为准。
+请求详情按需读取，摘要分页加载。
+已知金额正常显示，缺项单独提示。
+
+## 公开范围
+
+保留模型、账号、Trace 与会话历史管理。
+保留安全停止、索引修复和增强功能。
+跨服务切换默认关闭。
+公开版不提供工具页或客户端配置同步。
+范围以 [公开边界](public-release-boundary.md) 为准。
+
+## 验证与交付
+
+执行 `npm run check:quality` 验证当前源码。
+执行 `npm run check:public-boundary` 检查公开边界。
+检查使用隔离配置与合成上游。
+真实服务及各平台操作另行验收。
+
+源码推送不包含安装或发布。
+更新继续使用公开 GitHub Releases。
+macOS 保留手动 DMG 更新流程。

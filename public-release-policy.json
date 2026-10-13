@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "repositoryMode": "standalone",
   "historyStrategy": "new-root-history",
-  "sourceCommit": "9b2f522d272681651cc1175eb5bcfd46ae4465db",
+  "sourceCommit": "7bf876cd641f5f985b9741a36b10cc93288c01a6",
   "removedFeatures": [
     "configuration-sync",
     "excel-to-markdown",
@@ -10,16 +10,47 @@
     "conversation-diagnostics"
   ],
   "forbiddenPatterns": [
-    "10\\.10\\.114\\.104",
-    "/Users/damue",
-    "P11003008176",
-    "x3[c]lient",
+    "10[.]10[.]114[.]104",
+    "/Users[/]damue",
+    "P11003008[1]76",
+    "x[3][c]lient",
     "paper[h]ub",
     "open[t]race",
-    "x3[c]lientremote",
+    "x[3][c]lientremote",
     "tc-paper[h]ub\\.diezhi\\.net",
-    "\\bx3(?:[-_]hub)?\\b",
-    "\\bx3[_-]"
+    "\\bx[3](?:[-_]hub)?\\b",
+    "\\bx[3][_-]"
+  ],
+  "forbiddenFeaturePaths": [
+    "src/renderer/features/sync", "src/renderer/features/tools",
+    "src-native/src/config_sync.rs", "src-native/src/sync_adapters.rs",
+    "src-native/src/sync_plan.rs", "src-native/src/sync_project.rs",
+    "src-native/src/sync_transaction.rs", "src-native/src/sync_workspace.rs",
+    "src-native/src/conversation_doctor.rs", "src-native/src/excel.rs",
+    "src-native/src/excel_vision.rs", "src-native/src/excel-system-prompt.txt",
+    "src-native/src/excel-user-prompt.txt", "src/shared/codexConversationHealth.ts"
+  ],
+  "forbiddenRpcMethods": [
+    "convertExcelToMarkdown", "chooseExcelFiles", "convertExcelFiles", "cancelExcelConversion", "readExcelOutput", "openExcelOutput",
+    "discoverConfigSyncWorkspace", "getSyncConfig", "saveSyncConfig", "previewConfigSync",
+    "runConfigSync", "resolveConfigSyncConflict", "openConfigSyncConflictCopies",
+    "openConfigSyncPath", "diagnoseCodexConversations", "getCodexConversationDetail",
+    "cancelCodexConversationScan", "setCodexConversationDiagnosticsActive", "openCodexConversationPath"
+  ],
+  "forbiddenRuntimeEvents": ["xwxdeck-excel-progress", "xwxdeck:excel-native-drop", "excelProgress"],
+  "forbiddenProductionIdentifiers": [
+    "ConfigSyncConfig", "ConfigSyncService", "ConfigSyncTargets", "ConfigSyncProfile",
+    "ConfigSyncProfilesConfig", "ConfigSyncPreviewEntry", "ConfigSyncIssueCode", "ConfigSyncIssue",
+    "ConfigSyncPreview", "ConfigSyncSourceKind", "ConfigSyncSourceCounts", "ConfigSyncSourceSummary",
+    "ConfigSyncRunResult", "ConfigSyncResolveResult", "ConfigSyncWorkspaceSuggestion",
+    "SyncPage", "ToolsPage", "ExcelMarkdown", "ExcelMarkdownResult", "ExcelMarkdownFileResult",
+    "ExcelMarkdownBatchProgress", "ExcelConversionResult", "onExcelProgress", "CodexConversationDoctor",
+    "CodexConversationHealth", "CodexConversationHealthStatus", "CodexConversationWorkspaceKind",
+    "CodexConversationIssueCode", "CodexConversationIssue", "CodexConversationField", "CodexRolloutLocation",
+    "CodexConversationHealthRow", "CodexConversationDatabaseHealth", "CodexConversationHealthReport",
+    "CodexConversationFilter", "CodexConversationSortKey", "CodexConversationSortDirection",
+    "CodexConversationHealthSummaryRow", "CodexConversationScanPerformance", "CodexConversationPageRequest",
+    "CodexConversationPageResponse", "CodexConversationDetailRequest"
   ],
   "supplementalFixes": [
     "c673f4d9e8f8e781b5492ee358fada5a267a45af",

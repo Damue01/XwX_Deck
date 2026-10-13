@@ -1,6 +1,14 @@
 use super::*;
 use std::collections::BTreeMap;
 
+pub(super) fn append_tool_id(current: &str, part: &str) -> String {
+    if current == part {
+        current.to_owned()
+    } else {
+        format!("{current}{part}")
+    }
+}
+
 fn items(v: &Value) -> Vec<Value> {
     match v {
         Value::Array(a) => a.clone(),
@@ -57,7 +65,7 @@ impl ToolContext {
             "function" | "custom" | "tool_search" => {}
             _ => {
                 return Err(format!(
-                    "Chat 协议不支持该内置工具类型：{}",
+                    "当前转换协议不支持内置工具 {}；请在客户端关闭该工具，或选择明确支持此工具的 Responses 服务",
                     text(tool, "type")
                 ))
             }
@@ -265,7 +273,7 @@ pub(super) fn responses_chat(body: &Value) -> Result<(Value, ToolContext)> {
                                 text_parts.push(text(&part, "text").to_string())
                             }
                             "input_image" => images.push(
-                                json!({"type":"image_url","image_url":{"url":part["image_url"]}}),
+                                json!({"type":"image_url","image_url":{"url":part["image_url"],"detail":part.get("detail").cloned().unwrap_or(json!("auto"))}}),
                             ),
                             _ => {
                                 return Err(
@@ -602,16 +610,41 @@ pub(super) fn chat_response(value: &Value, context: &ToolContext) -> Value {
         }
         output.push(item);
     }
-    let raw = &value["usage"];
-    let input = raw["prompt_tokens"].as_u64().unwrap_or(0);
-    let out = raw["completion_tokens"].as_u64().unwrap_or(0);
-    let usage = if raw.is_object() {
-        json!({"input_tokens":input,"output_tokens":out,"total_tokens":raw["total_tokens"].as_u64().unwrap_or(input+out),"input_tokens_details":{"cached_tokens":raw["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0)},"output_tokens_details":raw.get("completion_tokens_details").cloned().unwrap_or(json!({}))})
-    } else {
-        Value::Null
-    };
+    let usage = converted_response_usage(value, "chat-completions");
     let incomplete = value["choices"][0]["finish_reason"] == "length";
     json!({"id":format!("resp_{}",text(value,"id")),"object":"response","created_at":(millis()/1000)as u64,"status":if incomplete{"incomplete"}else{"completed"},"model":value["model"],"output":output,"usage":usage,"error":null,"incomplete_details":if incomplete{json!({"reason":"max_output_tokens"})}else{Value::Null}})
+}
+
+fn converted_response_usage(value: &Value, wire: &str) -> Value {
+    if !value["usage"].is_object() {
+        return Value::Null;
+    }
+    let normalized = super::trace_usage::normalize(value, wire);
+    let mut input_details =
+        json!({"cached_tokens":normalized["cacheReadTokens"].as_u64().unwrap_or(0)});
+    for (source, target) in [
+        ("cacheCreationTokens", "cache_write_tokens"),
+        ("cacheCreation5mTokens", "cache_write_5m_tokens"),
+        ("cacheCreation1hTokens", "cache_write_1h_tokens"),
+    ] {
+        if normalized[source].as_u64().is_some() {
+            input_details[target] = normalized[source].clone();
+        }
+    }
+    let raw = &value["usage"];
+    let mut output_details = [
+        "completion_tokens_details",
+        "output_tokens_details",
+        "output_token_details",
+    ]
+    .iter()
+    .find_map(|k| raw.get(*k).filter(|v| v.is_object()))
+    .cloned()
+    .unwrap_or(json!({}));
+    // Codex requires reasoning_tokens when details are present. Defaults here
+    // are consumer compatibility only; billing uses the preserved upstream raw.
+    output_details["reasoning_tokens"] = json!(normalized["reasoningTokens"].as_u64().unwrap_or(0));
+    json!({"input_tokens":normalized["inputTotalTokens"].as_u64().unwrap_or(0),"output_tokens":normalized["outputTokens"].as_u64().unwrap_or(0),"total_tokens":normalized["totalTokens"],"input_tokens_details":input_details,"output_tokens_details":output_details})
 }
 
 pub(super) fn messages_response(value: &Value, context: &ToolContext) -> Value {
@@ -627,18 +660,12 @@ pub(super) fn messages_response(value: &Value, context: &ToolContext) -> Value {
             calls.push(json!({"id":part["id"],"type":"function","function":{"name":part["name"],"arguments":part["input"].to_string()}}));
         }
     }
-    let u = &value["usage"];
-    let uncached = u["input_tokens"].as_u64().unwrap_or(0);
-    let read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
-    let write = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-    let output = u["output_tokens"].as_u64().unwrap_or(0);
+    let normalized_usage = converted_response_usage(value, "messages");
     let mut result = chat_response(
-        &json!({"id":value["id"],"model":value["model"],"choices":[{"message":{"content":content,"reasoning_content":reasoning,"tool_calls":calls},"finish_reason":if value["stop_reason"]=="max_tokens"{"length"}else{"stop"}}],"usage":if u.is_object(){json!({"prompt_tokens":uncached+read+write,"completion_tokens":output,"prompt_tokens_details":{"cached_tokens":read},"total_tokens":uncached+read+write+output})}else{Value::Null}}),
+        &json!({"id":value["id"],"model":value["model"],"choices":[{"message":{"content":content,"reasoning_content":reasoning,"tool_calls":calls},"finish_reason":if value["stop_reason"]=="max_tokens"{"length"}else{"stop"}}]}),
         context,
     );
-    if write > 0 {
-        result["usage"]["input_tokens_details"]["cache_write_tokens"] = json!(write);
-    }
+    result["usage"] = normalized_usage;
     result
 }
 
@@ -666,15 +693,21 @@ pub(super) fn responses_message(value: &Value) -> Value {
             _ => {}
         }
     }
-    let usage = &value["usage"];
-    let input = usage["input_tokens"].as_u64().unwrap_or(0);
-    let read = usage["input_tokens_details"]["cached_tokens"]
-        .as_u64()
-        .unwrap_or(0);
-    let write = usage["input_tokens_details"]["cache_write_tokens"]
-        .as_u64()
-        .unwrap_or(0);
-    json!({"id":format!("msg_{}",text(value,"id")),"type":"message","role":"assistant","model":value["model"],"content":content,"stop_reason":if tool{"tool_use"}else if value["status"]=="incomplete"{"max_tokens"}else{"end_turn"},"stop_sequence":null,"usage":if usage.is_object(){json!({"input_tokens":input.saturating_sub(read+write),"output_tokens":usage["output_tokens"],"cache_read_input_tokens":read,"cache_creation_input_tokens":write})}else{Value::Null}})
+    let normalized = super::trace_usage::normalize(value, "responses");
+    let mut usage = if value["usage"].is_object() {
+        json!({"input_tokens":normalized["inputUncachedTokens"].as_u64().unwrap_or(0),"output_tokens":normalized["outputTokens"],"cache_read_input_tokens":normalized["cacheReadTokens"].as_u64().unwrap_or(0),"cache_creation_input_tokens":normalized["cacheCreationTokens"].as_u64().unwrap_or(0)})
+    } else {
+        Value::Null
+    };
+    if normalized["cacheCreation5mTokens"].as_u64().is_some()
+        || normalized["cacheCreation1hTokens"].as_u64().is_some()
+    {
+        usage["cache_creation"] = json!({"ephemeral_5m_input_tokens":normalized["cacheCreation5mTokens"],"ephemeral_1h_input_tokens":normalized["cacheCreation1hTokens"]});
+    }
+    if let Some(reasoning) = normalized["reasoningTokens"].as_u64() {
+        usage["output_tokens_details"] = json!({"thinking_tokens":reasoning});
+    }
+    json!({"id":format!("msg_{}",text(value,"id")),"type":"message","role":"assistant","model":value["model"],"content":content,"stop_reason":if tool{"tool_use"}else if value["status"]=="incomplete"{"max_tokens"}else{"end_turn"},"stop_sequence":null,"usage":usage})
 }
 
 pub(super) fn response_sse(value: &Value) -> String {
@@ -781,6 +814,27 @@ pub(super) fn message_sse(value: &Value) -> String {
     out
 }
 
+fn merge_usage_value(target: &mut Value, update: &Value) {
+    if let Some(fields) = update.as_object() {
+        if !target.is_object() {
+            *target = json!({});
+        }
+        for (key, value) in fields {
+            merge_usage_value(&mut target[key], value);
+        }
+    } else {
+        *target = update.clone();
+    }
+}
+
+pub(super) fn is_sse_body(raw: &[u8]) -> bool {
+    let raw = raw.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(raw);
+    let at = raw
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(raw.len());
+    raw[at..].starts_with(b"data:") || raw[at..].starts_with(b"event:")
+}
 pub(super) fn collapse_sse(raw: &str, wire: &str, model: &str) -> Result<Value> {
     let mut result = json!({"id":format!("native_{}",millis()),"model":model});
     let mut content = String::new();
@@ -791,6 +845,8 @@ pub(super) fn collapse_sse(raw: &str, wire: &str, model: &str) -> Result<Value> 
     let mut usage = Value::Null;
     let mut parsed = false;
     let mut ended = false;
+    let mut response_items: BTreeMap<usize, Value> = BTreeMap::new();
+    let mut pending_items = std::collections::BTreeSet::new();
     for block in raw.replace("\r\n", "\n").split("\n\n") {
         let data = block
             .lines()
@@ -803,8 +859,37 @@ pub(super) fn collapse_sse(raw: &str, wire: &str, model: &str) -> Result<Value> 
         let v: Value = serde_json::from_str(&data).map_err(|_| "上游 SSE JSON 损坏".to_string())?;
         parsed = true;
         if wire == "responses" {
+            if v["type"] == "response.output_item.added" {
+                if let Some(index) = v["output_index"].as_u64() {
+                    pending_items.insert(index as usize);
+                }
+            }
+            if v["type"] == "response.output_item.done" {
+                let index = v["output_index"]
+                    .as_u64()
+                    .ok_or("Responses output_index 缺失")? as usize;
+                if index > 4096 || !v["item"].is_object() {
+                    return Err("无效 Responses output item".into());
+                }
+                response_items.insert(index, v["item"].clone());
+                pending_items.remove(&index);
+            }
             if ["response.completed", "response.incomplete"].contains(&text(&v, "type")) {
-                return Ok(v["response"].clone());
+                let mut response = v["response"].clone();
+                if response["output"].as_array().is_none_or(|a| a.is_empty())
+                    && !pending_items.is_empty()
+                {
+                    return Err("Responses output item 未完整结束".into());
+                }
+                if response["output"].as_array().is_none_or(|a| a.is_empty())
+                    && !response_items.is_empty()
+                {
+                    if response_items.keys().copied().ne(0..response_items.len()) {
+                        return Err("Responses output item 顺序不完整".into());
+                    }
+                    response["output"] = json!(response_items.into_values().collect::<Vec<_>>());
+                }
+                return Ok(response);
             }
             if v["type"] == "response.failed" || v["type"] == "error" {
                 return Err("上游 Responses 失败".into());
@@ -819,7 +904,7 @@ pub(super) fn collapse_sse(raw: &str, wire: &str, model: &str) -> Result<Value> 
                 result["id"] = v["id"].clone();
             }
             if !v["usage"].is_null() {
-                usage = v["usage"].clone();
+                merge_usage_value(&mut usage, &v["usage"]);
             }
             let choice = &v["choices"][0];
             content.push_str(text(&choice["delta"], "content"));
@@ -832,9 +917,7 @@ pub(super) fn collapse_sse(raw: &str, wire: &str, model: &str) -> Result<Value> 
                 let current = calls.entry(index).or_insert(
                     json!({"id":"","type":"function","function":{"name":"","arguments":""}}),
                 );
-                for key in ["id"] {
-                    current[key] = json!(format!("{}{}", text(current, key), text(&call, key)));
-                }
+                current["id"] = json!(append_tool_id(text(current, "id"), text(&call, "id")));
                 for key in ["name", "arguments"] {
                     current["function"][key] = json!(format!(
                         "{}{}",
@@ -883,7 +966,7 @@ pub(super) fn collapse_sse(raw: &str, wire: &str, model: &str) -> Result<Value> 
                         usage = json!({});
                     }
                     for (k, value) in v["usage"].as_object().into_iter().flatten() {
-                        usage[k] = value.clone();
+                        merge_usage_value(&mut usage[k], value);
                     }
                 }
                 "message_stop" => ended = true,
@@ -991,4 +1074,115 @@ pub(super) fn validate_response(value: &Value, wire: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_chat_tool_ids_preserve_the_original_call_and_arguments() {
+        let chunks = [
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_fixture","function":{"name":"exec_command","arguments":"{"}}]}}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_fixture","function":{"name":"","arguments":"\"cmd\":\"read\"}"}}]}}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"","function":{"arguments":null}}]},"finish_reason":"tool_calls"}]}),
+        ];
+        let raw = chunks
+            .iter()
+            .map(|v| format!("data: {v}\n\n"))
+            .collect::<String>()
+            + "data: [DONE]\n\n";
+        let response = collapse_sse(&raw, "chat-completions", "fixture").unwrap();
+        let call = &response["choices"][0]["message"]["tool_calls"][0];
+        assert_eq!(call["id"], "call_fixture");
+        assert_eq!(call["function"]["arguments"], "{\"cmd\":\"read\"}");
+        assert_eq!(append_tool_id("call_", "fixture"), "call_fixture");
+    }
+    #[test]
+    fn tool_result_images_preserve_requested_detail_in_chat() {
+        for detail in ["low", "high", "auto"] {
+            let image = json!({"type":"input_image","image_url":"data:image/png;base64,fixture","detail":detail});
+            let body = json!({"model":"fixture","input":[
+                {"type":"function_call","call_id":"call_fixture","name":"read_image","arguments":"{}"},
+                {"type":"function_call_output","call_id":"call_fixture","output":[{"type":"input_text","text":"image result"},image]}
+            ]});
+            let (chat, _) = responses_chat(&body).unwrap();
+            assert_eq!(chat["messages"][1]["tool_call_id"], "call_fixture");
+            assert_eq!(chat["messages"][1]["content"], "image result");
+            assert_eq!(
+                chat["messages"][2]["content"][0]["image_url"]["url"],
+                image["image_url"]
+            );
+            assert_eq!(
+                chat["messages"][2]["content"][0]["image_url"]["detail"],
+                detail
+            );
+        }
+    }
+
+    #[test]
+    fn additive_and_ttl_usage_reaches_client_without_double_counting() {
+        let value = json!({"id":"fixture","model":"fixture","choices":[{"message":{"content":"once"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":5,"cache_read_input_tokens":60,"cache_creation_input_tokens":20,"cache_creation":{"ephemeral_5m_input_tokens":8,"ephemeral_1h_input_tokens":12},"prompt_tokens_details":{"cached_tokens":60},"completion_tokens_details":{"reasoning_tokens":3}}});
+        let response = chat_response(&value, &ToolContext::default());
+        assert_eq!(response["usage"]["input_tokens"], 100);
+        assert_eq!(
+            response["usage"]["input_tokens_details"]["cache_write_tokens"],
+            20
+        );
+        assert_eq!(
+            response["usage"]["input_tokens_details"]["cache_write_5m_tokens"],
+            8
+        );
+        assert_eq!(
+            response["usage"]["input_tokens_details"]["cache_write_1h_tokens"],
+            12
+        );
+        let message = responses_message(&response);
+        assert_eq!(message["usage"]["input_tokens"], 20);
+        assert_eq!(message["usage"]["cache_creation_input_tokens"], 20);
+        assert_eq!(
+            message["usage"]["cache_creation"]["ephemeral_1h_input_tokens"],
+            12
+        );
+        let restored = messages_response(&message, &ToolContext::default());
+        assert_eq!(restored["usage"]["input_tokens"], 100);
+        assert_eq!(restored["usage"]["total_tokens"], 105);
+    }
+
+    #[test]
+    fn cumulative_stream_usage_merges_nested_details_without_summing() {
+        let raw = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"fixture\",\"usage\":{\"input_tokens\":20,\"output_tokens\":1,\"cache_read_input_tokens\":60,\"cache_creation_input_tokens\":20,\"cache_creation\":{\"ephemeral_5m_input_tokens\":8,\"ephemeral_1h_input_tokens\":12}}}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5,\"cache_creation\":{\"ephemeral_1h_input_tokens\":12}}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+        let value = collapse_sse(raw, "anthropic-messages", "fixture").unwrap();
+        let normalized = super::super::trace_usage::normalize(&value, "messages");
+        assert_eq!(normalized["cacheCreation5mTokens"], 8);
+        assert_eq!(normalized["cacheCreation1hTokens"], 12);
+        assert_eq!(normalized["outputTokens"], 5);
+        assert_eq!(normalized["totalTokens"], 105);
+    }
+    #[test]
+    fn converted_usage_is_consumable_without_replaying_completed_output() {
+        let mut response = json!({"id":"fixture","model":"fixture","choices":[{"message":{"content":"once"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":4}});
+        let context = ToolContext::default();
+        let converted = chat_response(&response, &context);
+        assert_eq!(
+            converted["usage"]["output_tokens_details"]["reasoning_tokens"],
+            0
+        );
+        assert_eq!(
+            converted["usage"]["input_tokens_details"]["cached_tokens"],
+            0
+        );
+        response["usage"]["completion_tokens_details"] =
+            json!({"reasoning_tokens":3,"accepted_prediction_tokens":1});
+        let converted = chat_response(&response, &context);
+        assert_eq!(
+            converted["usage"]["output_tokens_details"]["reasoning_tokens"],
+            3
+        );
+        assert_eq!(
+            converted["usage"]["output_tokens_details"]["accepted_prediction_tokens"],
+            1
+        );
+        assert_eq!(converted["usage"]["total_tokens"], 14);
+    }
 }
