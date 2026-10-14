@@ -30,7 +30,8 @@
     "工具": "工具",
     "没有匹配的请求": "沒有符合的請求",
     "总计": "總計",
-    "打开所在文件夹": "開啟所在資料夾"
+    "打开所在文件夹": "開啟所在資料夾",
+    "暂无模型用量。": "暫無模型用量。"
   },
   "ja": {
     "返回": "戻る",
@@ -63,7 +64,8 @@
     "工具": "ツール",
     "没有匹配的请求": "一致するリクエストなし",
     "总计": "合計",
-    "打开所在文件夹": "フォルダーを開く"
+    "打开所在文件夹": "フォルダーを開く",
+    "暂无模型用量。": "モデルの使用量はまだありません。"
   },
   "ko": {
     "返回": "뒤로",
@@ -96,7 +98,8 @@
     "工具": "도구",
     "没有匹配的请求": "일치하는 요청 없음",
     "总计": "합계",
-    "打开所在文件夹": "폴더 열기"
+    "打开所在文件夹": "폴더 열기",
+    "暂无模型用量。": "아직 모델 사용량이 없습니다."
   },
   "fr": {
     "返回": "Retour",
@@ -129,7 +132,8 @@
     "工具": "Outils",
     "没有匹配的请求": "Aucune requête correspondante",
     "总计": "Total",
-    "打开所在文件夹": "Ouvrir le dossier"
+    "打开所在文件夹": "Ouvrir le dossier",
+    "暂无模型用量。": "Aucune utilisation de modèle pour le moment."
   },
   "de": {
     "返回": "Zurück",
@@ -162,7 +166,8 @@
     "工具": "Werkzeuge",
     "没有匹配的请求": "Keine passenden Anfragen",
     "总计": "Gesamt",
-    "打开所在文件夹": "Ordner öffnen"
+    "打开所在文件夹": "Ordner öffnen",
+    "暂无模型用量。": "Noch keine Modellnutzung."
   },
   "es": {
     "返回": "Volver",
@@ -195,7 +200,8 @@
     "工具": "Herramientas",
     "没有匹配的请求": "No hay solicitudes coincidentes",
     "总计": "Total",
-    "打开所在文件夹": "Abrir carpeta"
+    "打开所在文件夹": "Abrir carpeta",
+    "暂无模型用量。": "Todavía no hay uso del modelo."
   },
   "pt-BR": {
     "返回": "Voltar",
@@ -228,6 +234,7 @@
     "工具": "Ferramentas",
     "没有匹配的请求": "Nenhuma solicitação correspondente",
     "总计": "Total",
-    "打开所在文件夹": "Abrir pasta"
+    "打开所在文件夹": "Abrir pasta",
+    "暂无模型用量。": "Ainda não há uso do modelo."
   }
 }

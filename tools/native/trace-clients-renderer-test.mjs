@@ -20,7 +20,7 @@ const bridge = { booted: true, modelClients: ['claude', 'codex'], api: {}, patch
 globalThis.__traceClientsFixture = bridge;
 const bundle = await esbuild.build({ stdin: { contents: "export { SignalPage } from './src/renderer/features/trace/SignalPage';", resolveDir: base }, bundle: true, platform: 'node', format: 'cjs', write: false, alias: { '@': resolve(base, 'src/renderer') }, external: ['react', 'react/*', 'react-dom', 'react-dom/*'], plugins: [{ name: 'fixture', setup(build) {
   build.onResolve({ filter: /^@\/(bridge\/store|lib\/i18n|lib\/toast|components\/ui\/confirm-dialog)$/ }, args => ({ path: args.path, namespace: 'fixture' }));
-  build.onResolve({ filter: /^\.\/(ParticleField|ThroughputChart|AppearanceDrawer|ReadoutDigits)$/ }, args => ({ path: args.path, namespace: 'fixture' }));
+  build.onResolve({ filter: /^\.\/(ParticleField|ThroughputChart|AppearanceDrawer)$/ }, args => ({ path: args.path, namespace: 'fixture' }));
   build.onLoad({ filter: /.*/, namespace: 'fixture' }, args => ({ contents:
     args.path.endsWith('store') ? 'export const useBridge=()=>globalThis.__traceClientsFixture;' :
     args.path.endsWith('i18n') ? 'export const t=s=>s;export const useLanguage=()=>{};export const getLanguage=()=>"zh-CN";' :
@@ -48,5 +48,29 @@ try {
   assert.deepEqual(sources('live'), ['claude-live', 'codex-live', 'pi-live']);
   bridge.modelClients = []; await render(true);
   assert.deepEqual(sources('idle'), []); assert.deepEqual(sources('live'), []);
+  bridge.traceStats={total:{tokens:165,costUsd:.003,costComplete:false,knownCostRequests:1},today:{tokens:0,costUsd:0,costComplete:false,knownCostRequests:1},week:{tokens:0,costUsd:0,costComplete:false,knownCostRequests:0},series:[]};
+  await render(true);
+  const readout=()=>document.querySelector('#readoutValue .sr-only').textContent;
+  const click=async selector=>act(async()=>document.querySelector(selector).click());
+  assert.equal(readout(),'165');
+  await click('#tokenReadout');
+  assert.equal(readout(),'$0.003','tiny known amount matches the dashboard precision');
+  assert.equal(document.querySelector('#readoutLabel').textContent,'USD');
+  assert.equal(document.querySelector('.readout-partial'),null);
+  assert.doesNotMatch(document.querySelector('#tokenReadout').title,/未计价|部分|缺少|可靠|\*/);
+  await click('[data-period="today"]');
+  assert.equal(readout(),'$0.0000','known zero survives unrelated missing usage');
+  await click('[data-period="week"]');
+  assert.equal(readout(),'—','all-unknown cost remains unavailable without warnings');
+  assert.equal(document.querySelector('#readoutLabel').textContent,'USD');
+  await click('[data-period="total"]');
+  await click('#tokenReadout');
+  assert.equal(readout(),'165');
+  await act(async()=>document.querySelector('#tokenReadout').dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Enter',bubbles:true})));
+  assert.equal(readout(),'$0.003');
+  bridge.traceStats={...bridge.traceStats,total:{tokens:0,costUsd:0,costComplete:true,knownCostRequests:0}};await render(true);
+  assert.equal(readout(),'$0.0000','empty period is a normal zero');
+  assert.equal(document.querySelector('.readout-partial'),null);
+  console.log('PASS actual Trace readout: known amount, tiny fee, known zero, unknown, period changes and keyboard toggle without stars or fallback text');
   console.log('PASS real Trace component: removal in idle/live, enabled stale runtime, navigation, alias restoration, generic clients, empty list');
 } finally { await act(async () => root.unmount()); dom.window.close(); delete globalThis.__traceClientsFixture; }

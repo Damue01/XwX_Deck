@@ -606,7 +606,7 @@ impl TraceStore {
     pub fn stats(&self) -> Value {
         let now = millis();
         let today = Local::now().date_naive();
-        let mut total = json!({"tokens":0,"costUsd":0.0,"costComplete":true});
+        let mut total = json!({"tokens":0,"costUsd":0.0,"costComplete":true,"knownCostRequests":0});
         let mut day = total.clone();
         let mut week = total.clone();
         let mut series = vec![];
@@ -687,6 +687,10 @@ impl TraceStore {
                     period["tokens"] = json!(period["tokens"].as_u64().unwrap_or(0) + tokens);
                     period["costUsd"] =
                         json!(period["costUsd"].as_f64().unwrap_or(0.0) + cost.unwrap_or(0.0));
+                    if cost.is_some() {
+                        period["knownCostRequests"] =
+                            json!(period["knownCostRequests"].as_u64().unwrap_or(0) + 1);
+                    }
                     if !complete {
                         period["costComplete"] = json!(false);
                     }
@@ -1658,6 +1662,50 @@ impl Drop for ClientBodyGuard {
 #[cfg(test)]
 mod client_evidence_tests {
     use super::*;
+
+    #[test]
+    fn stats_distinguish_known_zero_from_missing_cost_without_repricing() {
+        let root = std::env::temp_dir().join(format!(
+            "xwx-known-cost-{}-{}",
+            std::process::id(),
+            millis()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let now = millis();
+        let missing = json!({"atMs":now,"tokens":null,"knownCostUsd":null,"costComplete":false});
+        let zero = json!({"atMs":now,"tokens":0,"knownCostUsd":0.0,"costComplete":true});
+        let index =
+            json!({"version":1,"sessions":[{"id":"known-cost","nativeUsage":[zero,missing]}]})
+                .to_string();
+        fs::write(root.join("index.json"), &index).unwrap();
+        let store = TraceStore::open(root.clone(), u64::MAX, false, &root).unwrap();
+        {
+            let mut store = store.lock().unwrap();
+            for (points, count, amount, complete) in [
+                (json!([zero, missing]), 1, 0.0, false),
+                (json!([missing]), 0, 0.0, false),
+                (json!([zero]), 1, 0.0, true),
+                (
+                    json!([{"atMs":now,"tokens":7,"knownCostUsd":0.003,"costComplete":false},missing]),
+                    1,
+                    0.003,
+                    false,
+                ),
+                (json!([]), 0, 0.0, true),
+            ] {
+                store.index["sessions"][0]["nativeUsage"] = points;
+                let stats = store.stats();
+                for period in ["total", "today", "week"] {
+                    assert_eq!(stats[period]["knownCostRequests"], count);
+                    assert_eq!(stats[period]["costUsd"], amount);
+                    assert_eq!(stats[period]["costComplete"], complete);
+                }
+            }
+        }
+        assert_eq!(fs::read_to_string(root.join("index.json")).unwrap(), index);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn model_field_coverage_keeps_known_zero_after_unknown_and_invalid_requests() {

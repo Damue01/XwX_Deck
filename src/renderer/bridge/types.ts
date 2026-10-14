@@ -139,6 +139,7 @@ export interface TraceStatsPeriod {
   readonly tokens: number;
   readonly costUsd: number;
   readonly costComplete: boolean;
+  readonly knownCostRequests?: number;
 }
 
 export interface TraceStatsPoint {

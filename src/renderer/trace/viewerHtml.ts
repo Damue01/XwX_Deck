@@ -508,8 +508,6 @@ summary.diff-section-header::-webkit-details-marker{display:none}
 .dash-cost.cost-na{color:var(--faint)}
 .dash-model{font-family:var(--mono);color:var(--cyan)}
 .dash-agent{color:var(--muted)}
-.dash-unpriced-badge{flex:0 0 auto;font-size:10.5px;color:var(--muted);line-height:1.5;white-space:nowrap}
-.dash-unpriced-badge:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:2px}
 .dash-status.err{flex:0 0 auto;color:var(--red);font-size:10.5px;font-weight:700;line-height:1}
 .dash-table thead th.col-del,.dash-table tbody td.dash-del{text-align:center;padding:8px 4px}
 .dash-table [data-col="actions"]{position:sticky;right:0;background:var(--panel);z-index:2}
@@ -1627,10 +1625,7 @@ function billableTotalTokens(u){ u=u||{}; if(typeof u.totalTokens === 'number') 
 function totalTokens(t){ return billableTotalTokens(usageOf(t)); }
 function tokenCountHtml(value, incomplete, hasKnown){
   const known = typeof value === 'number' && isFinite(value) && (hasKnown === undefined ? !incomplete || value > 0 : hasKnown);
-  const text = known ? num(value) : '—';
-  return incomplete || !known
-    ? '<span title="'+esc(L('用量不完整；这里只显示上游已返回的已知小计','Incomplete usage; only the known upstream subtotal is shown'))+'">'+text+'</span>'
-    : text;
+  return known ? num(value) : '—';
 }
 function traceTokenCountHtml(t){
   const u = usageOf(t);
@@ -2097,63 +2092,20 @@ function fmtCost(v){
 }
 function sessionCostInfo(sess){
   const m = sess && sess.usageByModel;
-  if(!m || typeof m !== 'object') return { cost: undefined, priced: 0, unpriced: 0 };
-  let cost = 0, priced = 0, unpriced = 0;
+  if(!m || typeof m !== 'object') return { cost: undefined, priced: 0 };
+  let cost = 0, priced = 0;
   for(const model in m){
     const u = m[model];
     if(!u) continue;
     const price = findModelPriceForUsage(model, u.servedModel);
-    if(!price && !u.capturedCost){ unpriced += 1; continue; }
+    if(!price && !u.capturedCost) continue;
     const estimated = estimateCostBreakdown(u, price);
-    if(!estimated.complete) unpriced += 1;
     if(estimated.cost !== undefined){ cost += estimated.cost; priced += 1; }
   }
-  return { cost: priced ? cost : undefined, priced, unpriced };
-}
-function costGapLabel(reason){
-  const labels = {
-    incomplete_usage:L('用量缺失或不完整','Missing or incomplete usage'),
-    invalid_usage:L('用量字段异常','Invalid usage fields'),
-    missing_price:L('缺少价格','Missing price'),
-    missing_storage_duration:L('缺少缓存存储时长','Missing cache storage duration'),
-    incomplete_pricing:L('缺少计费明细','Missing billing details'),
-    legacy_unknown:L('历史记录未保存原因','Reason unavailable in historical records')
-  };
-  return labels[reason] || labels.legacy_unknown;
-}
-function sessionCostGaps(sess){
-  const points = Array.isArray(sess && sess.nativeUsage) ? sess.nativeUsage : [];
-  const reasons = {};
-  let count = 0;
-  for(const point of points){
-    if(point.costComplete === true) continue;
-    count++;
-    let codes = Array.isArray(point.unpricedReasons) ? point.unpricedReasons.slice() : [];
-    if(!codes.length){
-      if(!point.priceRule) codes.push('missing_price');
-      if(point.tokens == null) codes.push('incomplete_usage');
-      if(point.storageUnpriced) codes.push('missing_storage_duration');
-      if(!codes.length) codes.push('legacy_unknown');
-    }
-    for(const code of new Set(codes)) reasons[code] = (reasons[code] || 0) + 1;
-  }
-  const info = sessionCostInfo(sess);
-  return { count, reasons, historicalUnknown:points.length < (sess.traceCount || 0) && (info.unpriced > 0 || info.cost === undefined) };
-}
-function costGapSummary(gaps){
-  const parts = Object.keys(gaps.reasons).map(reason => costGapLabel(reason)+' '+num(gaps.reasons[reason]));
-  if(gaps.historicalUnknown) parts.push(L('历史请求明细不足，数量无法确认','Historical request details are insufficient; count unavailable'));
-  return parts.join(L('；','; '));
-}
-function costGapBadge(gaps){
-  if(!gaps.count && !gaps.historicalUnknown) return '';
-  const label = gaps.count ? L('未计价 ','Unpriced ')+num(gaps.count) : L('费用缺项','Cost gaps');
-  return '<span class="dash-unpriced-badge" role="note" tabindex="0" title="'+esc(costGapSummary(gaps))+'" aria-label="'+esc(label+': '+costGapSummary(gaps))+'">'+esc(label)+'</span>';
+  return { cost: priced ? cost : undefined, priced };
 }
 function sessionCostTitle(info){
-  if(!info || info.cost === undefined) return L('暂无已知金额', 'No known amount yet');
-  if(info.unpriced) return L('已知金额 USD ','Known amount USD ')+info.cost;
-  return L('估算费用', 'Estimated cost')+' USD '+info.cost;
+  return L('估算费用', 'Estimated cost')+(info && info.cost !== undefined ? ' USD '+info.cost : '');
 }
 /** 会话总耗时：最早请求 startedAt 到最晚请求 startedAt；旧会话再回退累计字段。 */
 function sessionDurationMs(sess){
@@ -2366,7 +2318,7 @@ function openPricing(){
     (ids.length
       ? '<table class="pricing-table"><thead><tr><th>'+L('模型 ID','Model ID')+'</th><th>'+L('协议','Protocol')+'</th><th>'+L('来源','Source')+'</th><th>'+L('输入','Input')+'</th><th>'+L('输出','Output')+'</th><th>'+L('缓存读','Cache Read')+'</th><th>'+L('缓存写 5m/默认','Cache Write 5m/default')+'</th><th>'+L('缓存写 1h','Cache Write 1h')+'</th><th>'+L('状态','Status')+'</th></tr></thead><tbody>'+rows+'</tbody></table>'
       : '<div class="dash-matrix-note">'+L('当前没有可见或已使用的模型，价目表不会展示全局兜底规则。','No visible or used models. Global fallback rules are intentionally hidden.')+'</div>')+
-    '<div class="pricing-note">'+L('<p>模型信息和参考价格来自 models.dev。价格优先使用模型厂商，其次 AWS Bedrock、Azure；转售平台仅用于关联模型别名。</p><p>日期后缀只在能唯一关联标准模型时匹配；版本不明或有多个候选时保留未知。请求使用的原始模型 ID 不变。</p><p>费用按每条请求的实际 Token 口径计算，保留上下文分档、缓存读写和推理计费差异，不提前四舍五入。新请求保存价格快照；旧记录没有快照时按当前参考价显示。</p><p>仪表盘正常显示已知金额；未计价请求的数量和原因单独提示，无可计价部分时显示 —。参考费用不代表订阅扣款或服务实际结算。</p>','<p>Model metadata and reference prices come from models.dev. Rates prefer the model owner, then AWS Bedrock and Azure. Resellers provide alias evidence only.</p><p>Date suffixes resolve only to an unambiguous standard model. Unknown versions remain unpriced. The requested model ID is preserved.</p><p>Cost follows each request’s reported tokens, context tiers, cache writes and reads, and reasoning rates without rounding intermediate amounts. New requests freeze their rates; older records without snapshots use the current reference price.</p><p>The dashboard displays known amounts normally and reports unpriced request counts and reasons separately. With no priced components, cost is unavailable. Reference cost does not represent a subscription charge or actual service billing.</p>')+'</div>';
+    '<div class="pricing-note">'+L('<p>模型信息和参考价格来自 models.dev。价格优先使用模型厂商，其次 AWS Bedrock、Azure；转售平台仅用于关联模型别名。</p><p>日期后缀只在能唯一关联标准模型时匹配；版本不明或有多个候选时保留未知。请求使用的原始模型 ID 不变。</p><p>费用按每条请求的实际 Token 口径计算，保留上下文分档、缓存读写和推理计费差异，不提前四舍五入。新请求保存价格快照；旧记录没有快照时按当前参考价显示。</p><p>仪表盘汇总每条请求保存的参考金额。参考费用不代表订阅扣款或服务实际结算。</p>','<p>Model metadata and reference prices come from models.dev. Rates prefer the model owner, then AWS Bedrock and Azure. Resellers provide alias evidence only.</p><p>Date suffixes resolve only to an unambiguous standard model. Unknown versions remain unpriced. The requested model ID is preserved.</p><p>Cost follows each request’s reported tokens, context tiers, cache writes and reads, and reasoning rates without rounding intermediate amounts. New requests freeze their rates; older records without snapshots use the current reference price.</p><p>The dashboard sums the reference amount saved for each request. Reference cost does not represent a subscription charge or actual service billing.</p>')+'</div>';
   el('pricingOv').classList.add('on');
   el('pricingClose').focus();
 }
@@ -2377,67 +2329,43 @@ function renderTokenMatrix(sessions){
   // 各自漂移——把 cacheCreation5m/1h 预置成 0 会让「没有 TTL 拆分」看起来像「拆分是 0」，
   // 于是 1 小时写入被按 5 分钟价计。
   let byModel = {};
-  let legacySessions = 0;
   const referenceRebuild = sessions.some(s => s.costViewBasis === 'legacy-current-reference');
   for(const s of sessions){
     const m = s.usageByModel;
     if(!m || typeof m !== 'object'){
-      if((s.totalTokens || 0) > 0) legacySessions += 1;
       continue;
     }
     byModel = mergeModelUsage(byModel, m);
   }
   const models = Object.keys(byModel).sort((a,b) => byModel[b].total - byModel[a].total);
   if(!models.length){
-    return '<div class="dash-matrix-wrap"><div class="dash-matrix-note">'+L('还没有带模型划分的会话数据（历史会话不回填，新请求开始累计）。','No per-model usage yet. Older sessions are not backfilled; new requests will accumulate here.')+'</div></div>';
+    return '<div class="dash-matrix-wrap"><div class="dash-matrix-note">'+L('暂无模型用量。','No model usage yet.')+'</div></div>';
   }
   const sum = { input:0, output:0, cacheRead:0, cacheCreation:0, total:0, cost:0 };
-  let unpriced = 0, priced = 0;
+  let priced = 0;
   let rows = '';
   // Unknown counters remain visible even if equal rates make pricing possible.
-  const sumLost = new Set();
   const sumKnown = {};
   for(const model of models){
     const u = byModel[model];
     const price = findModelPriceForUsage(model, u.servedModel);
     const detail = price || u.capturedCost ? estimateCostBreakdown(u, price) : { complete: false };
     const cost = detail.cost;
-    if(!detail.complete) unpriced += 1;
     if(cost !== undefined){ sum.cost += cost; priced += 1; }
     sum.input += u.input; sum.output += u.output; sum.cacheRead += u.cacheRead; sum.cacheCreation += u.cacheCreation; sum.total += u.total;
-    // Some providers bill cache creation as ordinary input and do not report a
-    // separate counter. Keep it unavailable without claiming a missing charge.
-    const writeIncluded = detail.complete && price && price.cacheWritePolicy === 'input'
-      && price.cacheWritePolicySource === 'official' && u.inputTotalComplete === true;
-    for(const name of (u.incompleteFields || [])) if(name !== 'cacheWrite' || !writeIncluded) sumLost.add(name);
     for(const [name,key] of [['input','input'],['cacheRead','cacheRead'],['cacheWrite','cacheCreation'],['output','output'],['total','total']]){
       sumKnown[name] = (sumKnown[name] || 0) + knownUsageFieldCount(u,name,key);
-      if((u.invalidFields || []).includes(name)) sumLost.add(name);
     }
-    const field = (name,value) => {
-      const key = name === 'cacheWrite' ? 'cacheCreation' : name;
-      const display = knownUsageFieldCount(u,name,key) > 0 ? num(value) : '—';
-      if((u.invalidFields || []).includes(name) || (name === 'cacheWrite' && (u.invalidFields || []).includes('cacheWriteTtl'))) return '<span title="'+esc(L('部分上游用量异常；这里只显示已知数量，详见请求用量','Some upstream usage is invalid; known counters are shown. See request usage details'))+'">'+display+'</span>';
-      if(!(u.incompleteFields || []).includes(name)) return display;
-      if(name === 'cacheWrite' && writeIncluded) return '<span title="'+esc(L('缓存写入计入普通输入，不单列数量','Cache creation is billed as ordinary input; no separate counter is reported'))+'">'+display+'</span>';
-      return '<span title="'+esc(L('已知用量小计；部分请求的该字段未返回且无法可靠推导','Known usage subtotal; this field was missing from some requests and cannot be derived reliably'))+'">'+display+'</span>';
-    };
+    const field = (name,value) => knownUsageFieldCount(u,name,name === 'cacheWrite' ? 'cacheCreation' : name) > 0 ? num(value) : '—';
     // 上游回报的名字和请求名不同时要说出来，否则用户会以为我们认错了模型。
     const nameCell = u.servedModel
-      ? '<span title="'+esc(L('上游回报的模型名：'+u.servedModel,'Reported by the service as '+u.servedModel))+'">'+esc(model)+' <span class="model-served">*</span></span>'
+      ? '<span title="'+esc(L('上游回报的模型名：'+u.servedModel,'Reported by the service as '+u.servedModel))+'">'+esc(model)+'</span>'
       : esc(model);
-    rows += '<tr><td>'+nameCell+'</td><td>'+field('input',u.input)+'</td><td>'+field('cacheRead',u.cacheRead)+'</td><td>'+field('cacheWrite',u.cacheCreation)+'</td><td>'+field('output',u.output)+'</td><td>'+field('total',u.total)+'</td><td'+(cost === undefined ? ' class="cost-na"' : '')+' title="'+esc(u.capturedCost ? referenceRebuild ? L('包含按当前参考价重新计算的旧记录。','Includes older records calculated with current reference rates.') : L('按每条请求捕获时的价格汇总。仅汇总已知金额；未计价请求的数量和原因单独提示。','Summed at each captured request price. Known amounts only; unpriced request counts and reasons are shown separately.') : priceRuleSummary(price))+'">'+(cost === undefined ? '—' : fmtCost(cost))+'</td></tr>';
+    rows += '<tr><td>'+nameCell+'</td><td>'+field('input',u.input)+'</td><td>'+field('cacheRead',u.cacheRead)+'</td><td>'+field('cacheWrite',u.cacheCreation)+'</td><td>'+field('output',u.output)+'</td><td>'+field('total',u.total)+'</td><td'+(cost === undefined ? ' class="cost-na"' : '')+' title="'+esc(u.capturedCost ? referenceRebuild ? L('包含按当前参考价重新计算的旧记录。','Includes older records calculated with current reference rates.') : L('按每条请求捕获时的价格汇总。','Summed at each captured request price.') : priceRuleSummary(price))+'">'+(cost === undefined ? '—' : fmtCost(cost))+'</td></tr>';
   }
-  // 计数缺失仍标未知；相同费率使费用可计算时，也不把未知计数展示为零。
-  const sumField = (name,value) => sumLost.has(name)
-    ? '<span title="'+esc(L('已知用量小计；部分会话缺少该字段或仍是旧口径','Known subtotal; some sessions lack this field or still use legacy semantics'))+'">'+(sumKnown[name] > 0 ? num(value) : '—')+'</span>'
-    : sumKnown[name] > 0 ? num(value) : '—';
+  const sumField = (name,value) => sumKnown[name] > 0 ? num(value) : '—';
   const notes = [];
   notes.push(L('Token 按请求累计，包含每轮发送的上下文；推理 Token 已计入输出，不重复相加。','Tokens accumulate per request, including context sent on each turn. Reasoning tokens are already included in output.'));
-  if(referenceRebuild) notes.push(L('旧记录无价格快照的部分按当前参考价计算。','Older records without price snapshots use current reference rates.'));
-  notes.push(L('费用和用量汇总已知数值；缺项和异常在悬停说明及请求详情中提示。','Cost and usage sum known values; gaps and invalid data are explained in tooltips and request details.'));
-  if(unpriced) notes.push(L(unpriced+' 个模型有未计价部分。', unpriced+' models have unpriced components.'));
-  if(legacySessions) notes.push(L(legacySessions+' 个旧会话无模型划分数据，未计入矩阵（但计入上方 Total Tokens）。', legacySessions+' legacy sessions have no per-model usage and are excluded from the matrix.'));
   return '<div class="dash-matrix-wrap"><table class="dash-matrix">'+
     '<thead><tr><th>'+L('模型','Model')+'</th><th>'+L('未缓存输入','Uncached Input')+'</th><th>'+L('缓存读','Cache Read')+'</th><th>'+L('缓存写','Cache Write')+'</th><th>'+L('输出','Output')+'</th><th>'+L('总 Token','Total Tokens')+'</th><th>'+L('估算费用','Est. Cost')+'</th></tr></thead>'+
     '<tbody>'+rows+'</tbody>'+
@@ -2461,10 +2389,7 @@ function renderDashboard(){
   const cacheStats = window.XwXTraceCacheRate.details(sessions);
   const cacheRatio = cacheStats.rate;
   const cacheRate = cacheRatio === null ? '—' : (cacheRatio * 100).toFixed(1) + '%';
-  const cacheHint = (cacheRatio === null
-    ? L('没有可计算的已知输入和缓存用量','No known input and cache usage is available')
-    : L('已知请求的缓存读取 Token ÷ 输入 Token（含缓存读取和写入）','Known requests: cache read tokens / input tokens (including cache reads and writes)'))
-      + L('；已纳入 ','; included ') + num(cacheStats.knownRequests) + L(' 条，已排除 ',' requests; excluded ') + num(cacheStats.excludedRequests) + L(' 条缺项请求',' requests with missing usage');
+  const cacheHint = L('缓存读取 Token ÷ 输入 Token（含缓存读取和写入）','Cache read tokens / input tokens (including cache reads and writes)');
   const filters = [
     { id:'all', label:L('全部','All') },
     { id:'claude-cli', label:'Claude' },
@@ -2480,7 +2405,7 @@ function renderDashboard(){
   const heroValue = hero.unit === '$'
     ? (knownCosts || !sessions.length ? fmtCost(totalCost) : '—')
     : (incompleteTokens && !sessions.some(sessionHasKnownTokens) ? '—' : hero.value + (hero.unit ? '<span class="u">' + esc(hero.unit) + '</span>' : ''));
-  const usageHint = L('累计请求用量，包含每轮发送的上下文；不是当前上下文长度。已知数值正常汇总，缺项在请求详情中说明。','Cumulative request usage includes context sent on each turn; it is not the current context length. Known values are summed; gaps are explained in request details.');
+  const usageHint = L('累计请求用量，包含每轮发送的上下文；不是当前上下文长度。','Cumulative request usage includes context sent on each turn; it is not the current context length.');
   let html = '<div class="dash">'+
     '<div class="dash-hero">'+
       '<div class="dash-hero-main" data-toggle-matrix role="button" tabindex="0" aria-expanded="'+(tokenMatrixOpen?'true':'false')+'" aria-label="'+esc(hero.toggleHint)+'" title="'+esc((tokenMatrixOpen ? L('参考费用，非实际扣款。','Reference cost, not an actual charge. ') : num(totalTok)+' Tokens. ')+usageHint)+'">'+
@@ -2490,7 +2415,7 @@ function renderDashboard(){
       '<div class="dash-hero-side">'+
         '<div class="dash-hero-stat"><div class="dash-hs-label">'+L('会话','Sessions')+'</div><div class="dash-hs-val">'+num(sessions.length)+'</div></div>'+
         '<div class="dash-hero-stat"><div class="dash-hs-label">'+L('请求','Requests')+'</div><div class="dash-hs-val">'+num(totalTraces)+'</div></div>'+
-        '<div class="dash-hero-stat" data-cache-hit-rate title="'+esc(cacheHint)+'"><div class="dash-hs-label">'+(cacheStats.excludedRequests > 0 ? L('缓存命中率（已知）','Cache Hit Rate (Known)') : L('缓存命中率','Cache Hit Rate'))+'</div><div class="dash-hs-val">'+esc(cacheRate)+'</div></div>'+
+        '<div class="dash-hero-stat" data-cache-hit-rate title="'+esc(cacheHint)+'"><div class="dash-hs-label">'+L('缓存命中率','Cache Hit Rate')+'</div><div class="dash-hs-val">'+esc(cacheRate)+'</div></div>'+
       '</div>'+
     '</div>'+
     (tokenMatrixOpen ? renderTokenMatrix(sessions) : '')+
@@ -2534,7 +2459,7 @@ function renderDashboard(){
     const durMs = sessionDurationMs(s);
     html += '<tr data-sid="'+esc(s.id)+'" tabindex="0" aria-label="'+esc(L('打开会话：','Open session: ')+(display || L('无 user message','no user message')))+'">'+
       '<td class="dash-time" data-col="started" title="'+esc(new Date(s.startedAt).toLocaleString())+'"><span>'+esc(new Date(s.startedAt).toLocaleDateString(uiLang === 'zh' ? 'zh-CN' : 'en-CA')+' '+new Date(s.startedAt).toLocaleTimeString(uiLang === 'zh' ? 'zh-CN' : 'en-GB', {hour12:false}))+'</span></td>'+
-      '<td class="dash-first" data-col="first" title="'+esc(first || display)+'"><div class="dash-first-line"><span class="dash-first-title">'+esc(display || L('(无 user message)','(no user message)'))+'</span>'+errorBadge+costGapBadge(sessionCostGaps(s))+'</div></td>'+
+      '<td class="dash-first" data-col="first" title="'+esc(first || display)+'"><div class="dash-first-line"><span class="dash-first-title">'+esc(display || L('(无 user message)','(no user message)'))+'</span>'+errorBadge+'</div></td>'+
       '<td class="col-src" data-col="source"><span class="src-tag src-'+esc(src)+'">'+esc(sourceLabel(src))+'</span></td>'+
       '<td class="dash-model col-model" data-col="model" title="'+esc(model)+'">'+esc(model)+'</td>'+
       '<td class="dash-num dash-dur" data-col="duration">'+sessionDurationText(durMs)+'</td>'+

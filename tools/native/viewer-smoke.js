@@ -14,7 +14,7 @@
   const unknownSection=document.createElement('section');
   try{
     unknownSection.innerHTML=renderMetrics(unknown,unknown.usage)+railRowHtml(unknown,false);document.body.append(unknownSection);
-    check('native request detail and rail mark missing usage as unknown instead of zero',unknownSection.querySelector('.mhero').textContent==='—'&&unknownSection.querySelector('.tok').textContent==='— tok'&&unknownSection.querySelector('.mhero span').title.includes('用量不完整'));
+    check('native request detail and rail mark missing usage as unknown instead of zero',unknownSection.querySelector('.mhero').textContent==='—'&&unknownSection.querySelector('.tok').textContent==='— tok');
   }finally{unknownSection.remove();}
   const fixturePrice={match:'exact',modelId:'native-partial-fixture',tokens:['native-partial-fixture'],protocol:'openai',input:1,output:2,cacheRead:.1,cacheWritePolicy:'input'};
   const fixtureUsage={version:2,input:20,inputTotal:100,inputTotalComplete:true,output:5,cacheRead:60,cacheCreation:20,total:105,invalidFields:['cacheWriteTtl']};
@@ -25,7 +25,7 @@
   try {
     matrix.innerHTML=renderTokenMatrix([{usageByModel:{'native-partial-fixture':fixtureUsage}}]);document.body.append(matrix);
     const cells=matrix.querySelectorAll('tbody td');
-    check('native Viewer marks invalid usage separately and keeps a normal positive tiny known amount',cells[1].textContent==='20'&&cells[2].textContent==='60'&&cells[3].textContent==='20'&&cells[3].querySelector('span').title.includes('上游用量异常')&&cells[4].textContent==='5'&&cells[5].textContent==='105'&&cells[6].textContent==='$0.000036'&&cells[6].getBoundingClientRect().height>0&&matrix.querySelector('tfoot td:last-child').textContent==='$0.000036');
+    check('native Viewer marks invalid usage separately and keeps a normal positive tiny known amount',cells[1].textContent==='20'&&cells[2].textContent==='60'&&cells[3].textContent==='20'&&cells[4].textContent==='5'&&cells[5].textContent==='105'&&cells[6].textContent==='$0.000036'&&cells[6].getBoundingClientRect().height>0&&matrix.querySelector('tfoot td:last-child').textContent==='$0.000036');
   } finally {matrix.remove();PRICE_RULES.splice(PRICE_RULES.indexOf(fixturePrice),1);}
   check('dashboard header, columns and table rows have no dividers',getComputedStyle(document.querySelector('.top')).borderBottomWidth==='0px'&&getComputedStyle(document.querySelector('.rail')).borderRightWidth==='0px'&&[...document.querySelectorAll('.dash-table th,.dash-table td')].every(element=>getComputedStyle(element).borderBottomWidth==='0px'));
   const idleRow=document.querySelector('.dash-table tbody tr');
@@ -36,7 +36,7 @@
     state={...state,sessions:[{id:'native-cost-gap',source:'codex-cli',firstPrompt:'Known amount fixture',startedAt:'2026-10-13T00:00:00Z',traceCount:2,totalTokens:165,nativeUsage:[{knownCostUsd:.003,costComplete:true},{knownCostUsd:null,costComplete:false,priceRule:{},tokens:null,unpricedReasons:['incomplete_usage']}],usageByModel:{fixture:{version:2,input:100,output:5,cacheRead:60,cacheCreation:0,total:165,incompleteFields:['input'],capturedCost:{cost:.003,complete:false}}}}]};
     tokenMatrixOpen=true;renderDashboard();
     check('native dashboard shows known fees without stars in hero session and matrix',document.querySelector('.dash-hero-num').textContent==='$0.003'&&document.querySelector('td[data-col="cost"]').textContent==='$0.003'&&[...document.querySelectorAll('.dash-matrix tr')].every(row=>!row.lastElementChild.textContent.includes('*')));
-    check('native dashboard omits the top warning and keeps one inline missing-usage hint on a single line',!document.querySelector('.dash-unpriced-report')&&document.querySelector('.dash-unpriced-badge').textContent==='未计价 1'&&document.querySelector('.dash-unpriced-badge').title.includes('用量缺失或不完整 1')&&document.querySelector('.dash-unpriced-badge').getBoundingClientRect().height<=20&&document.querySelector('.dash-table tbody tr').getBoundingClientRect().height<=50);
+    check('native dashboard keeps single-line rows without unpriced fallback labels',!document.querySelector('.dash-unpriced-report,.dash-unpriced-badge')&&!document.querySelector('.dash').textContent.includes('未计价')&&document.querySelector('.dash-table tbody tr').getBoundingClientRect().height<=50);
   } finally {state=costFixtureState;tokenMatrixOpen=costFixtureMatrix;renderDashboard();}
   document.querySelector('.dash-table tbody tr').click();
   await wait(()=>location.hash.startsWith('#session=')&&document.querySelector('#detail')?.innerText.includes('POST'),'lazy native session detail');

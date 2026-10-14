@@ -59,8 +59,8 @@ try {
   }
   const value = () => dom.window.document.querySelector('[data-cache-hit-rate] .dash-hs-val')?.textContent;
   assert.equal(value(), '40.0%', 'actual dashboard uses the shared weighted calculation');
-  assert.equal(dom.window.document.querySelector('[data-cache-hit-rate] .dash-hs-label').textContent, '缓存命中率（已知）');
-  assert.match(dom.window.document.querySelector('[data-cache-hit-rate]').title,/已排除 1 条/);
+  assert.equal(dom.window.document.querySelector('[data-cache-hit-rate] .dash-hs-label').textContent, '缓存命中率');
+  assert.doesNotMatch(dom.window.document.querySelector('[data-cache-hit-rate]').title,/已排除|缺项|未计价/);
   assert.ok(!dom.window.document.querySelector('.dash-hero-side').textContent.includes('错误率'));
   dom.window.document.querySelector('[data-sfilter="claude-cli"]').click();
   assert.equal(value(), '60.0%', 'source filter recomputes from only selected sessions');
@@ -70,8 +70,7 @@ try {
     startedAt:'2026-10-14T00:00:00Z', usageByModel:{} };
   dom.window.eval('state.sessions = '+JSON.stringify([allUnknown])+';state.dashSourceFilter="all";renderDashboard();');
   assert.equal(value(),'—');
-  assert.match(dom.window.document.querySelector('[data-cache-hit-rate]').title,/已纳入 0 条，已排除 3 条/,
-    'an entirely unknown population still explains its exclusion count');
+  assert.deepEqual(JSON.parse(dom.window.eval('JSON.stringify(window.XwXTraceCacheRate.details(state.sessions))')).excludedRequests,3);
   const continued = {id:'known-after-legacy',sessionId:'legacy-cache',turn:4,source:'codex-cli',
     startedAt:'2026-10-14T00:00:01Z',completedAt:'2026-10-14T00:00:02Z',
     request:{model:'fixture',apiType:'responses',body:{input:'synthetic'}},
@@ -79,13 +78,11 @@ try {
       cacheReadTokens:60,cacheCreationTokens:0,outputTokens:5,totalTokens:105}};
   dom.window.mergeTrace(continued);dom.window.renderDashboard();
   assert.equal(value(),'60.0%');
-  assert.match(dom.window.document.querySelector('[data-cache-hit-rate]').title,/已纳入 1 条，已排除 3 条/,
-    'SSE continuation cannot lose the old summary exclusion count');
+  assert.equal(JSON.parse(dom.window.eval('JSON.stringify(window.XwXTraceCacheRate.details(state.sessions))')).excludedRequests,3, 'SSE continuation cannot lose the old summary exclusion count');
   assert.deepEqual(JSON.parse(dom.window.eval('JSON.stringify(state.sessions[0].cacheHitUsage)')),
     {inputTokens:100,cacheReadTokens:60,knownRequests:1,excludedRequests:3});
   dom.window.mergeTrace(continued);dom.window.renderDashboard();
-  assert.match(dom.window.document.querySelector('[data-cache-hit-rate]').title,/已纳入 1 条，已排除 3 条/,
-    'duplicate delivery must not accumulate pairs or exclusions twice');
+  assert.equal(JSON.parse(dom.window.eval('JSON.stringify(window.XwXTraceCacheRate.details(state.sessions))')).excludedRequests,3, 'duplicate delivery must not accumulate pairs or exclusions twice');
   const reportedZero = {request:{model:'coverage-fixture'},usage:{version:2,inputUncachedTokens:0,inputTotalTokens:100,inputIncludesCache:true,cacheReadTokens:100,cacheCreationTokens:0,outputTokens:0,totalTokens:100}};
   const missingFields = {request:{model:'coverage-fixture'},usage:{version:2,incompleteFields:['input','output','cacheRead','cacheWrite','total']}};
   let coverage = dom.window.accumUsageByModel(undefined,reportedZero);
@@ -94,11 +91,11 @@ try {
   matrix.innerHTML = dom.window.renderTokenMatrix([{usageByModel:coverage}]);
   assert.deepEqual([...matrix.querySelector('tbody tr').querySelectorAll('td')].slice(1,6).map(e=>e.textContent),['0','100','0','0','100'],
     'missing usage preserves known zero and positive counters without stars');
-  assert.match(matrix.querySelector('tbody tr td:nth-child(5) span').title,/部分请求/);
+  assert.equal(matrix.querySelector('tbody tr td:nth-child(5) span'),null);
   matrix.innerHTML = dom.window.renderTokenMatrix([{usageByModel:dom.window.accumUsageByModel(undefined,missingFields)}]);
   assert.deepEqual([...matrix.querySelector('tbody tr').querySelectorAll('td')].slice(1,6).map(e=>e.textContent),['—','—','—','—','—'],
     'completely unknown counters remain unavailable');
-  assert.equal(dom.window.tokenCountHtml(0,true,true).includes('>0</span>'),true);
+  assert.equal(dom.window.tokenCountHtml(0,true,true),'0');
   assert.equal(dom.window.tokenCountHtml(100,true,true).includes('*'),false);
   console.log('PASS shared cache contract: weighted protocols, missing/legacy/invalid data, actual Viewer render and source-filter clicks');
 } finally { dom.window.close(); }

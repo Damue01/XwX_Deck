@@ -36,19 +36,8 @@ function TokenReadout({ stats, period }: TokenReadoutProps): React.ReactElement 
   const slot = stats?.[period] ?? { tokens: 0, costUsd: 0, costComplete: true };
   const pres = tokenCostPresentation({ showCost, tokens: slot.tokens, costUsd: slot.costUsd });
   const range = readoutRange(pres.value + pres.unit);
-  // A partial total is the most useful number available while at least one model
-  // priced: it is a real lower bound. But a partial total of exactly zero means
-  // nothing priced at all, and rendering that as $0.00 asserts the period cost
-  // nothing — which is strictly worse than admitting the figure is unavailable.
-  // Reproduced with periods containing only length-banded models captured before
-  // banding existed.
-  const nothingPriced = showCost && !slot.costComplete && slot.costUsd === 0;
-  const partialCost = showCost && !slot.costComplete && !nothingPriced;
-  const costHint = nothingPriced
-    ? t('缺少可靠的费率或用量，暂时无法计算费用；其他统计正常显示。')
-    : partialCost
-      ? t('金额只合计已知费用；未计价请求的数量和原因可在仪表盘查看。')
-      : pres.toggleHint;
+  const nothingPriced = showCost && !slot.costComplete && slot.costUsd === 0
+    && (slot.knownCostRequests ?? 0) === 0;
 
   return (
     <div className="hero-readout">
@@ -58,12 +47,12 @@ function TokenReadout({ stats, period }: TokenReadoutProps): React.ReactElement 
         role="button"
         tabIndex={0}
         aria-label={t("切换 Token 与费用")}
-        title={costHint}
+        title={pres.toggleHint}
         onClick={() => setShowCost(c => !c)}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
       >
         <div className="readout-eyebrow">
-          <span className="readout-label" id="readoutLabel">{pres.label}{nothingPriced ? t('（无可信价格）') : ''}</span>
+          <span className="readout-label" id="readoutLabel">{pres.label}</span>
         </div>
         <div className="readout-value" id="readoutValue" data-range={range}>
           <ReadoutDigits

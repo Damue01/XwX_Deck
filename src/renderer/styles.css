@@ -856,7 +856,6 @@ body[data-trace-switching] .appearance-idle-entry { transform: none; }
 .readout-value[data-range="wide"] { font-size: clamp(42px,6vw,64px); }
 /* Marks a cost total that excludes models with no verified price, so the figure
    reads as a lower bound rather than a complete bill. */
-.readout-partial { margin-left: 2px; color: var(--quiet); font-size: .42em; font-weight: 600; vertical-align: super; }
 .readout-value[data-range="extra-wide"] { font-size: clamp(34px,5vw,54px); }
 /* Number Ticker (value changes) + a single-block fade-up on Token ↔ 费用. */
 .readout-digits { position: relative; display: inline-flex; vertical-align: top; }

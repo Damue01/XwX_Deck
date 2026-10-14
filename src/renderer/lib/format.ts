@@ -53,9 +53,13 @@ export function tokenCostPresentation(options: {
 }): TokenCostPresentation {
   const english = options.language === 'en';
   if (options.showCost) {
+    const cost = Number(options.costUsd || 0);
+    const value = cost > 0 && cost < 1
+      ? String(Number(cost.toPrecision(6)))
+      : cost.toFixed(cost >= 100 ? 0 : cost >= 1 ? 2 : 4);
     return {
       label: 'USD',
-      value: Number(options.costUsd || 0).toFixed(2),
+      value,
       unit: '$',
       toggleHint: english ? 'Show Token usage' : t('点击查看 Token 使用量')
     };

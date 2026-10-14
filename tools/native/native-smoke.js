@@ -555,6 +555,29 @@
       check('hot switch success matches the saved provider and model', (await window.xwxDeck.getProviders()).active.codex==='Native_Second' && (await window.xwxDeck.getCodexConfig()).compatible.model==='pilot-model');
       check('ordinary switch shows a toast and retains the listener without a confirmation', !document.querySelector('[role=alertdialog]') && (await window.xwxDeck.getState()).localBaseUrl===runningBase);
       document.querySelector('.rail [data-page="signal"]').click(); await delay(200);
+      const realReadoutStats = window.xwxDeck.getTraceStats;
+      const readoutText = () => document.querySelector('#readoutValue .sr-only')?.textContent;
+      const clickPeriod = period => document.querySelector('[data-period="'+period+'"]').click();
+      const knownReadout = {total:{tokens:165,costUsd:.003,costComplete:false,knownCostRequests:1},today:{tokens:0,costUsd:0,costComplete:false,knownCostRequests:1},week:{tokens:0,costUsd:0,costComplete:false,knownCostRequests:0},series:[]};
+      try {
+        window.xwxDeck.getTraceStats = async () => knownReadout;
+        clickPeriod('total');
+        await wait(()=>readoutText()==='165','synthetic known readout reaches actual Trace component');
+        document.querySelector('#tokenReadout').click();
+        await wait(()=>readoutText()==='$0.003','Trace tiny known amount');
+        check('native Trace displays tiny known amounts without stars or partial labels',document.querySelector('#readoutLabel').textContent==='USD'&&!document.querySelector('.readout-partial')&&!/未计价|部分|缺少|可靠|\*/.test(document.querySelector('#tokenReadout').title));
+        clickPeriod('today');await wait(()=>readoutText()==='$0.0000','Trace known zero');
+        check('native Trace retains known zero despite another request missing usage',document.querySelector('#readoutLabel').textContent==='USD');
+        clickPeriod('week');await wait(()=>readoutText()==='—','Trace unknown amount');
+        check('native Trace uses a plain dash for unknown amounts without fallback labels',document.querySelector('#readoutLabel').textContent==='USD');
+        clickPeriod('total');document.querySelector('#tokenReadout').click();
+        await wait(()=>readoutText()==='165','Trace returns to tokens');
+        check('native Trace period and amount toggles retain exact known token total',!document.querySelector('.readout-partial'));
+      } finally {
+        window.xwxDeck.getTraceStats = realReadoutStats;
+        clickPeriod('total');
+        if(document.querySelector('#readoutLabel').textContent==='USD')document.querySelector('#tokenReadout').click();
+      }
       const request = await window.__TAURI__.core.invoke('pilot_rpc', { method: 'smokeRequest', args: [false] });
       check('native window real streaming round trip', request.status === 200 && request.body.includes('response.completed'));
       document.querySelector('#dashBtn').click();
