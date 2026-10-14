@@ -107,3 +107,5 @@ Windows、macOS、CLI 和 Desktop 分别登记。
 自然耗尽后的同会话自动切换仍需真实资源。
 当前没有全应用随机操作或长时间浸泡套件。
 原生窗口物理操作与其他平台仍需单独验收。
+
+T04 和 T15 的目录与已有压缩项检查见 [Codex 专项验收](codex-provider-continuation-acceptance.md)。
