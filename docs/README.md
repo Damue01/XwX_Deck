@@ -36,3 +36,4 @@ Codex 目录和加密续接见 [专项验收](codex-provider-continuation-accept
 模型资料的动态更新与兼容边界见 [消费链路审计](model-metadata-consumption-audit.md)。
 
 服务切换、Trace 开关与同线程续接见 [路由链路审计](routing-consumption-audit.md)。
+本轮执行结果见 [路由交付记录](routing-consumption-delivery.md)。
