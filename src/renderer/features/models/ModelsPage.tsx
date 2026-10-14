@@ -226,7 +226,8 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       bridge.patch({ codexConfig: config, providers, modelServices: services, runtime });
       clearLifecycleNotice();
       if (result.conflicts.length) {
-        showToast(t('ChatGPT 配置已修复，部分选择未恢复'), 'warning', undefined, {
+        showToast('ChatGPT 配置已修复，部分选择未恢复', 'warning', undefined, {
+          diagnostic: true,
           description: result.conflicts.join('；')
         });
       } else {
@@ -237,10 +238,11 @@ export function ModelsPage({ active }: Props): React.ReactElement {
     } catch (error) {
       if (!isCurrent()) return;
       if (result) {
-        showToast(t('ChatGPT 配置已写入并验证，页面状态暂未刷新'), 'warning', undefined, {
+        showToast('ChatGPT 配置已写入并验证，页面状态暂未刷新', 'warning', undefined, {
+          diagnostic: true,
           description: result.conflicts.length
             ? result.conflicts.join('；')
-            : t('重新打开模型页查看；正在运行的 ChatGPT 可能需要重启。')
+            : '重新打开模型页查看；正在运行的 ChatGPT 可能需要重启。'
         });
       } else {
         showErrorToast(t('修复 ChatGPT 配置失败'), error, undefined, {

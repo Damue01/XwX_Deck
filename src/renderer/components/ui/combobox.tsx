@@ -85,7 +85,7 @@ export function ComboboxPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="z-50 select-none"
+        className="z-(--z-menu) select-none"
         collisionPadding={collisionPadding}
         data-slot="combobox-positioner"
         side={side}

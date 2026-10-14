@@ -1,5 +1,11 @@
 /** Product copy only. User-entered values and model IDs are never translated. */
 export const english: Readonly<Record<string, string>> = {
+  "官网入口": "Official site",
+  "安装说明": "Installation guide",
+  "复制连接信息失败": "Could not copy connection details",
+  "本地 Gateway 占位密钥，不是服务商 API Key": "Local Gateway placeholder key, not a provider API Key",
+  "这里只保存 XwX Deck 的模型选择，不修改 Qoder 配置。请在 Qoder 中使用 /model → Custom 向导；可用服务、模型和凭据字段以当前账号的向导为准。": "Only the XwX Deck model choice is saved here; Qoder configuration is unchanged. Use the /model → Custom wizard in Qoder. Available providers, models, and credential fields depend on the current account’s wizard.",
+  "仅在向导允许时填写下面的 Gateway 信息，不要手动修改 settings.json。": "Use the Gateway details below only if the wizard permits them. Do not edit settings.json manually.",
   "我的配置": "My configurations",
   "模型服务详情": "Model service details",
   "此模型不可用": "This model is unavailable",

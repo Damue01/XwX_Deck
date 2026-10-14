@@ -427,5 +427,364 @@
       "cacheCreationTokens": 80,
       "totalTokens": 105
     }
+  },
+  {
+    "name": "qwen-responses-native-chat-billing-default-write",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 60
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 100,
+          "output_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 60
+          },
+          "total_tokens": 105
+        }
+      ]
+    },
+    "expected": {
+      "cacheCreationTokens": 0,
+      "cacheReadTokens": 60,
+      "inputUncachedTokens": 40,
+      "inputTotalTokens": 100,
+      "outputTokens": 5,
+      "totalTokens": 105,
+      "optionalDefaults": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "qwen-responses-mismatched-does-not-default",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 60
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 99,
+          "output_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 60
+          },
+          "total_tokens": 105
+        }
+      ]
+    },
+    "expected": {
+      "incompleteFields": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "qwen-responses-unknown-schema-does-not-default",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 60
+      },
+      "x_details": [
+        {
+          "x_billing_type": "unknown",
+          "input_tokens": 100,
+          "output_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 60
+          },
+          "total_tokens": 105
+        }
+      ]
+    },
+    "expected": {
+      "incompleteFields": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "qwen-responses-invalid-outer-write-does-not-default",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 60,
+        "cache_write_tokens": -1
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 100,
+          "output_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 60
+          },
+          "total_tokens": 105
+        }
+      ]
+    },
+    "expected": {
+      "incompleteFields": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "qwen-responses-inner-write-does-not-default",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 60
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 100,
+          "output_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 60,
+            "cache_write_tokens": 20
+          },
+          "total_tokens": 105
+        }
+      ]
+    },
+    "expected": {
+      "incompleteFields": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "qwen-responses-explicit-write-wins",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 60,
+        "cache_write_tokens": 10
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 100,
+          "output_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 60
+          },
+          "total_tokens": 105
+        }
+      ]
+    },
+    "expected": {
+      "cacheCreationTokens": 10,
+      "inputUncachedTokens": 30
+    }
+  },
+  {
+    "name": "qwen-responses-unsafe-inner-and-outer-do-not-default",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 9007199254740992,
+      "output_tokens": 9007199254740992,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 9007199254740992
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 9007199254740992,
+          "output_tokens": 9007199254740992,
+          "prompt_tokens_details": {
+            "cached_tokens": 9007199254740992
+          },
+          "total_tokens": 105
+        }
+      ]
+    },
+    "expected": {
+      "incompleteFields": [
+        "input",
+        "cacheRead",
+        "cacheWrite",
+        "output"
+      ]
+    }
+  },
+  {
+    "name": "qwen-responses-inner-camel-write-does-not-default",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 60
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 100,
+          "output_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 60
+          },
+          "total_tokens": 105,
+          "cacheCreationTokens": 20
+        }
+      ]
+    },
+    "expected": {
+      "incompleteFields": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "qwen-responses-inner-creation-object-does-not-default",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 60
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 100,
+          "output_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 60
+          },
+          "total_tokens": 105,
+          "cache_creation": {
+            "input_tokens": 20
+          }
+        }
+      ]
+    },
+    "expected": {
+      "incompleteFields": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "qwen-responses-inner-ttl-write-does-not-default",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 60
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 100,
+          "output_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 60,
+            "cache_write_5m_tokens": 20
+          },
+          "total_tokens": 105
+        }
+      ]
+    },
+    "expected": {
+      "incompleteFields": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "qwen-responses-inner-ttl-hour-write-does-not-default",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 100,
+      "output_tokens": 5,
+      "total_tokens": 105,
+      "input_tokens_details": {
+        "cached_tokens": 60
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 100,
+          "output_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 60
+          },
+          "total_tokens": 105,
+          "claude_cache_creation_1_h_tokens": 20
+        }
+      ]
+    },
+    "expected": {
+      "incompleteFields": [
+        "cacheWrite"
+      ]
+    }
+  },
+  {
+    "name": "qwen-responses-safe-integer-boundary-remains-valid",
+    "wire": "responses",
+    "raw": {
+      "input_tokens": 9007199254740991,
+      "output_tokens": 0,
+      "total_tokens": 9007199254740991,
+      "input_tokens_details": {
+        "cached_tokens": 9007199254740991
+      },
+      "x_details": [
+        {
+          "x_billing_type": "response_api",
+          "input_tokens": 9007199254740991,
+          "output_tokens": 0,
+          "prompt_tokens_details": {
+            "cached_tokens": 9007199254740991
+          },
+          "total_tokens": 9007199254740991
+        }
+      ]
+    },
+    "expected": {
+      "cacheCreationTokens": 0,
+      "cacheReadTokens": 9007199254740991,
+      "inputUncachedTokens": 0,
+      "inputTotalTokens": 9007199254740991,
+      "outputTokens": 0,
+      "totalTokens": 9007199254740991,
+      "optionalDefaults": [
+        "cacheWrite"
+      ]
+    }
   }
 ]

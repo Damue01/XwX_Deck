@@ -397,6 +397,8 @@ export interface TapModelUsageBand {
 }
 
 export interface TapModelUsage {
+  /** Per-field request coverage distinguishes reported zero from unavailable data. */
+  readonly knownFieldCounts?: Partial<Record<'input' | 'cacheRead' | 'cacheWrite' | 'output' | 'total', number>>;
   /** Known monetary subtotal frozen per captured request; null means no priced component. */
   readonly capturedCost?: { readonly cost?: number | null; readonly complete: boolean };
   /** Version 2 makes every displayed input/cache bucket mutually exclusive. */
@@ -466,6 +468,13 @@ export interface TapSessionSummary {
   /** 该 session 最晚一条请求的 startedAt。 */
   readonly lastRequestAt?: string;
   readonly traceCount: number;
+  /** Complete per-request input/cache pairs; incomplete requests are excluded. */
+  readonly cacheHitUsage?: {
+    readonly inputTokens: number;
+    readonly cacheReadTokens: number;
+    readonly knownRequests: number;
+    readonly excludedRequests: number;
+  };
   readonly jsonlPath: string;
   /** 历史字段：早期版本写入。新逻辑不再用，仅保留以读旧 index.json。 */
   readonly interactionId?: string;

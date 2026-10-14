@@ -1,7 +1,7 @@
 import type { ProviderSnapshot } from '../../shared/providers';
 import * as React from 'react';
 import { getApi, isDesktop } from './api';
-import { showLifecycleNotice } from '@/lib/toast';
+import { showLifecycleNotice, recordDiagnosticNotice } from '@/lib/toast';
 import { lifecycleFailure } from '../../shared/lifecycleNotice';
 import type {
   ClaudeModelSettings,
@@ -154,9 +154,10 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
             setIssue(label, null);
           }
         }).catch(error => {
-          if (generations.get(label) !== generation) return;
+          if (!alive || generations.get(label) !== generation) return;
           setIssue(label, '加载失败，可重试');
           if (label === '加载应用状态') showLifecycleNotice(lifecycleFailure(error, label));
+          else recordDiagnosticNotice(lifecycleFailure(error, label));
         }).finally(() => { clearTimeout(timer); timers.delete(timer); });
       };
       jobs.set(label, run);

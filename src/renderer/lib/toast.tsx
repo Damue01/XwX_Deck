@@ -62,6 +62,11 @@ export function readLastDiagnosticNotice(): LifecycleNotice | undefined {
   return lastDiagnosticNotice;
 }
 
+export function recordDiagnosticNotice(notice: LifecycleNotice): void {
+  lastDiagnosticNotice = notice;
+  window.dispatchEvent(new Event(DIAGNOSTIC_NOTICE_EVENT));
+}
+
 export function clearLastDiagnosticNotice(): void {
   if (!lastDiagnosticNotice) return;
   lastDiagnosticNotice = undefined;
@@ -72,10 +77,9 @@ export function clearLifecycleNotice(): void {
   for (const key of lifecycleToastKeys) closeToast(key);
   lifecycleToastKeys.clear();
   lifecycleNotices.clear();
-  clearLastDiagnosticNotice();
 }
 
-export function showLifecycleNotice(notice: LifecycleNotice, key?: string): void {
+export function showLifecycleNotice(notice: LifecycleNotice, key?: string, record = true): void {
   if (notice.type === 'success') clearLifecycleNotice();
   const persistent = isPersistentLifecycleNotice(notice);
   const toastKey = key ?? (persistent ? 'runtime-lifecycle-issue' : `${notice.type}:${notice.message}`);
@@ -88,20 +92,20 @@ export function showLifecycleNotice(notice: LifecycleNotice, key?: string): void
     description: notice.description,
     timeout: persistent ? 0 : undefined,
     actionProps: action(notice.action, notice.actionLabel),
-    secondaryActionProps: action(notice.secondaryAction, notice.secondaryActionLabel)
+    secondaryActionProps: action(notice.secondaryAction, notice.secondaryActionLabel),
+    diagnostic: false
   });
-  if (notice.type === 'error') {
-    lastDiagnosticNotice = notice;
-    window.dispatchEvent(new Event(DIAGNOSTIC_NOTICE_EVENT));
-  }
+  if (record && (notice.type ?? 'error') === 'error') recordDiagnosticNotice(notice);
 }
 
 export function setLifecycleActionsBusy(busy: boolean): void {
   lifecycleActionsBusy = busy;
-  for (const [key, notice] of lifecycleNotices) if (notifications.has(key)) showLifecycleNotice(notice, key);
+  for (const [key, notice] of lifecycleNotices) if (notifications.has(key)) showLifecycleNotice(notice, key, false);
 }
 
 interface ShowToastOptions {
+  /** Retain operation failures independently of current toast/recovery state. */
+  readonly diagnostic?: boolean;
   readonly description?: string;
   readonly timeout?: number;
   readonly actionProps?: React.ComponentPropsWithoutRef<'button'>;
@@ -127,10 +131,8 @@ export function showToast(
   key?: string,
   options: ShowToastOptions = {}
 ): void {
-  if (type === 'error') {
-    lastDiagnosticNotice = { message, description: options.description ? t(options.description) : undefined, type };
-    window.dispatchEvent(new Event(DIAGNOSTIC_NOTICE_EVENT));
-  }
+  if (options.diagnostic ?? type === 'error') recordDiagnosticNotice({ message,
+    description: options.description, type: 'error' });
   // Short UI notifications omit the final sentence stop. Keep inner punctuation,
   // ellipses and the original message/key used by lifecycle and deduplication.
   const copy = (text: string) => text.replace(/(?<!\.)[。.]\s*$/u, '');

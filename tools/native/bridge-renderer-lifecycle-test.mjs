@@ -25,7 +25,7 @@ api.getModelClients = async () => ['claude', 'codex'];
 for (const [method, kind] of [['onState', 'state'], ['onUpdateState', 'update'], ['onShowUpdateDetails', 'details']]) api[method] = callback => {
   subscriptions[kind].add(callback); return () => subscriptions[kind].delete(callback);
 };
-globalThis.__bridgeFixture = { api };
+globalThis.__bridgeFixture = { api, notices: [] };
 const rootPath = resolve(import.meta.dirname, '../..'), entry = resolve(rootPath, 'src/renderer/bridge/store.tsx');
 const bundle = await esbuild.build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs', write: false,
   external: ['react', 'react/*'], plugins: [{ name: 'deferred-native-bridge', setup(build) {
@@ -33,7 +33,7 @@ const bundle = await esbuild.build({ entryPoints: [entry], bundle: true, platfor
     build.onResolve({ filter: /^@\/lib\/toast$/ }, () => ({ path: 'toast', namespace: 'fixture' }));
     build.onLoad({ filter: /.*/, namespace: 'fixture' }, args => ({ loader: 'js', contents: args.path === 'api'
       ? 'export const getApi=()=>globalThis.__bridgeFixture.api;export const isDesktop=()=>true;'
-      : 'export const showLifecycleNotice=()=>{};' }));
+      : 'export const showLifecycleNotice=n=>globalThis.__bridgeFixture.notices.push(n);export const recordDiagnosticNotice=n=>globalThis.__bridgeFixture.notices.push(n);' }));
   } }],
 });
 const compiled = { exports: {} };
@@ -48,7 +48,8 @@ try {
   await act(async () => { root.render(React.createElement(React.StrictMode, null, React.createElement(BridgeProvider, null, React.createElement(Consumer)))); });
   assert.equal(latest.booted, true); assert.deepEqual(latest.modelClients, ['claude', 'codex']); assert.equal(latest.providers, null);
   // Release the first StrictMode mount's stale requests; they must be inert.
-  await act(async () => { for (const list of jobs.values()) for (const job of list.slice(0, -1)) job.resolve({}); });
+  await act(async () => { for (const list of jobs.values()) for (const job of list.slice(0, -1)) job.reject(Error('late StrictMode startup rejection')); });
+  assert.equal(globalThis.__bridgeFixture.notices.length,0,'unmounted StrictMode reads must not write global failure history');
   await act(async () => { latest.patch({ providers: provider('saved'), codexConfig: { marker: 'saved-codex' } }); });
   await act(async () => { last('getProviders').resolve(provider('old-boot')); last('getCodexConfig').resolve({ marker: 'old-codex' }); last('getClaudeModels').resolve({ marker: 'independent-claude' }); });
   assert.equal(latest.providers.marker, 'saved'); assert.equal(latest.codexConfig.marker, 'saved-codex'); assert.equal(latest.claudeModels.marker, 'independent-claude');
@@ -82,14 +83,19 @@ try {
   pass('metadata refresh retains a newly saved provider while still accepting independent model data');
   await act(async () => { window.dispatchEvent(new Event('xwxdeck:metadata-changed')); last('getProviders').reject(Error('isolated catalog failure')); });
   assert.ok(latest.loadIssues.some(issue => issue.startsWith('加载模型服务列表：加载失败')));
+  assert.equal(globalThis.__bridgeFixture.notices.length,1,'active non-runtime load failure is retained without a blocking toast');
+  assert.equal(globalThis.__bridgeFixture.notices[0].message,'加载模型服务列表失败');
   await act(async () => { latest.retryInitialData(); });
   await act(async () => { last('getProviders').resolve(provider('successful-retry')); });
   assert.equal(latest.providers.marker, 'successful-retry'); assert.ok(!latest.loadIssues.some(issue => issue.startsWith('加载模型服务列表：')));
   pass('failed refresh remains actionable and a successful retry publishes fresh data and clears its issue');
+  await act(async () => { window.dispatchEvent(new Event('xwxdeck:metadata-changed')); });
+  const lateFailure=last('getProviders'),noticeCount=globalThis.__bridgeFixture.notices.length;
   const patch = latest.patch;
   await act(async () => { root.unmount(); patch({ providers: provider('after-unmount') }); });
   assert.equal(subscriptions.state.size + subscriptions.update.size + subscriptions.details.size, 0);
-  await act(async () => { for (const list of jobs.values()) for (const job of list) job.resolve({}); });
+  await act(async () => { lateFailure.reject(Error('late rejection after final unmount')); for (const list of jobs.values()) for (const job of list) job.resolve({}); });
+  assert.equal(globalThis.__bridgeFixture.notices.length,noticeCount,'late failures after unmount cannot replace a newer diagnostic record');
   pass('StrictMode and final unmount remove subscriptions/timers and make late callbacks inert');
   console.log(JSON.stringify({ passed: true, checks, scope: 'actual React BridgeProvider under StrictMode with deferred IPC reads and push events; background ordering only, no native WebView or platform claim' }));
 } finally { await act(async () => { root.unmount(); }); dom.window.close(); delete globalThis.__bridgeFixture; }

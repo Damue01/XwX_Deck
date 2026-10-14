@@ -110,6 +110,16 @@ export function GatewayClientModels({ client, active }: { client: DownloadClient
     setProvider(providerId); setModel(modelId);
     void save(providerId, modelId);
   };
+  const copyConnection = async (value: string) => {
+    try {
+      await bridge.api.copyText(value);
+      if (mounted.current && activeRef.current) showToast(t('已复制'), 'success');
+    } catch (error) {
+      if (mounted.current && activeRef.current) showErrorToast(t('复制连接信息失败'), error, `client-copy:${client}`, {
+        actionProps: { children: t('重试'), onClick: () => void copyConnection(value) }
+      });
+    }
+  };
   if (!bridge.api.getClientRoute) return <ClientDownloads client={client} />;
   const gatewayBase = bridge.runtime?.localBaseUrl ? `${bridge.runtime.localBaseUrl}/clients/${client}` : null;
   const base = gatewayBase ? `${gatewayBase}${['gemini-cli', 'antigravity-cli'].includes(client) ? '' : '/v1'}` : null;
@@ -125,16 +135,18 @@ export function GatewayClientModels({ client, active }: { client: DownloadClient
       <span className="fr-label">{t('默认模型')}</span>
       <div className="fr-value" aria-busy={busy || catalogBusy}><ModelPicker value={model} catalog={catalog} disabled={busy || !provider} onChange={id => choose(provider, id)} noteFor={id => catalog.length && !catalog.some(item => item.id === id) ? { label: t('不在目录'), hint: t('保留已选择的模型') } : undefined} /></div>
     </div>
-    {route && !route.automatic && <details className="setup-card-downloads gateway-client-connection">
+    {route && !route.automatic && <>
+      {client === 'qoder' && <p className="strategy-order-help">{t('这里只保存 XwX Deck 的模型选择，不修改 Qoder 配置。请在 Qoder 中使用 /model → Custom 向导；可用服务、模型和凭据字段以当前账号的向导为准。')}{' '}{t('仅在向导允许时填写下面的 Gateway 信息，不要手动修改 settings.json。')}</p>}
+      <details className="setup-card-downloads gateway-client-connection">
       <summary>{t('连接设置')}<ChevronDown aria-hidden="true" /></summary>
       <div className="field-row">
       <span className="fr-label">{t('接入地址')}</span>
-      <div className="fr-value"><button type="button" className="provider-text-action" disabled={!base || !route.providerId} aria-label={t('复制接入地址')} title={base ?? t('开启 Trace 后可连接')} onClick={() => { if (base) void bridge.api.copyText(base).then(() => showToast(t('已复制'), 'success')); }}><span className="mono">{base ?? t('开启 Trace 后可连接')}</span><Copy size={14} /></button></div>
+      <div className="fr-value"><button type="button" className="provider-text-action" disabled={!base || !route.providerId} aria-label={t('复制接入地址')} title={base ?? t('开启 Trace 后可连接')} onClick={() => { if (base) void copyConnection(base); }}><span className="mono">{base ?? t('开启 Trace 后可连接')}</span><Copy size={14} /></button></div>
     </div><div className="field-row">
       <span className="fr-label">{t('接入密钥')}</span>
-      <div className="fr-value"><button type="button" className="provider-text-action" disabled={!base || !route.providerId} aria-label={t('复制接入密钥')} onClick={() => void bridge.api.copyText('xwx-deck').then(() => showToast(t('已复制'), 'success'))}><span className="mono">xwx-deck</span><Copy size={14} /></button></div>
+      <div className="fr-value"><button type="button" className="provider-text-action" disabled={!base || !route.providerId} aria-label={t('复制接入密钥')} title={t('本地 Gateway 占位密钥，不是服务商 API Key')} onClick={() => void copyConnection('xwx-deck')}><span className="mono">xwx-deck</span><Copy size={14} /></button></div>
     </div>
-      {help && <a className="setup-card-link" href={help} target="_blank" rel="noopener noreferrer" onClick={event => { event.preventDefault(); void bridge.api.openSetupWebsite(helpKey).catch(error => showErrorToast(t('打开下载入口失败'), error)); }}>{t('查看连接说明')}<ArrowUpRight aria-hidden="true" /></a>}
-    </details>}
+      {help && <a className="setup-card-link" href={help} target="_blank" rel="noopener noreferrer" onClick={event => { event.preventDefault(); void bridge.api.openSetupWebsite(helpKey).catch(error => showErrorToast(t('打开官方页面失败'), error)); }}>{t('查看连接说明')}<ArrowUpRight aria-hidden="true" /></a>}
+    </details></>}
   </>;
 }

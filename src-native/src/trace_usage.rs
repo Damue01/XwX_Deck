@@ -133,6 +133,53 @@ pub(super) fn normalize_for_request(value: &Value, wire: &str, request: &Value) 
     ]
     .contains(&wire)
         && (input.is_some() || output.is_some());
+    // Qwen native Responses publishes complete Chat-shaped billing details.
+    // Its omitted write counter follows that optional schema, not OpenAI's
+    // required write schema. Validate every detail and the outer totals first.
+    let chat_billing_details = ["responses", "openai-responses"].contains(&wire)
+        && input.is_some()
+        && output.is_some()
+        && read.is_some()
+        && u["x_details"].as_array().is_some_and(|parts| {
+            !parts.is_empty()
+                && parts.iter().all(|part| {
+                    part["x_billing_type"] == "response_api"
+                        && [
+                            &part["input_tokens"],
+                            &part["output_tokens"],
+                            &part["prompt_tokens_details"]["cached_tokens"],
+                        ]
+                        .iter()
+                        .all(|value| value.as_u64().is_some_and(|n| n <= 9_007_199_254_740_991))
+                        && [
+                            "cache_write_tokens",
+                            "cache_creation_tokens",
+                            "cache_creation_input_tokens",
+                            "cacheCreationTokens",
+                            "cache_creation",
+                            "cache_write_5m_tokens",
+                            "cache_write_1h_tokens",
+                            "claude_cache_creation_5_m_tokens",
+                            "claude_cache_creation_1_h_tokens",
+                        ]
+                        .iter()
+                        .all(|key| {
+                            part.get(*key).is_none()
+                                && part["prompt_tokens_details"].get(*key).is_none()
+                        })
+                })
+                && parts
+                    .iter()
+                    .try_fold(0, |sum, p| add(sum, p["input_tokens"].as_u64()?))
+                    == input
+                && parts
+                    .iter()
+                    .try_fold(0, |sum, p| add(sum, p["output_tokens"].as_u64()?))
+                    == output
+                && parts.iter().try_fold(0, |sum, p| {
+                    add(sum, p["prompt_tokens_details"]["cached_tokens"].as_u64()?)
+                }) == read
+        });
     let mut defaults = vec![];
     let mut derived = vec![];
     if optional
@@ -151,7 +198,7 @@ pub(super) fn normalize_for_request(value: &Value, wire: &str, request: &Value) 
         read = Some(0);
         defaults.push("cacheRead");
     }
-    if optional
+    if (optional || chat_billing_details)
         && write.is_none()
         && !supplied(&[
             &u["cache_creation_input_tokens"],

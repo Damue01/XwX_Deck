@@ -70,10 +70,9 @@ export function RepairCenterSheet({
             type="button"
             className="btn repair-action-button"
             key={action}
-            aria-label={(index === 0 ? notice.actionLabel : notice.secondaryActionLabel) ?? noticeActionLabel(action)}
-            title={(index === 0 ? notice.actionLabel : notice.secondaryActionLabel) ?? noticeActionLabel(action)}
+            aria-label={t((index === 0 ? notice.actionLabel : notice.secondaryActionLabel) ?? noticeActionLabel(action))}
+            title={t((index === 0 ? notice.actionLabel : notice.secondaryActionLabel) ?? noticeActionLabel(action))}
             onClick={() => {
-              clearLastDiagnosticNotice();
               setOpen(false);
               runNoticeAction(action);
             }}
@@ -126,8 +125,8 @@ export function RepairCenterSheet({
                   {notices.map((notice, index) => notice ? (
                     <article className="repair-notice" key={`${notice.message}:${notice.description}`}>
                       <span className="repair-action-copy">
-                        <h3>{index === 0 && currentNotice ? t('当前问题') : t('最近一次失败')}：{notice.message}</h3>
-                        {notice.description ? <p>{notice.description}</p> : null}
+                        <h3>{index === 0 && currentNotice ? t('当前问题') : t('最近一次失败')}：{t(notice.message)}</h3>
+                        {notice.description ? <p>{t(notice.description)}</p> : null}
                       </span>
                       {renderNoticeActions(notice)}
                       {notice === recentNotice && notice !== currentNotice ? (

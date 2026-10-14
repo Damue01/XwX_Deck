@@ -7,11 +7,11 @@ export const CLIENT_DOWNLOADS = [
   { id: 'deepseek-harness', label: 'DeepSeek Harness', icon: 'deepseek', url: 'https://deepseek.com/harness/' },
   { id: 'zcode', label: 'ZCode（智谱）', icon: 'zhipu', url: 'https://zcode.z.ai/cn/docs/install' },
   { id: 'kimi-code', label: 'Kimi Code', icon: 'kimi', url: 'https://www.kimi.com/code/docs/' },
-  { id: 'minimax-code', label: 'MiniMax Code', icon: 'minimax', url: 'https://agent.minimax.io' },
+  { id: 'minimax-code', label: 'MiniMax Agent', downloadLabel: 'MiniMax Desktop', icon: 'minimax', url: 'https://agent.minimax.io' },
   { id: 'codex-cli', label: 'Codex CLI', icon: 'chatgpt', url: 'https://learn.chatgpt.com/docs/codex/cli' },
   { id: 'claude-code', label: 'Claude Code', downloadLabel: 'Claude Code CLI', icon: 'claude', url: 'https://code.claude.com/docs/en/setup' },
   { id: 'gemini-cli', label: 'Gemini CLI', icon: 'gemini', url: 'https://geminicli.com/docs/get-started/installation/' },
-  { id: 'qwen-code', label: 'Qwen Code', downloadLabel: 'Qwen Code Desktop', icon: 'qwen', url: 'https://qwen.ai/qwencode' },
+  { id: 'qwen-code', label: 'Qwen Code', downloadLabel: 'Qwen Code CLI', icon: 'qwen', url: 'https://qwen.ai/qwencode' },
   { id: 'grok-build', label: 'Grok Build', icon: 'xai', url: 'https://x.ai/build' },
   { id: 'cursor', label: 'Cursor', downloadLabel: 'Cursor Desktop', icon: 'cursor', url: 'https://cursor.com/downloads' },
   { id: 'windsurf', label: 'Devin（Windsurf）', icon: 'windsurf', url: 'https://devin.ai/download' },
@@ -20,7 +20,7 @@ export const CLIENT_DOWNLOADS = [
   { id: 'trae', label: 'TRAE', icon: 'trae', url: 'https://www.trae.cn/download' },
   { id: 'opencode', label: 'OpenCode', downloadLabel: 'OpenCode Desktop', icon: 'opencode', url: 'https://opencode.ai/download' },
   { id: 'cline', label: 'Cline', icon: 'cline', url: 'https://docs.cline.bot/getting-started/installing-cline' },
-  { id: 'goose', label: 'Goose', icon: 'goose', url: 'https://block.github.io/goose/' },
+  { id: 'goose', label: 'Goose', icon: 'goose', url: 'https://goose-docs.ai/docs/getting-started/installation' },
   { id: 'pi', label: 'Pi', downloadLabel: 'Pi CLI', icon: 'pi', url: 'https://github.com/earendil-works/pi#getting-started' },
   { id: 'oh-my-pi', label: 'oh-my-pi', downloadLabel: 'oh-my-pi CLI', icon: 'omp', url: 'https://github.com/can1357/oh-my-pi#install' },
   { id: 'crush', label: 'Crush', downloadLabel: 'Crush CLI', icon: 'crush', url: 'https://github.com/charmbracelet/crush#installation' },
@@ -65,7 +65,7 @@ export function canonicalModelClient(id: DownloadClientId): DownloadClientId {
 export const MODEL_CLIENT_CATALOG = CLIENT_DOWNLOADS.filter(client => !['codex-cli', 'claude-code', 'cursor-cli'].includes(client.id));
 
 /** Clients with reversible configuration adapters, rather than download-only entries. */
-const MANAGED_MODEL_CLIENTS: readonly DownloadClientId[] = ['claude', 'codex', 'opencode', 'gemini-cli', 'qwen-code', 'pi', 'mimo-code', 'crush', 'qoder', 'droid', 'codebuddy-code', 'workbuddy'];
+const MANAGED_MODEL_CLIENTS: readonly DownloadClientId[] = ['claude', 'codex', 'opencode', 'gemini-cli', 'qwen-code', 'pi', 'mimo-code', 'crush', 'droid', 'codebuddy-code', 'workbuddy'];
 export function supportsManagedModels(client: DownloadClientId): boolean {
   return MANAGED_MODEL_CLIENTS.includes(canonicalModelClient(client));
 }

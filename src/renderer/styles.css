@@ -46,6 +46,7 @@
   --dur-state: 180ms;
   --dur-panel: 240ms;
   /* Global portals share this order. Toast remains above every app overlay. */
+  --z-onboarding: 20;
   --z-sheet-backdrop: 60;
   --z-sheet: 61;
   --z-dialog: 80;
@@ -1700,7 +1701,7 @@ html[data-theme="night"] .tour-backdrop-full { background: rgba(0,0,0,.7); }
    White paper with the Trace dot field flowing across the whole window. The
    field thins out under the reading column through a soft mask rather than a
    solid white cut-out, so it stays continuous. */
-.onboarding-setup { position: fixed; inset: 36px 0 0; z-index: 20; display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center; overflow: hidden; background: var(--paper); color: var(--ink); transition: opacity 420ms var(--ease); }
+.onboarding-setup { position: fixed; inset: 36px 0 0; z-index: var(--z-onboarding); display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center; overflow: hidden; background: var(--paper); color: var(--ink); transition: opacity 420ms var(--ease); }
 .app.native-frame .onboarding-setup, body:has(.app.native-frame) .onboarding-setup { top: 0; }
 .onboarding-step[hidden] { display: none; }
 .onboarding-setup.leaving { opacity: 0; pointer-events: none; }

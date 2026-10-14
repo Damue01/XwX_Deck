@@ -44,6 +44,27 @@ fn executable(path: &Path) -> bool {
     }
 }
 
+fn codex_bundle_identity(path: &Path) -> bool {
+    if !fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && metadata.len() <= 256 * 1024)
+    {
+        return false;
+    }
+    // Validate both XML and binary plists with the same native consumer parser.
+    // The guard applies only to macOS bundles; executable discovery is separate.
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/usr/bin/plutil")
+            .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-"])
+            .arg(path)
+            .output()
+            .is_ok_and(|output| output.status.success() && output.stdout == b"com.openai.codex\n")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 impl Discovery {
     pub fn for_home(home: &Path) -> Self {
         Self::in_home(home)
@@ -167,7 +188,7 @@ impl Discovery {
             "qoder" => (&["Qoder"], &["qoder", "qodercli"]),
             "droid" => (&[], &["droid"]),
             "copilot-cli" => (&[], &["copilot"]),
-            "mimo-code" => (&["MiMo Code", "Xiaomi MiMo"], &["mimocode"]),
+            "mimo-code" => (&["MiMo Code", "Xiaomi MiMo"], &["mimo", "mimocode"]),
             "workbuddy" => (&["WorkBuddy"], &["workbuddy"]),
             "codebuddy-code" => (&[], &["codebuddy", "cbc"]),
             "hermes-agent" => (&[], &["hermes"]),
@@ -202,12 +223,19 @@ impl Discovery {
         if self.apps.iter().any(|root| {
             apps.iter().any(|name| {
                 let bundle = root.join(format!("{name}.app/Contents/MacOS"));
-                if fs::read_dir(bundle)
-                    .into_iter()
-                    .flatten()
-                    .take(32)
-                    .filter_map(|entry| entry.ok())
-                    .any(|entry| executable(&entry.path()))
+                let supported_bundle = !(bundle.is_dir()
+                    && canonical_id(id) == "codex"
+                    && *name == "ChatGPT"
+                    && !codex_bundle_identity(&root.join("ChatGPT.app/Contents/Info.plist")));
+                // Only an actual macOS bundle has this identity contract.
+                // Keep Windows executable discovery until its own acceptance.
+                if supported_bundle
+                    && fs::read_dir(bundle)
+                        .into_iter()
+                        .flatten()
+                        .take(32)
+                        .filter_map(|entry| entry.ok())
+                        .any(|entry| executable(&entry.path()))
                 {
                     return true;
                 }
@@ -315,6 +343,85 @@ mod tests {
         assert!(discovery.installed("claude"));
         assert!(discovery.installed("claude-code"));
         assert!(!discovery.installed("codex"));
+    }
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn desktop_consumer_identity_distinguishes_legacy_chatgpt_and_renamed_codex() {
+        let f = Fixture::new();
+        f.file("Applications/ChatGPT.app/Contents/MacOS/ChatGPT", true);
+        f.file("Applications/ChatGPT.app/Contents/Info.plist", false);
+        let info = f.0.join("Applications/ChatGPT.app/Contents/Info.plist");
+        fs::write(&info, "<plist><dict><key>CFBundleIdentifier</key><string>com.openai.chat</string></dict></plist>").unwrap();
+        let discovery = Discovery::in_home(&f.0);
+        assert!(!discovery.installed("codex"));
+        assert!(!discovery.installed("codex-cli"));
+        fs::write(&info, "<plist><dict><key>CFBundleIdentifier</key><string>com.openai.codex</string><key>CFBundleExecutable</key><string>ChatGPT</string></dict></plist>").unwrap();
+        assert!(
+            discovery.installed("codex"),
+            "the currently renamed official Codex consumer remains manageable"
+        );
+        assert!(discovery.installed("codex-cli"));
+        fs::write(&info, "<plist><dict><key>CFBundleIdentifier</key><string>com.openai.chat</string></dict></plist>").unwrap();
+        f.file(
+            if cfg!(windows) {
+                "Applications/Codex/Codex.exe"
+            } else {
+                "Applications/Codex.app/Contents/MacOS/Codex"
+            },
+            true,
+        );
+        assert!(discovery.installed("codex"));
+        assert!(discovery.installed("codex-cli"));
+    }
+
+    #[test]
+    fn non_macos_named_chatgpt_executable_does_not_require_a_mac_plist() {
+        let f = Fixture::new();
+        f.file("Applications/ChatGPT/ChatGPT.exe", true);
+        assert!(Discovery::in_home(&f.0).installed("codex"));
+    }
+
+    #[test]
+    fn invalid_consumer_plist_does_not_imply_managed_configuration() {
+        let f = Fixture::new();
+        f.file("Applications/ChatGPT.app/Contents/Info.plist", false);
+        let info = f.0.join("Applications/ChatGPT.app/Contents/Info.plist");
+        for content in ["broken plist", "<plist><dict><key>Other</key><string>com.openai.codex</string></dict></plist>", "<plist><dict><key>CFBundleIdentifier</key><string>com.openai.chat</string></dict></plist>"] {
+            fs::write(&info, content).unwrap();
+            assert!(!codex_bundle_identity(&info));
+        }
+    }
+
+    #[test]
+    fn finds_current_mimo_command_and_preserves_its_legacy_alias() {
+        for command in ["mimo", "mimocode"] {
+            let f = Fixture::new();
+            f.file(
+                &format!(
+                    ".local/bin/{command}{}",
+                    if cfg!(windows) { ".cmd" } else { "" }
+                ),
+                true,
+            );
+            assert!(Discovery::in_home(&f.0).installed("mimo-code"));
+        }
+    }
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn binary_and_oversized_plists_follow_the_same_identity_contract() {
+        let f = Fixture::new();
+        f.file("Applications/ChatGPT.app/Contents/Info.plist", false);
+        let path = f.0.join("Applications/ChatGPT.app/Contents/Info.plist");
+        fs::write(&path, "<plist><dict><key>CFBundleIdentifier</key><string>com.openai.codex</string></dict></plist>").unwrap();
+        assert!(std::process::Command::new("/usr/bin/plutil")
+            .args(["-convert", "binary1"])
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        assert!(codex_bundle_identity(&path));
+        fs::write(&path, vec![b' '; 256 * 1024 + 1]).unwrap();
+        assert!(!codex_bundle_identity(&path));
     }
     #[test]
     fn finds_qwen_desktop_without_a_separate_cli() {

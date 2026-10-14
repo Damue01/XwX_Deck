@@ -197,8 +197,9 @@ function Shell(): React.ReactElement {
             localStorage.setItem(storageKey, JSON.stringify([...new Set([...ignored, ...missingProviders])]));
             closeToast(id);
           } catch {
-            showToast(t('无法保存“不再提醒”'), 'warning', id, {
-              description: t('应用本地存储不可用，下次启动仍可能出现此提醒。')
+            showToast('无法保存“不再提醒”', 'warning', id, {
+              diagnostic: true,
+              description: '应用本地存储不可用，下次启动仍可能出现此提醒。'
             });
           }
         }

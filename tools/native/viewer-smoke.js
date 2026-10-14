@@ -14,7 +14,7 @@
   const unknownSection=document.createElement('section');
   try{
     unknownSection.innerHTML=renderMetrics(unknown,unknown.usage)+railRowHtml(unknown,false);document.body.append(unknownSection);
-    check('native request detail and rail mark missing usage as unknown instead of zero',unknownSection.querySelector('.mhero').textContent==='—*'&&unknownSection.querySelector('.tok').textContent==='—* tok');
+    check('native request detail and rail mark missing usage as unknown instead of zero',unknownSection.querySelector('.mhero').textContent==='—'&&unknownSection.querySelector('.tok').textContent==='— tok'&&unknownSection.querySelector('.mhero span').title.includes('用量不完整'));
   }finally{unknownSection.remove();}
   const fixturePrice={match:'exact',modelId:'native-partial-fixture',tokens:['native-partial-fixture'],protocol:'openai',input:1,output:2,cacheRead:.1,cacheWritePolicy:'input'};
   const fixtureUsage={version:2,input:20,inputTotal:100,inputTotalComplete:true,output:5,cacheRead:60,cacheCreation:20,total:105,invalidFields:['cacheWriteTtl']};
@@ -25,7 +25,7 @@
   try {
     matrix.innerHTML=renderTokenMatrix([{usageByModel:{'native-partial-fixture':fixtureUsage}}]);document.body.append(matrix);
     const cells=matrix.querySelectorAll('tbody td');
-    check('native Viewer marks invalid usage separately and keeps a normal positive tiny known amount',cells[1].textContent==='20'&&cells[2].textContent==='60'&&cells[3].textContent==='错误*'&&cells[4].textContent==='5'&&cells[5].textContent==='105'&&cells[6].textContent==='$0.000036'&&cells[6].getBoundingClientRect().height>0&&matrix.querySelector('tfoot td:last-child').textContent==='$0.000036');
+    check('native Viewer marks invalid usage separately and keeps a normal positive tiny known amount',cells[1].textContent==='20'&&cells[2].textContent==='60'&&cells[3].textContent==='20'&&cells[3].querySelector('span').title.includes('上游用量异常')&&cells[4].textContent==='5'&&cells[5].textContent==='105'&&cells[6].textContent==='$0.000036'&&cells[6].getBoundingClientRect().height>0&&matrix.querySelector('tfoot td:last-child').textContent==='$0.000036');
   } finally {matrix.remove();PRICE_RULES.splice(PRICE_RULES.indexOf(fixturePrice),1);}
   check('dashboard header, columns and table rows have no dividers',getComputedStyle(document.querySelector('.top')).borderBottomWidth==='0px'&&getComputedStyle(document.querySelector('.rail')).borderRightWidth==='0px'&&[...document.querySelectorAll('.dash-table th,.dash-table td')].every(element=>getComputedStyle(element).borderBottomWidth==='0px'));
   const idleRow=document.querySelector('.dash-table tbody tr');

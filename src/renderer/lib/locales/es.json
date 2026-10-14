@@ -719,5 +719,11 @@
   "切换为仅用量模式？": "¿Cambiar al modo de solo uso?",
   "同时删除已有 Token 用量和费用统计": "Eliminar también las estadísticas existentes de uso de tokens y costes",
   "金额只合计已知费用；未计价请求的数量和原因可在仪表盘查看。": "El importe suma los costes conocidos. El panel muestra cuántas solicitudes no tienen precio y por qué.",
-  "名称需为 1–80 个字符，不能包含控制字符。": "El nombre debe tener entre 1 y 80 caracteres, sin caracteres de control."
+  "名称需为 1–80 个字符，不能包含控制字符。": "El nombre debe tener entre 1 y 80 caracteres, sin caracteres de control.",
+  "官网入口": "Sitio oficial",
+  "安装说明": "Guía de instalación",
+  "复制连接信息失败": "No se pudieron copiar los datos de conexión",
+  "本地 Gateway 占位密钥，不是服务商 API Key": "Clave de ejemplo del Gateway local, no una API Key del proveedor",
+  "这里只保存 XwX Deck 的模型选择，不修改 Qoder 配置。请在 Qoder 中使用 /model → Custom 向导；可用服务、模型和凭据字段以当前账号的向导为准。": "Aquí solo se guarda la selección de modelo de XwX Deck; la configuración de Qoder no cambia. Use el asistente /model → Custom en Qoder. Los proveedores, modelos y campos de credenciales disponibles dependen del asistente de la cuenta actual.",
+  "仅在向导允许时填写下面的 Gateway 信息，不要手动修改 settings.json。": "Use los datos del Gateway que aparecen abajo solo si el asistente lo permite. No modifique settings.json manualmente."
 }

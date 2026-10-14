@@ -59,7 +59,9 @@ try {
     assert.ok(unknown); assert.equal(rate([unknown]), null);
     mode = 'zero'; values = await send(state, client, client + '-unknown', ++count);
     const retainedUnknown = values.find(s => s.id === unknown.id);
-    assert.equal(retainedUnknown.traceCount, 2); assert.equal(rate([retainedUnknown]), null, 'later complete usage cannot erase earlier missing fields');
+    assert.equal(retainedUnknown.traceCount, 2); assert.equal(rate([retainedUnknown]), 0, 'known request rate survives earlier missing usage');
+    assert.deepEqual(JSON.parse(JSON.stringify(rate.details([retainedUnknown]))), {inputTokens:100,cacheReadTokens:0,knownRequests:1,excludedRequests:1,rate:0});
+    assert.ok(retainedUnknown.usageByModel['cache-model'].incompleteFields.includes('input'), 'excluded usage is still unknown in the token matrix');
     const priorIds = values.map(s => s.id);
     values = await send(state, client, client + '-zero', ++count);
     assert.equal(rate(values.filter(s => !priorIds.includes(s.id))), 0, 'explicit no-cache usage is known zero');

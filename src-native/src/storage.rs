@@ -138,10 +138,41 @@ pub(super) fn load_prices(root: &Path) -> Vec<Value> {
     }
 }
 
+fn accumulate_cache_hit_usage(stats: &mut Value, usage: &Value) {
+    if !stats.is_object() {
+        *stats =
+            json!({"inputTokens":0,"cacheReadTokens":0,"knownRequests":0,"excludedRequests":0});
+    }
+    let missing = |field| {
+        usage["incompleteFields"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|f| f == field))
+    };
+    let invalid = usage["invalidFields"]
+        .as_array()
+        .is_some_and(|fields| fields.iter().any(|f| f == "input" || f == "cacheRead"));
+    let input = usage["inputTotalTokens"].as_u64().filter(|_| {
+        usage["inputIncludesCache"] == true || (!missing("cacheRead") && !missing("cacheWrite"))
+    });
+    let pair = input
+        .zip(usage["cacheReadTokens"].as_u64())
+        .filter(|(i, r)| {
+            !invalid && !missing("cacheRead") && i >= r && *i <= 9_007_199_254_740_991
+        });
+    if let Some((input, read)) = pair {
+        stats["inputTokens"] = json!(stats["inputTokens"].as_u64().unwrap_or(0) + input);
+        stats["cacheReadTokens"] = json!(stats["cacheReadTokens"].as_u64().unwrap_or(0) + read);
+        stats["knownRequests"] = json!(stats["knownRequests"].as_u64().unwrap_or(0) + 1);
+    } else {
+        stats["excludedRequests"] = json!(stats["excludedRequests"].as_u64().unwrap_or(0) + 1);
+    }
+}
+
 fn accumulate_model_usage(by_model: &mut Value, record: &Value) {
     let model = text(&record["request"], "model");
     let u = &record["usage"];
     let m = &mut by_model[model];
+    let had_usage = m.is_object();
     if !m.is_object() {
         *m = json!({"version":2,"input":0,"inputTotal":0,"inputTotalComplete":true,"output":0,"cacheRead":0,"cacheCreation":0,"total":0,"apiType":record["request"]["apiType"]});
     }
@@ -155,6 +186,45 @@ fn accumulate_model_usage(by_model: &mut Value, record: &Value) {
     });
     if m["inputTotal"].is_null() {
         m["inputTotalComplete"] = json!(false);
+    }
+    if !m["knownFieldCounts"].is_object() {
+        // If raw history is unavailable, retain a known legacy aggregate,
+        // including explicit zero. Its coverage is a lower bound of one.
+        let mut coverage = json!({});
+        for (field, key) in [
+            ("input", "input"),
+            ("cacheRead", "cacheRead"),
+            ("cacheWrite", "cacheCreation"),
+            ("output", "output"),
+            ("total", "total"),
+        ] {
+            let known = had_usage
+                && m[key].as_u64().is_some_and(|n| {
+                    n > 0
+                        || !m["incompleteFields"]
+                            .as_array()
+                            .is_some_and(|a| a.iter().any(|f| f == field))
+                            && !m["invalidFields"]
+                                .as_array()
+                                .is_some_and(|a| a.iter().any(|f| f == field))
+                });
+            coverage[field] = json!(u64::from(known));
+        }
+        m["knownFieldCounts"] = coverage;
+    }
+    for (field, key) in [
+        ("input", "inputUncachedTokens"),
+        ("cacheRead", "cacheReadTokens"),
+        ("cacheWrite", "cacheCreationTokens"),
+        ("output", "outputTokens"),
+        ("total", "totalTokens"),
+    ] {
+        let valid = u[key].as_u64().is_some()
+            && !u["invalidFields"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|f| f == field));
+        m["knownFieldCounts"][field] =
+            json!(m["knownFieldCounts"][field].as_u64().unwrap_or(0) + u64::from(valid));
     }
     for (key, value) in [
         ("input", "inputUncachedTokens"),
@@ -441,7 +511,13 @@ impl TraceStore {
                         || (point["costComplete"] == false && point["priceRule"].is_object())
                 })
             });
-            if session["costSnapshotVersion"] == 1 && !frozen_correction {
+            if session["costSnapshotVersion"] == 1
+                && !frozen_correction
+                && session["cacheHitUsage"].is_object()
+                && session["usageByModel"].as_object().is_some_and(|models| {
+                    models.values().all(|m| m["knownFieldCounts"].is_object())
+                })
+            {
                 continue;
             }
             let path = PathBuf::from(text(session, "jsonlPath"));
@@ -456,9 +532,11 @@ impl TraceStore {
             }
             let mut by_model = json!({});
             let mut points = vec![];
+            let mut cache_hit_usage = Value::Null;
             for row in rows {
                 let row = self.display_record(row);
                 accumulate_model_usage(&mut by_model, &row);
+                accumulate_cache_hit_usage(&mut cache_hit_usage, &row["usage"]);
                 points.push(row["costSnapshot"].clone());
             }
             if session["traceCount"]
@@ -476,8 +554,30 @@ impl TraceStore {
                     point["costComplete"] = json!(false);
                 }
             }
+            let accounted = cache_hit_usage["knownRequests"].as_u64().unwrap_or(0)
+                + cache_hit_usage["excludedRequests"].as_u64().unwrap_or(0);
+            if let Some(extra) = session["traceCount"]
+                .as_u64()
+                .and_then(|n| n.checked_sub(accounted))
+            {
+                cache_hit_usage["excludedRequests"] =
+                    json!(cache_hit_usage["excludedRequests"].as_u64().unwrap_or(0) + extra);
+            }
+            if session["costSnapshotVersion"] == 1 && !frozen_correction {
+                let mut annotated = session["usageByModel"].clone();
+                for (model, usage) in annotated.as_object_mut().into_iter().flatten() {
+                    if by_model[model]["knownFieldCounts"].is_object() {
+                        usage["knownFieldCounts"] = by_model[model]["knownFieldCounts"].clone();
+                    }
+                }
+                self.legacy_costs.insert(
+                    text(session, "id").into(),
+                    json!({"cacheHitUsage":cache_hit_usage,"usageByModel":annotated}),
+                );
+                continue;
+            }
             let tokens: u64 = points.iter().filter_map(|p| p["tokens"].as_u64()).sum();
-            self.legacy_costs.insert(text(session,"id").into(),json!({"usageByModel":by_model,"nativeUsage":points,"totalTokens":tokens,"costViewBasis":if frozen_correction {"frozen-rate-correction"} else {"legacy-current-reference"}}));
+            self.legacy_costs.insert(text(session,"id").into(),json!({"cacheHitUsage":cache_hit_usage,"usageByModel":by_model,"nativeUsage":points,"totalTokens":tokens,"costViewBasis":if frozen_correction {"frozen-rate-correction"} else {"legacy-current-reference"}}));
         }
     }
     fn view_sessions(&self) -> Vec<Value> {
@@ -983,6 +1083,10 @@ impl TraceStore {
             for row in &rows {
                 accumulate_model_usage(&mut usage_by_model, row);
             }
+            let mut cache_hit_usage = Value::Null;
+            for row in &rows {
+                accumulate_cache_hit_usage(&mut cache_hit_usage, &row["usage"]);
+            }
             let first = &rows[0];
             let last = rows.last().unwrap();
             let native_usage: Vec<_> = rows.iter().map(|r| r["costSnapshot"].clone()).collect();
@@ -994,7 +1098,7 @@ impl TraceStore {
                 .filter(|s| s.is_object())
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let recovered = json!({"id":candidate["id"],"startedAt":first["startedAt"],"updatedAt":last["completedAt"],"source":first["source"],"clientConversationKey":first["clientConversationKey"],"firstPrompt":first["request"]["body"]["input"].as_str().unwrap_or(""),"firstModel":first["request"]["model"],"jsonlPath":path,"traceCount":rows.len(),"totalTokens":rows.iter().filter_map(|r|r["usage"]["totalTokens"].as_u64()).sum::<u64>(),"totalDurationMs":rows.iter().filter_map(|r|r["durationMs"].as_u64()).sum::<u64>(),"usageByModel":usage_by_model,"usageNormalizationVersion":2,"nativeUsage":native_usage});
+            let recovered = json!({"cacheHitUsage":cache_hit_usage,"id":candidate["id"],"startedAt":first["startedAt"],"updatedAt":last["completedAt"],"source":first["source"],"clientConversationKey":first["clientConversationKey"],"firstPrompt":first["request"]["body"]["input"].as_str().unwrap_or(""),"firstModel":first["request"]["model"],"jsonlPath":path,"traceCount":rows.len(),"totalTokens":rows.iter().filter_map(|r|r["usage"]["totalTokens"].as_u64()).sum::<u64>(),"totalDurationMs":rows.iter().filter_map(|r|r["durationMs"].as_u64()).sum::<u64>(),"usageByModel":usage_by_model,"usageNormalizationVersion":2,"nativeUsage":native_usage});
             for (key, value) in recovered.as_object().unwrap() {
                 if key == "firstPrompt" && summary.get(key).is_some() {
                     continue;
@@ -1218,6 +1322,34 @@ impl TraceStore {
         let sessions = self.index["sessions"].as_array_mut().unwrap();
         let at=sessions.iter().position(|s|s["id"]==id).unwrap_or_else(||{sessions.push(json!({"id":id,"startedAt":record["startedAt"],"updatedAt":record["completedAt"],"source":record["source"],"clientConversationKey":key,"firstPrompt":record["request"]["body"]["input"].as_str().or_else(||record["clientFirstPrompt"].as_str()).unwrap_or(""),"firstModel":record["request"]["model"],"jsonlPath":file,"traceCount":0,"totalTokens":0,"totalDurationMs":0,"usageByModel":{},"usageNormalizationVersion":2,"nativeUsage":[]}));sessions.len()-1});
         let summary = &mut sessions[at];
+        if !summary["cacheHitUsage"].is_object() {
+            let recovered = self
+                .legacy_costs
+                .get(&id)
+                .map(|view| &view["cacheHitUsage"]);
+            summary["cacheHitUsage"] = recovered
+                .filter(|stats| stats.is_object())
+                .cloned()
+                .unwrap_or_else(|| {
+                    json!({"inputTokens":0,"cacheReadTokens":0,"knownRequests":0,
+                    "excludedRequests":summary["traceCount"].as_u64().unwrap_or(0)})
+                });
+        }
+        if let Some(view) = self.legacy_costs.get(&id) {
+            for (model, usage) in summary["usageByModel"]
+                .as_object_mut()
+                .into_iter()
+                .flatten()
+            {
+                if !usage["knownFieldCounts"].is_object()
+                    && view["usageByModel"][model]["knownFieldCounts"].is_object()
+                {
+                    usage["knownFieldCounts"] =
+                        view["usageByModel"][model]["knownFieldCounts"].clone();
+                }
+            }
+        }
+
         if let Some(legacy) = self.legacy_annotations.remove(&id) {
             for (key, value) in legacy.as_object().into_iter().flatten() {
                 summary[key] = value.clone();
@@ -1286,6 +1418,7 @@ impl TraceStore {
             summary["costSnapshotVersion"] = json!(1);
         }
         accumulate_model_usage(&mut summary["usageByModel"], &record);
+        accumulate_cache_hit_usage(&mut summary["cacheHitUsage"], &record["usage"]);
         summary["nativeUsage"]
             .as_array_mut()
             .unwrap()
@@ -1525,6 +1658,190 @@ impl Drop for ClientBodyGuard {
 #[cfg(test)]
 mod client_evidence_tests {
     use super::*;
+
+    #[test]
+    fn model_field_coverage_keeps_known_zero_after_unknown_and_invalid_requests() {
+        let unknown = json!({
+            "request":{"model":"known-zero-contract"},
+            "usage":{"incompleteFields":["input","cacheRead","cacheWrite","output","total"]},
+            "costSnapshot":{"version":1,"knownCostUsd":null,"costComplete":false}
+        });
+        let zero = json!({
+            "request":{"model":"known-zero-contract"},
+            "usage":{"version":2,"inputUncachedTokens":0,"inputTotalTokens":0,
+                "inputIncludesCache":true,"cacheReadTokens":0,"cacheCreationTokens":0,
+                "outputTokens":0,"totalTokens":0,"incompleteFields":[]},
+            "costSnapshot":{"version":1,"knownCostUsd":0,"costComplete":true}
+        });
+        let mut by_model = json!({});
+        accumulate_model_usage(&mut by_model, &unknown);
+        assert_eq!(
+            by_model["known-zero-contract"]["knownFieldCounts"],
+            json!({"input":0,"cacheRead":0,"cacheWrite":0,"output":0,"total":0})
+        );
+        assert!(by_model["known-zero-contract"]["capturedCost"]["cost"].is_null());
+        accumulate_model_usage(&mut by_model, &zero);
+        assert_eq!(
+            by_model["known-zero-contract"]["knownFieldCounts"],
+            json!({"input":1,"cacheRead":1,"cacheWrite":1,"output":1,"total":1})
+        );
+        for key in [
+            "input",
+            "inputTotal",
+            "cacheRead",
+            "cacheCreation",
+            "output",
+            "total",
+        ] {
+            assert_eq!(by_model["known-zero-contract"][key].as_u64(), Some(0));
+        }
+        // One illegal counter must not discard independently valid zero fields.
+        let mut invalid = zero.clone();
+        invalid["usage"]["outputTokens"] = json!(-1);
+        invalid["usage"]["invalidFields"] = json!(["output"]);
+        invalid["costSnapshot"]["costComplete"] = json!(false);
+        accumulate_model_usage(&mut by_model, &invalid);
+        assert_eq!(
+            by_model["known-zero-contract"]["knownFieldCounts"],
+            json!({"input":2,"cacheRead":2,"cacheWrite":2,"output":1,"total":2})
+        );
+        assert_eq!(by_model["known-zero-contract"]["output"].as_u64(), Some(0));
+        assert!(by_model["known-zero-contract"]["invalidFields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "output"));
+        assert_eq!(
+            by_model["known-zero-contract"]["capturedCost"]["cost"].as_f64(),
+            Some(0.0)
+        );
+        assert_eq!(
+            by_model["known-zero-contract"]["capturedCost"]["complete"],
+            false
+        );
+        let coverage = by_model["known-zero-contract"]["knownFieldCounts"].clone();
+        let bytes = serde_json::to_vec(&by_model).unwrap();
+        let mut resumed: Value = serde_json::from_slice(&bytes).unwrap();
+        accumulate_model_usage(&mut resumed, &unknown);
+        assert_eq!(resumed["known-zero-contract"]["knownFieldCounts"], coverage);
+        assert_eq!(resumed["known-zero-contract"]["total"].as_u64(), Some(0));
+        assert_eq!(
+            resumed["known-zero-contract"]["capturedCost"]["cost"].as_f64(),
+            Some(0.0)
+        );
+        assert_eq!(
+            zero["usage"]["outputTokens"], 0,
+            "source usage stays read-only"
+        );
+    }
+
+    #[test]
+    fn legacy_known_zero_survives_an_unknown_append_without_raw_history() {
+        let mut by_model = json!({"fixture":{"version":2,"input":40,"cacheRead":60,"cacheCreation":0,"output":0,"total":100}});
+        let unknown = json!({"request":{"model":"fixture"},"usage":{"incompleteFields":["input","cacheRead","cacheWrite","output","total"]}});
+        accumulate_model_usage(&mut by_model, &unknown);
+        assert_eq!(by_model["fixture"]["cacheCreation"], 0);
+        assert_eq!(
+            by_model["fixture"]["knownFieldCounts"],
+            json!({"input":1,"cacheRead":1,"cacheWrite":1,"output":1,"total":1})
+        );
+        let mut fresh = json!({});
+        accumulate_model_usage(&mut fresh, &unknown);
+        assert_eq!(
+            fresh["fixture"]["knownFieldCounts"],
+            json!({"input":0,"cacheRead":0,"cacheWrite":0,"output":0,"total":0})
+        );
+    }
+
+    #[test]
+    fn cache_hit_pairs_survive_missing_usage_and_preserve_frozen_history() {
+        let known = json!({"inputTotalTokens":100,"inputIncludesCache":true,"cacheReadTokens":60,"cacheCreationTokens":0,"inputUncachedTokens":40});
+        let mut stats = Value::Null;
+        accumulate_cache_hit_usage(&mut stats, &known);
+        accumulate_cache_hit_usage(
+            &mut stats,
+            &json!({"incompleteFields":["input","cacheRead","cacheWrite"]}),
+        );
+        assert_eq!(
+            stats,
+            json!({"inputTokens":100,"cacheReadTokens":60,"knownRequests":1,"excludedRequests":1})
+        );
+        let root = std::env::temp_dir().join(format!(
+            "xwx-cache-history-{}-{}",
+            std::process::id(),
+            millis()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("history.jsonl");
+        let frozen = json!({"version":1,"costComplete":true,"costUsd":0.123,"knownCostUsd":0.123,"tokens":100});
+        let source = [json!({"request":{"model":"fixture"},"usage":known,"costSnapshot":frozen}),json!({"request":{"model":"fixture"},"usage":{"incompleteFields":["input","cacheRead"]},"costSnapshot":{"version":1,"costComplete":false}})].iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+        fs::write(&file, &source).unwrap();
+        let original_model = json!({"version":2,"input":40,"cacheRead":60,"cacheCreation":0,"incompleteFields":["input","cacheRead"]});
+        let index=json!({"version":1,"sessions":[{"id":"history","jsonlPath":file,"traceCount":2,"costSnapshotVersion":1,"nativeUsage":[frozen,{"version":1,"costComplete":false}],"usageByModel":{"fixture":original_model}}]}).to_string();
+        fs::write(root.join("index.json"), &index).unwrap();
+        let store = TraceStore::open(root.clone(), u64::MAX, false, &root).unwrap();
+        {
+            let store = store.lock().unwrap();
+            let view = &store.view_sessions()[0];
+            assert_eq!(view["cacheHitUsage"], stats);
+            let mut annotated_model = original_model.clone();
+            annotated_model["knownFieldCounts"] =
+                json!({"input":1,"cacheRead":1,"cacheWrite":1,"output":0,"total":0});
+            assert_eq!(view["usageByModel"]["fixture"], annotated_model);
+            assert_eq!(view["nativeUsage"][0], frozen);
+        }
+        assert_eq!(fs::read_to_string(&file).unwrap(), source);
+        assert_eq!(fs::read_to_string(root.join("index.json")).unwrap(), index);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn continued_legacy_summary_without_readable_rows_counts_history_as_excluded() {
+        for empty_file in [false, true] {
+            let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
+                "xwx-cache-missing-history-{}-{}-{empty_file}",
+                std::process::id(),
+                millis()
+            ));
+            fs::create_dir_all(&root).unwrap();
+            let key = "cache-legacy-resume";
+            let id = format!("session-{}", &digest(key.as_bytes())[..24]);
+            let file = root.join(format!("{id}.jsonl"));
+            if empty_file {
+                fs::write(&file, "").unwrap();
+            }
+            let frozen = json!({"version":1,"costComplete":true,"costUsd":0.123,"knownCostUsd":0.123,"tokens":100});
+            let frozen_history = vec![frozen; 3];
+            let index = json!({"version":1,"sessions":[{"id":id,"clientConversationKey":key,"jsonlPath":file,"traceCount":3,
+                "costSnapshotVersion":1,"captureClassificationVersion":1,"errorCount":0,"nativeUsage":frozen_history,
+                "totalTokens":300,"usageByModel":{"fixture":{"version":2,"input":0,"cacheRead":0,"cacheCreation":0,
+                    "inputTotalComplete":false,"incompleteFields":["input","cacheRead"]}}}]}).to_string();
+            fs::write(root.join("index.json"), &index).unwrap();
+            let store = TraceStore::open(root.clone(), u64::MAX, false, &root).unwrap();
+            let record = json!({"id":"continued","startedAt":"2026-10-14T00:00:00Z","completedAt":"2026-10-14T00:00:01Z",
+                "source":"codex-cli","durationMs":1,"request":{"model":"fixture","apiType":"responses","body":{"input":"synthetic"}},
+                "usage":{"inputTokens":100,"inputUncachedTokens":40,"inputTotalTokens":100,"inputIncludesCache":true,
+                    "cacheReadTokens":60,"cacheCreationTokens":0,"outputTokens":5,"totalTokens":105}});
+            {
+                let mut store = store.lock().unwrap();
+                assert!(store.legacy_costs.is_empty());
+                store.append(record, key).unwrap();
+                let view = store.view_sessions().remove(0);
+                assert_eq!(view["traceCount"], 4);
+                assert_eq!(
+                    view["cacheHitUsage"],
+                    json!({"inputTokens":100,"cacheReadTokens":60,"knownRequests":1,"excludedRequests":3})
+                );
+                assert_eq!(
+                    &view["nativeUsage"].as_array().unwrap()[..3],
+                    frozen_history.as_slice()
+                );
+            }
+            drop(store);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
 
     #[test]
     fn legacy_cost_view_rebuilds_raw_usage_without_writing_evidence() {

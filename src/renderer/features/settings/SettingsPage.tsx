@@ -258,7 +258,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       bridge.patch({ runtime: next });
       showToast(next.startup?.warning ? t('开机启动选择已保存，系统同步待完成')
         : enabled ? t('已开启开机启动') : t('已关闭开机启动'), next.startup?.warning ? 'info' : 'success', undefined,
-        { description: next.startup?.warning });
+        { description: next.startup?.warning, diagnostic: !!next.startup?.warning });
     } catch (error) {
       showErrorToast(t('更新开机启动失败'), error);
     } finally {
@@ -416,7 +416,8 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       const message = error instanceof Error ? error.message : String(error);
       if (message === '已取消重置。') return;
       if (/客户端未能完全关闭|无法确认.*退出/.test(message)) {
-        showToast(t('客户端未能关闭'), 'warning', undefined, {
+        showToast('客户端未能关闭', 'warning', undefined, {
+          diagnostic: true,
           description: message,
           timeout: 8_000
         });

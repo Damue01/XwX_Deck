@@ -47,7 +47,6 @@ const CLI_DOWNLOADS: Partial<Record<DownloadClientId, { name: string; site: Setu
   codex: { name: 'Codex CLI', site: 'download-codex-cli' },
   claude: { name: 'Claude Code CLI', site: 'download-claude-code' },
   opencode: { name: 'OpenCode CLI', site: 'opencode-cli-official' },
-  'qwen-code': { name: 'Qwen Code CLI', site: 'qwen-code-cli-official' },
   cursor: { name: 'Cursor CLI', site: 'download-cursor-cli' }
 };
 
@@ -57,21 +56,22 @@ export function ClientDownloads({ client, officialOnly = false }: { client: Down
   const product = canonicalModelClient(client);
   const info = CLIENT_DOWNLOADS.find(item => item.id === product)!;
   const cli = CLI_DOWNLOADS[product];
+  const officialLabel = t(clientDownloadLabel(info).endsWith('CLI') ? '安装说明' : '官网入口');
   const groups: readonly DownloadGroup[] = product === 'claude' ? CLAUDE_DOWNLOAD_GROUPS : product === 'codex' ? DOWNLOAD_GROUPS : desktopDownloadGroups(product);
-  const websiteLink = (site: SetupWebsite, label: string, accessibleName?: string) => api.setupWebsites[site] && <a className="setup-card-link" aria-label={accessibleName} href={api.setupWebsites[site]} target="_blank" rel="noopener noreferrer" onClick={event => {
+  const websiteLink = (site: SetupWebsite, label: string, accessibleName?: string, failureTitle = t('打开官方页面失败')) => api.setupWebsites[site] && <a className="setup-card-link" aria-label={accessibleName} href={api.setupWebsites[site]} target="_blank" rel="noopener noreferrer" onClick={event => {
     event.preventDefault();
-    void api.openSetupWebsite(site).catch(error => showErrorToast(t('打开下载入口失败'), error));
+    void api.openSetupWebsite(site).catch(error => showErrorToast(failureTitle, error));
   }}>{label}<ArrowUpRight aria-hidden="true" /></a>;
   return <div className="setup-card-download-versions">
     <section className="setup-card-download-groups" aria-label={clientDownloadLabel(info)}>
-      <div className="setup-card-download-version-heading">{(cli || 'downloadLabel' in info) && <h4>{clientDownloadLabel(info)}</h4>}{websiteLink(product === 'codex' || product === 'claude' ? product : `download-${product}`, t('官方下载'), `${clientDownloadLabel(info)} ${t('官方下载')}`)}</div>
+      <div className="setup-card-download-version-heading">{(cli || 'downloadLabel' in info) && <h4>{clientDownloadLabel(info)}</h4>}{websiteLink(product === 'codex' || product === 'claude' ? product : `download-${product}`, officialLabel, `${clientDownloadLabel(info)} ${officialLabel}`)}</div>
     {!officialOnly && groups.map(group => <details key={group.name} className="setup-card-downloads">
       <summary>{group.name} {t(group.official ? '官方下载' : '镜像')}<ChevronDown aria-hidden="true" /></summary>
       <div className="setup-card-download-links">{group.rows.map(row => <React.Fragment key={row.name}>
-        {websiteLink(row.mirror, row.name, group.official ? `${group.name} ${row.name} Desktop ${t('官方下载')}` : t("{0} {1} 国内镜像下载（第三方）", group.name, row.name))}
+        {websiteLink(row.mirror, row.name, group.official ? `${group.name} ${row.name} Desktop ${t('官方下载')}` : t("{0} {1} 国内镜像下载（第三方）", group.name, row.name), t('打开下载入口失败'))}
       </React.Fragment>)}</div>
     </details>)}
     </section>
-    {cli && <section className="setup-card-download-groups" aria-label={cli.name}><div className="setup-card-download-version-heading"><h4>{cli.name}</h4>{websiteLink(cli.site, t('官方下载'), `${cli.name} ${t('官方下载')}`)}</div></section>}
+    {cli && <section className="setup-card-download-groups" aria-label={cli.name}><div className="setup-card-download-version-heading"><h4>{cli.name}</h4>{websiteLink(cli.site, t('安装说明'), `${cli.name} ${t('安装说明')}`)}</div></section>}
   </div>;
 }

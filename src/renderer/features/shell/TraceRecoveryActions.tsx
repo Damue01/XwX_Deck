@@ -114,6 +114,7 @@ export function TraceRecoveryActions(): null {
         if (refreshes[2].status === 'fulfilled') patch({ codexConfig: refreshes[2].value });
         if (next.lastError) {
           showToast('设置已修复，部分连接仍需处理', 'warning', undefined, {
+            diagnostic: true,
             description: lifecycleFailure(next.lastError, '恢复运行状态').description
           });
         } else if (repaired.lostProviderSettings) {

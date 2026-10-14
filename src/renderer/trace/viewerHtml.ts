@@ -1625,17 +1625,26 @@ function contextWindowTokens(u){ u=u||{}; if(u.inputIncludesCache) return u.inpu
 // 计费总量 = API total 优先；缺失时 上下文窗口占用 + 输出 兜底。
 function billableTotalTokens(u){ u=u||{}; if(typeof u.totalTokens === 'number') return u.totalTokens; return contextWindowTokens(u) + (u.outputTokens || 0); }
 function totalTokens(t){ return billableTotalTokens(usageOf(t)); }
-function tokenCountHtml(value, incomplete){
-  const known = typeof value === 'number' && isFinite(value);
-  const text = known && (!incomplete || value > 0) ? num(value) : '—';
+function tokenCountHtml(value, incomplete, hasKnown){
+  const known = typeof value === 'number' && isFinite(value) && (hasKnown === undefined ? !incomplete || value > 0 : hasKnown);
+  const text = known ? num(value) : '—';
   return incomplete || !known
-    ? '<span title="'+esc(L('用量不完整；这里只显示上游已返回的已知小计','Incomplete usage; only the known upstream subtotal is shown'))+'">'+text+'*</span>'
+    ? '<span title="'+esc(L('用量不完整；这里只显示上游已返回的已知小计','Incomplete usage; only the known upstream subtotal is shown'))+'">'+text+'</span>'
     : text;
 }
 function traceTokenCountHtml(t){
   const u = usageOf(t);
   const incomplete = typeof u.totalTokens !== 'number' || (u.incompleteFields || []).includes('total') || (u.invalidFields || []).includes('total');
-  return tokenCountHtml(typeof u.totalTokens === 'number' ? u.totalTokens : billableTotalTokens(u), incomplete);
+  return tokenCountHtml(typeof u.totalTokens === 'number' ? u.totalTokens : billableTotalTokens(u), incomplete,
+    typeof u.totalTokens === 'number' && !(u.invalidFields || []).includes('total') || billableTotalTokens(u) > 0);
+}
+function knownUsageFieldCount(u, name, key){
+  if(u.knownFieldCounts && Number.isSafeInteger(u.knownFieldCounts[name])) return u.knownFieldCounts[name];
+  return Number.isSafeInteger(u[key]) && u[key] >= 0 && (u[key] > 0
+    || !(u.incompleteFields || []).includes(name) && !(u.invalidFields || []).includes(name)) ? 1 : 0;
+}
+function sessionHasKnownTokens(s){
+  return s.totalTokens > 0 || Object.values(s.usageByModel || {}).some(u => knownUsageFieldCount(u,'total','total') > 0);
 }
 function sessionTokensIncomplete(s){
   const models = Object.values(s.usageByModel || {});
@@ -1800,6 +1809,11 @@ function mergeModelUsage(target, source){
     const u = source[model]; if(!u) continue;
     const hadUsage = !!out[model];
     const agg = out[model] || (out[model] = { version:2, input:0, output:0, cacheRead:0, cacheCreation:0, total:0, apiType:u.apiType, incompleteFields:[] });
+    const coverage = {};
+    for(const [name,key] of [['input','input'],['cacheRead','cacheRead'],['cacheWrite','cacheCreation'],['output','output'],['total','total']]){
+      coverage[name] = (hadUsage ? knownUsageFieldCount(agg,name,key) : 0) + knownUsageFieldCount(u,name,key);
+    }
+    agg.knownFieldCounts = coverage;
     if(u.capturedCost || agg.capturedCost){
       const left = agg.capturedCost || (hadUsage ? { complete:false } : { complete:true });
       const right = u.capturedCost || { complete:false };
@@ -1878,6 +1892,7 @@ function logicalConversationSessions(rawSessions){
     const updatedAt = fragments.reduce((v,s) => !v || (s.updatedAt || s.startedAt) > v ? (s.updatedAt || s.startedAt) : v, '');
     const liveAt = fragments.reduce((v,s) => !v || (s.liveAt || '') > v ? (s.liveAt || '') : v, '');
     const usageByModel = {};
+    const cacheHitUsage = {inputTokens:0,cacheReadTokens:0,knownRequests:0,excludedRequests:0};
     const nativeUsage = [];
     const auxiliaryCounts = {};
     let traceCount=0,totalTokens=0,errorCount=0,internalFragments=0;
@@ -1886,6 +1901,8 @@ function logicalConversationSessions(rawSessions){
       if(isInternalMaintenancePrompt(s.firstPrompt)) internalFragments += 1;
       nativeUsage.push(...(Array.isArray(s.nativeUsage) ? s.nativeUsage : []));
       mergeModelUsage(usageByModel,s.usageByModel);
+      const cacheStats = window.XwXTraceCacheRate.details([s]);
+      for(const k of Object.keys(cacheHitUsage)) cacheHitUsage[k] += cacheStats[k];
       mergeAuxiliaryCounts(auxiliaryCounts,s.auxiliaryCounts);
     }
     const startedAtMs = Date.parse(startedAt || '');
@@ -1903,7 +1920,7 @@ function logicalConversationSessions(rawSessions){
       firstModel: (visiblePromptOwner && visiblePromptOwner.firstModel) || representative.firstModel,
       firstClient: (visiblePromptOwner && visiblePromptOwner.firstClient) || representative.firstClient,
       lastTurnError: lastMainOwner ? lastMainOwner.lastTurnError : representative.lastTurnError,
-      usageByModel, nativeUsage,
+      usageByModel, cacheHitUsage, nativeUsage,
       auxiliaryCounts,
       logicalConversationKey: logicalKey,
       fragmentIds: fragments.map(s => s.id),
@@ -2379,7 +2396,7 @@ function renderTokenMatrix(sessions){
   let rows = '';
   // Unknown counters remain visible even if equal rates make pricing possible.
   const sumLost = new Set();
-  let includedWrites = false;
+  const sumKnown = {};
   for(const model of models){
     const u = byModel[model];
     const price = findModelPriceForUsage(model, u.servedModel);
@@ -2392,13 +2409,18 @@ function renderTokenMatrix(sessions){
     // separate counter. Keep it unavailable without claiming a missing charge.
     const writeIncluded = detail.complete && price && price.cacheWritePolicy === 'input'
       && price.cacheWritePolicySource === 'official' && u.inputTotalComplete === true;
-    if(writeIncluded && (u.incompleteFields || []).includes('cacheWrite')) includedWrites = true;
     for(const name of (u.incompleteFields || [])) if(name !== 'cacheWrite' || !writeIncluded) sumLost.add(name);
+    for(const [name,key] of [['input','input'],['cacheRead','cacheRead'],['cacheWrite','cacheCreation'],['output','output'],['total','total']]){
+      sumKnown[name] = (sumKnown[name] || 0) + knownUsageFieldCount(u,name,key);
+      if((u.invalidFields || []).includes(name)) sumLost.add(name);
+    }
     const field = (name,value) => {
-      if((u.invalidFields || []).includes(name) || (name === 'cacheWrite' && (u.invalidFields || []).includes('cacheWriteTtl'))) return '<span title="'+esc(L('上游用量异常','Invalid upstream usage'))+'">'+L('错误','Error')+'*</span>';
-      if(!(u.incompleteFields || []).includes(name)) return num(value);
-      if(name === 'cacheWrite' && writeIncluded) return '<span title="'+esc(L('缓存写入计入普通输入，不单列数量','Cache creation is billed as ordinary input; no separate counter is reported'))+'">'+(value > 0 ? num(value) : '—')+'</span>';
-      return '<span title="'+esc(L('已知用量小计；部分请求的该字段未返回且无法可靠推导','Known usage subtotal; this field was missing from some requests and cannot be derived reliably'))+'">'+(value > 0 ? num(value) : '—')+'*</span>';
+      const key = name === 'cacheWrite' ? 'cacheCreation' : name;
+      const display = knownUsageFieldCount(u,name,key) > 0 ? num(value) : '—';
+      if((u.invalidFields || []).includes(name) || (name === 'cacheWrite' && (u.invalidFields || []).includes('cacheWriteTtl'))) return '<span title="'+esc(L('部分上游用量异常；这里只显示已知数量，详见请求用量','Some upstream usage is invalid; known counters are shown. See request usage details'))+'">'+display+'</span>';
+      if(!(u.incompleteFields || []).includes(name)) return display;
+      if(name === 'cacheWrite' && writeIncluded) return '<span title="'+esc(L('缓存写入计入普通输入，不单列数量','Cache creation is billed as ordinary input; no separate counter is reported'))+'">'+display+'</span>';
+      return '<span title="'+esc(L('已知用量小计；部分请求的该字段未返回且无法可靠推导','Known usage subtotal; this field was missing from some requests and cannot be derived reliably'))+'">'+display+'</span>';
     };
     // 上游回报的名字和请求名不同时要说出来，否则用户会以为我们认错了模型。
     const nameCell = u.servedModel
@@ -2408,12 +2430,12 @@ function renderTokenMatrix(sessions){
   }
   // 计数缺失仍标未知；相同费率使费用可计算时，也不把未知计数展示为零。
   const sumField = (name,value) => sumLost.has(name)
-    ? '<span title="'+esc(L('已知用量小计；部分会话缺少该字段或仍是旧口径','Known subtotal; some sessions lack this field or still use legacy semantics'))+'">'+(value > 0 ? num(value) : '—')+'*</span>'
-    : name === 'cacheWrite' && includedWrites && value === 0 ? '—' : num(value);
+    ? '<span title="'+esc(L('已知用量小计；部分会话缺少该字段或仍是旧口径','Known subtotal; some sessions lack this field or still use legacy semantics'))+'">'+(sumKnown[name] > 0 ? num(value) : '—')+'</span>'
+    : sumKnown[name] > 0 ? num(value) : '—';
   const notes = [];
   notes.push(L('Token 按请求累计，包含每轮发送的上下文；推理 Token 已计入输出，不重复相加。','Tokens accumulate per request, including context sent on each turn. Reasoning tokens are already included in output.'));
   if(referenceRebuild) notes.push(L('旧记录无价格快照的部分按当前参考价计算。','Older records without price snapshots use current reference rates.'));
-  notes.push(L('费用只汇总已知金额，未计价请求单独提示；用量字段的 * 表示缺失或异常。','Cost sums known amounts; unpriced requests are shown separately. * on usage fields marks missing or invalid data.'));
+  notes.push(L('费用和用量汇总已知数值；缺项和异常在悬停说明及请求详情中提示。','Cost and usage sum known values; gaps and invalid data are explained in tooltips and request details.'));
   if(unpriced) notes.push(L(unpriced+' 个模型有未计价部分。', unpriced+' models have unpriced components.'));
   if(legacySessions) notes.push(L(legacySessions+' 个旧会话无模型划分数据，未计入矩阵（但计入上方 Total Tokens）。', legacySessions+' legacy sessions have no per-model usage and are excluded from the matrix.'));
   return '<div class="dash-matrix-wrap"><table class="dash-matrix">'+
@@ -2436,11 +2458,13 @@ function renderDashboard(){
     incompleteTokens = incompleteTokens || sessionTokensIncomplete(s);
     if(costInfo.cost !== undefined){ totalCost += costInfo.cost; knownCosts++; }
   }
-  const cacheRatio = window.XwXTraceCacheRate(sessions);
+  const cacheStats = window.XwXTraceCacheRate.details(sessions);
+  const cacheRatio = cacheStats.rate;
   const cacheRate = cacheRatio === null ? '—' : (cacheRatio * 100).toFixed(1) + '%';
-  const cacheHint = cacheRatio === null
-    ? L('缺少完整输入或缓存用量，暂无法计算','Complete input and cache usage is unavailable')
-    : L('缓存读取 Token ÷ 全部输入 Token（含缓存读取和写入）','Cache read tokens / all input tokens (including cache reads and writes)');
+  const cacheHint = (cacheRatio === null
+    ? L('没有可计算的已知输入和缓存用量','No known input and cache usage is available')
+    : L('已知请求的缓存读取 Token ÷ 输入 Token（含缓存读取和写入）','Known requests: cache read tokens / input tokens (including cache reads and writes)'))
+      + L('；已纳入 ','; included ') + num(cacheStats.knownRequests) + L(' 条，已排除 ',' requests; excluded ') + num(cacheStats.excludedRequests) + L(' 条缺项请求',' requests with missing usage');
   const filters = [
     { id:'all', label:L('全部','All') },
     { id:'claude-cli', label:'Claude' },
@@ -2455,8 +2479,8 @@ function renderDashboard(){
   });
   const heroValue = hero.unit === '$'
     ? (knownCosts || !sessions.length ? fmtCost(totalCost) : '—')
-    : (incompleteTokens && !totalTok ? '—' : hero.value + (hero.unit ? '<span class="u">' + esc(hero.unit) + '</span>' : '')) + (incompleteTokens ? '*' : '');
-  const usageHint = L('累计请求用量，包含每轮发送的上下文；不是当前上下文长度。用量字段的 * 表示缺项；已知金额单独汇总。','Cumulative request usage includes context sent on each turn; it is not the current context length. * on usage fields marks gaps; known fees are summed separately.');
+    : (incompleteTokens && !sessions.some(sessionHasKnownTokens) ? '—' : hero.value + (hero.unit ? '<span class="u">' + esc(hero.unit) + '</span>' : ''));
+  const usageHint = L('累计请求用量，包含每轮发送的上下文；不是当前上下文长度。已知数值正常汇总，缺项在请求详情中说明。','Cumulative request usage includes context sent on each turn; it is not the current context length. Known values are summed; gaps are explained in request details.');
   let html = '<div class="dash">'+
     '<div class="dash-hero">'+
       '<div class="dash-hero-main" data-toggle-matrix role="button" tabindex="0" aria-expanded="'+(tokenMatrixOpen?'true':'false')+'" aria-label="'+esc(hero.toggleHint)+'" title="'+esc((tokenMatrixOpen ? L('参考费用，非实际扣款。','Reference cost, not an actual charge. ') : num(totalTok)+' Tokens. ')+usageHint)+'">'+
@@ -2466,7 +2490,7 @@ function renderDashboard(){
       '<div class="dash-hero-side">'+
         '<div class="dash-hero-stat"><div class="dash-hs-label">'+L('会话','Sessions')+'</div><div class="dash-hs-val">'+num(sessions.length)+'</div></div>'+
         '<div class="dash-hero-stat"><div class="dash-hs-label">'+L('请求','Requests')+'</div><div class="dash-hs-val">'+num(totalTraces)+'</div></div>'+
-        '<div class="dash-hero-stat" data-cache-hit-rate title="'+esc(cacheHint)+'"><div class="dash-hs-label">'+L('缓存命中率','Cache Hit Rate')+'</div><div class="dash-hs-val">'+esc(cacheRate)+'</div></div>'+
+        '<div class="dash-hero-stat" data-cache-hit-rate title="'+esc(cacheHint)+'"><div class="dash-hs-label">'+(cacheStats.excludedRequests > 0 ? L('缓存命中率（已知）','Cache Hit Rate (Known)') : L('缓存命中率','Cache Hit Rate'))+'</div><div class="dash-hs-val">'+esc(cacheRate)+'</div></div>'+
       '</div>'+
     '</div>'+
     (tokenMatrixOpen ? renderTokenMatrix(sessions) : '')+
@@ -2515,7 +2539,7 @@ function renderDashboard(){
       '<td class="dash-model col-model" data-col="model" title="'+esc(model)+'">'+esc(model)+'</td>'+
       '<td class="dash-num dash-dur" data-col="duration">'+sessionDurationText(durMs)+'</td>'+
       '<td class="dash-num" data-col="requests">'+num(s.traceCount || 0)+'</td>'+
-      '<td class="dash-num" data-col="tokens">'+tokenCountHtml(tok, sessionTokensIncomplete(s))+'</td>'+
+      '<td class="dash-num" data-col="tokens">'+tokenCountHtml(tok, sessionTokensIncomplete(s), sessionHasKnownTokens(s))+'</td>'+
       '<td class="dash-cost'+(costInfo.cost === undefined ? ' cost-na' : '')+'" data-col="cost" title="'+esc(sessionCostTitle(costInfo))+'">'+(costInfo.cost === undefined ? '—' : fmtCost(costInfo.cost))+'</td>'+
      '<td class="dash-del" data-col="actions"><button type="button" class="del-btn" data-act="delete" data-sid="'+esc(s.id)+'" aria-label="'+esc(L('删除该会话','Delete session'))+'" title="'+esc(L('删除','Delete'))+'"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button></td>'+
      '<td class="col-spacer" aria-hidden="true"></td>'+
@@ -6236,6 +6260,7 @@ function mergeTrace(trace, bucketSessionId){
       clientConversationKey: trace.clientConversationKey,
       nativeUsage: trace.costSnapshot ? [trace.costSnapshot] : [],
       usageByModel: accumUsageByModel(undefined, trace),
+      cacheHitUsage: window.XwXTraceCacheRate.accumulate({excludedRequests:Math.max(0,observedCount-1)}, usageOf(trace)),
       auxiliaryCounts: trace.auxiliary
         ? { [trace.auxiliary]: 1 }
         : (trace.subagent ? { subagent: 1 } : undefined)
@@ -6274,6 +6299,7 @@ function mergeTrace(trace, bucketSessionId){
       session.totalTokens = (session.totalTokens || 0) + tok;
       if(isErr) session.errorCount = (session.errorCount || 0) + 1;
       if(trace.costSnapshot) session.nativeUsage = [...(session.nativeUsage || []),trace.costSnapshot];
+      session.cacheHitUsage = window.XwXTraceCacheRate.accumulate(session.cacheHitUsage || {excludedRequests:Math.max(0,(session.traceCount || 0)-1)}, usageOf(trace));
       session.usageByModel = accumUsageByModel(session.usageByModel, trace);
       if(trace.auxiliary || trace.subagent){
         const kind = trace.auxiliary || 'subagent';
@@ -6356,9 +6382,15 @@ function accumUsageByModel(prev, trace){
   const servedModel = snap && snap.model && snap.model !== model ? snap.model : undefined;
   const next = Object.assign({}, prev);
   const before = next[model];
+  const coverage = {};
+  for(const [name,key,aggregate] of [['input','inputUncachedTokens','input'],['cacheRead','cacheReadTokens','cacheRead'],['cacheWrite','cacheCreationTokens','cacheCreation'],['output','outputTokens','output'],['total','totalTokens','total']]){
+    coverage[name] = (before ? knownUsageFieldCount(before,name,aggregate) : 0)
+      + (Number.isSafeInteger(u[key]) && u[key] >= 0 && !(u.invalidFields || []).includes(name) ? 1 : 0);
+  }
   const bands = accumUsageBands(before && before.bands, model, servedModel, trace, u);
   next[model] = {
     version: 2,
+    knownFieldCounts: coverage,
     input: ((before && before.input) || 0) + (u.inputUncachedTokens || 0),
     inputTotal: ((before && before.inputTotal) || 0) + (u.inputTotalTokens || 0),
     inputTotalComplete: (!before || before.inputTotalComplete === true) && u.inputTotalTokens !== undefined

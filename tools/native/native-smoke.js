@@ -359,7 +359,7 @@
       document.querySelector('[data-client-download="codex"]').click(); await delay(150);
       check('downloads render in same dialog with mirrors collapsed', document.querySelectorAll('[role="dialog"]:not([data-position])').length === 1 && [...document.querySelectorAll('#configuration-clients details')].every(item => !item.open));
       document.querySelector('#configuration-clients .setup-card-link').click(); await delay(150);
-      check('official client download shortcut preserved', opened.at(-1) === 'codex' && window.xwxDeck.setupWebsites.codex === 'https://learn.chatgpt.com/docs/app');
+      check('official client website shortcut preserved', opened.at(-1) === 'codex' && window.xwxDeck.setupWebsites.codex === 'https://learn.chatgpt.com/docs/app');
       document.querySelector('[data-client-download="deepseek-harness"]').click(); await delay(150);
       document.querySelector('#configuration-clients .setup-card-link').click(); await delay(150);
       check('DeepSeek Harness opens official landing page in same dialog', opened.at(-1) === 'download-deepseek-harness' && window.xwxDeck.setupWebsites['download-deepseek-harness'] === 'https://deepseek.com/harness/' && document.querySelectorAll('[role=dialog]:not([data-position])').length === 1);
@@ -371,7 +371,7 @@
         document.querySelector(`[data-client-download="${product}"]`).click(); await delay(150);
         const links = document.querySelector('#configuration-clients');
         check(`${client} keeps its official installation within its product page without commands`, !links.querySelector('code') && (product === client || [...links.querySelectorAll('h4')].some(heading => heading.textContent === label)));
-        links.querySelector(`[aria-label="${label} 官方下载"]`).click(); await delay(100);
+        links.querySelector(`[aria-label="${label} 安装说明"]`).click(); await delay(100);
         check(`${client} opens its own official installation page`, opened.at(-1) === `download-${client}`);
       }
       for (const client of ['opencode']) {
@@ -385,10 +385,10 @@
         check(`${client} preserves explicitly selected Apple Silicon download`, opened.at(-1) === `${client}-mac-arm64-download`);
       }
       document.querySelector('[data-client-download="qwen-code"]').click();
-      await wait(() => document.querySelector('#configuration-clients [aria-label="Qwen Code Desktop 官方下载"]'), 'Qwen Code official downloads');
-      check('Qwen Code keeps Desktop and CLI entries without redundant Mac download groups', !document.querySelector('#configuration-clients details') && !!document.querySelector('#configuration-clients [aria-label="Qwen Code CLI 官方下载"]'));
-      const qwenWebsite = document.querySelector('#configuration-clients [aria-label="Qwen Code Desktop 官方下载"]');
-      check('Qwen Code Desktop links to its official website', qwenWebsite.href === 'https://qwen.ai/qwencode');
+      await wait(() => document.querySelector('#configuration-clients [aria-label="Qwen Code CLI 安装说明"]'), 'Qwen Code official installation guide');
+      check('Qwen Code has one actual CLI installation entry without an invented Desktop or duplicate groups', !document.querySelector('#configuration-clients details') && document.querySelectorAll('#configuration-clients .setup-card-download-groups').length === 1 && document.querySelector('#configuration-clients h4').textContent === 'Qwen Code CLI');
+      const qwenWebsite = document.querySelector('#configuration-clients [aria-label="Qwen Code CLI 安装说明"]');
+      check('Qwen Code CLI links to its official installation website', qwenWebsite.href === 'https://qwen.ai/qwencode');
       qwenWebsite.click();
       await wait(() => opened.at(-1) === 'download-qwen-code', 'Qwen Code official website action');
       check('Qwen Code opens its approved official website', opened.at(-1) === 'download-qwen-code');

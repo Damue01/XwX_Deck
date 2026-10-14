@@ -34,9 +34,22 @@
     let write = additive ? positive(topWrite, detailWrite) : positive(detailWrite, topWrite);
     const supplied = values => values.some(v => v !== undefined && v !== null);
     const optional = ['chat-completions','openai-chat-completions','messages','anthropic-messages'].includes(protocol) && (input !== undefined || output !== undefined);
+    // Qwen Responses carries complete Chat-shaped per-call billing details.
+    // Only this validated schema gives an omitted write counter a zero default.
+    const parts = u.x_details;
+    const chatBillingDetails = ['responses','openai-responses'].includes(protocol)
+      && [input,output,read].every(Number.isSafeInteger) && Array.isArray(parts) && parts.length > 0
+      && parts.every(part => part && part.x_billing_type === 'response_api'
+        && Number.isSafeInteger(part.input_tokens) && part.input_tokens >= 0
+        && Number.isSafeInteger(part.output_tokens) && part.output_tokens >= 0
+        && Number.isSafeInteger(part.prompt_tokens_details?.cached_tokens) && part.prompt_tokens_details.cached_tokens >= 0
+        && ['cache_write_tokens','cache_creation_tokens','cache_creation_input_tokens','cacheCreationTokens','cache_creation','cache_write_5m_tokens','cache_write_1h_tokens','claude_cache_creation_5_m_tokens','claude_cache_creation_1_h_tokens'].every(key => !(key in part) && !(key in part.prompt_tokens_details)))
+      && parts.reduce((sum,p) => sum+p.input_tokens,0) === input
+      && parts.reduce((sum,p) => sum+p.output_tokens,0) === output
+      && parts.reduce((sum,p) => sum+p.prompt_tokens_details.cached_tokens,0) === read;
     const defaults = [], derived = [];
     if(optional && read === undefined && !supplied([details.cached_tokens,details.cache_read_tokens,details.cache_read_input_tokens,u.cache_read_input_tokens,u.cache_read_tokens,u.cacheReadTokens,u.prompt_cache_hit_tokens,u.cached_tokens])) { read=0; defaults.push('cacheRead'); }
-    if(optional && write === undefined && !supplied([u.cache_creation_input_tokens,u.cache_creation_tokens,u.cacheCreationTokens,creation.input_tokens,creation.tokens,details.cache_creation_tokens,details.cache_creation_input_tokens,details.cache_write_tokens,creation.ephemeral_5m_input_tokens,creation.ephemeral_1h_input_tokens,details.cache_write_5m_tokens,details.cache_write_1h_tokens,u.claude_cache_creation_5_m_tokens,u.claude_cache_creation_1_h_tokens])) { write=0; defaults.push('cacheWrite'); }
+    if((optional || chatBillingDetails) && write === undefined && !supplied([u.cache_creation_input_tokens,u.cache_creation_tokens,u.cacheCreationTokens,creation.input_tokens,creation.tokens,details.cache_creation_tokens,details.cache_creation_input_tokens,details.cache_write_tokens,creation.ephemeral_5m_input_tokens,creation.ephemeral_1h_input_tokens,details.cache_write_5m_tokens,details.cache_write_1h_tokens,u.claude_cache_creation_5_m_tokens,u.claude_cache_creation_1_h_tokens])) { write=0; defaults.push('cacheWrite'); }
     if (write !== undefined) {
       if (five === undefined && hour !== undefined) five = number(write - hour);
       if (hour === undefined && five !== undefined) hour = number(write - five);
