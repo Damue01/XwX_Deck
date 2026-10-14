@@ -169,7 +169,8 @@
           "tools/native/trace-native-sessions-test.mjs",
           "tools/native/trace-client-evidence-test.mjs",
           "tools/native/trace-viewer-renderer-test.mjs",
-          "tools/native/portability-test.mjs"
+          "tools/native/portability-test.mjs",
+          "tools/native/claude-native-sessions-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -179,7 +180,8 @@
         "R",
         "U"
       ],
-      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。"
+      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。",
+      "module": "Trace 捕获与会话归类"
     },
     {
       "id": "TR02",
@@ -201,7 +203,8 @@
         "R",
         "U"
       ],
-      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。"
+      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。",
+      "module": "Trace 捕获与会话归类"
     },
     {
       "id": "TR03",
@@ -223,7 +226,8 @@
         "R",
         "U"
       ],
-      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。"
+      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。",
+      "module": "Trace 捕获与会话归类"
     },
     {
       "id": "TR04",
@@ -245,7 +249,8 @@
         "R",
         "U"
       ],
-      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。"
+      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。",
+      "module": "Trace 捕获与会话归类"
     },
     {
       "id": "TR05",
@@ -257,14 +262,15 @@
           "tools/native/portability-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "gap": "现有 compact 断言使用合成服务。真实客户端压缩完成、恢复原线程与跨服务续聊仍需 R/U。"
       },
       "requiredEvidence": [
         "P",
         "R",
         "U"
       ],
-      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。"
+      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。",
+      "module": "Trace 捕获与会话归类"
     },
     {
       "id": "TR06",
@@ -278,14 +284,15 @@
           "tools/native/portability-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "gap": "工具配对和主辅归组有程序断言。真实侧边聊天、btw 与全部辅助类型仍待验；淡色命名标记未实现。"
       },
       "requiredEvidence": [
         "P",
         "R",
         "U"
       ],
-      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。"
+      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。",
+      "module": "Trace 捕获与会话归类"
     },
     {
       "id": "TR07",
@@ -297,7 +304,8 @@
           "tools/native/trace-native-sessions-test.mjs",
           "tools/native/trace-client-evidence-test.mjs",
           "tools/native/trace-viewer-renderer-test.mjs",
-          "tools/native/portability-test.mjs"
+          "tools/native/portability-test.mjs",
+          "tools/native/official-websocket-proxy-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -307,7 +315,8 @@
         "R",
         "U"
       ],
-      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。"
+      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。",
+      "module": "Trace 捕获与会话归类"
     },
     {
       "id": "TR08",
@@ -319,17 +328,19 @@
           "tools/native/trace-viewer-renderer-test.mjs",
           "tools/native/dashboard-layout-test.mjs",
           "tools/native/session-reading-renderer-test.mjs",
-          "tools/native/trace-session-navigation-test.mjs"
+          "tools/native/trace-session-navigation-test.mjs",
+          "tools/native/trace-dashboard-api-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "gap": "原生 HTTP 分页与合成 Viewer 交互分别覆盖。真实大量记录、物理滚动、多屏及跨页操作仍需当前包 U。"
       },
       "requiredEvidence": [
         "P",
         "R",
         "U"
       ],
-      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。"
+      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。",
+      "module": "Trace 捕获与会话归类"
     },
     {
       "id": "TR09",
@@ -351,7 +362,8 @@
         "R",
         "U"
       ],
-      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。"
+      "realScenario": "开启 Trace 后新建真实客户端会话。核对原生会话 ID、原始请求、上游及仪表盘归属。续接与并发场景沿用原会话。",
+      "module": "Trace 捕获与会话归类"
     },
     {
       "id": "CO01",
@@ -370,7 +382,8 @@
         "R",
         "U"
       ],
-      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。"
+      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。",
+      "module": "用量、参考费用与统计"
     },
     {
       "id": "CO02",
@@ -392,12 +405,13 @@
         "R",
         "U"
       ],
-      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。"
+      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。",
+      "module": "用量、参考费用与统计"
     },
     {
       "id": "CO03",
       "priority": "P0",
-      "requirement": "详情、会话总计、首页、LIVE、过滤、刷新和重启一致；重试/辅助请求按定义纳入，不因事件重放重复累计；Trace 和仪表盘的已知金额无星号；失败缺项不产生金额；无未计价提示，零值和小额精度一致",
+      "requirement": "详情、会话总计、首页、实时汇总、过滤、刷新和重启一致；重试/辅助请求按定义纳入，不因事件重放重复累计；Trace 和仪表盘的已知金额无星号；失败缺项不产生金额；无未计价提示，零值和小额精度一致",
       "moduleId": "CO",
       "automation": {
         "scripts": [
@@ -415,7 +429,8 @@
         "R",
         "U"
       ],
-      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。"
+      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。",
+      "module": "用量、参考费用与统计"
     },
     {
       "id": "CO04",
@@ -437,7 +452,8 @@
         "R",
         "U"
       ],
-      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。"
+      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。",
+      "module": "用量、参考费用与统计"
     },
     {
       "id": "CO05",
@@ -457,7 +473,8 @@
         "R",
         "U"
       ],
-      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。"
+      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。",
+      "module": "用量、参考费用与统计"
     },
     {
       "id": "CO06",
@@ -469,7 +486,8 @@
           "tools/native/trace-clients-renderer-test.mjs",
           "tools/native/trace-cache-usage-test.mjs",
           "tools/native/trace-billing-test.mjs",
-          "tools/native/price-catalog-test.mjs"
+          "tools/native/price-catalog-test.mjs",
+          "tools/shared-core/trace-cache-rate-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -479,7 +497,8 @@
         "R",
         "U"
       ],
-      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。"
+      "realScenario": "用真实服务完成普通、缓存和失败请求。逐条核对原始用量与价格快照，再对照服务账单。缺项不得估算。",
+      "module": "用量、参考费用与统计"
     },
     {
       "id": "MO01",
@@ -492,7 +511,10 @@
           "tools/native/catalog-contract-edges-test.mjs",
           "tools/native/provider-validation-test.mjs",
           "tools/native/protocol-test.mjs",
-          "tools/native/models-dev-unification-test.mjs"
+          "tools/native/models-dev-unification-test.mjs",
+          "tools/native/catalog-contract-test.mjs",
+          "tools/native/official-catalog-test.mjs",
+          "tools/native/provider-presets-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -502,7 +524,8 @@
         "R",
         "U"
       ],
-      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。"
+      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。",
+      "module": "模型服务、目录与协议"
     },
     {
       "id": "MO02",
@@ -514,7 +537,8 @@
           "tools/native/provider-catalog-test.mjs",
           "tools/native/catalog-contract-edges-test.mjs",
           "tools/native/provider-validation-test.mjs",
-          "tools/native/protocol-test.mjs"
+          "tools/native/protocol-test.mjs",
+          "tools/native/reasoning-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -524,7 +548,8 @@
         "R",
         "U"
       ],
-      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。"
+      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。",
+      "module": "模型服务、目录与协议"
     },
     {
       "id": "MO03",
@@ -546,7 +571,8 @@
         "R",
         "U"
       ],
-      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。"
+      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。",
+      "module": "模型服务、目录与协议"
     },
     {
       "id": "MO04",
@@ -568,7 +594,8 @@
         "R",
         "U"
       ],
-      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。"
+      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。",
+      "module": "模型服务、目录与协议"
     },
     {
       "id": "MO05",
@@ -587,7 +614,8 @@
         "R",
         "U"
       ],
-      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。"
+      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。",
+      "module": "模型服务、目录与协议"
     },
     {
       "id": "MO06",
@@ -611,7 +639,8 @@
         "R",
         "U"
       ],
-      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。"
+      "realScenario": "连接真实服务并刷新目录。切换模型和协议，核对保存值、回读值、实际 URL 与上游响应。离线后复查选择。",
+      "module": "模型服务、目录与协议"
     },
     {
       "id": "CL01",
@@ -624,7 +653,8 @@
           "tools/native/codex-models-renderer-test.mjs",
           "tools/native/client-models-renderer-test.mjs",
           "tools/native/portability-test.mjs",
-          "tools/native/desktop-model-routing-test.mjs"
+          "tools/native/desktop-model-routing-test.mjs",
+          "tools/native/regressions.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -634,7 +664,28 @@
         "R",
         "U"
       ],
-      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。"
+      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。",
+      "module": "客户端配置与续接"
+    },
+    {
+      "id": "CL02",
+      "priority": "P0",
+      "module": "客户端配置与续接",
+      "requirement": "已配置服务之间双向续接同一线程；同进程与重开 resume 分开验收。",
+      "moduleId": "CL",
+      "automation": {
+        "scripts": [
+          "tools/native/portability-test.mjs"
+        ],
+        "mappingStatus": "entry-points-only",
+        "gap": "本地服务与合成身份有相关断言。真实授权、实际 CLI 或 Desktop 和同线程续接仍需当前包验收。"
+      },
+      "requiredEvidence": [
+        "P",
+        "R",
+        "U"
+      ],
+      "realScenario": "在实际页面切换 A→B→A，续接原线程。核对上下文、账号、实际路由与 Trace 归属。"
     },
     {
       "id": "CL03",
@@ -657,7 +708,8 @@
         "R",
         "U"
       ],
-      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。"
+      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。",
+      "module": "客户端配置与续接"
     },
     {
       "id": "CL04",
@@ -670,7 +722,8 @@
           "tools/native/codex-models-renderer-test.mjs",
           "tools/native/client-models-renderer-test.mjs",
           "tools/native/portability-test.mjs",
-          "tools/native/desktop-model-routing-test.mjs"
+          "tools/native/desktop-model-routing-test.mjs",
+          "tools/native/official-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -680,7 +733,8 @@
         "R",
         "U"
       ],
-      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。"
+      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。",
+      "module": "客户端配置与续接"
     },
     {
       "id": "CL05",
@@ -703,7 +757,8 @@
         "R",
         "U"
       ],
-      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。"
+      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。",
+      "module": "客户端配置与续接"
     },
     {
       "id": "CL06",
@@ -712,7 +767,10 @@
       "moduleId": "CL",
       "automation": {
         "scripts": [
-          "tools/native/desktop-lifecycle-test.mjs"
+          "tools/native/desktop-lifecycle-test.mjs",
+          "tools/native/legacy-helper-test.mjs",
+          "tools/native/legacy-direct-test.mjs",
+          "tools/native/legacy-recovery-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -722,7 +780,8 @@
         "R",
         "U"
       ],
-      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。"
+      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。",
+      "module": "客户端配置与续接"
     },
     {
       "id": "CL07",
@@ -735,7 +794,12 @@
           "tools/native/codex-models-renderer-test.mjs",
           "tools/native/client-models-renderer-test.mjs",
           "tools/native/portability-test.mjs",
-          "tools/native/desktop-model-routing-test.mjs"
+          "tools/native/desktop-model-routing-test.mjs",
+          "tools/native/claude-config-path-test.mjs",
+          "tools/native/client-management-test.mjs",
+          "tools/native/expanded-clients-test.mjs",
+          "tools/native/gateway-clients-test.mjs",
+          "tools/native/universal-gateway-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -745,7 +809,8 @@
         "R",
         "U"
       ],
-      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。"
+      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。",
+      "module": "客户端配置与续接"
     },
     {
       "id": "CL08",
@@ -758,7 +823,8 @@
           "tools/native/codex-models-renderer-test.mjs",
           "tools/native/client-models-renderer-test.mjs",
           "tools/native/portability-test.mjs",
-          "tools/native/desktop-model-routing-test.mjs"
+          "tools/native/desktop-model-routing-test.mjs",
+          "tools/native/installed-clients-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -768,7 +834,8 @@
         "R",
         "U"
       ],
-      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。"
+      "realScenario": "新建真实客户端会话。中途切换服务后续接同一会话，检查上下文和上游。停止后核对客户端恢复及监听关闭。",
+      "module": "客户端配置与续接"
     },
     {
       "id": "SE01",
@@ -778,7 +845,8 @@
       "automation": {
         "scripts": [
           "tools/native/provider-identity-test.mjs",
-          "tools/native/settings-write-test.mjs"
+          "tools/native/settings-write-test.mjs",
+          "tools/native/config-import-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -787,7 +855,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。"
+      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。",
+      "module": "设置、配置读写与 Trace 存储"
     },
     {
       "id": "SE02",
@@ -800,7 +869,8 @@
           "tools/native/preferences-test.mjs",
           "tools/native/trace-writer-test.mjs",
           "tools/native/trace-index-repair-test.mjs",
-          "tools/native/directory-lifecycle-test.mjs"
+          "tools/native/directory-lifecycle-test.mjs",
+          "tools/tests/run-bridge-order-regressions.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -809,12 +879,13 @@
         "P",
         "U"
       ],
-      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。"
+      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。",
+      "module": "设置、配置读写与 Trace 存储"
     },
     {
       "id": "SE03",
       "priority": "P0",
-      "requirement": "新运行目录是 xwxdeck；账号/授权保留，旧 Trace 不自动导入；损坏配置不静默重置",
+      "requirement": "独立运行目录为 xwx-deck；正常重启保留本版账号、设置和 Trace；损坏配置不静默重置。",
       "moduleId": "SE",
       "automation": {
         "scripts": [
@@ -825,13 +896,14 @@
           "tools/native/directory-lifecycle-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "gap": "只验收本版持久配置和未来原生更新。旧发行版本的兼容不在公开版范围；实际平台安装、系统授权和重启仍需 U/H。"
       },
       "requiredEvidence": [
         "P",
         "U"
       ],
-      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。"
+      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。",
+      "module": "设置、配置读写与 Trace 存储"
     },
     {
       "id": "SE04",
@@ -841,16 +913,18 @@
       "automation": {
         "scripts": [
           "tools/native/preferences-test.mjs",
-          "tools/native/trace-writer-test.mjs"
+          "tools/native/trace-writer-test.mjs",
+          "tools/native/trace-usage-only-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "gap": "0 GB 用量保留与在途正文清理已有专用脚本。实际容量编辑、确认/取消及单位对照仍需 U。"
       },
       "requiredEvidence": [
         "P",
         "U"
       ],
-      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。"
+      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。",
+      "module": "设置、配置读写与 Trace 存储"
     },
     {
       "id": "SE05",
@@ -859,16 +933,18 @@
       "moduleId": "SE",
       "automation": {
         "scripts": [
-          "tools/native/trace-writer-test.mjs"
+          "tools/native/trace-writer-test.mjs",
+          "tools/native/trace-usage-only-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "gap": "自动清理与 0 GB 在途收尾分别验证。大规模真实记录、设置页与磁盘占用仍需 U。"
       },
       "requiredEvidence": [
         "P",
         "U"
       ],
-      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。"
+      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。",
+      "module": "设置、配置读写与 Trace 存储"
     },
     {
       "id": "SE06",
@@ -886,7 +962,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。"
+      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。",
+      "module": "设置、配置读写与 Trace 存储"
     },
     {
       "id": "SE07",
@@ -904,7 +981,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。"
+      "realScenario": "在独立数据目录修改设置并重启。制造外部修改与在途请求，检查数据保留、所有权、容量和修复结果。",
+      "module": "设置、配置读写与 Trace 存储"
     },
     {
       "id": "AC01",
@@ -915,7 +993,11 @@
         "scripts": [
           "tools/native/credential-private-files-test.mjs",
           "tools/native/official-private-files-test.mjs",
-          "tools/native/preferences-test.mjs"
+          "tools/native/preferences-test.mjs",
+          "tools/native/claude-secure-store-test.mjs",
+          "tools/native/credential-os-test.mjs",
+          "tools/native/credential-vault-test.mjs",
+          "tools/native/grok-secure-store-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -926,7 +1008,42 @@
         "U",
         "H"
       ],
-      "realScenario": "使用独立授权账号登录、刷新及退出。核对当前账号、官方原始额度与实际路由。切换时检查会话亲和和凭据隔离。"
+      "realScenario": "使用独立授权账号登录、刷新及退出。核对当前账号、官方原始额度与实际路由。切换时检查会话亲和和凭据隔离。",
+      "module": "账号、凭据与额度"
+    },
+    {
+      "id": "AC02",
+      "priority": "P0",
+      "module": "账号、凭据与额度",
+      "requirement": "官方登录、API 授权和订阅账号彼此隔离；添加或移除关联保留其他来源登录。",
+      "moduleId": "AC",
+      "automation": {
+        "scripts": [
+          "tools/native/credential-private-files-test.mjs",
+          "tools/native/official-accounts-test.mjs",
+          "tools/native/subscriptions-test.mjs",
+          "tools/native/subscription-routing-test.mjs",
+          "tools/native/subscription-usage-test.mjs",
+          "tools/native/claude-subscriptions-test.mjs",
+          "tools/native/copilot-subscriptions-test.mjs",
+          "tools/native/credential-validation-test.mjs",
+          "tools/native/cursor-subscriptions-test.mjs",
+          "tools/native/grok-subscriptions-test.mjs",
+          "tools/native/official-chatgpt-renderer-test.mjs",
+          "tools/native/official-chatgpt-test.mjs",
+          "tools/native/subscription-import-private-files-test.mjs",
+          "tools/native/subscription-import-test.mjs"
+        ],
+        "mappingStatus": "entry-points-only",
+        "gap": "本地服务与合成身份有相关断言。真实授权、实际 CLI 或 Desktop 和同线程续接仍需当前包验收。"
+      },
+      "requiredEvidence": [
+        "P",
+        "R",
+        "U",
+        "H"
+      ],
+      "realScenario": "在专用账号环境执行登录、导入、移除和重新授权。核对原客户端登录、模型选择与其他账号。"
     },
     {
       "id": "AC03",
@@ -946,7 +1063,8 @@
         "R",
         "U"
       ],
-      "realScenario": "使用独立授权账号登录、刷新及退出。核对当前账号、官方原始额度与实际路由。切换时检查会话亲和和凭据隔离。"
+      "realScenario": "使用独立授权账号登录、刷新及退出。核对当前账号、官方原始额度与实际路由。切换时检查会话亲和和凭据隔离。",
+      "module": "账号、凭据与额度"
     },
     {
       "id": "AC04",
@@ -965,7 +1083,8 @@
         "R",
         "U"
       ],
-      "realScenario": "使用独立授权账号登录、刷新及退出。核对当前账号、官方原始额度与实际路由。切换时检查会话亲和和凭据隔离。"
+      "realScenario": "使用独立授权账号登录、刷新及退出。核对当前账号、官方原始额度与实际路由。切换时检查会话亲和和凭据隔离。",
+      "module": "账号、凭据与额度"
     },
     {
       "id": "AC06",
@@ -977,7 +1096,9 @@
           "tools/native/credential-private-files-test.mjs",
           "tools/native/official-accounts-test.mjs",
           "tools/native/subscription-routing-test.mjs",
-          "tools/native/subscription-usage-test.mjs"
+          "tools/native/subscription-usage-test.mjs",
+          "tools/native/cli-home-lifecycle-test.mjs",
+          "tools/native/credential-validation-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -987,7 +1108,8 @@
         "R",
         "U"
       ],
-      "realScenario": "使用独立授权账号登录、刷新及退出。核对当前账号、官方原始额度与实际路由。切换时检查会话亲和和凭据隔离。"
+      "realScenario": "使用独立授权账号登录、刷新及退出。核对当前账号、官方原始额度与实际路由。切换时检查会话亲和和凭据隔离。",
+      "module": "账号、凭据与额度"
     },
     {
       "id": "HI01",
@@ -995,15 +1117,18 @@
       "requirement": "开启管理、服务切换与历史分类后，原会话可见且可以 resume，原生 ID 不变",
       "moduleId": "HI",
       "automation": {
-        "scripts": [],
-        "mappingStatus": "planned",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "scripts": [
+          "tools/native/legacy-codex-test.mjs"
+        ],
+        "mappingStatus": "entry-points-only",
+        "gap": "已有分类和恢复账本相关断言。当前真实会话正文、工具、compact 与 resume 仍需 R/U。"
       },
       "requiredEvidence": [
         "P",
         "U"
       ],
-      "realScenario": "在独立客户端目录创建多轮历史。执行分类、取消和恢复，核对文件差异及客户端历史。外部修改应保留。"
+      "realScenario": "在独立客户端目录创建多轮历史。执行分类、取消和恢复，核对文件差异及客户端历史。外部修改应保留。",
+      "module": "客户端会话历史管理"
     },
     {
       "id": "HI02",
@@ -1019,7 +1144,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在独立客户端目录创建多轮历史。执行分类、取消和恢复，核对文件差异及客户端历史。外部修改应保留。"
+      "realScenario": "在独立客户端目录创建多轮历史。执行分类、取消和恢复，核对文件差异及客户端历史。外部修改应保留。",
+      "module": "客户端会话历史管理"
     },
     {
       "id": "HI03",
@@ -1027,15 +1153,18 @@
       "requirement": "关闭管理时，“恢复迁移前分类”选择始终可见；勾选/不勾选/取消结果各自正确",
       "moduleId": "HI",
       "automation": {
-        "scripts": [],
-        "mappingStatus": "planned",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "scripts": [
+          "tools/tests/run-history-confirm-regressions.mjs"
+        ],
+        "mappingStatus": "entry-points-only",
+        "gap": "仅关联恢复确认的组件断言。原生历史分类、实际文件变更和同线程 resume 仍需补充自动化与真实验收。"
       },
       "requiredEvidence": [
         "P",
         "U"
       ],
-      "realScenario": "在独立客户端目录创建多轮历史。执行分类、取消和恢复，核对文件差异及客户端历史。外部修改应保留。"
+      "realScenario": "在独立客户端目录创建多轮历史。执行分类、取消和恢复，核对文件差异及客户端历史。外部修改应保留。",
+      "module": "客户端会话历史管理"
     },
     {
       "id": "HI04",
@@ -1051,7 +1180,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在独立客户端目录创建多轮历史。执行分类、取消和恢复，核对文件差异及客户端历史。外部修改应保留。"
+      "realScenario": "在独立客户端目录创建多轮历史。执行分类、取消和恢复，核对文件差异及客户端历史。外部修改应保留。",
+      "module": "客户端会话历史管理"
     },
     {
       "id": "UI01",
@@ -1070,7 +1200,8 @@
         "P",
         "U"
       ],
-      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。"
+      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。",
+      "module": "首次设置与共用界面"
     },
     {
       "id": "UI02",
@@ -1083,7 +1214,8 @@
           "tools/native/toast-renderer-test.mjs",
           "tools/native/language-renderer-test.mjs",
           "tools/native/trace-clients-renderer-test.mjs",
-          "tools/native/toast-layer-renderer-test.mjs"
+          "tools/native/toast-layer-renderer-test.mjs",
+          "tools/native/configuration-state-renderer-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1092,7 +1224,8 @@
         "P",
         "U"
       ],
-      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。"
+      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。",
+      "module": "首次设置与共用界面"
     },
     {
       "id": "UI03",
@@ -1114,7 +1247,8 @@
         "P",
         "U"
       ],
-      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。"
+      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。",
+      "module": "首次设置与共用界面"
     },
     {
       "id": "UI04",
@@ -1124,7 +1258,8 @@
       "automation": {
         "scripts": [
           "tools/native/theme-test.mjs",
-          "tools/native/preferences-test.mjs"
+          "tools/native/preferences-test.mjs",
+          "tools/tests/run-theme-regressions.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1133,7 +1268,8 @@
         "P",
         "U"
       ],
-      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。"
+      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。",
+      "module": "首次设置与共用界面"
     },
     {
       "id": "UI05",
@@ -1154,7 +1290,8 @@
         "P",
         "U"
       ],
-      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。"
+      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。",
+      "module": "首次设置与共用界面"
     },
     {
       "id": "UI06",
@@ -1164,7 +1301,9 @@
       "automation": {
         "scripts": [
           "tools/native/toast-renderer-test.mjs",
-          "tools/native/bridge-renderer-lifecycle-test.mjs"
+          "tools/native/bridge-renderer-lifecycle-test.mjs",
+          "tools/native/toast-layer-renderer-test.mjs",
+          "tools/tests/run-trace-notice-regressions.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1173,7 +1312,8 @@
         "P",
         "U"
       ],
-      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。"
+      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。",
+      "module": "首次设置与共用界面"
     },
     {
       "id": "UI07",
@@ -1192,7 +1332,8 @@
         "P",
         "U"
       ],
-      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。"
+      "realScenario": "用实际系统 WebView 操作引导、表单和弹层。检查键盘焦点、草稿、Toast 遮挡及中英文布局，重启后核对偏好。",
+      "module": "首次设置与共用界面"
     },
     {
       "id": "LF01",
@@ -1202,16 +1343,18 @@
       "automation": {
         "scripts": [
           "tools/native/trace-stop-admission-test.mjs",
-          "tools/native/tool-wait-test.mjs"
+          "tools/native/tool-wait-test.mjs",
+          "tools/native/toggle-renderer-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "gap": "已有忙碌停止、工具等待、显式强停和局部重复点击断言。实际页面等待/取消与真实客户端续聊仍需 U/R。"
       },
       "requiredEvidence": [
         "P",
         "U"
       ],
-      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。"
+      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。",
+      "module": "生命周期、托盘与恢复"
     },
     {
       "id": "LF02",
@@ -1233,7 +1376,8 @@
         "P",
         "U"
       ],
-      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。"
+      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。",
+      "module": "生命周期、托盘与恢复"
     },
     {
       "id": "LF03",
@@ -1252,7 +1396,8 @@
         "P",
         "U"
       ],
-      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。"
+      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。",
+      "module": "生命周期、托盘与恢复"
     },
     {
       "id": "LF04",
@@ -1274,7 +1419,8 @@
         "P",
         "U"
       ],
-      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。"
+      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。",
+      "module": "生命周期、托盘与恢复"
     },
     {
       "id": "LF05",
@@ -1296,7 +1442,8 @@
         "P",
         "U"
       ],
-      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。"
+      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。",
+      "module": "生命周期、托盘与恢复"
     },
     {
       "id": "LF06",
@@ -1306,7 +1453,8 @@
       "automation": {
         "scripts": [
           "tools/native/application-reset-test.mjs",
-          "tools/native/application-reset-ui-test.mjs"
+          "tools/native/application-reset-ui-test.mjs",
+          "tools/native/application-reset-private-files-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1315,7 +1463,8 @@
         "P",
         "U"
       ],
-      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。"
+      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。",
+      "module": "生命周期、托盘与恢复"
     },
     {
       "id": "RE01",
@@ -1324,7 +1473,8 @@
       "moduleId": "RE",
       "automation": {
         "scripts": [
-          "tools/native/source-fingerprint-test.mjs"
+          "tools/native/source-fingerprint-test.mjs",
+          "tools/native/public-boundary-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1333,7 +1483,8 @@
         "P",
         "U"
       ],
-      "realScenario": "核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。"
+      "realScenario": "核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。",
+      "module": "构建、安装、更新与交付"
     },
     {
       "id": "RE02",
@@ -1353,7 +1504,8 @@
         "P",
         "U"
       ],
-      "realScenario": "核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。"
+      "realScenario": "核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。",
+      "module": "构建、安装、更新与交付"
     },
     {
       "id": "RE03",
@@ -1367,13 +1519,14 @@
           "tools/native/portable-update-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "gap": "只验收本版持久配置和未来原生更新。旧发行版本的兼容不在公开版范围；实际平台安装、系统授权和重启仍需 U/H。"
       },
       "requiredEvidence": [
         "P",
         "U"
       ],
-      "realScenario": "核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。"
+      "realScenario": "核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。",
+      "module": "构建、安装、更新与交付"
     },
     {
       "id": "RE04",
@@ -1393,7 +1546,8 @@
         "P",
         "U"
       ],
-      "realScenario": "核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。"
+      "realScenario": "核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。",
+      "module": "构建、安装、更新与交付"
     },
     {
       "id": "RE05",
@@ -1406,13 +1560,14 @@
           "tools/native/portable-update-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "gap": "只验收本版持久配置和未来原生更新。旧发行版本的兼容不在公开版范围；实际平台安装、系统授权和重启仍需 U/H。"
       },
       "requiredEvidence": [
         "P",
         "U"
       ],
-      "realScenario": "核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。"
+      "realScenario": "核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。",
+      "module": "构建、安装、更新与交付"
     },
     {
       "id": "SW01",
@@ -1433,7 +1588,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。"
+      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。",
+      "module": "额度耗尽自动服务切换"
     },
     {
       "id": "SW02",
@@ -1454,7 +1610,8 @@
         "R",
         "U"
       ],
-      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。"
+      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。",
+      "module": "额度耗尽自动服务切换"
     },
     {
       "id": "SW03",
@@ -1475,7 +1632,8 @@
         "R",
         "U"
       ],
-      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。"
+      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。",
+      "module": "额度耗尽自动服务切换"
     },
     {
       "id": "SW04",
@@ -1494,7 +1652,8 @@
         "R",
         "U"
       ],
-      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。"
+      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。",
+      "module": "额度耗尽自动服务切换"
     },
     {
       "id": "DG01",
@@ -1514,7 +1673,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。"
+      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。",
+      "module": "诊断与修复中心"
     },
     {
       "id": "DG02",
@@ -1534,7 +1694,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。"
+      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。",
+      "module": "诊断与修复中心"
     },
     {
       "id": "DG03",
@@ -1554,7 +1715,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。"
+      "realScenario": "在隔离配置中执行对应实际操作。核对原始数据、最新选择和最终结果。真实服务需另验。",
+      "module": "诊断与修复中心"
     },
     {
       "id": "LF07",
@@ -1566,13 +1728,14 @@
           "tools/native/window-lifecycle-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
+        "gap": "窗口专题不属于默认后端清单。物理全屏、多屏和系统 Space 动画仍需 U。"
       },
       "requiredEvidence": [
         "P",
         "U"
       ],
-      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。"
+      "realScenario": "启动当前候选并创建活动请求与工具等待。操作窗口、托盘、停止和退出，核对恢复账本、监听与实际进程。",
+      "module": "生命周期、托盘与恢复"
     },
     {
       "id": "WE01",
@@ -1590,7 +1753,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在窄屏和桌面浏览器打开本地官网。操作各预览与下载入口，检查焦点、布局、控制台及实际下载反馈。"
+      "realScenario": "在窄屏和桌面浏览器打开本地官网。操作各预览与下载入口，检查焦点、布局、控制台及实际下载反馈。",
+      "module": "官网与内嵌应用预览"
     },
     {
       "id": "WE02",
@@ -1608,7 +1772,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在窄屏和桌面浏览器打开本地官网。操作各预览与下载入口，检查焦点、布局、控制台及实际下载反馈。"
+      "realScenario": "在窄屏和桌面浏览器打开本地官网。操作各预览与下载入口，检查焦点、布局、控制台及实际下载反馈。",
+      "module": "官网与内嵌应用预览"
     },
     {
       "id": "WE03",
@@ -1626,7 +1791,8 @@
         "P",
         "U"
       ],
-      "realScenario": "在窄屏和桌面浏览器打开本地官网。操作各预览与下载入口，检查焦点、布局、控制台及实际下载反馈。"
+      "realScenario": "在窄屏和桌面浏览器打开本地官网。操作各预览与下载入口，检查焦点、布局、控制台及实际下载反馈。",
+      "module": "官网与内嵌应用预览"
     }
   ]
 }

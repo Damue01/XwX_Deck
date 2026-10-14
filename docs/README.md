@@ -25,3 +25,8 @@
 - [客户端配置共通修复验收](public-client-configuration-acceptance.md)。
 - [公开版整合验收](public-sync-acceptance.md)。
 - [中文写作准则](documentation-style-guide.md)。
+
+- [功能开发与测试流程](development-testing-workflow.md)。
+- [Trace 状态验收矩阵](trace-state-acceptance.md)。
+- [自动化脚本入口映射](test-coverage-map.md)。
+- [共同要求与测试范围](shared-requirements-status.md)。

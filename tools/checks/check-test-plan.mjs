@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, lstatSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
@@ -45,6 +46,8 @@ const separate = [...scripts].filter(path => !runner.includes('"' + path.split('
 if (errors.length) { console.error(errors.join('\n')); process.exitCode = 1; }
 else {
   console.log(`PASS test plan: ${moduleIds.size} modules, ${caseIds.size} stable IDs, ${scripts.size} existing script entry points`);
-  console.log(`Separate topic/UI commands (not in backend runner): ${separate.join(', ')}`);
+  console.log(`Entries outside the literal default backend list (see inventory for built/conditional/topic classification): ${separate.join(', ')}`);
   console.log('Mapping validation only; no functional or real-environment acceptance is inferred.');
+  const inventory = spawnSync(process.execPath, [join(root, 'tools/checks/report-test-coverage.mjs'), '--check'], { stdio: 'inherit' });
+  if (inventory.status !== 0 || inventory.error) process.exitCode = 1;
 }

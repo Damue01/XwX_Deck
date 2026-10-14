@@ -9,5 +9,25 @@
     "R": [],
     "U": [],
     "H": []
+  },
+  "stateScenarioIds": [],
+  "initialState": {
+    "tracingEnabled": null,
+    "activeRequests": null,
+    "waitingTools": null,
+    "latestSelection": {},
+    "configHashes": {}
+  },
+  "actions": [],
+  "observations": {
+    "ui": [],
+    "files": [],
+    "runtime": [],
+    "trace": []
+  },
+  "network": {
+    "syntheticUpstream": null,
+    "realUpstream": null,
+    "paidRequests": null
   }
 }
