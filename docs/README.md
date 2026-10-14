@@ -22,5 +22,6 @@
 - [运行架构](architecture.md)。
 - [功能与测试点](core-functional-acceptance-checklist.md)。
 - [测试执行方式](testing-strategy.md)。
+- [客户端配置共通修复验收](public-client-configuration-acceptance.md)。
 - [公开版整合验收](public-sync-acceptance.md)。
 - [中文写作准则](documentation-style-guide.md)。

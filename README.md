@@ -139,4 +139,5 @@ npm run test:rust
 
 当前源码采用单一 Rust/Tauri 后端。
 前端与共享资源不再依赖旧 TypeScript 后端。
-最新同步范围与测试结果见 [公开版整合验收](docs/public-sync-acceptance.md)。
+最新客户端、统计和诊断修复见 [共通修复验收](docs/public-client-configuration-acceptance.md)。
+整体功能与此前结果见 [公开版整合验收](docs/public-sync-acceptance.md)。
