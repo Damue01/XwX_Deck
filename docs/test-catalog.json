@@ -397,7 +397,7 @@
     {
       "id": "CO03",
       "priority": "P0",
-      "requirement": "详情、会话总计、首页、LIVE、过滤、刷新和重启一致；重试/辅助请求按定义纳入，不因事件重放重复累计；仪表盘已知金额不带星号，未计价请求的数量和原因单列，不重复计数",
+      "requirement": "详情、会话总计、首页、LIVE、过滤、刷新和重启一致；重试/辅助请求按定义纳入，不因事件重放重复累计；Trace 和仪表盘的已知金额无星号；失败缺项不产生金额；无未计价提示，零值和小额精度一致",
       "moduleId": "CO",
       "automation": {
         "scripts": [
@@ -462,10 +462,11 @@
     {
       "id": "CO06",
       "priority": "P1",
-      "requirement": "小额金额、星号、缓存命中率、单位和舍入清晰一致；订阅参考价与真实账户扣款分开",
+      "requirement": "小额金额、零值、未知值、缓存命中率、单位和舍入一致；订阅参考价与真实账户扣款分开",
       "moduleId": "CO",
       "automation": {
         "scripts": [
+          "tools/native/trace-clients-renderer-test.mjs",
           "tools/native/trace-cache-usage-test.mjs",
           "tools/native/trace-billing-test.mjs",
           "tools/native/price-catalog-test.mjs"
