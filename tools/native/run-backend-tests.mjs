@@ -42,6 +42,7 @@ const suites = [
   "subscription-import-renderer-test.mjs",
   "onboarding-renderer-test.mjs",
   "provider-dialog-renderer-test.mjs",
+  "configuration-state-renderer-test.mjs",
   "enhancements-choices-renderer-test.mjs",
   "subscriptions-test.mjs",
   "subscription-routing-test.mjs",

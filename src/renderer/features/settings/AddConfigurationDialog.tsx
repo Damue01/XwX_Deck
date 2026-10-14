@@ -5,7 +5,7 @@ import { ArrowLeft, FileUp, Plug, Plus, RefreshCw, SlidersHorizontal, X } from '
 import { useBridge } from '@/bridge/store';
 import { groupSubscriptionConnections, subscriptionPlatformForAccount, subscriptionServiceIcon, subscriptionServiceNames } from '@/lib/subscriptionServices';
 import { showErrorToast, showToast } from '@/lib/toast';
-import { OFFICIAL_PROVIDERS, LISTED_OFFICIAL_PROVIDERS, type OfficialProviderId } from '../../../shared/officialProviders';
+import { OFFICIAL_PROVIDERS, LISTED_OFFICIAL_PROVIDERS, officialProviderForUrl, type OfficialProviderId } from '../../../shared/officialProviders';
 import { ProviderIcon, providerIconKind } from './ProviderIcon';
 import type { ProviderConnection } from '../../../shared/providers';
 import { SubscriptionAccountsPanel } from './SubscriptionAccountsPanel';
@@ -19,7 +19,7 @@ type Service = OfficialProviderId | 'custom';
 const TABS = ['services', 'accounts', 'saved', 'clients'] as const;
 export type ConfigurationTab = typeof TABS[number];
 
-export function AddConfigurationDialog({ open, busy: providerBusy, selected, onOpenChange, onSelect, onBack, editor, finalFocus, initialTab = 'services', initialSubscriptionPlatform = null, clientsOnly = false, manageClients = false, onOpenClient, savedConnections = [], selectedConnectionId, onEditConnection, managementOpen = false, onStartAdding, activeTab, onTabChange, onImported, editorNavigation, draftName, connectionNames = {}, subscriptionEditor }: {
+export function AddConfigurationDialog({ open, busy: providerBusy, selected, onOpenChange, onSelect, onBack, editor, finalFocus, initialTab = 'services', initialSubscriptionPlatform = null, clientsOnly = false, manageClients = false, onOpenClient, savedConnections: knownConnections, selectedConnectionId, onEditConnection, managementOpen = false, onStartAdding, activeTab, onTabChange, onImported, editorNavigation, draftName, connectionNames = {}, subscriptionEditor }: {
   subscriptionEditor?: React.ReactNode;
   managementOpen?: boolean;
   onStartAdding?: () => void;
@@ -47,6 +47,10 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
   finalFocus: React.RefObject<HTMLButtonElement | null>;
 }): React.ReactElement {
   useLanguage();
+  const savedConnections = knownConnections ?? [];
+  const configuredServices = new Set(savedConnections.filter(item => !item.subscriptionAccountId).map(item =>
+    OFFICIAL_PROVIDERS.find(preset => 'providerPreset' in preset && preset.providerPreset === item.providerPreset)?.id
+      ?? officialProviderForUrl(item.baseUrl)?.id ?? providerIconKind(item.baseUrl)));
   const dialogActions = React.useRef<Dialog.Root.Actions | null>(null);
   const previouslyOpen = React.useRef(open);
   React.useEffect(() => {
@@ -109,18 +113,18 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
   const savedList = maintenance ? groupSubscriptionConnections(savedConnections, selectedConnectionId) : [];
   const savedChoices = savedList.map(item => <button key={item.id} type="button" className="configuration-choice" data-saved-provider={item.id} aria-pressed={!enhancementsOpen && selectedConnectionId === item.id} disabled={busy} onClick={() => { setEnhancementsOpen(false); onEditConnection?.(item); }}><ProviderIcon kind={item.subscriptionAccountId ? subscriptionServiceIcon(item.subscriptionAccountId) : providerIconKind(item.baseUrl)} /><span>{item.subscriptionAccountId ? t(subscriptionServiceNames[subscriptionPlatformForAccount(item.subscriptionAccountId)]) : connectionNames[item.id]?.trim() || item.displayName}</span></button>);
   const services = <>
-    {LISTED_OFFICIAL_PROVIDERS.map(item => <button key={item.id} type="button" className="configuration-choice" data-service={item.id} aria-pressed={selected === item.id} disabled={busy} onClick={() => { setEnhancementsOpen(false); onSelect(item.id); }}>
+    {LISTED_OFFICIAL_PROVIDERS.map(item => <button key={item.id} type="button" className="configuration-choice" data-service={item.id} data-unconfigured={knownConnections !== undefined && !configuredServices.has(item.id) || undefined} aria-pressed={selected === item.id} disabled={busy} onClick={() => { setEnhancementsOpen(false); onSelect(item.id); }}>
       <ProviderIcon kind={item.id} /><span>{t(item.label)}</span>
     </button>)}
     <button type="button" className="configuration-choice" data-service="custom" aria-pressed={selected === 'custom'} disabled={busy} onClick={() => { setEnhancementsOpen(false); onSelect('custom'); }}><Plug className="provider-brand-icon" aria-hidden="true" /><span>{t("自定义")}</span></button>
-    {api.previewConfigurationImport && <button ref={importEntry} type="button" className="configuration-choice configuration-import-entry" disabled={busy} onClick={() => setImportOpen(true)}><FileUp className="provider-brand-icon" aria-hidden="true" /><span>{t('导入已有配置')}</span></button>}
+    {api.previewConfigurationImport && <button ref={importEntry} type="button" className="configuration-choice configuration-import-entry" disabled={busy} onClick={() => setImportOpen(true)}><FileUp className="provider-brand-icon" aria-hidden="true" /><span>{t('导入配置')}</span></button>}
   </>;
   const clientInfo = CLIENT_DOWNLOADS.find(item => item.id === client);
   const manageable = (id: DownloadClientId) => supportsModelManagement(id) || modelClients.includes(canonicalModelClient(id));
   const clients = MODEL_CLIENT_CATALOG.map(item => {
     const uninstalled = manageClients && installation.snapshot?.available === true
       && installation.snapshot.clients.some(entry => entry.id === (canonicalModelClient(item.id)) && !entry.installed);
-    return <button key={item.id} type="button" className="configuration-choice" data-client-download={item.id} data-uninstalled={uninstalled || undefined} aria-pressed={client === item.id} disabled={addingClient} onClick={() => setClient(item.id)}>
+    return <button key={item.id} type="button" className="configuration-choice" data-client-download={item.id} data-unconfigured={uninstalled || undefined} aria-pressed={client === item.id} disabled={addingClient} onClick={() => setClient(item.id)}>
       <ProviderIcon kind={item.icon} /><span>{clientCatalogLabel(item)}</span>
     </button>;
   });
@@ -151,7 +155,7 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
       <Dialog.Backdrop className="setup-card-backdrop" />
       <Dialog.Popup className={`configuration-dialog${maintenance ? ' configuration-management-dialog' : ''}${manageClients && (clientsOnly || tab === 'clients') ? ' client-manager-dialog' : ''}`} id="add-configuration-dialog" tabIndex={-1} finalFocus={finalFocus} initialFocus={openType => openType === 'keyboard' ? initialTabButton.current : document.getElementById('add-configuration-dialog')}>
         <header className={`configuration-header${clientsOnly || importing ? '' : ' configuration-header-tabs'}`}>
-          <Dialog.Title className={clientsOnly || importing ? undefined : 'sr-only'}>{importing ? t('导入已有配置') : maintenance ? t('我的配置') : clientsOnly ? manageClients ? t('管理客户端') : t('添加客户端') : t('添加配置')}</Dialog.Title>
+          <Dialog.Title className={clientsOnly || importing ? undefined : 'sr-only'}>{importing ? t('导入配置') : maintenance ? t('我的配置') : clientsOnly ? manageClients ? t('管理客户端') : t('添加客户端') : t('添加配置')}</Dialog.Title>
           <Dialog.Description className="sr-only">{importing ? t('选择要导入的配置') : clientsOnly ? t('选择客户端、打开官方下载页面或管理模型页的客户端标签。移除保留模型配置。') : t('添加 API 服务、订阅账号或下载客户端。')}</Dialog.Description>
           {!clientsOnly && !importing && <div className="configuration-tabs" role="tablist" aria-label={t("添加配置类型")} onKeyDown={event => {
             if (busy || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;

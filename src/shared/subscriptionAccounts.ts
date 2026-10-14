@@ -24,6 +24,8 @@ export interface SubscriptionAccount {
   readonly authKind?: 'official' | 'api';
   readonly externalLogin?: boolean;
   readonly importedLogin?: boolean;
+  /** Bound source-login state; unreadable metadata is distinct from confirmed expiry. */
+  readonly sourceLogin?: 'authenticated' | 'unauthenticated' | 'unknown';
   readonly sourceError?: string | null;
   readonly accountKey?: string;
   readonly quota?: { remainingPercent: number; resetsAt: number; checkedAt: number };

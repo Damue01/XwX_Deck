@@ -726,6 +726,30 @@ pub(super) struct CliHome {
     lease: Option<fs::File>,
     completed: bool,
 }
+#[cfg(unix)]
+unsafe extern "C" {
+    // POSIX fcntl is variadic. Apple ARM64 passes its final argument on the
+    // stack, so declaring a fixed third argument can leave CLOEXEC unchanged.
+    fn fcntl(fd: i32, command: i32, ...) -> i32;
+}
+
+#[cfg(unix)]
+fn clear_cli_lease_cloexec(fd: i32) -> std::io::Result<()> {
+    let flags = unsafe { fcntl(fd, 1) }; // F_GETFD
+    if flags < 0 || unsafe { fcntl(fd, 2, flags & !1) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let inherited = unsafe { fcntl(fd, 1) };
+    if inherited < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if inherited & 1 != 0 {
+        // The pre-exec callback must not allocate or acquire application locks.
+        return Err(std::io::Error::from_raw_os_error(22)); // EINVAL
+    }
+    Ok(())
+}
+
 impl CliHome {
     pub fn create(root: &Path) -> Result<Self> {
         let mut nonce = [0u8; 16];
@@ -795,17 +819,8 @@ impl CliHome {
         {
             use std::os::fd::AsRawFd;
             let fd = self.lease.as_ref().ok_or("临时授权租约已释放")?.as_raw_fd();
-            unsafe extern "C" {
-                fn fcntl(fd: i32, command: i32, argument: i32) -> i32;
-            }
             unsafe {
-                command.pre_exec(move || {
-                    let flags = fcntl(fd, 1, 0);
-                    if flags < 0 || fcntl(fd, 2, flags & !1) < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
+                command.pre_exec(move || clear_cli_lease_cloexec(fd));
             }
         }
         let child = command
@@ -829,18 +844,8 @@ impl CliHome {
         {
             use std::os::fd::AsRawFd;
             let fd = self.lease.as_ref().ok_or("临时授权租约已释放")?.as_raw_fd();
-            unsafe extern "C" {
-                fn fcntl(fd: i32, command: i32, argument: i32) -> i32;
-            }
             unsafe {
-                command.pre_exec(move || {
-                    let flags = fcntl(fd, 1, 0); // F_GETFD
-                    if flags < 0 || fcntl(fd, 2, flags & !1) < 0 {
-                        // F_SETFD, FD_CLOEXEC
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
+                command.pre_exec(move || clear_cli_lease_cloexec(fd));
             }
         }
         let mut child = command
@@ -1410,6 +1415,83 @@ mod tests {
         assert_eq!(fs::read_to_string(&file).unwrap(), bad);
         fs::remove_dir_all(root).unwrap();
     }
+    #[cfg(unix)]
+    #[test]
+    fn invalid_cli_lease_descriptor_cannot_silently_pass_exec_admission() {
+        assert!(clear_cli_lease_cloexec(-1).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn actual_exec_retains_cli_lease_after_the_parent_home_is_dropped() {
+        use std::os::fd::AsRawFd;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let root = std::env::temp_dir().join(format!(
+            "xwxdeck-cli-exec-{}-{}",
+            std::process::id(),
+            millis()
+        ));
+        fs::create_dir(&root).unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut home = CliHome::create(&root).unwrap();
+                let path = home.path.clone();
+                let fd = home.lease.as_ref().unwrap().as_raw_fd();
+                assert_eq!(
+                    unsafe { fcntl(fd, 1) } & 1,
+                    1,
+                    "the parent descriptor remains CLOEXEC"
+                );
+                let mut command = tokio::process::Command::new("/bin/cat");
+                command
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped());
+                let mut child = home.spawn(&mut command).unwrap();
+                let mut input = child.stdin.take().unwrap();
+                let mut output = child.stdout.take().unwrap();
+                input.write_all(b"ready").await.unwrap();
+                let mut ready = [0; 5];
+                tokio::time::timeout(Duration::from_secs(5), output.read_exact(&mut ready))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(&ready, b"ready", "the child has executed its real program");
+                assert_eq!(
+                    unsafe { fcntl(fd, 1) } & 1,
+                    1,
+                    "clearing the child flag does not affect parallel parent spawns"
+                );
+                drop(home);
+                assert!(
+                    cli_home_lease(&path, &root).unwrap().is_none(),
+                    "the actual exec child still owns its inherited lock"
+                );
+                cleanup_cli_homes(&root).unwrap();
+                assert!(path.is_dir());
+                let live: Vec<PathBuf> = serde_json::from_str(
+                    &read(&root.join("native-cli-work.json")).unwrap().unwrap(),
+                )
+                .unwrap();
+                assert_eq!(live, vec![path.clone()]);
+                drop(input);
+                assert!(tokio::time::timeout(Duration::from_secs(5), child.wait())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .success());
+                cleanup_cli_homes(&root).unwrap();
+                assert!(!path.exists());
+                assert_eq!(
+                    read(&root.join("native-cli-work.json")).unwrap().as_deref(),
+                    Some("[]")
+                );
+            });
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn concurrent_cli_homes_preserve_every_live_lease_and_cleanup() {
         let root = std::env::temp_dir().join(format!(

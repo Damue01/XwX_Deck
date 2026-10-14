@@ -161,7 +161,7 @@ export function SubscriptionAccountsPanel({ visible, open, initialPlatform = nul
   return <div className={embedded ? 'configuration-detail subscription-accounts' : `configuration-content subscription-workspace${platform ? ' has-detail' : ''}`} aria-busy={busy}>
     {!embedded && <div className="configuration-directory">
       {platform && <button type="button" className="provider-text-action configuration-back" disabled={busy} onClick={() => { setPlatform(null); setRenaming(null); }}><ArrowLeft size={15} aria-hidden="true" />{t("全部订阅")}</button>}
-      <div className={platform ? 'configuration-list' : 'configuration-grid'} aria-label={t("订阅服务")}>{OPTIONS.map(item => <button className="configuration-choice" type="button" data-subscription-service={item.id} aria-pressed={platform === item.id} key={item.id} disabled={busy} onClick={() => {
+      <div className={platform ? 'configuration-list' : 'configuration-grid'} aria-label={t("订阅服务")}>{OPTIONS.map(item => <button className="configuration-choice" type="button" data-subscription-service={item.id} data-unconfigured={snapshot !== null && snapshot.supported !== false && !snapshot.accounts.some(account => (account.platform ?? 'chatgpt') === item.id && (account.sourceLogin === undefined ? account.status === 'connected' || !!account.sourceError : account.sourceLogin !== 'unauthenticated')) || undefined} aria-pressed={platform === item.id} key={item.id} disabled={busy} onClick={() => {
         setRenaming(null);
         setPlatform(item.id); setError('');
       }}><ProviderIcon kind={item.icon} /><span>{item.label}</span></button>)}</div>

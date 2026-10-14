@@ -256,7 +256,7 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
         <button id="provider-models-tab" role="tab" type="button" aria-selected={checksOpen} aria-controls="provider-models-panel" tabIndex={checksOpen ? 0 : -1} onClick={event => { setChecksOpen(true); event.currentTarget.focus(); }} disabled={busy}>{t('模型')}</button>
       </div>}
       draftName={editorOpen ? draft?.displayName : undefined} connectionNames={Object.fromEntries(Object.entries(drafts).filter(([, value]) => !!value.id).map(([id, value]) => [id, value.displayName]))}
-      savedConnections={bridge.providers?.connections ?? []} selectedConnectionId={subscriptionConnection?.id ?? (editorOpen ? draft?.id : undefined)}
+      savedConnections={bridge.providers?.connections} selectedConnectionId={subscriptionConnection?.id ?? (editorOpen ? draft?.id : undefined)}
       onEditConnection={provider => edit(provider, editorTrigger.current)}
       onOpenChange={open => { setDialogOpen(open); if (!open) { setEditorOpen(false); setChecksOpen(false); } }} />
     {configuredConnections.map(p => <div className="provider" key={p.id}>

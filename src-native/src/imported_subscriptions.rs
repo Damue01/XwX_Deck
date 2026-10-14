@@ -4,6 +4,39 @@ use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 pub(super) const KEY: &str = "importedSubscriptionAccounts";
+const SOURCE_ACCOUNT_REMOVED: &str = "来源账号已移除，请重新登录或移除导入账号";
+const SOURCE_LOGIN_CHANGED: &str = "来源登录已换成其他账号，请重新检测并导入；原关联未改变";
+const SOURCE_LOGIN_MISSING: &str = "来源账号未登录，请在原应用登录后重新检测";
+const SOURCE_LOGIN_LAPSED: &str = "来源授权已失效，请在原应用重新登录后重新检测";
+const SOURCE_LOGIN_EXPIRED: &str = "来源授权已过期，请在原应用刷新登录后重新检测";
+
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum SourceLogin {
+    Authenticated,
+    Unauthenticated,
+    Unknown,
+}
+
+fn source_login(auth: &Result<Value>) -> SourceLogin {
+    match auth {
+        Ok(_) => SourceLogin::Authenticated,
+        Err(reason)
+            if [
+                SOURCE_ACCOUNT_REMOVED,
+                SOURCE_LOGIN_CHANGED,
+                SOURCE_LOGIN_MISSING,
+                SOURCE_LOGIN_LAPSED,
+                SOURCE_LOGIN_EXPIRED,
+            ]
+            .contains(&reason.as_str()) =>
+        {
+            SourceLogin::Unauthenticated
+        }
+        Err(_) => SourceLogin::Unknown,
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Registration {
@@ -100,9 +133,9 @@ impl Registration {
                             text(row, "id") == self.record_id
                         }
                 })
-                .ok_or("来源账号已移除，请重新登录或移除导入账号")?;
+                .ok_or(SOURCE_ACCOUNT_REMOVED)?;
             if !text(row, "lapsed").is_empty() {
-                return Err("来源授权已失效，请在原应用重新登录后重新检测".into());
+                return Err(SOURCE_LOGIN_LAPSED.into());
             }
             row["auth"].clone()
         };
@@ -113,7 +146,7 @@ impl Registration {
         };
         let current = Self::new(path, &json!({}), kind, &auth)?;
         if current.identity != self.identity || current.client_id != self.client_id {
-            return Err("来源登录已换成其他账号，请重新检测并导入；原关联未改变".into());
+            return Err(SOURCE_LOGIN_CHANGED.into());
         }
         let token = if self.kind == "official" {
             text(&auth["tokens"], "access_token")
@@ -121,7 +154,7 @@ impl Registration {
             text(&auth, "access")
         };
         if token.is_empty() {
-            return Err("来源账号未登录，请在原应用登录后重新检测".into());
+            return Err(SOURCE_LOGIN_MISSING.into());
         }
         let expires = claims(token)["exp"].as_u64().or_else(|| {
             auth["expires"]
@@ -130,7 +163,7 @@ impl Registration {
                 .map(|t| t.timestamp().max(0) as u64)
         });
         if expires.is_some_and(|t| t <= (millis() / 1000) as u64) {
-            return Err("来源授权已过期，请在原应用刷新登录后重新检测".into());
+            return Err(SOURCE_LOGIN_EXPIRED.into());
         }
         if self.kind == "api"
             && (!auth["scopes"].as_array().is_some_and(|scopes| {
@@ -145,9 +178,10 @@ impl Registration {
     }
     pub fn metadata(&self, root: &Path, isolated: bool) -> Value {
         let auth = self.auth(root, isolated);
+        let source_login = source_login(&auth);
         json!({"id":self.id,"platform":"chatgpt","authKind":self.kind,"label":self.label,"email":self.email,
             "accountKey":self.identity,"importedLogin":true,"status":if auth.is_ok(){"connected"}else{"signed-out"},
-            "sourceError":auth.err()})
+            "sourceLogin":source_login,"sourceError":auth.err()})
     }
     pub fn provider(&self, base: String) -> Provider {
         Provider {
