@@ -1,4 +1,6 @@
 use super::*;
+#[path = "codex_checkpoint.rs"]
+mod codex_checkpoint;
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 static CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn items(v: &Value) -> Vec<Value> {
@@ -128,9 +130,8 @@ fn official_input(input: Vec<Value>) -> Result<Vec<Value>> {
     }
     Ok(output)
 }
-// A strict Responses endpoint follows the strict OpenAI input schema. Keep
+// Responses endpoints follow the strict OpenAI input schema. Keep
 // third-party visible reasoning as assistant text; never invent an opaque seal.
-#[cfg(test)]
 pub(super) fn strict_responses(body: &Value) -> Result<Value> {
     let before = items(&body["input"]);
     let input = official_input(before.clone())?;
@@ -140,8 +141,19 @@ pub(super) fn strict_responses(body: &Value) -> Result<Value> {
     }
     Ok(body)
 }
+fn restored_prefix(current: Vec<Value>, mut recovered: Vec<Value>) -> Vec<Value> {
+    let is_instruction = |item: &Value| ["system", "developer"].contains(&text(item, "role"));
+    let mut instructions: Vec<_> = current.into_iter().filter(is_instruction).collect();
+    if instructions.is_empty() {
+        return recovered;
+    }
+    recovered.retain(|item| !is_instruction(item));
+    instructions.extend(recovered);
+    instructions
+}
 pub(super) fn expand(
     root: &Path,
+    codex_home: &Path,
     provider: &Provider,
     session: &str,
     body: &Value,
@@ -196,7 +208,30 @@ pub(super) fn expand(
         if !seal.is_empty() {
             let hash = storage::digest(seal.as_bytes());
             let entry = &ledger["seals"][&hash];
-            let foreign = entry["owner"].as_str().is_some_and(|o| o != origin)
+            let checkpoint = if entry.is_null() {
+                codex_checkpoint::read_thread(
+                    codex_home,
+                    session,
+                    seal,
+                    ["compaction", "compaction_summary"].contains(&text(&item, "type")),
+                )?
+            } else {
+                None
+            };
+            let native_foreign = checkpoint.as_ref().is_some_and(|saved| {
+                if provider.official || provider.oauth {
+                    saved.provider != "openai"
+                } else {
+                    ![
+                        provider.id.as_str(),
+                        provider.codex_provider_id.as_str(),
+                        "xwx_deck",
+                    ]
+                    .contains(&saved.provider.as_str())
+                }
+            });
+            let foreign = native_foreign
+                || entry["owner"].as_str().is_some_and(|o| o != origin)
                 || (entry.is_null() && ledger["owner"].as_str().is_some_and(|o| o != origin));
             if foreign {
                 if ["compaction", "compaction_summary"].contains(&text(&item, "type")) {
@@ -207,10 +242,22 @@ pub(super) fn expand(
                         } else {
                             None
                         };
-                    let saved = cached.filter(|c| c["complete"] != false).ok_or(
-                        "无法恢复原服务的加密压缩上下文，请回到原服务继续或发送完整上下文",
-                    )?;
-                    input.extend(items(&saved["input"]));
+                    if let Some(saved) = cached.filter(|c| c["complete"] != false) {
+                        input = restored_prefix(input, items(&saved["input"]));
+                    } else {
+                        let recovered = match checkpoint {
+                            Some(saved) => saved.input,
+                            None => codex_checkpoint::read_thread(codex_home, session, seal, true)?
+                                .and_then(|saved| saved.input),
+                        }
+                        .ok_or(
+                            "无法恢复原服务的加密压缩上下文，请回到原服务继续或发送完整上下文",
+                        )?;
+                        // The exact checkpoint includes the retained precompact
+                        // messages already before this item. Replace that prefix
+                        // rather than duplicating tool calls or old instructions.
+                        input = restored_prefix(input, recovered);
+                    }
                     continue;
                 }
                 if let Some(object) = item.as_object_mut() {

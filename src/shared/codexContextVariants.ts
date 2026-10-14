@@ -7,6 +7,7 @@ export const CODEX_MAX_CONTEXT_WINDOW = 2_000_000;
 export interface CodexContextCapableModel {
   readonly id: string;
   readonly contextWindow?: number;
+  readonly codexContextWindow?: number;
   readonly capabilitySources?: {
     readonly contextWindow?: string;
   };
@@ -20,8 +21,8 @@ export interface CodexContextVariant {
 }
 
 /**
- * GPT models whose maintained capability reaches 1M expose the standard Codex
- * window and the opt-in 1M window as two UI choices. The suffix is display-only:
+ * GPT models use the current client's default and an optional 1M override.
+ * The default never freezes a client window in config.toml. The suffix is display-only:
  * config.toml and upstream requests keep the canonical model id.
  */
 export function codexContextVariants(model: CodexContextCapableModel): readonly CodexContextVariant[] {
@@ -32,33 +33,35 @@ export function codexContextVariants(model: CodexContextCapableModel): readonly 
   }
 
   if (verifiedWindow >= CODEX_EXTENDED_CONTEXT_WINDOW) {
-    return [
+    const defaultWindow = codexDefaultContextWindow(model)!;
+    const choices: CodexContextVariant[] = [
       {
         modelId,
-        label: `${modelId}[${formatContextWindow(CODEX_STANDARD_LONG_CONTEXT_WINDOW)}]`,
-        contextWindow: CODEX_STANDARD_LONG_CONTEXT_WINDOW
-      },
-      {
+        label: `${modelId}[${formatContextWindow(defaultWindow)}]`,
+        contextWindow: null
+      }
+    ];
+    if (defaultWindow !== CODEX_EXTENDED_CONTEXT_WINDOW) choices.push({
         modelId,
         label: `${modelId}[${formatContextWindow(CODEX_EXTENDED_CONTEXT_WINDOW)}]`,
         contextWindow: CODEX_EXTENDED_CONTEXT_WINDOW
-      }
-    ];
+    });
+    return choices;
   }
 
   return [{
     modelId,
-    label: `${modelId}[${formatContextWindow(verifiedWindow)}]`,
+    label: `${modelId}[${formatContextWindow(codexDefaultContextWindow(model)!)}]`,
     contextWindow: null
   }];
 }
 
-/** Default operational window written into XwX's 兼容服务 Codex catalog. */
+/** The current operational default, without a fixed historical 256K ceiling. */
 export function codexDefaultContextWindow(model: CodexContextCapableModel): number | undefined {
   const verifiedWindow = verifiedContextWindow(model);
   if (verifiedWindow === undefined) return undefined;
-  return isGptModel(model.id) && verifiedWindow >= CODEX_EXTENDED_CONTEXT_WINDOW
-    ? CODEX_STANDARD_LONG_CONTEXT_WINDOW
+  return Number.isSafeInteger(model.codexContextWindow) && (model.codexContextWindow ?? 0) > 0
+    ? Math.min(model.codexContextWindow!, verifiedWindow)
     : verifiedWindow;
 }
 

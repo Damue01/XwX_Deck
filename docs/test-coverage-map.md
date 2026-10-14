@@ -21,6 +21,7 @@
 | 脚本 | 执行入口 | 关联编号 |
 | --- | --- | --- |
 | [claude-native-sessions-test.mjs](../tools/native/claude-native-sessions-test.mjs) | 后端默认入口 | TR01 |
+| [codex-client-compatibility-test.mjs](../tools/native/codex-client-compatibility-test.mjs) | 后端默认入口 | TR05、MO01、CL01、CL02 |
 | [dashboard-layout-test.mjs](../tools/native/dashboard-layout-test.mjs) | 独立专题入口 | TR08、CO03 |
 | [official-websocket-proxy-test.mjs](../tools/native/official-websocket-proxy-test.mjs) | 后端默认入口 | TR07 |
 | [portability-test.mjs](../tools/native/portability-test.mjs) | 后端默认入口 | TR01、TR02、TR03、TR04、TR05、TR06、TR07、TR09、CL01、CL02、CL03、CL04、CL05、CL07、CL08 |
@@ -58,6 +59,7 @@
 | [catalog-contract-edges-test.mjs](../tools/native/catalog-contract-edges-test.mjs) | 后端默认入口 | CO05、MO01、MO02、MO03、MO05、MO06 |
 | [catalog-contract-test.mjs](../tools/native/catalog-contract-test.mjs) | 后端默认入口 | MO01 |
 | [client-models-renderer-test.mjs](../tools/native/client-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |
+| [codex-client-compatibility-test.mjs](../tools/native/codex-client-compatibility-test.mjs) | 后端默认入口 | TR05、MO01、CL01、CL02 |
 | [codex-models-renderer-test.mjs](../tools/native/codex-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |
 | [metadata-test.mjs](../tools/native/metadata-test.mjs) | 后端默认入口 | MO06 |
 | [models-dev-unification-test.mjs](../tools/native/models-dev-unification-test.mjs) | 后端默认入口 | CO02、CO04、MO01、MO06 |
@@ -68,6 +70,7 @@
 | [provider-presets-test.mjs](../tools/native/provider-presets-test.mjs) | 后端默认入口 | MO01 |
 | [provider-validation-test.mjs](../tools/native/provider-validation-test.mjs) | 后端默认入口 | MO01、MO02、MO03、MO06 |
 | [reasoning-test.mjs](../tools/native/reasoning-test.mjs) | 后端默认入口 | MO02 |
+| [codex-client-contract-test.mjs](../tools/shared-core/codex-client-contract-test.mjs) | 独立专题入口 | MO01 |
 
 ## CL 客户端配置与续接
 
@@ -79,6 +82,7 @@
 | [client-config-merge-test.mjs](../tools/native/client-config-merge-test.mjs) | 后端默认入口 | CL01、CL03、CL04、CL05、CL07、CL08 |
 | [client-management-test.mjs](../tools/native/client-management-test.mjs) | 后端默认入口 | CL07 |
 | [client-models-renderer-test.mjs](../tools/native/client-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |
+| [codex-client-compatibility-test.mjs](../tools/native/codex-client-compatibility-test.mjs) | 后端默认入口 | TR05、MO01、CL01、CL02 |
 | [codex-models-renderer-test.mjs](../tools/native/codex-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |
 | [desktop-lifecycle-test.mjs](../tools/native/desktop-lifecycle-test.mjs) | 后端默认入口 | CL06、LF02、LF03、LF04、LF05 |
 | [desktop-model-routing-test.mjs](../tools/native/desktop-model-routing-test.mjs) | 后端默认入口 | CL01、CL03、CL04、CL05、CL07、CL08 |

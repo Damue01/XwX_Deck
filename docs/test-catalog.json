@@ -259,7 +259,8 @@
       "moduleId": "TR",
       "automation": {
         "scripts": [
-          "tools/native/portability-test.mjs"
+          "tools/native/portability-test.mjs",
+          "tools/native/codex-client-compatibility-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "现有 compact 断言使用合成服务。真实客户端压缩完成、恢复原线程与跨服务续聊仍需 R/U。"
@@ -514,7 +515,9 @@
           "tools/native/models-dev-unification-test.mjs",
           "tools/native/catalog-contract-test.mjs",
           "tools/native/official-catalog-test.mjs",
-          "tools/native/provider-presets-test.mjs"
+          "tools/native/provider-presets-test.mjs",
+          "tools/native/codex-client-compatibility-test.mjs",
+          "tools/shared-core/codex-client-contract-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -654,7 +657,8 @@
           "tools/native/client-models-renderer-test.mjs",
           "tools/native/portability-test.mjs",
           "tools/native/desktop-model-routing-test.mjs",
-          "tools/native/regressions.mjs"
+          "tools/native/regressions.mjs",
+          "tools/native/codex-client-compatibility-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -675,7 +679,8 @@
       "moduleId": "CL",
       "automation": {
         "scripts": [
-          "tools/native/portability-test.mjs"
+          "tools/native/portability-test.mjs",
+          "tools/native/codex-client-compatibility-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "本地服务与合成身份有相关断言。真实授权、实际 CLI 或 Desktop 和同线程续接仍需当前包验收。"

@@ -31,6 +31,7 @@ const suites = [
   "metadata-test.mjs",
   "provider-catalog-test.mjs",
   "catalog-contract-test.mjs",
+  "codex-client-compatibility-test.mjs",
   "catalog-contract-edges-test.mjs",
   "price-catalog-test.mjs",
   "models-dev-unification-test.mjs",

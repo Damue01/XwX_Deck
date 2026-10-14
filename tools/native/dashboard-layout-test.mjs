@@ -35,15 +35,14 @@ try {
     await page.locator('[data-toggle-matrix]').click();
     assert.equal(await page.locator('.dash-hero-num').textContent(),'$0.024');
     assert.equal(await page.locator('.dash-unpriced-report').count(),0);
-    assert.equal(await page.locator('.dash-unpriced-badge').count(),2);
+    assert.equal(await page.locator('.dash-unpriced-badge').count(),0);
     assert.deepEqual(await page.locator('td[data-col="cost"]').allTextContents(),['$0.012','$0.012']);
     await page.locator('[data-sfilter="codex-cli"]').click();
     assert.equal(await page.locator('.dash-table tbody tr').count(),1);
     assert.equal(await page.locator('.dash-hero-num').textContent(),'$0.012');
     assert.equal(await page.locator('.dash-unpriced-report').count(),0);
-    assert.equal(await page.locator('.dash-unpriced-badge').count(),1);
-    assert.ok((await page.locator('.dash-unpriced-badge').getAttribute('title')).includes(language==='en'?'Missing or incomplete usage':'用量缺失或不完整'));
-    checks.push(`CO03: normal known fees, no top warning, inline gap count/reason and actual filter/fee-toggle interaction at ${width}px ${language}`);
+    assert.equal(await page.locator('.dash-unpriced-badge').count(),0);
+    checks.push(`CO03: normal known fees, no top warning or fallback badge, and actual filter/fee-toggle interaction at ${width}px ${language}`);
 
   }
   if(process.env.XWX_DASHBOARD_TEST_SCREENSHOT) await page.screenshot({path:process.env.XWX_DASHBOARD_TEST_SCREENSHOT});

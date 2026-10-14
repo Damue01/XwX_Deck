@@ -30,3 +30,5 @@
 - [Trace 状态验收矩阵](trace-state-acceptance.md)。
 - [自动化脚本入口映射](test-coverage-map.md)。
 - [共同要求与测试范围](shared-requirements-status.md)。
+
+Codex 目录和加密续接见 [专项验收](codex-provider-continuation-acceptance.md)。

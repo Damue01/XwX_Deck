@@ -259,6 +259,7 @@ struct Route {
     store: storage::Store,
     root: PathBuf,
     cancel: tokio::sync::watch::Receiver<bool>,
+    codex_home: PathBuf,
 }
 struct Dashboard {
     port: u16,
@@ -1544,6 +1545,7 @@ impl Pilot {
             store: self.store.clone(),
             root: self.root.clone(),
             cancel: cancelled,
+            codex_home: self.codex_home(),
         };
         let routes = Arc::new(std::sync::RwLock::new(route));
         let (shutdown, receive) = oneshot::channel();
@@ -2750,8 +2752,23 @@ async fn forward_once(
     let client_stream = payload.as_ref().is_some_and(|v| v["stream"] == true);
     if !is_claude && !metadata && !account {
         if let Some(ref body) = payload {
-            match continuation::expand(&route.root, provider, session, body, convert) {
+            match continuation::expand(
+                &route.root,
+                &route.codex_home,
+                provider,
+                session,
+                body,
+                convert,
+            ) {
                 Ok(expanded) => {
+                    let expanded = if wire == "responses" {
+                        match continuation::strict_responses(&expanded) {
+                            Ok(body) => body,
+                            Err(error) => return protocol_error(400, incoming, &error),
+                        }
+                    } else {
+                        expanded
+                    };
                     payload = Some(expanded);
                 }
                 Err(e) => return protocol_error(400, incoming, &e),

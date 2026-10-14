@@ -41,6 +41,8 @@ export interface ModelCatalogEntry {
   readonly reasoningLevels?: readonly string[];
   readonly defaultReasoningLevel?: string;
   readonly contextWindow?: number;
+  /** Codex's operational default, distinct from the service's model capacity. */
+  readonly codexContextWindow?: number;
   readonly maxOutputTokens?: number;
   readonly inputModalities?: readonly string[];
   readonly reasoning?: boolean;

@@ -21,11 +21,11 @@ const require=createRequire(resolve(base,'package.json'));
 const React=require('react'),{act}=React,{createRoot}=require('react-dom/client');
 const notices=[],writes=[],checks=[];const providerId='subscription-fixture';
 let saved={mode:'official',officialModel:'deepseek-v4-pro',compatible:{model:'deepseek-v4-pro',baseUrl:'https://api.openai.com/v1',bearerToken:''},configOwnership:'deck',modelCatalogSource:'none'};
-let hold=null,readHold=null,fail=false,mismatch=false;
+let hold=null,readHold=null,fail=false,mismatch=false,clientWindow;
 const deferred=()=>{let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j});return{promise,resolve,reject}};
 const bridge={modelClients:['codex'],runtime:{tracingEnabled:false},codexConfig:saved,codexEnhancements:{},providers:{active:{codex:providerId,claude:null},connections:[{id:'official-configured',displayName:'Official_fixture',subscriptionAccountId:'official-chatgpt-fixture',baseUrl:'https://api.openai.com/v1',adapter:'responses',codexApiFormat:'responses',claudeModels:{}},{id:providerId,displayName:'Fixture_e740eed2',subscriptionAccountId:'account',baseUrl:'https://api.openai.com/v1',adapter:'responses',codexApiFormat:'responses',claudeModels:{}}]},modelCatalog:[],patch:()=>{},api:{
  getCodexConfig:async()=>readHold?readHold.promise:structuredClone(saved),
- fetchModels:async()=>['gpt-6.1-sol','gpt-6-luna'].map(id=>({id,vendor:'OpenAI',protocols:['openai-responses'],clients:['codex']})),
+ fetchModels:async()=>['gpt-6.1-sol','gpt-6-luna'].map(id=>({id,vendor:'OpenAI',protocols:['openai-responses'],clients:['codex'],...(clientWindow&&id==='gpt-6.1-sol'?{contextWindow:1050000,codexContextWindow:clientWindow,capabilitySources:{contextWindow:'models.dev'}}:{})})),
  updateCodexConfig:async input=>{writes.push(input);if(hold)await hold.promise;if(fail)throw Error('External configuration changed');if(mismatch)return structuredClone(saved);saved={...saved,officialModel:input.expectedProviderId===null?input.officialModel:saved.officialModel,compatible:{...saved.compatible,model:input.expectedProviderId===null?saved.compatible.model:input.compatibleModel},modelContextWindow:input.modelContextWindow??undefined,warning:bridge.runtime.tracingEnabled?undefined:'模型选择已保存，需要开启 Trace 后用于客户端请求。'};return structuredClone(saved);},
  getOfficialChatgptAccount:async()=>({id:"official-chatgpt",label:"本机官方登录",email:"official@example.test",status:"connected",quotaDetails:{windows:[],httpStatus:200}}),
  switchClientProvider:async({providerId:id})=>{bridge.providers={...bridge.providers,active:{...bridge.providers.active,codex:id}};return bridge.providers;},
@@ -97,6 +97,15 @@ try{
  pass('a successful RPC returning the wrong model cannot produce a success toast, erase the choice, or prevent retry');
  bridge.runtime={tracingEnabled:true};saved={...saved,mode:'compatible'};await render(false);await render(true);await choose('gpt-6.1-sol');await wait(()=>!button().disabled,'active Trace save');assert.equal(saved.compatible.model,'gpt-6.1-sol');
  pass('the same selection path also saves while Trace is active');
+ clientWindow=500000;saved={...saved,modelContextWindow:262144};await render(false);await render(true);await wait(()=>button()?.textContent.includes('256K'),'saved explicit window remains');
+ await choose('gpt-6.1-sol[500K]');await wait(()=>!button().disabled,'automatic window saved');assert.equal(writes.at(-1).modelContextWindow,null);assert.equal(saved.compatible.model,'gpt-6.1-sol');assert.equal(saved.modelContextWindow,undefined);
+ await choose('gpt-6.1-sol[1M]');await wait(()=>!button().disabled,'explicit extended window saved');assert.equal(saved.modelContextWindow,1000000);
+ clientWindow=600000;await render(false);await render(true);await wait(()=>button()?.textContent.includes('[1M]'),'explicit extension retained after metadata refresh');
+ await choose('gpt-6.1-sol[600K]');await wait(()=>!button().disabled,'refreshed automatic window saved');assert.equal(writes.at(-1).modelContextWindow,null);assert.equal(saved.modelContextWindow,undefined);
+ clientWindow=undefined;await render(false);await render(true);await wait(()=>!button().disabled,'ordinary labels restored');
+ pass('actual model selector retains the saved 256K choice, clears its override only on selecting the 500K/600K default, preserves explicit 1M across refresh and keeps the canonical model ID');
+
+
  const picker=document.querySelector('[data-client-panel="codex"] .provider-choice button');await act(async()=>picker.click());await wait(()=>[...document.querySelectorAll('[role="option"]')].some(e=>e.textContent==='ChatGPT 官方登录'),'official service option');
  await act(async()=>{const option=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent==='ChatGPT 官方登录');const down=new MouseEvent('pointerdown',{bubbles:true,button:0,buttons:1});Object.defineProperty(down,'pointerType',{value:'mouse'});option.dispatchEvent(down);option.click()});
  await wait(()=>bridge.providers.active.codex==='official-configured','explicit configured official account selected');
@@ -118,7 +127,7 @@ try{
  await act(async()=>root.render(null));
  const makeProvider=(id,subscriptionAccountId)=>({id,displayName:id,subscriptionAccountId,baseUrl:'https://api.openai.com/v1',adapter:'responses',codexApiFormat:'responses',claudeModels:{}});
  const raceApi={...bridge.api},raceProviders=bridge.providers,raceRuntime=bridge.runtime;
- const raceCatalog=['gpt-6.1-sol','gpt-6-luna'].map(id=>({id,vendor:'OpenAI',protocols:['openai-responses'],clients:['codex']}));
+ const raceCatalog=['gpt-6.1-sol','gpt-6-luna'].map(id=>({id,vendor:'OpenAI',protocols:['openai-responses'],clients:['codex'],...(clientWindow&&id==='gpt-6.1-sol'?{contextWindow:1050000,codexContextWindow:clientWindow,capabilitySources:{contextWindow:'models.dev'}}:{})}));
  let selectionReads=[],interceptReads=false;
  bridge.modelClients=['codex'];bridge.runtime={tracingEnabled:true};
  bridge.providers={active:{codex:'race-first',claude:null},connections:['race-first','race-second','race-third'].map(id=>makeProvider(id))};

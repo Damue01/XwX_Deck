@@ -15,6 +15,34 @@ const FIELDS: &[&str] = &[
     "interleavedThinking",
     "inputModalities",
 ];
+// The model's service capacity and Codex's current operational default are
+// different facts. Never hard-code the client's default for future models.
+fn codex_window(entry: &Value, native: Option<&Value>) -> u64 {
+    let capacity = entry["contextWindow"].as_u64().filter(|n| *n > 0);
+    if entry["capabilitySources"]["contextWindow"] == "provider" {
+        return capacity.unwrap_or(262144);
+    }
+    if let Some(window) = native
+        .and_then(|row| row["context_window"].as_u64())
+        .filter(|n| *n > 0)
+    {
+        return if entry["capabilitySources"]["contextWindow"] == "fallback" {
+            window
+        } else {
+            capacity.map_or(window, |limit| window.min(limit))
+        };
+    }
+    capacity.unwrap_or(262144)
+}
+
+fn ensure_codex_instructions(row: &mut Value) {
+    if row["base_instructions"].is_string()
+        || row["model_messages"]["instructions_template"].is_string()
+    {
+        return;
+    }
+    row["base_instructions"] = json!("You are a coding agent. Follow the user instructions, use the provided tools carefully, and report the completed result clearly.");
+}
 fn normalize_id(id: &str) -> String {
     id.trim().trim_start_matches("models/").to_lowercase()
 }
@@ -325,6 +353,20 @@ pub(super) struct Catalog {
     pub defer_publication: bool,
 }
 impl Catalog {
+    fn client_defaults(&self, mut entries: Vec<Value>) -> Vec<Value> {
+        let native = read(&self.codex_home.join("models_cache.json"))
+            .ok()
+            .flatten()
+            .and_then(|source| serde_json::from_str::<Value>(&source).ok())
+            .unwrap_or(Value::Null);
+        for entry in &mut entries {
+            let exact = native["models"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["slug"] == entry["id"]));
+            entry["codexContextWindow"] = json!(codex_window(entry, exact));
+        }
+        entries
+    }
     fn cache_path(&self, p: &Provider) -> PathBuf {
         self.root.join(format!(
             "provider-{}-models.json",
@@ -354,6 +396,7 @@ impl Catalog {
                 .cloned()
                 .map(|e| enrich(e, &remote))
                 .collect();
+            let entries = self.client_defaults(entries);
             self.publish_catalog(p, &entries)?;
             return Ok(json!(entries));
         }
@@ -409,6 +452,7 @@ impl Catalog {
             .into_iter()
             .map(|e| enrich(e, &remote))
             .collect::<Vec<_>>();
+        let entries = self.client_defaults(entries);
         let entries = super::retired_models::overlay(&self.root, p, json!(entries))?;
         self.publish_catalog(p, entries.as_array().unwrap())?;
         Ok(entries)
@@ -439,10 +483,10 @@ impl Catalog {
             .unwrap_or(Value::Null);
         let models=rows.iter().enumerate().filter(|(_,r)|!metadata::unavailable(r)&&!metadata::non_conversational(r)&&!r["catalogEndpoints"].as_array().is_some_and(|a|a.len()==1&&a[0]=="gemini")).map(|(i,r)|{
             let exact=native["models"].as_array().and_then(|a|a.iter().find(|e|e["slug"]==r["id"]));
-            let context=r["contextWindow"].as_u64().unwrap_or(262144);let vision=if r["capabilitySources"]["vision"]=="fallback"{exact.is_some_and(|e|e["supports_image_detail_original"]==true)}else{r["vision"]==true};
+            let context=codex_window(r, exact);let vision=if r["capabilitySources"]["vision"]=="fallback"{exact.is_some_and(|e|e["supports_image_detail_original"]==true)}else{r["vision"]==true};
             let mut row=exact.cloned().unwrap_or_else(||json!({"shell_type":"shell_command","base_instructions":"You are a coding agent. Follow the user instructions, use the provided tools carefully, and report the completed result clearly.","apply_patch_tool_type":"freeform","default_verbosity":"medium","truncation_policy":{"mode":"tokens","limit":10000},"experimental_supported_tools":[]}));
             row["slug"]=r["id"].clone();row["display_name"]=r["id"].clone();row["description"]=r["vendor"].clone();row["visibility"]=json!("list");row["supported_in_api"]=json!(true);row["priority"]=json!(i);
-            row["context_window"]=json!(context);row["max_context_window"]=json!(context);row["auto_compact_token_limit"]=json!(context*9/10);row["effective_context_window_percent"]=json!(95);
+            row["context_window"]=json!(context);row["max_context_window"]=json!(r["contextWindow"].as_u64().unwrap_or(context).max(context));row["auto_compact_token_limit"]=json!(context*9/10);row["effective_context_window_percent"]=json!(95);
             row["input_modalities"]=if vision{json!(["text","image"])}else{json!(["text"])};row["supports_image_detail_original"]=json!(vision);row["supports_search_tool"]=json!(false);row["supports_parallel_tool_calls"]=json!(false);row["support_verbosity"]=json!(false);
             if exact.is_none() || r["capabilitySources"]["reasoning"] != "fallback" {
                 row["supported_reasoning_levels"]=json!(r["reasoningLevels"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|s|["none","minimal","low","medium","high","xhigh","max"].contains(s)).map(|s|json!({"effort":s,"description":format!("{s} reasoning effort")})).collect::<Vec<_>>());
@@ -450,7 +494,8 @@ impl Catalog {
                 if r["defaultReasoningLevel"].is_string() && row["supported_reasoning_levels"].as_array().is_some_and(|levels|levels.iter().any(|level|level["effort"]==r["defaultReasoningLevel"])) {row["default_reasoning_level"]=r["defaultReasoningLevel"].clone();}
             }
             row["supports_reasoning_summary_parameter"]=json!(r["reasoning"]==true);row["default_reasoning_summary"]=json!(if r["reasoning"]==true{"auto"}else{"none"});
-            for key in ["comp_hash","max_output_tokens","supports_websockets","supports_reasoning_summaries","availability_nux","model_messages","multi_agent_version","tool_mode","upgrade","use_responses_lite","web_search_tool_type"] {row.as_object_mut().unwrap().remove(key);}
+            for key in ["comp_hash","max_output_tokens","supports_websockets","supports_reasoning_summaries","availability_nux","multi_agent_version","tool_mode","upgrade","use_responses_lite","web_search_tool_type"] {row.as_object_mut().unwrap().remove(key);}
+            ensure_codex_instructions(&mut row);
             row
         }).collect::<Vec<_>>();
         let path = self.codex_home.join("xwx-deck-model-catalog.json");
@@ -647,4 +692,46 @@ pub(super) fn wire(root: &Path, p: &Provider, model: Option<&str>, incoming: &st
         }
     }
     default.into()
+}
+
+#[cfg(test)]
+mod client_contract_tests {
+    use super::*;
+    #[test]
+    fn instruction_templates_survive_client_publication() {
+        let mut template = json!({"model_messages":{"instructions_template":"current native instructions","permissions":{"fixture":true}}});
+        let original = template.clone();
+        ensure_codex_instructions(&mut template);
+        assert_eq!(template, original);
+        let mut legacy = json!({"base_instructions":"retained legacy instructions"});
+        ensure_codex_instructions(&mut legacy);
+        assert_eq!(legacy["base_instructions"], "retained legacy instructions");
+        let mut absent = json!({"slug":"codex-auto-review"});
+        ensure_codex_instructions(&mut absent);
+        assert!(absent["base_instructions"].is_string());
+    }
+    #[test]
+    fn current_client_default_does_not_replace_service_capacity() {
+        let entry =
+            json!({"contextWindow":1050000,"capabilitySources":{"contextWindow":"models.dev"}});
+        assert_eq!(
+            codex_window(&entry, Some(&json!({"context_window":500000}))),
+            500000
+        );
+        assert_eq!(entry["contextWindow"], 1050000);
+        assert_eq!(codex_window(&entry, None), 1050000);
+        let provider =
+            json!({"contextWindow":128000,"capabilitySources":{"contextWindow":"provider"}});
+        assert_eq!(
+            codex_window(&provider, Some(&json!({"context_window":500000}))),
+            128000
+        );
+        let unknown =
+            json!({"contextWindow":262144,"capabilitySources":{"contextWindow":"fallback"}});
+        assert_eq!(
+            codex_window(&unknown, Some(&json!({"context_window":500000}))),
+            500000
+        );
+        assert_eq!(codex_window(&unknown, None), 262144);
+    }
 }
