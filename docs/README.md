@@ -37,3 +37,6 @@ Codex 目录和加密续接见 [专项验收](codex-provider-continuation-accept
 
 服务切换、Trace 开关与同线程续接见 [路由链路审计](routing-consumption-audit.md)。
 本轮执行结果见 [路由交付记录](routing-consumption-delivery.md)。
+
+Codex 压缩、搜索和工具控制见 [兼容控制](codex-compatibility-controls.md)。
+最新共享修复见 [路由交付记录](routing-consumption-delivery.md)。

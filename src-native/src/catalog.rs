@@ -2,6 +2,8 @@
 //! capabilities retain their own provenance across cache and client publication.
 use super::*;
 use std::collections::BTreeMap;
+#[path = "catalog_compatibility.rs"]
+mod compatibility;
 #[path = "catalog_metadata.rs"]
 pub(super) mod metadata;
 
@@ -357,7 +359,7 @@ pub(super) struct Catalog {
     pub defer_publication: bool,
 }
 impl Catalog {
-    fn client_defaults(&self, mut entries: Vec<Value>) -> Vec<Value> {
+    fn client_defaults(&self, p: &Provider, mut entries: Vec<Value>) -> Vec<Value> {
         let native = read(&self.codex_home.join("models_cache.json"))
             .ok()
             .flatten()
@@ -368,6 +370,8 @@ impl Catalog {
                 .as_array()
                 .and_then(|rows| rows.iter().find(|row| row["slug"] == entry["id"]));
             entry["codexContextWindow"] = json!(codex_window(entry, exact));
+            entry["codexCompatibility"] =
+                compatibility::resolve(entry, exact, &entry_wire(p, Some(entry), "responses"));
             entry["codexContextWindowSource"] = json!(
                 if entry["capabilitySources"]["contextWindow"] == "provider" {
                     "provider"
@@ -384,7 +388,7 @@ impl Catalog {
         }
         entries
     }
-    fn enrich_subscription(&self, entries: Value) -> Result<Value> {
+    fn enrich_subscription(&self, p: &Provider, entries: Value) -> Result<Value> {
         let remote = model_metadata::cached_capabilities(&self.root)?;
         let rows = entries
             .as_array()
@@ -393,7 +397,7 @@ impl Catalog {
             .cloned()
             .map(|entry| enrich(entry, &remote))
             .collect();
-        Ok(json!(self.client_defaults(rows)))
+        Ok(json!(self.client_defaults(p, rows)))
     }
     fn cache_path(&self, p: &Provider) -> PathBuf {
         self.root.join(format!(
@@ -424,7 +428,7 @@ impl Catalog {
                 .cloned()
                 .map(|e| enrich(e, &remote))
                 .collect();
-            let entries = self.client_defaults(entries);
+            let entries = self.client_defaults(p, entries);
             self.publish_catalog(p, &entries)?;
             return Ok(json!(entries));
         }
@@ -480,7 +484,7 @@ impl Catalog {
             .into_iter()
             .map(|e| enrich(e, &remote))
             .collect::<Vec<_>>();
-        let entries = self.client_defaults(entries);
+        let entries = self.client_defaults(p, entries);
         let entries = super::retired_models::overlay(&self.root, p, json!(entries))?;
         self.publish_catalog(p, entries.as_array().unwrap())?;
         Ok(entries)
@@ -514,8 +518,8 @@ impl Catalog {
             let context=codex_window(r, exact);let vision=if r["capabilitySources"]["vision"]=="fallback"{exact.is_some_and(|e|e["supports_image_detail_original"]==true)}else{r["vision"]==true};
             let mut row=exact.cloned().unwrap_or_else(||json!({"shell_type":"shell_command","base_instructions":"You are a coding agent. Follow the user instructions, use the provided tools carefully, and report the completed result clearly.","apply_patch_tool_type":"freeform","default_verbosity":"medium","truncation_policy":{"mode":"tokens","limit":10000},"experimental_supported_tools":[]}));
             row["slug"]=r["id"].clone();row["display_name"]=r["id"].clone();row["description"]=r["vendor"].clone();row["visibility"]=json!("list");row["supported_in_api"]=json!(true);row["priority"]=json!(i);
-            row["context_window"]=json!(context);row["max_context_window"]=json!(r["contextWindow"].as_u64().unwrap_or(context).max(context));row["auto_compact_token_limit"]=json!(context*9/10);row["effective_context_window_percent"]=json!(95);
-            row["input_modalities"]=if vision{json!(["text","image"])}else{json!(["text"])};row["supports_image_detail_original"]=json!(vision);row["supports_search_tool"]=json!(false);row["supports_parallel_tool_calls"]=json!(false);row["support_verbosity"]=json!(false);
+            row["context_window"]=json!(context);row["max_context_window"]=json!(r["contextWindow"].as_u64().unwrap_or(context).max(context));row.as_object_mut().unwrap().remove("auto_compact_token_limit");for (key,value) in compatibility::resolve(r,exact,&entry_wire(p,Some(r),"responses"))["values"].as_object().unwrap() {row[key]=value.clone();}
+            row["input_modalities"]=if vision{json!(["text","image"])}else{json!(["text"])};row["supports_image_detail_original"]=json!(vision);row.as_object_mut().unwrap().remove("supports_parallel_tool_calls");
             if exact.is_none() || r["reasoningLevels"].is_array() || (r["reasoning"] == false && r["capabilitySources"]["reasoning"] != "fallback") {
                 row["supported_reasoning_levels"]=json!(r["reasoningLevels"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|s|["none","minimal","low","medium","high","xhigh","max"].contains(s)).map(|s|json!({"effort":s,"description":format!("{s} reasoning effort")})).collect::<Vec<_>>());
 
@@ -528,7 +532,7 @@ impl Catalog {
             if exact.is_none() || r["capabilitySources"]["reasoning"] != "fallback" {
                 row["supports_reasoning_summary_parameter"]=json!(r["reasoning"]==true);row["default_reasoning_summary"]=json!(if r["reasoning"]==true{"auto"}else{"none"});
             }
-            for key in ["comp_hash","max_output_tokens","supports_websockets","supports_reasoning_summaries","availability_nux","multi_agent_version","tool_mode","upgrade","use_responses_lite","web_search_tool_type"] {row.as_object_mut().unwrap().remove(key);}
+            for key in ["comp_hash","max_output_tokens","supports_websockets","supports_reasoning_summaries","availability_nux","multi_agent_version","tool_mode","upgrade","use_responses_lite"] {row.as_object_mut().unwrap().remove(key);}
             ensure_codex_instructions(&mut row);
             row
         }).collect::<Vec<_>>();
@@ -595,6 +599,7 @@ impl Pilot {
         context.defer_publication = true;
         Ok(Some(CatalogJob {
             generation: self.catalog_generation,
+            repair_generation: self.catalog_repair_generation,
             context,
             provider: provider.cloned(),
             official,
@@ -607,7 +612,7 @@ impl Pilot {
         }))
     }
     pub fn finish_catalog(&mut self, job: &CatalogJob, entries: Value) -> Result<Value> {
-        if job.generation != self.catalog_generation {
+        if job.repair_generation != self.catalog_repair_generation {
             return Err("模型缓存已修复，未应用修复前的迟到目录；请重新加载".into());
         }
         if let Some(official) = &job.official {
@@ -634,8 +639,23 @@ impl Pilot {
             return Err("连接已更改，未应用迟到目录；请重新加载".into());
         }
         if job.subscription.is_some() {
-            return Ok(entries);
+            return self.catalog_context().enrich_subscription(current, entries);
         }
+        // A reference-data refresh is not a user cache repair. Keep validated
+        // service facts, but consume the current reference and native defaults.
+        let entries = if job.generation != self.catalog_generation {
+            let remote = model_metadata::cached_capabilities(&self.root)?;
+            let rows = entries
+                .as_array()
+                .ok_or("模型目录格式无效")?
+                .iter()
+                .cloned()
+                .map(|entry| enrich(entry, &remote))
+                .collect();
+            json!(self.catalog_context().client_defaults(current, rows))
+        } else {
+            entries
+        };
         self.catalog_context().publish_catalog(
             current,
             entries.as_array().map(Vec::as_slice).unwrap_or(&[]),
@@ -657,6 +677,7 @@ impl Pilot {
 }
 pub struct CatalogJob {
     generation: u64,
+    repair_generation: u64,
     context: Catalog,
     provider: Option<Provider>,
     official: Option<clients::OfficialCatalog>,
@@ -674,7 +695,9 @@ impl CatalogJob {
             let entries = accounts
                 .model_catalog(self.provider.as_ref().ok_or("连接已删除")?)
                 .await?;
-            return self.context.enrich_subscription(entries);
+            return self
+                .context
+                .enrich_subscription(self.provider.as_ref().ok_or("连接已删除")?, entries);
         }
         self.context
             .connection_catalog(self.provider.as_ref().ok_or("连接已删除")?, self.refresh)
@@ -682,7 +705,7 @@ impl CatalogJob {
     }
 }
 
-pub(super) fn wire(root: &Path, p: &Provider, model: Option<&str>, incoming: &str) -> String {
+fn cached_entry(root: &Path, p: &Provider, model: &str) -> Option<Value> {
     let cache = root.join(format!(
         "provider-{}-models.json",
         &storage::digest(p.id.as_bytes())[..24]
@@ -695,10 +718,29 @@ pub(super) fn wire(root: &Path, p: &Provider, model: Option<&str>, incoming: &st
     let entry = if cache["connectionId"] == identity(p) {
         cache["entries"]
             .as_array()
-            .and_then(|a| a.iter().find(|r| r["id"].as_str() == model))
+            .and_then(|a| a.iter().find(|r| r["id"].as_str() == Some(model)))
     } else {
         None
     };
+    entry.cloned()
+}
+
+pub(super) fn output_limit(root: &Path, p: &Provider, model: &str) -> Option<u64> {
+    let entry = cached_entry(root, p, model)?;
+    if !["provider", "models.dev"]
+        .contains(&entry["capabilitySources"]["maxOutputTokens"].as_str()?)
+    {
+        return None;
+    }
+    entry["maxOutputTokens"].as_u64().filter(|limit| *limit > 0)
+}
+
+pub(super) fn wire(root: &Path, p: &Provider, model: Option<&str>, incoming: &str) -> String {
+    let entry = model.and_then(|model| cached_entry(root, p, model));
+    entry_wire(p, entry.as_ref(), incoming)
+}
+
+fn entry_wire(p: &Provider, entry: Option<&Value>, incoming: &str) -> String {
     let default = if p.codex_api_format.is_empty() {
         "responses"
     } else {
@@ -744,6 +786,46 @@ mod client_contract_tests {
         let mut absent = json!({"slug":"codex-auto-review"});
         ensure_codex_instructions(&mut absent);
         assert!(absent["base_instructions"].is_string());
+    }
+    #[test]
+    fn output_limit_is_scoped_to_the_connection_and_requires_provenance() {
+        let root = std::env::temp_dir().join(format!(
+            "xwx-output-limit-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let provider = Provider {
+            id: "budget-test".into(),
+            base_url: "https://synthetic.example/v1".into(),
+            bearer_token: "synthetic-only".into(),
+            ..Provider::default()
+        };
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join(format!(
+            "provider-{}-models.json",
+            &storage::digest(provider.id.as_bytes())[..24]
+        ));
+        for source in ["fallback", "provider", "models.dev"] {
+            write(&file, &json!({"connectionId":identity(&provider),"entries":[{"id":"model","maxOutputTokens":4096,"capabilitySources":{"maxOutputTokens":source}}]}).to_string()).unwrap();
+            assert_eq!(
+                output_limit(&root, &provider, "model"),
+                if source == "fallback" {
+                    None
+                } else {
+                    Some(4096)
+                }
+            );
+            assert_eq!(output_limit(&root, &provider, "other-model"), None);
+            let changed = Provider {
+                bearer_token: "different-synthetic-only".into(),
+                ..provider.clone()
+            };
+            assert_eq!(output_limit(&root, &changed, "model"), None);
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn current_client_default_does_not_replace_service_capacity() {

@@ -275,6 +275,7 @@ impl Drop for Dashboard {
 pub struct Pilot {
     reset_pending: bool,
     catalog_generation: u64,
+    catalog_repair_generation: u64,
     state_revision: std::sync::Mutex<(u64, Value)>,
     pub root: PathBuf,
     subscriptions: subscriptions::Accounts,
@@ -688,6 +689,7 @@ impl Pilot {
         let mut pilot = Self {
             reset_pending: false,
             catalog_generation: 0,
+            catalog_repair_generation: 0,
             state_revision: std::sync::Mutex::new((0, Value::Null)),
             subscriptions: subscriptions::Accounts::open(&root, isolated)?,
             updates: updates::Updates::new(root.clone()),
@@ -2838,7 +2840,14 @@ async fn forward_once(
                     Ok(body)
                 }
                 "anthropic-messages" => {
-                    let (mut body, tools) = protocol::responses_messages(&responses)?;
+                    let (mut body, tools) = protocol::responses_messages(
+                        &responses,
+                        catalog::output_limit(
+                            &route.root,
+                            provider,
+                            model.as_deref().unwrap_or(""),
+                        ),
+                    )?;
                     reasoning::messages(&mut body, &responses);
                     context = tools;
                     Ok(body)

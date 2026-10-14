@@ -44,6 +44,12 @@ export interface ModelCatalogEntry {
   /** Codex's operational default, distinct from the service's model capacity. */
   readonly codexContextWindow?: number;
   readonly codexContextWindowSource?: 'provider' | 'codex' | 'models.dev' | 'fallback';
+  /** Effective Codex controls, with service/client/fallback provenance. */
+  readonly codexCompatibility?: {
+    readonly values: Readonly<Record<string, boolean | number | string>>;
+    readonly sources: Readonly<Record<string, 'provider' | 'codex' | 'fallback' | 'protocol'>>;
+    readonly restrictions: Readonly<Record<string, string>>;
+  };
   readonly maxOutputTokens?: number;
   readonly inputModalities?: readonly string[];
   readonly reasoning?: boolean;

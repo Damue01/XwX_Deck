@@ -91,7 +91,7 @@
 | [desktop-model-routing-test.mjs](../tools/native/desktop-model-routing-test.mjs) | 后端默认入口 | CL01、CL03、CL04、CL05、CL07、CL08 |
 | [expanded-clients-test.mjs](../tools/native/expanded-clients-test.mjs) | 后端默认入口 | CL07 |
 | [gateway-clients-test.mjs](../tools/native/gateway-clients-test.mjs) | 条件入口 | CL07 |
-| [installed-clients-test.mjs](../tools/native/installed-clients-test.mjs) | 条件入口 | CL08 |
+| [installed-clients-test.mjs](../tools/native/installed-clients-test.mjs) | 条件入口 | CL01、CL08 |
 | [legacy-direct-test.mjs](../tools/native/legacy-direct-test.mjs) | 后端默认入口 | CL06 |
 | [legacy-helper-test.mjs](../tools/native/legacy-helper-test.mjs) | 后端默认入口 | CL06 |
 | [legacy-recovery-test.mjs](../tools/native/legacy-recovery-test.mjs) | 后端默认入口 | CL06 |

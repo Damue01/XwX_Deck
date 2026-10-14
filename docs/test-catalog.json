@@ -507,7 +507,7 @@
     {
       "id": "MO01",
       "priority": "P0",
-      "requirement": "当前连接读取自己的目录、精确型号和协议；有效服务能力优先，缺失普通能力查 models.dev；旧内建表不补能力，LiteLLM 只补必要协议",
+      "requirement": "当前连接读取自己的目录、精确型号和协议；有效服务能力优先，缺失普通能力查 models.dev；旧内建表不补能力，LiteLLM 只补必要协议；普通资料刷新与主动缓存修复分开，迟到目录消费当前资料",
       "moduleId": "MO",
       "automation": {
         "scripts": [
@@ -561,7 +561,7 @@
     {
       "id": "MO03",
       "priority": "P0",
-      "requirement": "声明的协议与实际 URL 一致。转换行为与“需 Trace”提示一致。",
+      "requirement": "声明的协议与实际 URL 一致。转换行为与“需 Trace”提示一致。；并行工具参数双向保留，默认输出预算遵循已知上限",
       "moduleId": "MO",
       "automation": {
         "scripts": [
@@ -655,7 +655,7 @@
     {
       "id": "CL01",
       "priority": "P0",
-      "requirement": "界面、客户端文件、重新读取和实际上游使用相同 provider / 模型 / 授权类型",
+      "requirement": "界面、客户端文件、重新读取和实际上游使用相同 provider / 模型 / 授权类型；压缩阈值、有效窗口、搜索和输出详细程度按来源发布，用户明确配置保留",
       "moduleId": "CL",
       "automation": {
         "scripts": [
@@ -667,7 +667,8 @@
           "tools/native/regressions.mjs",
           "tools/native/codex-client-compatibility-test.mjs",
           "tools/native/model-metadata-consumption-test.mjs",
-          "tools/native/routing-consumption-test.mjs"
+          "tools/native/routing-consumption-test.mjs",
+          "tools/native/installed-clients-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"

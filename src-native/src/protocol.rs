@@ -464,6 +464,11 @@ pub(super) fn messages_responses(body: &Value) -> Result<Value> {
             "none" => json!("none"),
             _ => json!("auto"),
         };
+        if text(choice, "type") != "none" {
+            if let Some(disabled) = choice["disable_parallel_tool_use"].as_bool() {
+                out["parallel_tool_calls"] = json!(!disabled);
+            }
+        }
     }
     for key in ["temperature", "top_p"] {
         if let Some(v) = body.get(key) {
@@ -476,7 +481,10 @@ pub(super) fn messages_responses(body: &Value) -> Result<Value> {
     Ok(out)
 }
 
-pub(super) fn responses_messages(body: &Value) -> Result<(Value, ToolContext)> {
+pub(super) fn responses_messages(
+    body: &Value,
+    model_output_limit: Option<u64>,
+) -> Result<(Value, ToolContext)> {
     let (chat, context) = responses_chat(body)?;
     let mut messages = vec![];
     let mut system = vec![];
@@ -541,20 +549,29 @@ pub(super) fn responses_messages(body: &Value) -> Result<(Value, ToolContext)> {
             json!({"role":"user","content":[{"type":"text","text":"[Conversation resumed]"}]}),
         );
     }
-    let mut out = json!({"model":body["model"],"messages":messages,"max_tokens":body["max_output_tokens"].as_u64().filter(|n|*n>0).unwrap_or(8192),"stream":body["stream"]==true});
+    let mut out = json!({"model":body["model"],"messages":messages,"max_tokens":body["max_output_tokens"].as_u64().filter(|n|*n>0).unwrap_or_else(||model_output_limit.filter(|n|*n>0).map_or(8192,|n|n.min(8192))),"stream":body["stream"]==true});
     if !system.is_empty() {
         out["system"] = json!(system.join("\n\n"));
     }
     let tools:Vec<_>=context.tools.iter().map(|t|json!({"name":t["function"]["name"],"description":t["function"]["description"],"input_schema":t["function"]["parameters"]})).collect();
     if !tools.is_empty() {
         out["tools"] = json!(tools);
+        if let Some(parallel) = body["parallel_tool_calls"].as_bool() {
+            out["tool_choice"] = json!({"type":"auto","disable_parallel_tool_use":!parallel});
+        }
         if let Some(choice) = chat.get("tool_choice") {
-            out["tool_choice"] = match choice.as_str() {
+            let mut choice = match choice.as_str() {
                 Some("required") => json!({"type":"any"}),
                 Some("none") => json!({"type":"none"}),
                 Some(_) => json!({"type":"auto"}),
                 _ => json!({"type":"tool","name":choice["function"]["name"]}),
             };
+            if choice["type"] != "none" {
+                if let Some(parallel) = body["parallel_tool_calls"].as_bool() {
+                    choice["disable_parallel_tool_use"] = json!(!parallel);
+                }
+            }
+            out["tool_choice"] = choice;
         }
     }
     for key in ["temperature", "top_p"] {
@@ -1079,6 +1096,45 @@ pub(super) fn validate_response(value: &Value, wire: &str) -> Result<()> {
 #[cfg(test)]
 mod usage_tests {
     use super::*;
+
+    #[test]
+    fn messages_default_budget_respects_known_model_limit() {
+        let mut body = json!({"model":"fixture","input":"hello"});
+        for (limit, expected) in [(None, 8192), (Some(4096), 4096), (Some(32768), 8192)] {
+            assert_eq!(
+                responses_messages(&body, limit).unwrap().0["max_tokens"],
+                expected
+            );
+        }
+        body["max_output_tokens"] = json!(16000);
+        assert_eq!(
+            responses_messages(&body, Some(4096)).unwrap().0["max_tokens"],
+            16000
+        );
+    }
+    #[test]
+    fn explicit_parallel_policy_survives_messages_conversion() {
+        for parallel in [false, true] {
+            for choice in [
+                json!("auto"),
+                json!("required"),
+                json!({"type":"function","name":"read"}),
+            ] {
+                let body = json!({"model":"fixture","input":"hello","parallel_tool_calls":parallel,"tools":[{"type":"function","name":"read","parameters":{"type":"object"}}],"tool_choice":choice});
+                let (converted, _) = responses_messages(&body, None).unwrap();
+                assert_eq!(
+                    converted["tool_choice"]["disable_parallel_tool_use"],
+                    !parallel
+                );
+                let restored = messages_responses(&converted).unwrap();
+                assert_eq!(restored["parallel_tool_calls"], parallel);
+                assert_eq!(restored["tool_choice"], body["tool_choice"]);
+            }
+        }
+        let body = json!({"model":"fixture","input":"hello","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]});
+        let (converted, _) = responses_messages(&body, None).unwrap();
+        assert!(converted.get("tool_choice").is_none());
+    }
 
     #[test]
     fn repeated_chat_tool_ids_preserve_the_original_call_and_arguments() {

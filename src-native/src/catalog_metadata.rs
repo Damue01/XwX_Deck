@@ -288,6 +288,68 @@ pub(super) fn attach(entry: &mut Value, row: &Value) {
             cap[key] = v;
         }
     }
+    // Client-only controls require explicit service facts. Do not infer these
+    // from generic tool or reasoning capability in models.dev.
+    for (key, paths) in [
+        (
+            "supportsSearchTool",
+            vec![
+                "/supports_search_tool",
+                "/supports_web_search",
+                "/capabilities/web_search",
+            ],
+        ),
+        (
+            "supportVerbosity",
+            vec![
+                "/support_verbosity",
+                "/supports_verbosity",
+                "/capabilities/verbosity",
+            ],
+        ),
+    ] {
+        if let Some(v) = first(row, &paths, Value::is_boolean) {
+            cap[key] = v;
+        }
+    }
+    for (key, paths) in [
+        (
+            "autoCompactTokenLimit",
+            vec!["/auto_compact_token_limit", "/autoCompactTokenLimit"],
+        ),
+        (
+            "effectiveContextWindowPercent",
+            vec![
+                "/effective_context_window_percent",
+                "/effectiveContextWindowPercent",
+            ],
+        ),
+    ] {
+        if let Some(v) = first(row, &paths, |v| {
+            number(v)
+                && (key != "effectiveContextWindowPercent" || v.as_u64().is_some_and(|n| n <= 100))
+        }) {
+            cap[key] = v;
+        }
+    }
+    for (key, paths, allowed) in [
+        (
+            "defaultVerbosity",
+            vec!["/default_verbosity", "/defaultVerbosity"],
+            vec!["low", "medium", "high"],
+        ),
+        (
+            "webSearchToolType",
+            vec!["/web_search_tool_type"],
+            vec!["text", "text_and_image"],
+        ),
+    ] {
+        if let Some(v) = first(row, &paths, |v| {
+            v.as_str().is_some_and(|s| allowed.contains(&s))
+        }) {
+            cap[key] = v;
+        }
+    }
     if cap["vision"].is_null() {
         if let Some(a) = cap["inputModalities"].as_array() {
             cap["vision"] = json!(a

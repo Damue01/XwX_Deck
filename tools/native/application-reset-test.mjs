@@ -20,7 +20,17 @@ async function call(method,...args){return new Promise((resolve,reject)=>{const 
 async function rpc(method,...args){const result=await call(method,...args);assert.equal(result.ok,true,result.error);return result.result;}
 async function stop(){const exited=once(child,'exit');child.stdin.end();assert.equal((await exited)[0],0);}
 async function reset(root,option){const exited=once(child,'exit');const result=await rpc('resetApplication',{resetClientConfigs:option});assert.equal((await exited)[0],0);return result;}
-async function result(root){return wait(async()=>{const report=await readFile(join(root,'application-reset-result.json'),'utf8').then(JSON.parse,()=>null);return report;},'reset result');}
+async function result(root){return wait(async()=>{
+  const reportPath=join(root,'application-reset-result.json');
+  const report=await readFile(reportPath,'utf8').then(JSON.parse,()=>null);if(!report)return null;
+  // Publishing a result precedes the final gate/lock cleanup. In no-relaunch
+  // mode a startup during that interval recovers and exits before RPC begins.
+  const job=JSON.parse(await readFile(join(report.backupPath,'job.json'),'utf8'));
+  if(Number.isInteger(job.worker_pid)&&job.worker_pid>0){
+    try{process.kill(job.worker_pid,0);return null;}catch(error){if(error.code!=='ESRCH')throw error;}
+  }
+  return JSON.parse(await readFile(reportPath,'utf8'));
+},'reset worker finalization');}
 async function seed(root){await mkdir(root);start(root);await rpc('getState');await clearFreshCompatibleFixture(rpc);const workspace='../workspace-'+basename(root);for(const name of ['codex/sessions','codex/skills','claude/projects','claude/agents',workspace+'/source',workspace+'/target/.agents/skills'])await mkdir(join(root,name),{recursive:true});const preserved={'codex/sessions/history.jsonl':'opaque conversation body\n','codex/skills/SKILL.md':'user skill\n','claude/projects/history.jsonl':'opaque Claude history\n','claude/agents/agent.md':'user agent\n',[workspace+'/source/SKILL.md']:'workspace source\n',[workspace+'/target/.agents/skills/SKILL.md']:'workspace target\n'};for(const[name,source]of Object.entries(preserved))await writeFile(join(root,name),source);
   const core={'codex/config.toml':'# original config\nmodel="user-choice"\n','codex/auth.json':'{"OPENAI_API_KEY":"SYNTHETIC-RESET-ONLY"}\n','claude/settings.json':'{"permissions":{"allow":["Read"]}}\n','claude/claude.json':'{"legacySetting":"keep unless explicitly reset"}\n'};for(const[name,source]of Object.entries(core))await writeFile(join(root,name),source);
   await rpc('saveProvider',{id:'reset-fixture',displayName:'Fixture_ff7f6008',baseUrl:'http://127.0.0.1:9/v1',bearerToken:'SYNTHETIC-RESET-KEY',adapter:'responses',codexModel:'user-model'});

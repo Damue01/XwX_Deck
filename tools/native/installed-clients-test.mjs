@@ -24,6 +24,7 @@ let passed = false;
 let child, queue = [];
 let toolPending = false;
 let toolKind = 'codex';
+let declaredVerbosity=true, declaredSearch=false;
 const toolResult = 'isolated tool result';
 const codexToolCommand = process.platform === 'win32' ? `Write-Output '${toolResult}'` : `printf '${toolResult}'`;
 const token = 'SYNTHETIC-INSTALLED-CLIENT-TEST';
@@ -33,7 +34,7 @@ const upstream = createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk;
   const body = raw ? JSON.parse(raw) : null;
   requests.push({path: req.url, body, auth: req.headers.authorization, key: req.headers['x-api-key']});
-  if (req.url.endsWith('/models')) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({data: [{id: 'fixture-model'}, {id: 'compatible-model', supported_endpoint_types: ['anthropic-messages'], vision: true, tool_calling: true}]})); return; }
+  if (req.url.endsWith('/models')) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({data: [{id: 'fixture-model', max_output_tokens:4096,support_verbosity:declaredVerbosity,default_verbosity:'low',supports_search_tool:declaredSearch}, {id: 'compatible-model', supported_endpoint_types: ['anthropic-messages'], vision: true, tool_calling: true, max_output_tokens:4096}]})); return; }
   if (req.url === '/v1/messages/count_tokens') { res.end('{"input_tokens":20}'); return; }
   const id = 'response-fixture-' + requests.length;
   const emit = event => res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
@@ -141,6 +142,15 @@ try {
   const directCodex = await runCli(codex, codexArgs);
   assert.ok(directCodex.stdout.includes(answer)); assert.equal(requests.at(-1).auth, 'Bearer ' + token);
   pass('installed Codex loads the generated strict config and catalog and completes a real local Responses SSE request');
+  assert.equal(requests.at(-1).body.text.verbosity,'low');
+  declaredSearch=true;await rpc('fetchProviderModels',{providerId:codexId,refresh:true});
+  const searchArgs=[...codexArgs.slice(0,-1),'-c','web_search="live"',codexArgs.at(-1)];
+  assert.ok((await runCli(codex,searchArgs)).stdout.includes(answer));assert.ok(requests.at(-1).body.tools.some(t=>t.type==='web_search'||t.type==='web_search_preview'));
+  declaredSearch=false;declaredVerbosity=false;await rpc('fetchProviderModels',{providerId:codexId,refresh:true});
+  assert.ok((await runCli(codex,codexArgs)).stdout.includes(answer));assert.ok(!requests.at(-1).body.text?.verbosity);
+  declaredVerbosity=true;await rpc('fetchProviderModels',{providerId:codexId,refresh:true});
+  pass('installed Codex consumes declared verbosity and search in actual requests; an explicit capability disable removes verbosity after refresh');
+
   const image = join(workspace, 'fixture.png');
   const pngChunk = (type, data) => { const bytes = Buffer.concat([Buffer.from(type), data]), length = Buffer.alloc(4), checksum = Buffer.alloc(4); length.writeUInt32BE(data.length); checksum.writeUInt32BE(crc32(bytes)); return Buffer.concat([length, bytes, checksum]); };
   const header = Buffer.alloc(13); header.writeUInt32BE(1, 0); header.writeUInt32BE(1, 4); header[8] = 8; header[9] = 2;
@@ -191,7 +201,7 @@ try {
   await rpc('fetchProviderModels', {providerId: compatibleId, refresh: true});
   await rpc('switchClientProvider', {client: 'codex', providerId: compatibleId});
   assert.ok((await runCli(codex, imageArgs)).stdout.includes(answer)); assert.equal(requests.at(-1).path, '/v1/messages');
-  assert.ok(requests.at(-1).body.messages.some(m => m.content?.some?.(c => c.type === 'image' && c.source?.data)));
+  assert.ok(requests.at(-1).body.messages.some(m => m.content?.some?.(c => c.type === 'image' && c.source?.data)));assert.equal(requests.at(-1).body.max_tokens,4096);
   toolPending = true; const compatibleStart = requests.length;
   const compatibleExecuted = await runCli(codex, toolArgs); assert.ok(compatibleExecuted.stdout.includes(answer));
   const compatibleCalls = requests.slice(compatibleStart).filter(r => r.path === '/v1/messages'); assert.equal(compatibleCalls.length, 2);

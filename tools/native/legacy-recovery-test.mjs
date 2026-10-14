@@ -9,15 +9,18 @@ import {createServer} from 'node:net';
 import {nativeTestBinary} from './test-support.mjs';
 
 async function vacantLegacyPort() {
-  for (let port = 44233; port <= 44242; port++) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    let port = 0;
     const probes = [];
     try {
-      // macOS can accept the IPv6 bind while an IPv4-specific listener owns
+      // Use an ephemeral port so concurrent fixtures do not select the same
+      // product port. macOS can accept the IPv6 bind while an IPv4 listener owns
       // the same port. Reserve both loopback addresses before choosing it.
       for (const host of ['127.0.0.1', '::1']) {
         const probe = createServer();
         await new Promise((resolve, reject) => { probe.once('error', reject); probe.listen({port, host, ipv6Only: true}, resolve); });
         probes.push(probe);
+        if (!port) port = probe.address().port;
       }
       return port;
     } catch (error) { if (error.code !== 'EADDRINUSE') throw error; }

@@ -121,6 +121,7 @@ impl Pilot {
             bytes += removed;
         }
         self.catalog_generation = self.catalog_generation.wrapping_add(1);
+        self.catalog_repair_generation = self.catalog_repair_generation.wrapping_add(1);
         for path in paths {
             if let Some(removed) = remove_cache(&path)? {
                 count += 1;
