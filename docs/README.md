@@ -32,3 +32,5 @@
 - [共同要求与测试范围](shared-requirements-status.md)。
 
 Codex 目录和加密续接见 [专项验收](codex-provider-continuation-acceptance.md)。
+
+模型资料的动态更新与兼容边界见 [消费链路审计](model-metadata-consumption-audit.md)。

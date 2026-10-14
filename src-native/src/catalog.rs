@@ -43,6 +43,10 @@ fn ensure_codex_instructions(row: &mut Value) {
     }
     row["base_instructions"] = json!("You are a coding agent. Follow the user instructions, use the provided tools carefully, and report the completed result clearly.");
 }
+pub(super) fn with_service_metadata(mut entry: Value, raw: &Value) -> Value {
+    metadata::attach(&mut entry, raw);
+    entry
+}
 fn normalize_id(id: &str) -> String {
     id.trim().trim_start_matches("models/").to_lowercase()
 }
@@ -364,8 +368,32 @@ impl Catalog {
                 .as_array()
                 .and_then(|rows| rows.iter().find(|row| row["slug"] == entry["id"]));
             entry["codexContextWindow"] = json!(codex_window(entry, exact));
+            entry["codexContextWindowSource"] = json!(
+                if entry["capabilitySources"]["contextWindow"] == "provider" {
+                    "provider"
+                } else if exact
+                    .is_some_and(|row| row["context_window"].as_u64().is_some_and(|n| n > 0))
+                {
+                    "codex"
+                } else {
+                    entry["capabilitySources"]["contextWindow"]
+                        .as_str()
+                        .unwrap_or("fallback")
+                }
+            );
         }
         entries
+    }
+    fn enrich_subscription(&self, entries: Value) -> Result<Value> {
+        let remote = model_metadata::cached_capabilities(&self.root)?;
+        let rows = entries
+            .as_array()
+            .ok_or("订阅模型目录格式无效")?
+            .iter()
+            .cloned()
+            .map(|entry| enrich(entry, &remote))
+            .collect();
+        Ok(json!(self.client_defaults(rows)))
     }
     fn cache_path(&self, p: &Provider) -> PathBuf {
         self.root.join(format!(
@@ -488,12 +516,18 @@ impl Catalog {
             row["slug"]=r["id"].clone();row["display_name"]=r["id"].clone();row["description"]=r["vendor"].clone();row["visibility"]=json!("list");row["supported_in_api"]=json!(true);row["priority"]=json!(i);
             row["context_window"]=json!(context);row["max_context_window"]=json!(r["contextWindow"].as_u64().unwrap_or(context).max(context));row["auto_compact_token_limit"]=json!(context*9/10);row["effective_context_window_percent"]=json!(95);
             row["input_modalities"]=if vision{json!(["text","image"])}else{json!(["text"])};row["supports_image_detail_original"]=json!(vision);row["supports_search_tool"]=json!(false);row["supports_parallel_tool_calls"]=json!(false);row["support_verbosity"]=json!(false);
-            if exact.is_none() || r["capabilitySources"]["reasoning"] != "fallback" {
+            if exact.is_none() || r["reasoningLevels"].is_array() || (r["reasoning"] == false && r["capabilitySources"]["reasoning"] != "fallback") {
                 row["supported_reasoning_levels"]=json!(r["reasoningLevels"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|s|["none","minimal","low","medium","high","xhigh","max"].contains(s)).map(|s|json!({"effort":s,"description":format!("{s} reasoning effort")})).collect::<Vec<_>>());
-                row.as_object_mut().unwrap().remove("default_reasoning_level");
-                if r["defaultReasoningLevel"].is_string() && row["supported_reasoning_levels"].as_array().is_some_and(|levels|levels.iter().any(|level|level["effort"]==r["defaultReasoningLevel"])) {row["default_reasoning_level"]=r["defaultReasoningLevel"].clone();}
+
             }
-            row["supports_reasoning_summary_parameter"]=json!(r["reasoning"]==true);row["default_reasoning_summary"]=json!(if r["reasoning"]==true{"auto"}else{"none"});
+            let default = r["defaultReasoningLevel"].as_str().or_else(|| exact.and_then(|native| native["default_reasoning_level"].as_str()));
+            row.as_object_mut().unwrap().remove("default_reasoning_level");
+            if let Some(default) = default.filter(|default| row["supported_reasoning_levels"].as_array().is_some_and(|levels| levels.iter().any(|level| level["effort"] == *default))) {
+                row["default_reasoning_level"] = json!(default);
+            }
+            if exact.is_none() || r["capabilitySources"]["reasoning"] != "fallback" {
+                row["supports_reasoning_summary_parameter"]=json!(r["reasoning"]==true);row["default_reasoning_summary"]=json!(if r["reasoning"]==true{"auto"}else{"none"});
+            }
             for key in ["comp_hash","max_output_tokens","supports_websockets","supports_reasoning_summaries","availability_nux","multi_agent_version","tool_mode","upgrade","use_responses_lite","web_search_tool_type"] {row.as_object_mut().unwrap().remove(key);}
             ensure_codex_instructions(&mut row);
             row
@@ -637,9 +671,10 @@ impl CatalogJob {
             return official.execute().await;
         }
         if let Some(accounts) = &self.subscription {
-            return accounts
+            let entries = accounts
                 .model_catalog(self.provider.as_ref().ok_or("连接已删除")?)
-                .await;
+                .await?;
+            return self.context.enrich_subscription(entries);
         }
         self.context
             .connection_catalog(self.provider.as_ref().ok_or("连接已删除")?, self.refresh)

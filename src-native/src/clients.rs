@@ -149,14 +149,14 @@ pub(super) async fn subscription_catalog(
         let rows = body["models"]
             .as_array()
             .ok_or("无效 Cursor 订阅模型目录")?;
-        return Ok(json!(rows.iter().filter(|m|m["isHidden"]!=true&&m["isChatOnly"]!=true&&m["onlySupportsCmdK"]!=true&&m["supportsAgent"]!=false).filter_map(|m|m["name"].as_str().map(|id|json!({"id":if id=="default"{"auto"}else{id},"displayName":m["clientDisplayName"].as_str().unwrap_or(id),"vendor":"Cursor","protocols":["chat-completions"],"protocolsDeclared":true,"clients":["codex","claude"]}))).collect::<Vec<_>>()));
+        return Ok(json!(rows.iter().filter(|m|m["isHidden"]!=true&&m["isChatOnly"]!=true&&m["onlySupportsCmdK"]!=true&&m["supportsAgent"]!=false).filter_map(|m|m["name"].as_str().map(|id|catalog::with_service_metadata(json!({"id":if id=="default"{"auto"}else{id},"displayName":m["clientDisplayName"].as_str().unwrap_or(id),"vendor":"Cursor","protocols":["chat-completions"],"protocolsDeclared":true,"clients":["codex","claude"]}), m))).collect::<Vec<_>>()));
     }
     if provider
         .subscription_account_id
         .starts_with("claude-subscription-")
     {
         let rows = body["data"].as_array().ok_or("无效 Claude 订阅模型目录")?;
-        return Ok(json!(rows.iter().filter_map(|m|m["id"].as_str().map(|id|json!({"id":id,"displayName":m["display_name"].as_str().unwrap_or(id),"vendor":"Anthropic","protocols":["anthropic-messages"],"protocolsDeclared":true,"clients":["codex","claude"]}))).collect::<Vec<_>>()));
+        return Ok(json!(rows.iter().filter_map(|m|m["id"].as_str().map(|id|catalog::with_service_metadata(json!({"id":id,"displayName":m["display_name"].as_str().unwrap_or(id),"vendor":"Anthropic","protocols":["anthropic-messages"],"protocolsDeclared":true,"clients":["codex","claude"]}), m))).collect::<Vec<_>>()));
     }
     if provider.subscription_account_id.starts_with("copilot-") {
         let rows = body["data"].as_array().ok_or("无效 Copilot 订阅模型目录")?;
@@ -165,7 +165,7 @@ pub(super) async fn subscription_catalog(
                     let mut protocols=vec![];
                     for endpoint in endpoints.into_iter().flatten().filter_map(Value::as_str) {match endpoint {"/responses"|"/v1/responses"=>protocols.push("openai-responses"),"/chat/completions"|"/v1/chat/completions"=>protocols.push("chat-completions"),"/messages"|"/v1/messages"=>protocols.push("anthropic-messages"),_=>{}}}
                     if protocols.is_empty(){protocols.push("chat-completions");}
-                    json!({"id":id,"displayName":m["name"].as_str().unwrap_or(id),"vendor":"GitHub Copilot","protocols":protocols,"protocolsDeclared":true,"clients":["codex","claude"]})
+                    catalog::with_service_metadata(json!({"id":id,"displayName":m["name"].as_str().unwrap_or(id),"vendor":"GitHub Copilot","protocols":protocols,"protocolsDeclared":true,"clients":["codex","claude"]}), m)
                 })).collect();
         write(
             &provider_cache(root, provider),
@@ -176,10 +176,10 @@ pub(super) async fn subscription_catalog(
     }
     if provider.subscription_account_id.starts_with("grok-") {
         let rows = body["data"].as_array().ok_or("无效 Grok 订阅模型目录")?;
-        return Ok(json!(rows.iter().filter_map(|m|m["id"].as_str().map(|id|json!({"id":id,"displayName":m["name"].as_str().unwrap_or(id),"vendor":"xai","protocols":["openai-responses"],"protocolsDeclared":true,"clients":["codex","claude"]}))).collect::<Vec<_>>()));
+        return Ok(json!(rows.iter().filter_map(|m|m["id"].as_str().map(|id|catalog::with_service_metadata(json!({"id":id,"displayName":m["name"].as_str().unwrap_or(id),"vendor":"xai","protocols":["openai-responses"],"protocolsDeclared":true,"clients":["codex","claude"]}), m))).collect::<Vec<_>>()));
     }
     let rows = body["models"].as_array().ok_or("无效订阅模型目录")?;
-    let entries:Vec<_>=rows.iter().filter(|m|m["visibility"]=="list").filter_map(|m|m["slug"].as_str().map(|id|json!({"id":id,"displayName":m["display_name"],"vendor":"openai","protocols":["openai-responses"],"protocolsDeclared":true,"clients":["codex","claude"]}))).collect();
+    let entries:Vec<_>=rows.iter().filter(|m|m["visibility"]=="list").filter_map(|m|m["slug"].as_str().map(|id|catalog::with_service_metadata(json!({"id":id,"displayName":m["display_name"],"vendor":"openai","protocols":["openai-responses"],"protocolsDeclared":true,"clients":["codex","claude"]}), m))).collect();
     Ok(json!(entries))
 }
 
@@ -1124,4 +1124,25 @@ pub(super) async fn validate_provider(
         json!({"status":status,"providerId":p.id,"providerName":p.display_name,
         "protocol":wire,"httpStatus":http_status,"failureReason":failure_reason}),
     )
+}
+
+#[cfg(test)]
+mod subscription_metadata_tests {
+    use super::*;
+    #[test]
+    fn raw_subscription_facts_survive_normalization() {
+        let raw = json!({"context_window":500000,"input_modalities":["text","image"],"reasoning":true,"supported_reasoning_levels":[{"effort":"high"}],"tool_calling":false});
+        let entry = catalog::with_service_metadata(
+            json!({"id":"exact-model","protocols":["openai-responses"]}),
+            &raw,
+        );
+        assert_eq!(entry["providerCapabilities"]["contextWindow"], 500000);
+        assert_eq!(
+            entry["providerCapabilities"]["inputModalities"],
+            json!(["text", "image"])
+        );
+        assert_eq!(entry["providerCapabilities"]["levels"], json!(["high"]));
+        assert_eq!(entry["id"], "exact-model");
+        assert_eq!(entry["protocols"], json!(["openai-responses"]));
+    }
 }

@@ -8,6 +8,7 @@ export interface CodexContextCapableModel {
   readonly id: string;
   readonly contextWindow?: number;
   readonly codexContextWindow?: number;
+  readonly codexContextWindowSource?: string;
   readonly capabilitySources?: {
     readonly contextWindow?: string;
   };
@@ -28,12 +29,12 @@ export interface CodexContextVariant {
 export function codexContextVariants(model: CodexContextCapableModel): readonly CodexContextVariant[] {
   const modelId = model.id.trim();
   const verifiedWindow = verifiedContextWindow(model);
-  if (!isGptModel(modelId) || verifiedWindow === undefined) {
+  const defaultWindow = codexDefaultContextWindow(model);
+  if (!isGptModel(modelId) || defaultWindow === undefined) {
     return [{ modelId, label: modelId, contextWindow: null }];
   }
 
-  if (verifiedWindow >= CODEX_EXTENDED_CONTEXT_WINDOW) {
-    const defaultWindow = codexDefaultContextWindow(model)!;
+  if ((verifiedWindow ?? 0) >= CODEX_EXTENDED_CONTEXT_WINDOW) {
     const choices: CodexContextVariant[] = [
       {
         modelId,
@@ -51,7 +52,7 @@ export function codexContextVariants(model: CodexContextCapableModel): readonly 
 
   return [{
     modelId,
-    label: `${modelId}[${formatContextWindow(codexDefaultContextWindow(model)!)}]`,
+    label: `${modelId}[${formatContextWindow(defaultWindow)}]`,
     contextWindow: null
   }];
 }
@@ -59,10 +60,12 @@ export function codexContextVariants(model: CodexContextCapableModel): readonly 
 /** The current operational default, without a fixed historical 256K ceiling. */
 export function codexDefaultContextWindow(model: CodexContextCapableModel): number | undefined {
   const verifiedWindow = verifiedContextWindow(model);
-  if (verifiedWindow === undefined) return undefined;
-  return Number.isSafeInteger(model.codexContextWindow) && (model.codexContextWindow ?? 0) > 0
-    ? Math.min(model.codexContextWindow!, verifiedWindow)
-    : verifiedWindow;
+  if (Number.isSafeInteger(model.codexContextWindow) && (model.codexContextWindow ?? 0) > 0
+    && model.codexContextWindowSource !== 'fallback'
+    && (verifiedWindow !== undefined || ['codex', 'provider'].includes(model.codexContextWindowSource ?? ''))) {
+    return verifiedWindow === undefined ? model.codexContextWindow : Math.min(model.codexContextWindow!, verifiedWindow);
+  }
+  return verifiedWindow;
 }
 
 export function formatContextWindow(tokens: number): string {

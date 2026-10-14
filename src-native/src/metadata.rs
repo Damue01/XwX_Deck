@@ -249,21 +249,25 @@ impl Metadata {
         }
         let mut refreshed_models = 0;
         if capabilities {
-            let jobs = shared.lock().await.background_catalog_jobs()?;
-            for job in jobs {
-                if self.stopped.load(Ordering::SeqCst) {
-                    return Err("元数据刷新已停止".into());
-                }
-                match job.execute().await {
-                    Ok(entries) => {
-                        let count = entries.as_array().map_or(0, Vec::len);
-                        if let Err(error) = shared.lock().await.finish_catalog(&job, entries) {
-                            errors.push(error);
-                        } else {
-                            refreshed_models += count;
-                        }
+            // Publish fresh facts on the last known directory before attempting
+            // enumeration. A provider outage must not freeze unrelated sources.
+            for network in [false, true] {
+                let jobs = shared.lock().await.background_catalog_jobs(network)?;
+                for job in jobs {
+                    if self.stopped.load(Ordering::SeqCst) {
+                        return Err("元数据刷新已停止".into());
                     }
-                    Err(error) => errors.push(error),
+                    match job.execute().await {
+                        Ok(entries) => {
+                            let count = entries.as_array().map_or(0, Vec::len);
+                            if let Err(error) = shared.lock().await.finish_catalog(&job, entries) {
+                                errors.push(error);
+                            } else {
+                                refreshed_models += count;
+                            }
+                        }
+                        Err(error) => errors.push(error),
+                    }
                 }
             }
         }
@@ -452,16 +456,27 @@ impl Pilot {
     pub fn metadata_context(&self) -> Metadata {
         self.metadata.clone()
     }
-    pub fn background_catalog_jobs(&self) -> Result<Vec<catalog::CatalogJob>> {
+    pub fn background_catalog_jobs(&self, network: bool) -> Result<Vec<catalog::CatalogJob>> {
         let mut jobs = vec![];
         let mut seen = vec![];
         for client in ["codex", "claude"] {
             if let Some(id) = self.settings.selected[client].as_str() {
                 if !seen.contains(&id) {
                     seen.push(id);
+                    if !network {
+                        let provider = self.settings.connections.iter().find(|p| p.id == id);
+                        let Some(provider) = provider else { continue };
+                        if !provider.subscription_account_id.is_empty()
+                            || !self.local_catalog(provider).is_ok_and(|value| {
+                                value.as_array().is_some_and(|rows| !rows.is_empty())
+                            })
+                        {
+                            continue;
+                        }
+                    }
                     if let Some(job) = self.catalog_job(
                         "fetchProviderModels",
-                        &[json!({"providerId":id,"refresh":true})],
+                        &[json!({"providerId":id,"refresh":network})],
                     )? {
                         jobs.push(job);
                     }

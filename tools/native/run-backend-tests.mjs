@@ -29,6 +29,7 @@ const suites = [
   "claude-config-path-test.mjs",
   "client-repair-test.mjs",
   "metadata-test.mjs",
+  "model-metadata-consumption-test.mjs",
   "provider-catalog-test.mjs",
   "catalog-contract-test.mjs",
   "codex-client-compatibility-test.mjs",

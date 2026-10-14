@@ -168,3 +168,5 @@ HTTP 状态本身不能证明是否收费。
 生成目录保留原生 `model_messages` 模板。
 它与 `base_instructions` 都是有效指令来源。
 格式、续接和测试边界见 [Codex 专项验收](codex-provider-continuation-acceptance.md)。
+
+字段更新与客户端消费的检查见 [链路审计](model-metadata-consumption-audit.md)。

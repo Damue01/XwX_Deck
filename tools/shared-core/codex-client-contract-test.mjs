@@ -13,3 +13,8 @@ assert.equal(codexDefaultContextWindow({...model,contextWindow:128000}),128000);
 assert.equal(codexContextVariants({...model,contextWindow:872000})[0].label,model.id+'[500K]');
 assert.deepEqual(codexContextVariants({id:'unknown',contextWindow:262144,capabilitySources:{contextWindow:'fallback'}}),[{modelId:'unknown',label:'unknown',contextWindow:null}]);
 console.log('PASS current Codex default follows 500K/600K client metadata without freezing a TOML override; verified capacity and explicit 1M choice remain distinct');
+
+const unknownCapacity={id:'gpt-future',contextWindow:262144,codexContextWindow:500000,codexContextWindowSource:'codex',capabilitySources:{contextWindow:'fallback'}};
+assert.equal(codexDefaultContextWindow(unknownCapacity),500000);
+assert.deepEqual(codexContextVariants(unknownCapacity),[{modelId:'gpt-future',label:'gpt-future[500K]',contextWindow:null}]);
+assert.equal(codexDefaultContextWindow({...unknownCapacity,codexContextWindowSource:'fallback'}),undefined);

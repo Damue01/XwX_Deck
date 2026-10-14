@@ -43,6 +43,7 @@ export interface ModelCatalogEntry {
   readonly contextWindow?: number;
   /** Codex's operational default, distinct from the service's model capacity. */
   readonly codexContextWindow?: number;
+  readonly codexContextWindowSource?: 'provider' | 'codex' | 'models.dev' | 'fallback';
   readonly maxOutputTokens?: number;
   readonly inputModalities?: readonly string[];
   readonly reasoning?: boolean;

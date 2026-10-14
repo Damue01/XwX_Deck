@@ -62,6 +62,7 @@
 | [codex-client-compatibility-test.mjs](../tools/native/codex-client-compatibility-test.mjs) | 后端默认入口 | TR05、MO01、CL01、CL02 |
 | [codex-models-renderer-test.mjs](../tools/native/codex-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |
 | [metadata-test.mjs](../tools/native/metadata-test.mjs) | 后端默认入口 | MO06 |
+| [model-metadata-consumption-test.mjs](../tools/native/model-metadata-consumption-test.mjs) | 后端默认入口 | MO01、MO03、CL01 |
 | [models-dev-unification-test.mjs](../tools/native/models-dev-unification-test.mjs) | 后端默认入口 | CO02、CO04、MO01、MO06 |
 | [official-catalog-test.mjs](../tools/native/official-catalog-test.mjs) | 后端默认入口 | MO01 |
 | [protocol-test.mjs](../tools/native/protocol-test.mjs) | 后端默认入口 | MO01、MO02、MO03、MO06 |
@@ -92,6 +93,7 @@
 | [legacy-direct-test.mjs](../tools/native/legacy-direct-test.mjs) | 后端默认入口 | CL06 |
 | [legacy-helper-test.mjs](../tools/native/legacy-helper-test.mjs) | 后端默认入口 | CL06 |
 | [legacy-recovery-test.mjs](../tools/native/legacy-recovery-test.mjs) | 后端默认入口 | CL06 |
+| [model-metadata-consumption-test.mjs](../tools/native/model-metadata-consumption-test.mjs) | 后端默认入口 | MO01、MO03、CL01 |
 | [official-test.mjs](../tools/native/official-test.mjs) | 后端默认入口 | CL04 |
 | [portability-test.mjs](../tools/native/portability-test.mjs) | 后端默认入口 | TR01、TR02、TR03、TR04、TR05、TR06、TR07、TR09、CL01、CL02、CL03、CL04、CL05、CL07、CL08 |
 | [regressions.mjs](../tools/native/regressions.mjs) | 后端默认入口 | CL01 |

@@ -517,7 +517,8 @@
           "tools/native/official-catalog-test.mjs",
           "tools/native/provider-presets-test.mjs",
           "tools/native/codex-client-compatibility-test.mjs",
-          "tools/shared-core/codex-client-contract-test.mjs"
+          "tools/shared-core/codex-client-contract-test.mjs",
+          "tools/native/model-metadata-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -564,7 +565,8 @@
           "tools/native/provider-catalog-test.mjs",
           "tools/native/catalog-contract-edges-test.mjs",
           "tools/native/provider-validation-test.mjs",
-          "tools/native/protocol-test.mjs"
+          "tools/native/protocol-test.mjs",
+          "tools/native/model-metadata-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -658,7 +660,8 @@
           "tools/native/portability-test.mjs",
           "tools/native/desktop-model-routing-test.mjs",
           "tools/native/regressions.mjs",
-          "tools/native/codex-client-compatibility-test.mjs"
+          "tools/native/codex-client-compatibility-test.mjs",
+          "tools/native/model-metadata-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
