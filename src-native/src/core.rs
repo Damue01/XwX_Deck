@@ -961,6 +961,20 @@ impl Pilot {
         let previous = read(&journal)?
             .map(|s| serde_json::from_str::<Value>(&s).map_err(err))
             .transpose()?;
+        // Persistent Codex threads retain the Gateway provider ID. Keep a
+        // managed direct definition usable after Trace stops, without changing
+        // the provider selected for newly created threads.
+        let owns_resume_alias = previous.as_ref().is_some_and(|ledger| {
+            ledger["providerIds"]
+                .as_array()
+                .is_some_and(|ids| ids.iter().any(|id| id == "xwx_deck"))
+                && doc(text(ledger, "before")).is_ok_and(|before| {
+                    before
+                        .get("model_providers")
+                        .and_then(|t| t.get("xwx_deck"))
+                        .is_none()
+                })
+        });
         if let Some(ref ledger) = previous {
             let expected = doc(text(ledger, "managed"))?;
             let id = text(ledger, "providerId").trim();
@@ -972,7 +986,12 @@ impl Pilot {
                     || CODEX_PROVIDER_FIELDS.iter().any(|key| {
                         semantic(provider_field(&d, id, key))
                             != semantic(provider_field(&expected, id, key))
-                    }))
+                    })
+                    || (owns_resume_alias
+                        && CODEX_PROVIDER_FIELDS.iter().any(|key| {
+                            semantic(provider_field(&d, "xwx_deck", key))
+                                != semantic(provider_field(&expected, "xwx_deck", key))
+                        })))
             {
                 return Err("外部 Codex 配置变化已保留，请明确接管后重试".into());
             }
@@ -1099,7 +1118,8 @@ impl Pilot {
             {
                 d.remove("model_catalog_json");
             }
-            if self.settings.codex_enhancements["unifySessionHistory"] == true {
+            if self.settings.codex_enhancements["unifySessionHistory"] == true || owns_resume_alias
+            {
                 let oauth = self.auth_mode() == "chatgpt";
                 let base = d
                     .get(if oauth {
@@ -1115,7 +1135,9 @@ impl Pilot {
                     })
                     .trim_end_matches('/')
                     .to_string();
-                set_codex_field(&mut d, "model_provider", value("xwx_deck"));
+                if self.settings.codex_enhancements["unifySessionHistory"] == true {
+                    set_codex_field(&mut d, "model_provider", value("xwx_deck"));
+                }
                 set_codex_provider_field(&mut d, "xwx_deck", "name", value("XwX Deck"));
                 set_codex_provider_field(&mut d, "xwx_deck", "wire_api", value("responses"));
                 set_codex_provider_field(
@@ -1141,7 +1163,27 @@ impl Pilot {
             }
         }
         let managed = direct_provider.is_some()
-            || self.settings.codex_enhancements["unifySessionHistory"] == true;
+            || self.settings.codex_enhancements["unifySessionHistory"] == true
+            || owns_resume_alias;
+        let publish_resume_alias = direct_provider.is_some()
+            && direct_id != "xwx_deck"
+            && (owns_resume_alias
+                || d.get("model_providers")
+                    .and_then(|t| t.get("xwx_deck"))
+                    .is_none());
+        if publish_resume_alias {
+            for key in CODEX_PROVIDER_FIELDS {
+                if let Some(next) = provider_field(&d, direct_id, key).cloned() {
+                    set_codex_provider_field(&mut d, "xwx_deck", key, next);
+                } else if let Some(table) = d
+                    .get_mut("model_providers")
+                    .and_then(|t| t.get_mut("xwx_deck"))
+                    .and_then(Item::as_table_like_mut)
+                {
+                    table.remove(key);
+                }
+            }
+        }
         if managed {
             let managed_id = d
                 .get("model_provider")
@@ -1163,6 +1205,9 @@ impl Pilot {
                 ids.push(old.into());
             }
             ids.push(managed_id.into());
+            if publish_resume_alias {
+                ids.push("xwx_deck".into());
+            }
             ids.sort();
             ids.dedup();
             write(&journal,&json!({"providerId":managed_id,"providerIds":ids,"before":previous.as_ref().map(|l|text(l,"before")).unwrap_or(&before),"managed":d.to_string()}).to_string())?;

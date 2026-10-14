@@ -3942,14 +3942,26 @@ function responseSnapshot(t){
   // Native captures already assemble the response body, but do not store the
   // Electron-only snapshot. Read that same response, never request history.
   const body = t && t.response && t.response.body;
-  if(!body || typeof body !== 'object') return snapshot;
+  if(!body || typeof body !== 'object') return partialResponseSnapshot(t) || snapshot;
   let content = [];
   if(Array.isArray(body.output)) content = body.output.flatMap(item => normalizeBlocks(normalizeMessage(item).content));
   else if(Array.isArray(body.choices)) content = body.choices.flatMap((choice, index) => normalizeBlocks(normalizeMessage(choice.message).content).map(block => Object.assign({}, block, { choiceIndex:index })));
   else if(Array.isArray(body.content)) content = normalizeBlocks(normalizeMessage(body).content);
   else if(Array.isArray(body.candidates)) content = body.candidates.flatMap(candidate => normalizeBlocks((geminiMessage(candidate.content) || {}).content));
-  if(!content.length) return snapshot;
+  if(!content.length) return partialResponseSnapshot(t) || snapshot;
   return { content, raw:body, stopReason:body.status || body.stop_reason || '', incompleteReason:body.incomplete_details && body.incomplete_details.reason || '' };
+}
+function partialResponseSnapshot(t){
+  if(!t || !t.error || t.response && t.response.protocolEnded) return null;
+  const parts = new Map();
+  (t.sse && t.sse.events || []).forEach(event => {
+    const parsed = parseJsonMaybe(sseEventData(event));
+    if(!parsed || parsed.type !== 'response.output_text.delta' || typeof parsed.delta !== 'string') return;
+    const key = String(parsed.output_index ?? 0)+':'+String(parsed.content_index ?? 0);
+    parts.set(key, (parts.get(key) || '')+parsed.delta);
+  });
+  const content = Array.from(parts.values()).filter(Boolean).map(text => ({type:'text',text}));
+  return content.length ? {content,stopReason:'incomplete',incompleteReason:t.error} : null;
 }
 function renderResponse(t){
   const snap = responseSnapshot(t);

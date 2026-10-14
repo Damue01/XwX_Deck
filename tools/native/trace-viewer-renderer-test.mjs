@@ -327,6 +327,20 @@ try {
   empty.sse = { events:[{ event:'response.completed', data:'{}' }] };
   assert.match(dom.window.renderResponse(empty), /没有可展示/);
   pass('native incomplete Responses and Messages remain readable while empty output stays empty');
+  const cancelled = trace({input:'Count in an isolated thread'});
+  cancelled.error = '客户端断开或上游流中断，记录为未完成';
+  cancelled.response.protocolEnded = false;
+  cancelled.sse = {events:[
+    {event:'response.output_text.delta',data:JSON.stringify({type:'response.output_text.delta',output_index:0,content_index:0,delta:'PARTIAL_'})},
+    {event:'response.output_text.delta',data:JSON.stringify({type:'response.output_text.delta',output_index:0,content_index:0,delta:'CANCELLED'})}
+  ]};
+  const evidence = JSON.stringify(cancelled);
+  assert.match(dom.window.renderResponse(cancelled), /PARTIAL_CANCELLED/);
+  assert.match(dom.window.renderResponse(cancelled), /响应未完整结束/);
+  assert.equal(JSON.stringify(cancelled), evidence);
+  cancelled.response.protocolEnded = true;
+  assert.doesNotMatch(dom.window.renderResponse(cancelled), /PARTIAL_CANCELLED/);
+  pass('cancelled Responses show only actually received text deltas with an incomplete label and leave raw evidence unchanged');
   assert.equal(dom.window.railMode(), 'full');
   dom.window.innerWidth = 400;
   dom.window.applyResponsiveRail();
