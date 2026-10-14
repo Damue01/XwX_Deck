@@ -678,11 +678,9 @@ async fn forward_inner(
     } else {
         normalized.to_string().into_bytes()
     };
-    let response = super::forward_request(
-        State(Arc::new(std::sync::RwLock::new(route))),
-        Request::from_parts(parts, Body::from(body)),
-    )
-    .await;
+    let response =
+        service_switching::forward(route, routes, Request::from_parts(parts, Body::from(body)))
+            .await;
     if gemini_models && response.status().is_success() {
         let bytes = match to_bytes(response.into_body(), 4 * 1024 * 1024).await {
             Ok(b) => b,

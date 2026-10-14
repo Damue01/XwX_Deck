@@ -25,6 +25,7 @@
 | [dashboard-layout-test.mjs](../tools/native/dashboard-layout-test.mjs) | 独立专题入口 | TR08、CO03 |
 | [official-websocket-proxy-test.mjs](../tools/native/official-websocket-proxy-test.mjs) | 后端默认入口 | TR07 |
 | [portability-test.mjs](../tools/native/portability-test.mjs) | 后端默认入口 | TR01、TR02、TR03、TR04、TR05、TR06、TR07、TR09、CL01、CL02、CL03、CL04、CL05、CL07、CL08 |
+| [routing-consumption-test.mjs](../tools/native/routing-consumption-test.mjs) | 后端默认入口 | TR01、TR02、TR07、MO03、MO06、CL01、CL02、CL05、CL06、LF03 |
 | [session-reading-renderer-test.mjs](../tools/native/session-reading-renderer-test.mjs) | 独立专题入口 | TR08 |
 | [tool-wait-test.mjs](../tools/native/tool-wait-test.mjs) | 后端默认入口 | TR06、LF01、LF02、LF04、LF05 |
 | [trace-client-evidence-test.mjs](../tools/native/trace-client-evidence-test.mjs) | 后端默认入口 | TR01、TR02、TR03、TR04、TR07、TR09 |
@@ -71,6 +72,7 @@
 | [provider-presets-test.mjs](../tools/native/provider-presets-test.mjs) | 后端默认入口 | MO01 |
 | [provider-validation-test.mjs](../tools/native/provider-validation-test.mjs) | 后端默认入口 | MO01、MO02、MO03、MO06 |
 | [reasoning-test.mjs](../tools/native/reasoning-test.mjs) | 后端默认入口 | MO02 |
+| [routing-consumption-test.mjs](../tools/native/routing-consumption-test.mjs) | 后端默认入口 | TR01、TR02、TR07、MO03、MO06、CL01、CL02、CL05、CL06、LF03 |
 | [codex-client-contract-test.mjs](../tools/shared-core/codex-client-contract-test.mjs) | 独立专题入口 | MO01 |
 
 ## CL 客户端配置与续接
@@ -97,6 +99,7 @@
 | [official-test.mjs](../tools/native/official-test.mjs) | 后端默认入口 | CL04 |
 | [portability-test.mjs](../tools/native/portability-test.mjs) | 后端默认入口 | TR01、TR02、TR03、TR04、TR05、TR06、TR07、TR09、CL01、CL02、CL03、CL04、CL05、CL07、CL08 |
 | [regressions.mjs](../tools/native/regressions.mjs) | 后端默认入口 | CL01 |
+| [routing-consumption-test.mjs](../tools/native/routing-consumption-test.mjs) | 后端默认入口 | TR01、TR02、TR07、MO03、MO06、CL01、CL02、CL05、CL06、LF03 |
 | [universal-gateway-test.mjs](../tools/native/universal-gateway-test.mjs) | 后端默认入口 | CL07 |
 
 ## SE 设置、配置读写与 Trace 存储
@@ -184,6 +187,7 @@
 | [application-reset-ui-test.mjs](../tools/native/application-reset-ui-test.mjs) | 独立专题入口 | LF06 |
 | [desktop-lifecycle-test.mjs](../tools/native/desktop-lifecycle-test.mjs) | 后端默认入口 | CL06、LF02、LF03、LF04、LF05 |
 | [preferences-test.mjs](../tools/native/preferences-test.mjs) | 后端默认入口 | SE02、SE03、SE04、AC01、UI04、LF03 |
+| [routing-consumption-test.mjs](../tools/native/routing-consumption-test.mjs) | 后端默认入口 | TR01、TR02、TR07、MO03、MO06、CL01、CL02、CL05、CL06、LF03 |
 | [toggle-renderer-test.mjs](../tools/native/toggle-renderer-test.mjs) | 后端默认入口 | LF01 |
 | [tool-wait-test.mjs](../tools/native/tool-wait-test.mjs) | 后端默认入口 | TR06、LF01、LF02、LF04、LF05 |
 | [trace-stop-admission-test.mjs](../tools/native/trace-stop-admission-test.mjs) | 后端默认入口 | LF01、LF02、LF04、LF05 |

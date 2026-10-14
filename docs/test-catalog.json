@@ -170,7 +170,8 @@
           "tools/native/trace-client-evidence-test.mjs",
           "tools/native/trace-viewer-renderer-test.mjs",
           "tools/native/portability-test.mjs",
-          "tools/native/claude-native-sessions-test.mjs"
+          "tools/native/claude-native-sessions-test.mjs",
+          "tools/native/routing-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -193,7 +194,8 @@
           "tools/native/trace-native-sessions-test.mjs",
           "tools/native/trace-client-evidence-test.mjs",
           "tools/native/trace-viewer-renderer-test.mjs",
-          "tools/native/portability-test.mjs"
+          "tools/native/portability-test.mjs",
+          "tools/native/routing-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -306,7 +308,8 @@
           "tools/native/trace-client-evidence-test.mjs",
           "tools/native/trace-viewer-renderer-test.mjs",
           "tools/native/portability-test.mjs",
-          "tools/native/official-websocket-proxy-test.mjs"
+          "tools/native/official-websocket-proxy-test.mjs",
+          "tools/native/routing-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -566,7 +569,8 @@
           "tools/native/catalog-contract-edges-test.mjs",
           "tools/native/provider-validation-test.mjs",
           "tools/native/protocol-test.mjs",
-          "tools/native/model-metadata-consumption-test.mjs"
+          "tools/native/model-metadata-consumption-test.mjs",
+          "tools/native/routing-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -634,7 +638,8 @@
           "tools/native/provider-validation-test.mjs",
           "tools/native/protocol-test.mjs",
           "tools/native/metadata-test.mjs",
-          "tools/native/models-dev-unification-test.mjs"
+          "tools/native/models-dev-unification-test.mjs",
+          "tools/native/routing-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -661,7 +666,8 @@
           "tools/native/desktop-model-routing-test.mjs",
           "tools/native/regressions.mjs",
           "tools/native/codex-client-compatibility-test.mjs",
-          "tools/native/model-metadata-consumption-test.mjs"
+          "tools/native/model-metadata-consumption-test.mjs",
+          "tools/native/routing-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -683,7 +689,8 @@
       "automation": {
         "scripts": [
           "tools/native/portability-test.mjs",
-          "tools/native/codex-client-compatibility-test.mjs"
+          "tools/native/codex-client-compatibility-test.mjs",
+          "tools/native/routing-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "本地服务与合成身份有相关断言。真实授权、实际 CLI 或 Desktop 和同线程续接仍需当前包验收。"
@@ -755,7 +762,8 @@
           "tools/native/codex-models-renderer-test.mjs",
           "tools/native/client-models-renderer-test.mjs",
           "tools/native/portability-test.mjs",
-          "tools/native/desktop-model-routing-test.mjs"
+          "tools/native/desktop-model-routing-test.mjs",
+          "tools/native/routing-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -778,7 +786,8 @@
           "tools/native/desktop-lifecycle-test.mjs",
           "tools/native/legacy-helper-test.mjs",
           "tools/native/legacy-direct-test.mjs",
-          "tools/native/legacy-recovery-test.mjs"
+          "tools/native/legacy-recovery-test.mjs",
+          "tools/native/routing-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1395,7 +1404,8 @@
       "automation": {
         "scripts": [
           "tools/native/desktop-lifecycle-test.mjs",
-          "tools/native/preferences-test.mjs"
+          "tools/native/preferences-test.mjs",
+          "tools/native/routing-consumption-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"

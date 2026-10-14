@@ -80,7 +80,13 @@ pub(super) async fn upgrade(
     if !parts.uri.path().ends_with("/responses") {
         return protocol_error(404, "responses", "Unknown WebSocket route");
     }
-    if !["responses", "auto"].contains(&provider.adapter.as_str()) {
+    let wire = resolve_wire(
+        &route.root,
+        provider,
+        Some(&provider.codex_model),
+        "responses",
+    );
+    if wire != "responses" {
         return protocol_error(426, "responses", "当前协议请使用 HTTP Responses 传输");
     }
     let ws = match WebSocketUpgrade::from_request_parts(parts, &()).await {
@@ -103,8 +109,7 @@ pub(super) async fn upgrade(
     // Keep the official URL path and query while changing only the transport scheme.
     let mut url = match reqwest::Url::parse(&format!(
         "{}/responses{suffix}",
-        provider.base_url.trim_end_matches('/').to_string()
-            + if provider.oauth { "/codex" } else { "" }
+        Pilot::provider_api_root(provider) + if provider.oauth { "/codex" } else { "" }
     )) {
         Ok(url) => url,
         Err(_) => return protocol_error(502, "responses", "无效 WebSocket 上游"),
@@ -160,6 +165,16 @@ pub(super) async fn upgrade(
             _ => return protocol_error(502, "responses", "WebSocket 上游连接失败"),
         };
     let headers = parts.headers.clone();
+    let source = parts
+        .extensions
+        .get::<ingress::Origin>()
+        .map(|origin| origin.client.clone());
+    let scoped_client = source.clone().filter(|id| ingress::valid_client(id));
+    let request_path = parts
+        .extensions
+        .get::<ingress::Origin>()
+        .map(|origin| origin.path.clone())
+        .unwrap_or_else(|| parts.uri.path().to_string());
     let provider = provider.clone();
     let mut cancel = route.cancel.clone();
     let lease = parts.extensions.remove::<Arc<request_activity::Lease>>();
@@ -172,7 +187,12 @@ pub(super) async fn upgrade(
         let mut session:Option<String>=None;
         let mut tool_observer:Option<tool_wait::Observer>=None;
         let mut route_check=tokio::time::interval(Duration::from_millis(100));
-        let changed=|| routes.read().map(|current|current.provider.as_ref().is_none_or(|next|next.id!=provider.id || next.base_url!=provider.base_url || next.adapter!=provider.adapter || next.bearer_token!=provider.bearer_token || next.subscription_account_id!=provider.subscription_account_id)).unwrap_or(true);
+        let changed=|| routes.read().map(|current|scoped_client.as_ref().map_or(current.provider.as_ref(),|id|current.clients.get(id)).is_none_or(|next|
+            next.id!=provider.id || next.base_url!=provider.base_url || next.adapter!=provider.adapter
+            || next.codex_api_format!=provider.codex_api_format || next.codex_model!=provider.codex_model
+            || next.bearer_token!=provider.bearer_token || next.subscription_account_id!=provider.subscription_account_id
+            || next.official!=provider.official || next.oauth!=provider.oauth
+        )).unwrap_or(true);
         loop {
             tokio::select! {
                 _=cancel.changed()=>{let _=downstream.send(Down::Close(None)).await;let _=upstream.send(Up::Close(None)).await;break;},
@@ -188,8 +208,9 @@ pub(super) async fn upgrade(
                             let mut forwarded=text.to_string();
                             if let Ok(body)=serde_json::from_str::<Value>(text.as_str()) {
                                 if body["type"]=="response.create" {
-                                    if changed(){let _=downstream.send(Down::Text(json!({"type":"error","error":{"type":"service_changed","message":"模型服务已切换，请重新连接"}}).to_string().into())).await;if capture.is_some(){continue;}let _=downstream.send(Down::Close(None)).await;break;}
-                                    session=conversation_identity::session(&headers,&body,true);
+                                    if changed() || resolve_wire(&route.root,&provider,Some(super::text(&body,"model")),"responses")!="responses"{let _=downstream.send(Down::Text(json!({"type":"error","error":{"type":"service_changed","message":"模型或协议已变化，请重新连接；协议转换使用 HTTP Responses"}}).to_string().into())).await;if capture.is_some(){continue;}let _=downstream.send(Down::Close(None)).await;break;}
+                                    let native_session=conversation_identity::session(&headers,&body,true);
+                                    session=match &source {Some(client)=>Some(format!("{client}:{}",native_session.as_deref().unwrap_or(""))),None=>native_session.clone()};
                                     let mut expanded=match continuation::expand(&route.root,&route.codex_home,&provider,session.as_deref().unwrap_or(""),&body,false){Ok(value)=>value,Err(error)=>{let _=downstream.send(Down::Text(json!({"type":"error","error":{"type":"context_unavailable","message":error}}).to_string().into())).await;continue;}};
                                     expanded=match continuation::strict_responses(&expanded){Ok(value)=>value,Err(error)=>{let _=downstream.send(Down::Text(json!({"type":"error","error":{"type":"context_unavailable","message":error}}).to_string().into())).await;continue;}};
                                     match continuation::selected_model(&route.root,&provider,session.as_deref().unwrap_or(""),super::text(&body,"model")){Ok(model) if !model.is_empty()=>expanded["model"]=json!(model),Ok(_)=>{},Err(error)=>{let _=downstream.send(Down::Text(json!({"type":"error","error":{"type":"context_unavailable","message":error}}).to_string().into())).await;continue;}};
@@ -198,9 +219,10 @@ pub(super) async fn upgrade(
                                     forwarded=expanded.to_string();continuation_body=Some(expanded);
                                     if let Some(old)=capture.take(){old.finish(None);}
                                     let index=route.count.fetch_add(1,Ordering::Relaxed)+1;let started=millis();
-                                    tool_observer=Some(tool_wait::Observer::new(route.activity.clone(),index,&provider,"codex-cli",session.as_deref().unwrap_or(""),&continuation_body.as_ref().unwrap()["input"],"responses"));
-                                    let key=format!("codex-cli:{}",session.clone().unwrap_or_else(||format!("ws-{started}-{index}")));
-                                    let mut record=json!({"id":format!("trace-{started}-{index}"),"startedAt":storage::iso(started),"startedAtMs":started as u64,"source":"codex-cli","clientConversationKey":key,"protocol":"openai-responses","captureMode":"reverse-proxy","provider":{"id":provider.id,"name":provider.display_name},"request":{"method":"WS","path":"/responses","headers":{},"body":body,"model":body["model"],"apiType":"responses"},"upstream":{"baseUrl":provider.base_url,"url":url.to_string()},"response":{"statusCode":200},"timings":{}});
+                                    let client=source.as_deref().unwrap_or("codex-cli");
+                                    tool_observer=Some(tool_wait::Observer::new(route.activity.clone(),index,&provider,client,session.as_deref().unwrap_or(""),&continuation_body.as_ref().unwrap()["input"],"responses"));
+                                    let key=format!("{client}:{}",native_session.unwrap_or_else(||format!("ws-{started}-{index}")));
+                                    let mut record=json!({"id":format!("trace-{started}-{index}"),"startedAt":storage::iso(started),"startedAtMs":started as u64,"source":client,"clientConversationKey":key,"protocol":"openai-responses","captureMode":"reverse-proxy","provider":{"id":provider.id,"name":provider.display_name},"request":{"method":"WS","path":request_path,"headers":{},"body":body,"model":body["model"],"apiType":"responses"},"upstream":{"baseUrl":provider.base_url,"url":url.to_string()},"response":{"statusCode":200},"timings":{}});
                                     record["clientFirstPrompt"]=json!(ingress::first_prompt(continuation_body.as_ref().unwrap_or(&body)));
                                     record["catalogIdentity"]=json!(catalog::identity(&provider));
                                     if let Some(price)=provider_pricing::snapshot(&route.root,&provider,super::text(continuation_body.as_ref().unwrap(),"model")){record["providerPrice"]=storage::provider_price(&route.store,super::text(continuation_body.as_ref().unwrap(),"model"),price);}

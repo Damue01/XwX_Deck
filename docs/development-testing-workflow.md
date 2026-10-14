@@ -1,5 +1,7 @@
 # 功能开发与测试流程
 
+配置到实际请求的检查见 [路由链路审计](routing-consumption-audit.md)。
+
 本文规定开发一个功能时需要检查什么。
 测试结果仍按候选和环境分别记录。
 功能编号来自 [功能清单](core-functional-acceptance-checklist.md)。
