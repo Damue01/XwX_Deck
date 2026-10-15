@@ -286,7 +286,11 @@ fn windows_private_permissions(path: &Path) -> Result<()> {
         .encode_utf16()
         .chain(Some(0))
         .collect();
-    let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // Rust returns a verbatim Windows path (\\?\) here. The security API
+    // otherwise rejects deep credential backups at MAX_PATH even though the
+    // filesystem read/write operations successfully support that same path.
+    let physical = fs::canonicalize(path).map_err(err)?;
+    let name: Vec<u16> = physical.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut descriptor = null_mut();
     let mut dacl = null_mut();
     let (mut present, mut defaulted) = (0, 0);
