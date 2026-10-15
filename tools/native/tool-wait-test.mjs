@@ -12,24 +12,27 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { nativeTestBinary } from './test-support.mjs';
 
 const root=await mkdtemp(join(await realpath(tmpdir()),'xwxdeck-tool-wait-'));
-const checks=[], requests=[];let serial=0;
+const checks=[], requests=[];let serial=0,releaseHeld;
 const task={role:'user',content:'isolated tool task'};
 const call={type:'function_call',call_id:'reused-call',name:'lookup',arguments:'{"q":1}'};
 const result={type:'function_call_output',call_id:call.call_id,output:'read-only result'};
 const frame=v=>'data: '+JSON.stringify(v)+'\n\n';
 function response(body,wire) {
-  const tools=body.model==='tool'||body.model==='cut', id='tool-fixture-'+(++serial);
+  const tools=['tool','cut','two-tools'].includes(body.model), id='tool-fixture-'+(++serial);
   if(wire==='messages')return{id,type:'message',role:'assistant',model:body.model,content:tools?[{type:'tool_use',id:call.call_id,name:call.name,input:{q:1}}]:[{type:'text',text:'accepted once'}],stop_reason:tools?'tool_use':'end_turn',usage:{input_tokens:2,output_tokens:1}};
   if(wire==='chat')return{id,object:'chat.completion',model:body.model,choices:[{index:0,message:{role:'assistant',content:tools?null:'accepted once',...(tools?{tool_calls:[{id:call.call_id,type:'function',function:{name:call.name,arguments:call.arguments}}]}:{})},finish_reason:tools?'tool_calls':'stop'}],usage:{prompt_tokens:2,completion_tokens:1,total_tokens:3}};
-  return{id,object:'response',status:'completed',model:body.model,output:tools?[{...call,id:'item-'+id,status:'completed'}]:[{type:'message',role:'assistant',content:[{type:'output_text',text:'accepted once'}]}],usage:{input_tokens:2,output_tokens:1,total_tokens:3}};
+  return{id,object:'response',status:'completed',model:body.model,output:tools?[{...call,id:'item-'+id,status:'completed'},...(body.model==='two-tools'?[{...call,call_id:'second-call',id:'second-item-'+id,status:'completed'}]:[])]:[{type:'message',role:'assistant',content:[{type:'output_text',text:'accepted once'}]}],usage:{input_tokens:2,output_tokens:1,total_tokens:3}};
 }
 const upstream=createServer(async(req,res)=>{
   if(req.url.endsWith('/models')){res.end('{"data":[]}');return;}
   let raw='';for await(const c of req)raw+=c;const body=JSON.parse(raw);requests.push({path:req.url,model:body.model,transport:'http'});
   if(body.model==='refused'){res.writeHead(400,{'content-type':'application/json'});res.end('{"error":{"message":"synthetic rejection"}}');return;}
+  if(body.model==='disconnect'){req.socket.destroy();return;}
+  if(body.model==='hold'){await new Promise(resolve=>releaseHeld=resolve);}
   const wire=req.url.endsWith('/messages')?'messages':req.url.endsWith('/chat/completions')?'chat':'responses';const value=response(body,wire);
   if(!body.stream){res.setHeader('content-type','application/json');res.end(JSON.stringify(value)+(body.model==='trailing'?'invalid trailing bytes':''));return;}
   res.writeHead(200,{'content-type':'text/event-stream'});
+  if(body.model==='failed-stream'){res.end(frame({type:'response.failed',response:{id:value.id,status:'failed',error:{message:'synthetic stream failure'}}}));return;}
   let events;
   if(wire==='messages')events=[{type:'message_start',message:{...value,content:[],stop_reason:null}},{type:'content_block_start',index:0,content_block:{type:'tool_use',id:call.call_id,name:call.name,input:{}}},{type:'content_block_delta',index:0,delta:{type:'input_json_delta',partial_json:call.arguments}},{type:'content_block_stop',index:0},{type:'message_delta',delta:{stop_reason:'tool_use'},usage:{output_tokens:1}},{type:'message_stop'}];
   else if(wire==='chat')events=[{id:value.id,model:body.model,choices:[{index:0,delta:{tool_calls:[{index:0,id:call.call_id,type:'function',function:{name:call.name,arguments:call.arguments}}]},finish_reason:null}]},{id:value.id,model:body.model,choices:[{index:0,delta:{},finish_reason:'tool_calls'}]}];
@@ -39,7 +42,7 @@ const upstream=createServer(async(req,res)=>{
   const text=events.map(frame).join('').replaceAll('\n','\r\n');const cut=Math.floor(text.length/2);res.write(text.slice(0,cut));setTimeout(()=>res.end(text.slice(cut)),10);
 });
 upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const base=`http://127.0.0.1:${upstream.address().port}/v1`;
-const wss=new WebSocketServer({server:upstream});wss.on('connection',socket=>socket.on('message',raw=>{const body=JSON.parse(raw.toString());requests.push({path:'/v1/responses',model:body.model,transport:'websocket'});const value=response(body,'responses');if(body.model==='tool')socket.send(JSON.stringify({type:'response.output_item.added',item:value.output[0]}));socket.send(JSON.stringify({type:'response.completed',response:value}));}));
+const wss=new WebSocketServer({server:upstream});wss.on('connection',socket=>socket.on('message',raw=>{const body=JSON.parse(raw.toString());requests.push({path:'/v1/responses',model:body.model,transport:'websocket'});const value=response(body,'responses');if(body.model==='refused'){socket.send(JSON.stringify({type:'response.failed',response:{id:value.id,status:'failed',error:{message:'synthetic WS failure'}}}));return;}if(body.model==='tool')socket.send(JSON.stringify({type:'response.output_item.added',item:value.output[0]}));socket.send(JSON.stringify({type:'response.completed',response:value}));}));
 const child=spawn(nativeTestBinary,['--rpc','--pilot-root',root],{stdio:['pipe','pipe','inherit']});const pending=new Map();let sequence=0;
 createInterface({input:child.stdout}).on('line',line=>{const v=JSON.parse(line),p=pending.get(v.requestId);if(p){clearTimeout(p.timer);pending.delete(v.requestId);v.ok?p.resolve(v.result):p.reject(Error(v.error));}});
 const rpc=(method,...args)=>new Promise((resolve,reject)=>{const requestId=++sequence,timer=setTimeout(()=>{pending.delete(requestId);reject(Error(method+' timeout'));},20000);pending.set(requestId,{resolve,reject,timer});child.stdin.write(JSON.stringify({requestId,method,args})+'\n');});
@@ -56,9 +59,23 @@ try{
  await post([result]);await waiting(1);
  await post([task,{...call,arguments:'{"q":2}'},result]);await waiting(1);
  await post([{...task,content:'different task'},call,result]);await waiting(1);
- assert.equal((await post([task,call,result],{model:'refused'})).status,400);await waiting(1);
- await post([task,call,result],{model:'trailing'});await waiting(1);
- await post([task,call,call,result]);await waiting(1);pass('foreign session, ID-only result, changed arguments/context, rejected turn and duplicate call history cannot release the wait');
+ assert.equal((await post([task],{model:'refused'})).status,400);await waiting(1);
+ await post([task,call,call,result]);await waiting(1);pass('foreign session, ID-only result, changed arguments/context and duplicate call history cannot release the wait');
+ assert.equal((await post([task,call,result],{model:'refused'})).status,400);await waiting(0);pass('verified returned tool result clears its wait even when the next generation is rejected');
+ await post([task],{model:'tool'});await waiting(1);
+ await post([task,call,result],{model:'trailing'});await waiting(0);pass('verified returned tool result clears its wait even when the next response body is malformed');
+ for(const [model,stream]of[['disconnect',false],['failed-stream',true]]){
+   await post([task],{model:'tool'});await waiting(1);
+   const next=await post([task,call,result],{model,stream});assert.equal(next.status,model==='disconnect'?502:200);await waiting(0);
+   await rpc('toggleTracing',false);state=await rpc('toggleTracing',true);pass(`returned result permits ordinary stop after ${model} without restarting Gateway`);
+ }
+ await post([task],{model:'tool'});await waiting(1);const held=post([task,call,result],{model:'hold'});
+ await wait(async()=>{const s=await rpc('getState');return s.activeRequests===1&&s.waitingTools===0;});
+ await assert.rejects(rpc('toggleTracing',false),/回复正在生成|连接仍在使用/);releaseHeld();await held;await waiting(0);pass('returned tools retire during a slow next reply while active HTTP generation still blocks ordinary stop');
+ await post([task],{model:'two-tools'});await waiting(2);
+ assert.equal((await post([task,call,result],{model:'refused'})).status,400);await waiting(1);await busy();
+ await post([task,call,result,{...call,call_id:'second-call'},{...result,call_id:'second-call'}]);await waiting(0);pass('a failed next reply retires only the returned subset and preserves the tool that still has no result');
+ await post([task],{model:'tool'});await waiting(1);
  await post([task,call,result]);await waiting(0);await rpc('toggleTracing',false);pass('matching accepted tool result permits ordinary stop and restores direct routing');
  state=await rpc('toggleTracing',true);await post([task],{model:'tool',stream:true});await waiting(1);await select('responses','codex','Second_Same_Type_Provider');await post([task,call,result]);await waiting(0);await rpc('toggleTracing',false);pass('complete same-session tool lineage continues across explicit provider handoff without replay');
  state=await rpc('toggleTracing',true);await post([task],{model:'tool'});await waiting(1);await post([task,call,result]);await waiting(0);
@@ -71,10 +88,13 @@ try{
  }
  await select('responses');await post([task],{model:'cut',stream:true});await waiting(1);await busy();const before=requests.length;await rpc('toggleTracing',false,true);assert.equal(requests.length,before);await assert.rejects(fetch(state.localBaseUrl+'/v1/responses'));assert.doesNotMatch(await readFile(join(root,'codex/config.toml'),'utf8'),/127\.0\.0\.1:452(?:3[3-9]|4[0-2])/);pass('truncated emitted tool keeps an actionable wait; explicit force restores direct and never repeats the request');
  state=await rpc('toggleTracing',true);const ws=new WebSocket(state.localBaseUrl.replace('http:','ws:')+'/v1/responses',{headers:{'x-codex-thread-id':'ws-tool-session'}});await once(ws,'open');
- const turn=body=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('WebSocket timeout')),5000);const handler=raw=>{const v=JSON.parse(raw.toString());if(v.type==='response.completed'){clearTimeout(timer);ws.off('message',handler);resolve(v.response);}};ws.on('message',handler);ws.send(JSON.stringify({type:'response.create',...body}));});
- const initial=await turn({model:'tool',input:[task]});await waiting(1);await busy();await turn({model:'accept',previous_response_id:initial.id,input:[result]});await waiting(0);const closed=once(ws,'close');ws.close();await closed;await rpc('toggleTracing',false);pass('WebSocket terminal protects tool waiting; verified previous_response_id result restores lineage and permits idle stop');
+ const turn=body=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('WebSocket timeout')),5000);const handler=raw=>{const v=JSON.parse(raw.toString());if(['response.completed','response.failed'].includes(v.type)){clearTimeout(timer);ws.off('message',handler);resolve(v.response);}};ws.on('message',handler);ws.send(JSON.stringify({type:'response.create',...body}));});
+ const initial=await turn({model:'tool',input:[task]});await waiting(1);await busy();await turn({model:'accept',previous_response_id:initial.id,input:[result]});await waiting(0);pass('WebSocket terminal protects tool waiting; verified previous_response_id result restores lineage');
+ const wsTool=await turn({model:'tool',input:[{...task,content:'WS failure test'}]});await waiting(1);assert.equal((await turn({model:'refused',previous_response_id:wsTool.id,input:[result]})).status,'failed');await waiting(0);
+ const closed=once(ws,'close');ws.close();await closed;await rpc('toggleTracing',false);pass('WebSocket returned result permits ordinary stop even when the next generation fails');
  const report={passed:true,checks,requests,binarySha256:createHash('sha256').update(await readFile(nativeTestBinary)).digest('hex'),isolatedFixtures:true,realPlatformAuthorization:false};await writeFile('test-results/native-tool-wait-summary.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
 }finally{
+ releaseHeld?.();
  if(child.exitCode===null){await rpc('toggleTracing',false,true).catch(()=>{});child.stdin.end();await once(child,'exit');}
  for(const socket of wss.clients)socket.terminate();await new Promise(r=>wss.close(r));upstream.closeAllConnections();await new Promise(r=>upstream.close(r));await rm(root,{recursive:true,force:true});
 }

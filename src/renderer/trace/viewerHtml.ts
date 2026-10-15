@@ -63,9 +63,24 @@ ${VIEWER_TOKEN_ALIASES}
    语义色调（thinking 琥珀 / diff 增绿删红）是唯一的"换色"层。
    保留的线：.metrics 列竖线、.sbs-diff 的 OLD|NEW 分列竖线——它们承载表格语义，非嵌套装饰。 */
 *{box-sizing:border-box} html,body{height:100%;margin:0}
-/* Keep Trace content scrollable while hiding scrollbar chrome. */
+/* Hide scrollbar chrome by default; only session reading panes opt in. */
 html,html *{scrollbar-width:none}
 html::-webkit-scrollbar,html *::-webkit-scrollbar{display:none}
+#detail,#traceList{scrollbar-width:auto;scrollbar-gutter:stable;--session-scroll-thumb:color-mix(in srgb,var(--quiet) 65%,transparent)}
+:is(#detail,#traceList)::-webkit-scrollbar{display:block;width:10px}
+:is(#detail,#traceList)::-webkit-scrollbar:horizontal{display:none}
+:is(#detail,#traceList)::-webkit-scrollbar-track{background:transparent}
+:is(#detail,#traceList)::-webkit-scrollbar-thumb{background:var(--session-scroll-thumb);border:3px solid transparent;border-radius:999px;background-clip:padding-box}
+:is(#detail,#traceList)::-webkit-scrollbar-thumb:hover{background-color:var(--quiet)}
+:is(#detail,#traceList)::-webkit-scrollbar-thumb:active{background-color:var(--muted)}
+:is(#detail,#traceList)::-webkit-scrollbar-button{display:none}
+@supports not selector(::-webkit-scrollbar){
+  #detail,#traceList{scrollbar-width:thin;scrollbar-color:var(--session-scroll-thumb) transparent}
+}
+/* Recreate the WebKit track when expanding from scrollbar-width:none. */
+.app:not([data-rail]) #traceList{overflow-y:scroll}
+.app[data-rail] #traceList{scrollbar-width:none;scrollbar-gutter:auto}
+@supports not (scrollbar-width:none){.app[data-rail] #traceList::-webkit-scrollbar{width:0}}
 body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:13px;line-height:1.58;-webkit-font-smoothing:antialiased}
 button,input{font:inherit} button{cursor:pointer}.tnum{font-variant-numeric:tabular-nums}
 .top{height:48px;display:flex;align-items:center;gap:9px;padding:0 16px;background:var(--panel)}
@@ -4318,10 +4333,16 @@ function xmlElements(source, tag){
     if(after !== 0x20 && after !== 0x09 && after !== 0x0a && after !== 0x0d && after !== 0x3e){ from = start + openProbe.length; continue; }
     const gt = s.indexOf('>',start + openProbe.length);
     if(gt < 0) break;
+    const attrs = s.slice(start + openProbe.length,gt);
+    if(attrs.trimEnd().endsWith('/')){
+      out.push({ attrs:attrs.trimEnd().slice(0,-1), inner:'', full:s.slice(start,gt + 1) });
+      from = gt + 1;
+      continue;
+    }
     const close = s.indexOf(closeProbe,gt + 1);
     if(close < 0) break;
     out.push({
-      attrs:s.slice(start + openProbe.length,gt),
+      attrs,
       inner:s.slice(gt + 1,close),
       full:s.slice(start,close + closeProbe.length)
     });
@@ -6386,12 +6407,37 @@ async function refreshState(){
   } catch { return false; }
 }
 function setLive(on){ if(liveConnected === on) return; liveConnected = on; renderConnectionStatus(); }
+let viewerDisposed = false;
+let disconnectTraceEvents = null;
+window.__xwxTraceDispose = () => {
+  viewerDisposed = true;
+  if(disconnectTraceEvents) disconnectTraceEvents();
+};
+window.addEventListener('pagehide',window.__xwxTraceDispose);
+window.addEventListener('beforeunload',window.__xwxTraceDispose);
+window.addEventListener('pageshow',event => {
+  if(event.persisted && viewerDisposed){
+    viewerDisposed = false;
+    if(disconnectTraceEvents) connectEvents();
+  }
+});
 function connectEvents(){
-  if(typeof EventSource === 'undefined') return;
+  if(viewerDisposed || typeof EventSource === 'undefined') return;
+  if(disconnectTraceEvents) disconnectTraceEvents();
   let backoff = 1000;
   let isReconnect = false;
   let activeSrc = null;
+  let reconnectTimer = null;
+  disconnectTraceEvents = () => {
+    if(reconnectTimer !== null){ clearTimeout(reconnectTimer); reconnectTimer = null; }
+    const src = activeSrc;
+    activeSrc = null;
+    if(src){ try { src.close(); } catch {} }
+    setLive(false);
+  };
   const open = () => {
+    reconnectTimer = null;
+    if(viewerDisposed) return;
     const src = new EventSource('events');
     activeSrc = src;
     src.onopen = () => {
@@ -6406,7 +6452,7 @@ function connectEvents(){
       try { src.close(); } catch {}
       activeSrc = null;
       isReconnect = true;
-      setTimeout(open, backoff);
+      reconnectTimer = setTimeout(open, backoff);
       backoff = Math.min(backoff * 2, 30000);
     };
     src.addEventListener('trace', ev => {

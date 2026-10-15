@@ -2842,6 +2842,21 @@ async fn forward_once(
             .map(|b| b["input"].clone())
             .unwrap_or(Value::Null)
     };
+    // Retire proven client results before contacting the upstream. Its next reply
+    // may fail or never complete, but the tool results have already arrived here.
+    let tool_observer = if !metadata && !account && !compact && !path.ends_with("/compact") {
+        Some(tool_wait::Observer::new(
+            route.activity.clone(),
+            index,
+            provider,
+            source,
+            native_key.as_deref().unwrap_or(""),
+            &tool_input,
+            origin.map(|o| o.protocol.as_str()).unwrap_or(incoming),
+        ))
+    } else {
+        None
+    };
     if native_chat {
         payload = parts
             .extensions
@@ -3258,16 +3273,11 @@ async fn forward_once(
             .map(|e| e.capture()),
     };
     if response.status().is_success() && !compact {
-        if let Some(evidence) = parts.extensions.get::<storage::ClientEvidence>() {
-            evidence.tools(tool_wait::Observer::new(
-                route.activity.clone(),
-                index,
-                provider,
-                source,
-                native_key.as_deref().unwrap_or(""),
-                &tool_input,
-                origin.map(|o| o.protocol.as_str()).unwrap_or(incoming),
-            ));
+        if let (Some(evidence), Some(observer)) = (
+            parts.extensions.get::<storage::ClientEvidence>(),
+            tool_observer,
+        ) {
+            evidence.tools(observer);
         }
     }
     capture.record["upstream"]["statusCode"] = json!(response.status().as_u16());

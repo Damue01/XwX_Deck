@@ -1385,6 +1385,13 @@ fn main() {
         })
         .on_window_event(move |window,event| {
             if let tauri::WindowEvent::CloseRequested{api,..}=event {
+                if window.label()=="dashboard" {
+                    // WKWebView may retain a closed page. Release its SSE slot
+                    // before closing the window, independently of WebKit GC.
+                    if let Some(viewer)=window.app_handle().get_webview_window("dashboard") {
+                        let _=viewer.eval("window.__xwxTraceDispose?.()");
+                    }
+                }
                 // Only the manager stays in the tray while Trace is running.
                 // Hiding a fullscreen dashboard leaves a blank macOS Space.
                 if window.label()=="main" && tauri::async_runtime::block_on(async{shared.lock().await.active()}) {api.prevent_close();let _=window.hide();}

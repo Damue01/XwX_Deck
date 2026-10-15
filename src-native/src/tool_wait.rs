@@ -34,7 +34,6 @@ pub(super) struct Observer {
     activity: Arc<request_activity::Activity>,
     token: u64,
     group: Group,
-    proof: Proof,
     wire: String,
     sse: bool,
     event: Vec<u8>,
@@ -166,14 +165,10 @@ impl Pending {
         group.uncertain = true;
         self.groups.insert(token, group);
     }
-    fn complete(
-        &mut self,
-        token: u64,
-        current: &Group,
-        input: &Proof,
-        calls: Vec<Call>,
-        partial: bool,
-    ) {
+    fn accept(&mut self, token: u64, current: &Group, input: &Proof) {
+        if !input.complete {
+            return;
+        }
         // A bare result ID, stale history, a foreign conversation or changed arguments
         // cannot discharge a tool wait. Cross-provider continuation needs full lineage.
         let mut input_calls = BTreeMap::<&str, Vec<(usize, &str)>>::new();
@@ -230,6 +225,8 @@ impl Pending {
         }
         self.groups
             .retain(|_, g| g.uncertain || !g.calls.is_empty());
+    }
+    fn complete(&mut self, token: u64, current: &Group, calls: Vec<Call>, partial: bool) {
         // A purported terminal frame omitting previously emitted calls is not proof
         // that the client never saw a tool. Retain the explicit force-stop path.
         if partial && calls.is_empty() {
@@ -281,11 +278,15 @@ impl Observer {
             uncertain: false,
         };
         let opaque = input.is_null() || !proof.complete;
+        // The client has already returned these results. A later upstream error,
+        // cancellation or incomplete reply cannot make those tools pending again.
+        if !opaque {
+            activity.tools(|p| p.accept(token, &group, &proof));
+        }
         Self {
             activity,
             token,
             group,
-            proof,
             wire: wire.into(),
             sse: false,
             event: vec![],
@@ -361,7 +362,7 @@ impl Observer {
             return;
         }
         self.activity
-            .tools(|p| p.complete(self.token, &self.group, &self.proof, calls, self.partial));
+            .tools(|p| p.complete(self.token, &self.group, calls, self.partial));
         self.finished = true;
     }
     /// Called before the final body frame releases the HTTP admission lease.
@@ -519,28 +520,47 @@ mod tests {
             digest: storage::digest(c.to_string().as_bytes()),
         }]
     }
+    // Model the actual order: admit client results, then observe a completed reply.
+    fn completed(
+        pending: &mut Pending,
+        token: u64,
+        current: &Group,
+        input: &Proof,
+        calls: Vec<Call>,
+        partial: bool,
+    ) {
+        pending.accept(token, current, input);
+        pending.complete(token, current, calls, partial);
+    }
     #[test]
     fn result_requires_context_arguments_and_conversation() {
         let input = json!([{"role":"user","content":"task"}]);
         let g = group(&input);
         let mut pending = Pending::default();
-        pending.complete(1, &g, &proof(&input), calls(call("{\"q\":1}")), false);
+        completed(
+            &mut pending,
+            1,
+            &g,
+            &proof(&input),
+            calls(call("{\"q\":1}")),
+            false,
+        );
         for body in [
             json!([{"type":"function_call_output","call_id":"same-id","output":"done"}]),
             json!([{"role":"user","content":"other"},call("{\"q\":1}"),{"type":"function_call_output","call_id":"same-id","output":"done"}]),
             json!([{"role":"user","content":"task"},call("{\"q\":2}"),{"type":"function_call_output","call_id":"same-id","output":"done"}]),
         ] {
-            pending.complete(2, &group(&body), &proof(&body), vec![], false);
+            completed(&mut pending, 2, &group(&body), &proof(&body), vec![], false);
             assert_eq!(pending.count(), 1);
         }
         let body = json!([{"role":"user","content":"task"},call("{\"q\":1}"),{"type":"function_call_output","call_id":"same-id","output":"done"}]);
         let mut foreign = group(&body);
         foreign.scope = "other-session".into();
-        pending.complete(2, &foreign, &proof(&body), vec![], false);
+        completed(&mut pending, 2, &foreign, &proof(&body), vec![], false);
         assert_eq!(pending.count(), 1);
         let mut handoff = group(&body);
         handoff.owner = "provider-b".into();
-        pending.complete(2, &handoff, &proof(&body), vec![], false);
+        completed(&mut pending, 2, &handoff, &proof(&body), vec![], false);
         assert_eq!(pending.count(), 0);
     }
     #[test]
@@ -549,15 +569,36 @@ mod tests {
         let g = group(&input);
         let mut pending = Pending::default();
         for token in [1, 2] {
-            pending.complete(token, &g, &proof(&input), calls(call("{}")), false);
+            completed(
+                &mut pending,
+                token,
+                &g,
+                &proof(&input),
+                calls(call("{}")),
+                false,
+            );
         }
         let body = json!([{"role":"user","content":"task"},call("{}"),{"type":"function_call_output","call_id":"same-id","output":"done"}]);
-        pending.complete(3, &group(&body), &proof(&body), vec![], false);
+        completed(&mut pending, 3, &group(&body), &proof(&body), vec![], false);
         assert_eq!(pending.count(), 2);
         let mut pending = Pending::default();
-        pending.complete(1, &g, &proof(&input), calls(call("{}")), false);
+        completed(
+            &mut pending,
+            1,
+            &g,
+            &proof(&input),
+            calls(call("{}")),
+            false,
+        );
         let repeated = json!([{"role":"user","content":"task"},call("{}"),call("{}"),{"type":"function_call_output","call_id":"same-id","output":"done"}]);
-        pending.complete(3, &group(&repeated), &proof(&repeated), vec![], false);
+        completed(
+            &mut pending,
+            3,
+            &group(&repeated),
+            &proof(&repeated),
+            vec![],
+            false,
+        );
         assert_eq!(pending.count(), 1);
     }
     #[test]
@@ -567,7 +608,7 @@ mod tests {
         activity.tools(|p| p.start(1, &g));
         assert!(activity.begin_stop(false).is_err());
         assert!(activity.enter().is_ok());
-        activity.tools(|p| p.complete(1, &g, &proof(&json!([])), vec![], true));
+        activity.tools(|p| p.complete(1, &g, vec![], true));
         assert_eq!(activity.waiting_tools(), 1);
         activity.begin_stop(true).unwrap();
         assert!(activity.enter().is_err());
@@ -583,6 +624,75 @@ mod tests {
             canonical_call(&call("{\"a\":1,\"b\":2}")),
             canonical_call(&call("{\"b\":2,\"a\":1}"))
         );
+    }
+    #[test]
+    fn returned_result_retires_before_next_reply_and_keeps_active_request_protected() {
+        let activity = Arc::new(request_activity::Activity::default());
+        let provider = Provider::default();
+        let input = json!([{"role":"user","content":"task"}]);
+        let mut first = Observer::new(
+            activity.clone(),
+            1,
+            &provider,
+            "codex-cli",
+            "session",
+            &input,
+            "responses",
+        );
+        first.finish(
+            json!({"status":"completed","output":[call("{}")]})
+                .to_string()
+                .as_bytes(),
+            false,
+        );
+        assert_eq!(activity.waiting_tools(), 1);
+        let lease = activity.enter().unwrap();
+        let body = json!([{"role":"user","content":"task"},call("{}"),{"type":"function_call_output","call_id":"same-id","output":"tool failed"}]);
+        let mut next = Observer::new(
+            activity.clone(),
+            2,
+            &provider,
+            "codex-cli",
+            "session",
+            &body,
+            "responses",
+        );
+        assert_eq!(activity.waiting_tools(), 0);
+        assert!(activity
+            .begin_stop(false)
+            .unwrap_err()
+            .contains("回复正在生成"));
+        next.event(
+            &json!({"type":"response.failed","response":{"status":"failed"}}),
+            b"",
+        );
+        drop(next);
+        drop(lease);
+        activity.begin_stop(false).unwrap();
+    }
+    #[test]
+    fn failed_reply_after_partial_tool_does_not_claim_the_tool_returned() {
+        let activity = Arc::new(request_activity::Activity::default());
+        let mut observer = Observer::new(
+            activity.clone(),
+            1,
+            &Provider::default(),
+            "codex-cli",
+            "session",
+            &json!([]),
+            "responses",
+        );
+        observer.event(
+            &json!({"type":"response.output_item.added","item":call("{}")}),
+            b"",
+        );
+        observer.event(
+            &json!({"type":"response.failed","response":{"status":"failed"}}),
+            b"",
+        );
+        drop(observer);
+        assert_eq!(activity.waiting_tools(), 1);
+        assert!(activity.begin_stop(false).is_err());
     }
     #[test]
     fn malformed_gemini_error_frames_do_not_poison_shared_evidence() {

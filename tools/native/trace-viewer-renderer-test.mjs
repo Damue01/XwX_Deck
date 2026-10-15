@@ -356,6 +356,59 @@ try {
   dom.window.applyResponsiveRail();
   assert.equal(dom.window.railMode(), 'full');
   pass('narrow windows default to the number rail and resizing preserves an explicit rail choice');
+  const environment = '<environment_context>\n<cwd>/workspace/context</cwd>\n<shell>zsh</shell>\n<current_date>2026-10-15</current_date>\n<timezone>Asia/Shanghai</timezone>\n<filesystem><workspace_roots><root>/workspace/context</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>\n</environment_context>';
+  for (const value of [environment, environment.replace('<file_system type="unrestricted" />', '<file_system type="unrestricted"></file_system>')]) {
+    const body = { input:[{ type:'message', role:'user', content:[{ type:'input_text', text:value }] }] };
+    const before = JSON.stringify(body);
+    const rendered = dom.window.document.createElement('div');
+    rendered.innerHTML = dom.window.renderMessages(messages(body));
+    assert.equal(rendered.querySelectorAll('.env-context').length, 1);
+    assert.match(rendered.querySelector('.env-facts').textContent, /\/workspace\/context/);
+    assert.match(rendered.querySelector('.env-file').textContent, /disabled unrestricted/);
+    assert.equal(JSON.stringify(body), before, 'environment cards never rewrite the captured request');
+  }
+  const unknownEnvironment = environment.replace('<file_system type="unrestricted" />', '<file_system type="unrestricted" future="preserve" />');
+  const fallback = dom.window.document.createElement('div');
+  fallback.innerHTML = dom.window.renderTextRich(unknownEnvironment);
+  assert.equal(fallback.querySelector('.env-context'), null);
+  assert.match(fallback.textContent, /future="preserve"/);
+  const fencedEnvironment = dom.window.document.createElement('div');
+  fencedEnvironment.innerHTML = dom.window.renderTextRich('```xml\n' + environment + '\n```');
+  assert.equal(fencedEnvironment.querySelector('.env-context'), null, 'code examples remain code');
+  pass('paired and self-closing filesystem tags render environment cards; unknown attributes and fenced examples preserve raw text');
+  const eventSources = [];
+  const reconnects = new Map();
+  const oldSetTimeout = dom.window.setTimeout;
+  const oldClearTimeout = dom.window.clearTimeout;
+  dom.window.setTimeout = callback => { const id = reconnects.size + 1; reconnects.set(id, callback); return id; };
+  dom.window.clearTimeout = id => reconnects.delete(id);
+  dom.window.EventSource = class {
+    constructor(url) { this.url = url; this.closed = false; eventSources.push(this); }
+    close() { this.closed = true; }
+    addEventListener() {}
+  };
+  dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide'));
+  dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pageshow', { persisted:true }));
+  assert.equal(eventSources.length, 0, 'restoring a static viewer does not start live capture');
+  dom.window.connectEvents();
+  assert.equal(eventSources.length, 1);
+  eventSources[0].onerror();
+  assert.equal(reconnects.size, 1);
+  dom.window.__xwxTraceDispose();
+  assert.equal(reconnects.size, 0, 'closing a viewer cancels its pending reconnection');
+  dom.window.connectEvents();
+  assert.equal(eventSources.length, 1, 'a late state response cannot reconnect a closed viewer');
+  dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pageshow', { persisted:true }));
+  assert.equal(eventSources.length, 2, 'a restored page creates one fresh subscription');
+  dom.window.connectEvents();
+  assert.equal(eventSources[1].closed, true, 'duplicate initialization releases the prior SSE slot');
+  dom.window.dispatchEvent(new dom.window.PageTransitionEvent('pagehide'));
+  assert.equal(eventSources[2].closed, true);
+  eventSources[2].onerror();
+  assert.equal(reconnects.size, 0, 'a closed EventSource does not schedule another connection');
+  dom.window.setTimeout = oldSetTimeout;
+  dom.window.clearTimeout = oldClearTimeout;
+  pass('viewer disposal closes SSE and cancels retries; page restoration reconnects once and late responses remain stopped');
   assert.equal(errors.length, 0, errors.join('\n'));
   console.log(JSON.stringify({ passed: true, checks }));
 } finally { dom.window.close(); }

@@ -52,6 +52,8 @@ try{
  await app.rpc('switchClientProvider',{client:'codex',providerId:null});
  await writeFile(join(home,'config.toml'),`model_provider="openai"\nmodel="gpt-6.1-sol"\nopenai_base_url="http://127.0.0.1:${server.address().port}/backend-api"\n`);
  const auth='{"tokens":{"access_token":"synthetic-oauth"},"account_id":"synthetic-account"}';await writeFile(join(home,'auth.json'),auth);
+ // This fixture deliberately replaces the managed file with an official route.
+ await app.rpc('switchClientProvider',{client:'codex',providerId:null,takeOverExternalConfig:true});
  const tracing=await app.rpc('toggleTracing',true);
  const post=input=>fetch(tracing.localBaseUrl+'/v1/responses',{method:'POST',headers:{'content-type':'application/json','x-codex-thread-id':thread},body:JSON.stringify({model:'gpt-6.1-sol',input})});
  let initial=await post([{type:'compaction',encrypted_content:'official-exact-seal'},{role:'user',content:'official turn'}]);assert.equal(initial.status,200,await initial.clone().text());await initial.text();assert.ok(JSON.stringify(requests.at(-1)).includes('official-exact-seal'));
