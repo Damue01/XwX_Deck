@@ -1,10 +1,15 @@
-name: Documentation
+name: Website and documentation
 
 on:
   push:
     branches: [main]
     paths:
       - "docs/**"
+      - "web/site/**"
+      - "src/renderer/**"
+      - "src/shared/**"
+      - "tools/site/**"
+      - "tools/build/**"
       - "README.md"
       - "package.json"
       - "package-lock.json"
@@ -44,15 +49,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build and verify website
+        run: |
+          npm run build:site
+          npm install --prefix "$RUNNER_TEMP/site-browser" --no-save playwright
+          node "$RUNNER_TEMP/site-browser/node_modules/playwright/cli.js" install --with-deps chromium
+          XWX_PLAYWRIGHT_MODULE="$RUNNER_TEMP/site-browser/node_modules/playwright/index.mjs" XWX_PLAYWRIGHT_CHANNEL=chromium npm run test:site
+
       - name: Build documentation
         env:
-          DOCS_BASE: /XwX_Deck/
+          DOCS_BASE: /docs/
         run: npm run docs:build
+
+      - name: Assemble website and documentation
+        run: cp -R docs/.vitepress/dist test-results/site-preview/docs
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/.vitepress/dist
+          path: test-results/site-preview
 
   deploy:
     environment:
