@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 mod trace_classification;
 #[path = "trace_pricing.rs"]
 mod trace_pricing;
+#[cfg(target_os = "windows")]
+#[path = "windows_reveal.rs"]
+mod windows_reveal;
 #[cfg(test)]
 use trace_pricing::{model_cost, model_cost_parts};
 use trace_pricing::{needs_ark_cost_repair, repaired_cost_point, usage_cost_point};
@@ -2526,6 +2529,8 @@ pub(super) async fn dashboard(State(context): State<DashboardState>, request: Re
                     return Err("method not allowed".into());
                 }
                 let file = store.session_file(id)?;
+                // OS Shell dispatch must not hold the Trace store lock.
+                drop(store);
                 #[cfg(target_os = "macos")]
                 let status = std::process::Command::new("/usr/bin/open")
                     .arg("-R")
@@ -2533,15 +2538,13 @@ pub(super) async fn dashboard(State(context): State<DashboardState>, request: Re
                     .status()
                     .map_err(err)?;
                 #[cfg(target_os = "windows")]
-                let status = std::process::Command::new("explorer.exe")
-                    .arg(format!("/select,{}", file.display()))
-                    .status()
-                    .map_err(err)?;
+                windows_reveal::reveal(&file)?;
                 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                 let status = std::process::Command::new("xdg-open")
                     .arg(file.parent().ok_or("日志目录无效")?)
                     .status()
                     .map_err(err)?;
+                #[cfg(not(target_os = "windows"))]
                 if !status.success() {
                     return Err("无法打开日志所在文件夹".into());
                 }
