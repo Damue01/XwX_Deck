@@ -2,6 +2,7 @@ import { readFile, readdir, lstat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import ts from 'typescript';
+import { inspectPublicHistory } from './checks/public-history.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const policy = JSON.parse(await readFile(path.join(root, 'public-release-policy.json'), 'utf8'));
@@ -111,9 +112,11 @@ check((await exists('tools/checks/check-runtime-boundary.mjs'))?.isFile(), 'curr
 // The source digest is provenance, never an instruction to merge another history.
 const ancestry = spawnSync('git', ['merge-base', '--is-ancestor', policy.sourceCommit, 'HEAD'], { cwd: root, stdio: 'ignore' });
 check(ancestry.status !== 0, 'upstream history must not be merged into the independent public history');
+const history = inspectPublicHistory(root, forbiddenNames);
+failures.push(...history.failures);
 
 if (failures.length) {
   console.error('Public boundary check failed:');
   for (const failure of failures) console.error(`- ${failure}`);
   process.exitCode = 1;
-} else console.log(`PASS public boundary: ${sourceFiles} source text files, ${artifactFiles} current build files, removed features, isolated identity and empty defaults`);
+} else console.log(`PASS public boundary: ${sourceFiles} source text files, ${artifactFiles} current build files, ${history.counts.commit} historical commits, removed features, isolated identity and empty defaults`);

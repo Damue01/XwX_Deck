@@ -30,6 +30,14 @@ for (const entry of await readdir(workflowRoot, { withFileTypes: true })) {
     `${entry.name}: contains an internal-only value`);
   check(!/\bpermissions:\s*write-all\b/.test(content),
     `${entry.name}: write-all permissions are not allowed`);
+  for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
+    const steps = job.steps ?? [];
+    const auditsHistory = steps.some(step => /npm test\b|npm run (?:compile|check:quality|check:public-boundary|build:(?:rust|native|win|mac))\b/u.test(step.run ?? ''));
+    if (auditsHistory) {
+      const checkout = steps.find(step => step.uses?.startsWith('actions/checkout@'));
+      check(checkout?.with?.['fetch-depth'] === 0, `${entry.name}/${name}: repository checks require full Git history`);
+    }
+  }
 }
 
 for (const file of required) failures.push(`missing required workflow: ${file}`);

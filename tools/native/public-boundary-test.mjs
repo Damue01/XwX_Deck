@@ -69,10 +69,25 @@ try {
   assert.equal(saved.enabled, false);
   assert.deepEqual((await rpc('getProviders')).connections, []);
   assert.deepEqual((await rpc('getProviders')).selected, { codex: null, claude: null });
+  // Repository privacy rules must never become a user-input word filter.
+  const userLabels = [['paper', 'hub'], ['x', '3', 'client'], ['x', '3']].map(parts => parts.join(''));
+  for (const [index, label] of userLabels.entries()) {
+    const saved = await rpc('saveProvider', {
+      id: `user-label-${index}`, displayName: label, codexModel: label,
+      baseUrl: 'http://127.0.0.1:1/v1', adapter: 'responses', bearerToken: '',
+    });
+    const provider = saved.connections.find(provider => provider.id === `user-label-${index}`);
+    assert.equal(provider.displayName, label);
+    assert.equal(provider.codexModel, label);
+    assert.deepEqual(saved.selected, { codex: null, claude: null });
+  }
+  const persisted = JSON.parse(await readFile(join(root, 'settings.json'), 'utf8'));
+  assert.deepEqual(persisted.connections.map(provider => provider.displayName), userLabels);
+  assert.deepEqual(persisted.connections.map(provider => provider.codexModel), userLabels);
   const exited = once(child, 'exit');
   child.stdin.end();
   assert.equal((await exited)[0], 0, stderr);
-  console.log(`PASS public runtime boundary: empty choices, 1 GB cleanup, ${forbiddenMethods.length} removed operations rejected without writes, Desktop model integration retained`);
+  console.log(`PASS public runtime boundary: empty choices, 1 GB cleanup, ${forbiddenMethods.length} removed operations rejected without writes, Desktop model integration retained, user-defined names preserved without filtering`);
 } finally {
   if (child.exitCode === null && child.signalCode === null) {
     const exited = once(child, 'exit');
