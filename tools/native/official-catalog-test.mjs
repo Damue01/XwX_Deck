@@ -1,3 +1,5 @@
+import {readFileSync} from 'node:fs';
+const clientVersion=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url))).version;
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
@@ -24,7 +26,7 @@ const server=createServer((req,res)=>{
     assert.equal(req.url,'/v1/models');assert.equal(req.headers['chatgpt-account-id'],undefined);
     res.end(JSON.stringify({data:[{id:'api-current-model'}]}));return;
   }
-  assert.equal(req.url,'/backend-api/codex/models?client_version=1.1.0');
+  assert.equal(req.url,`/backend-api/codex/models?client_version=${clientVersion}`);
   assert.equal(req.headers['chatgpt-account-id'],'fixture-workspace');
   const payload=JSON.stringify({models:[
     {slug:'fresh-model',display_name:'Fresh model',visibility:'list',context_window:400000,input_modalities:['text','image'],supported_reasoning_levels:[{effort:'high'}],default_reasoning_level:'high'},
@@ -66,7 +68,7 @@ try{
   assert.ok((await readFile(config,'utf8')).includes(state.localBaseUrl));
   entries=await rpc('fetchModels',{refresh:true,expectedProviderId:null});
   assert.ok(entries.some(m=>m.id==='fresh-model'));
-  assert.equal(requests.at(-1).path,'/backend-api/codex/models?client_version=1.1.0');
+  assert.equal(requests.at(-1).path,`/backend-api/codex/models?client_version=${clientVersion}`);
   await rpc('toggleTracing',false);
   assert.equal(await readFile(auth,'utf8'),initialAuth);assert.equal(await readFile(cache,'utf8'),initialCache);
   pass('active Trace resolves the direct official catalog, restores route and never rewrites client credentials/cache');

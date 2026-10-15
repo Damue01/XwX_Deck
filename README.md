@@ -4,7 +4,7 @@ XwX Deck 是一个独立的本地 Claude / ChatGPT 请求追踪与模型网关�
 
 项目使用 [Apache License 2.0](LICENSE) 开源。
 
-当前源码版本：`1.1.0`。
+当前源码版本：`1.1.1`。
 
 本仓库按能力吸收上游修复，维护独立 Git 历史、应用身份和发布渠道。具体范围见 [技术吸收记录](docs/upstream-port.md)。当前独立版包含：
 
@@ -84,7 +84,7 @@ npm run docs:build
 - 应用 ID：`app.xwxdeck.desktop`
 - 数据目录命名空间：`xwx-deck`
 - Gateway 默认端口段：`45233-45242`
-- 当前版本：`1.1.0`
+- 当前版本：`1.1.1`
 - 自动更新：默认读取 GitHub Releases；可用 `XWX_DECK_UPDATE_SERVER_URL` 覆盖
 
 这些设置用于避免与内部 XwX Deck 安装共享配置、Trace 数据、单实例身份和 Gateway 端口。
