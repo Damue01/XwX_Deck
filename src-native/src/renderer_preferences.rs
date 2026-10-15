@@ -95,6 +95,11 @@ fn physical(path: &Path) -> Result<()> {
     let mut prefix = PathBuf::new();
     for component in path.components() {
         prefix.push(component);
+        // A Windows drive or verbatim prefix is incomplete until its root separator.
+        #[cfg(windows)]
+        if matches!(component, std::path::Component::Prefix(_)) {
+            continue;
+        }
         match fs::symlink_metadata(&prefix) {
             Ok(m) if m.file_type().is_symlink() => return Err("偏好目录不能经过符号链接".into()),
             Ok(_) => (),
@@ -519,7 +524,10 @@ mod tests {
             fs::write(directory.join(name), bytes).unwrap();
         }
         let before = fingerprint(&files(&directory).unwrap().unwrap());
-        let wanted = keys(std::iter::empty(), Path::new("/public-config/config.toml"));
+        let wanted = keys(
+            std::iter::empty(),
+            &directory.join("public-config/config.toml"),
+        );
         let encoded =
             base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&wanted).unwrap());
         let report = worker(&directory, &encoded).unwrap();

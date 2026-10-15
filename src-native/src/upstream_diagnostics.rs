@@ -194,7 +194,8 @@ mod tests {
     #[tokio::test]
     async fn timeout_and_refused_connection_have_actionable_messages() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let address = listener.local_addr().unwrap();
+        let endpoint = format!("http://{address}");
         let held = tokio::spawn(async move {
             let (_socket, _) = listener.accept().await.unwrap();
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -209,8 +210,19 @@ mod tests {
         assert!(user_message(&timeout).starts_with("Timed out"));
         held.abort();
         let _ = held.await;
-        let refused = client.get(&endpoint).send().await.unwrap_err();
-        assert!(refused.is_connect());
+        drop(tokio::net::TcpListener::bind(address).await.unwrap());
+        // Windows can report refusal after the intentionally short response deadline.
+        let refused_client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let refused = refused_client.get(&endpoint).send().await.unwrap_err();
+        assert!(
+            refused.is_connect(),
+            "expected connection refusal: {refused:?}"
+        );
+        assert!(!refused.is_timeout());
         assert!(user_message(&refused).contains("Could not connect"));
         for api in ["responses", "anthropic-messages"] {
             let response = response(api, user_message(&refused));
