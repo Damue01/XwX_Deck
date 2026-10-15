@@ -40,25 +40,28 @@ pub fn supported() -> Result<(), String> {
         return Err("隔离持久 WebView 验收需要 macOS 14 或以上；普通隔离测试仍可使用".into());
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    return Err("此平台尚未提供隔离持久 WebView 验收".into());
-    Ok(())
+    {
+        Err("此平台尚未提供隔离持久 WebView 验收".into())
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        Ok(())
+    }
 }
 
 pub fn create(app: &tauri::App, root: &Path) -> Result<(), String> {
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = root;
     supported()?;
     // This Tauri version omits store/directory fields when converting config
     // to WebviewAttributes. Set them on the builder explicitly.
-    let mut builder = tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])
+    let builder = tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])
         .map_err(|_| "无法准备隔离持久窗口")?
         .incognito(false);
     #[cfg(target_os = "macos")]
-    {
-        builder = builder.data_store_identifier(identifier(root)?);
-    }
+    let builder = builder.data_store_identifier(identifier(root)?);
     #[cfg(target_os = "windows")]
-    {
-        builder = builder.data_directory(directory(root, "restart-webview")?);
-    }
+    let builder = builder.data_directory(directory(root, "restart-webview")?);
     builder.build().map_err(|_| "无法创建隔离持久窗口")?;
     Ok(())
 }
@@ -104,6 +107,8 @@ pub fn create_ephemeral(app: &tauri::App, root: &Path) -> Result<(), String> {
 }
 
 pub fn cleanup(root: &Path) -> Result<(), String> {
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = root;
     supported()?;
     #[cfg(target_os = "macos")]
     {

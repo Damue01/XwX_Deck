@@ -93,7 +93,7 @@ async fn clear_impl(window: &tauri::WebviewWindow, all: bool) -> Result<(), Stri
             }
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             {
-                let _ = webview;
+                let _ = (webview, all);
                 let _ = sender.send(Err("此平台尚未提供浏览器缓存清理".into()));
             }
         })
