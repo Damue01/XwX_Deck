@@ -107,6 +107,13 @@ const installedClientsAvailable = (process.platform === 'darwin' || (process.pla
 if (installedClientsAvailable) suites.push('installed-clients-test.mjs');
 if (process.env.XWX_INSTALLED_PI || process.env.XWX_INSTALLED_OPENCODE) suites.push('gateway-clients-test.mjs');
 const results = [];
+const requestedSuites=process.argv.slice(2).map(argument=>{
+  if(!argument.startsWith('--suite='))throw Error('Unknown backend test argument: '+argument);
+  const suite=argument.slice('--suite='.length);
+  if(!suites.includes(suite))throw Error('Unknown backend test suite: '+suite);
+  return suite;
+});
+const activeSuites=requestedSuites.length?suites.filter(suite=>requestedSuites.includes(suite)):suites;
 const temporaryRoot=await mkdtemp(join(await realpath(tmpdir()),'xwx-deck-native-tests-'));
 let binary=join(temporaryRoot,process.platform==='win32'?'xwx-deck-native.exe':'xwx-deck-native');
 const original=resolve(nativeTestBinary), appRoot=dirname(dirname(dirname(original)));
@@ -124,7 +131,7 @@ if(!Buffer.from(await readFile(original)).equals(await readFile(binary)))throw E
 const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
 await mkdir('test-results', { recursive: true });
 const logs = join(temporaryRoot, 'logs'); await mkdir(logs, {recursive:true});
-try {for (const suite of suites) {
+try {for (const suite of activeSuites) {
   console.log(`\nNative suite: ${suite}`);
   const started = Date.now();
   const suiteRoot=join(temporaryRoot,suite.replace(/[^a-z0-9-]/gi,'-'));await mkdir(suiteRoot);
@@ -135,7 +142,7 @@ try {for (const suite of suites) {
   results.push({ suite, code: result.status, signal: result.signal, error: result.error?.message,
     ...(result.status !== 0 || result.error ? {log} : {}),
     skipped: (suite === 'portable-update-test.mjs' && process.platform !== 'win32') || (suite === 'cli-home-lifecycle-test.mjs' && process.platform === 'win32'), elapsedMs: Date.now() - started });
-}}finally{if (results.length === suites.length && results.every(result => result.code === 0 && !result.error)) await rm(temporaryRoot,{recursive:true,force:true});}
+}}finally{if (results.length === activeSuites.length && results.every(result => result.code === 0 && !result.error)) await rm(temporaryRoot,{recursive:true,force:true});}
 const failed = results.filter(result => result.code !== 0 || result.error);
 await mkdir('test-results', { recursive: true });
 await writeFile('test-results/native-backend-summary.json', JSON.stringify({ platform: process.platform, binarySha256, isolatedFixtures:true, fixturesCleaned:failed.length === 0, ...failed.length ? {retainedFixtures:temporaryRoot} : {}, installedClientsAvailable:Boolean(installedClientsAvailable), passed: failed.length === 0, results }, null, 2) + '\n');
