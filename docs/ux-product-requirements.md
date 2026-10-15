@@ -3,7 +3,7 @@
 本文维护公开版当前有效要求。
 功能验证见 [测试清单](core-functional-acceptance-checklist.md)。
 开发过程见 [开发与测试流程](development-testing-workflow.md)。
-公开范围以 [产品定义](../PRODUCT.md) 和 [公开边界](public-release-boundary.md) 为准。
+公开范围以 [产品定义](https://github.com/Damue01/XwX_Deck/blob/main/PRODUCT.md) 和 [公开边界](public-release-boundary.md) 为准。
 
 ## 共同规则
 
