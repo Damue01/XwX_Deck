@@ -402,6 +402,12 @@
       check('reveal shows the retained Key without submitting or closing the editor', document.querySelector('#provider-key').type === 'text' && document.querySelector('#provider-key').value === 'isolated-draft-key' && document.querySelector('.secret-input-visibility').type === 'button' && document.querySelector('.secret-input-visibility').getAttribute('aria-pressed') === 'true' && document.querySelector('.secret-input-visibility').getAttribute('aria-label') === '隐藏 Key' && !!document.querySelector('#provider-editor'));
       document.querySelector('.secret-input-visibility').click(); await delay(100);
       check('second click masks Key', document.querySelector('#provider-key').type === 'password' && document.querySelector('.secret-input-visibility').getAttribute('aria-pressed') === 'false');
+      for(let n=0;n<10;n++){
+        document.querySelector('.secret-input-visibility').click(); await delay(100);
+        const field=document.querySelector('#provider-key').getBoundingClientRect();
+        const eye=document.querySelector('.secret-input-visibility').getBoundingClientRect();
+        check('Key reveal toggle '+(n+1)+' stays centered inside its input', Math.abs((eye.top+eye.height/2)-(field.top+field.height/2))<1 && eye.top>=field.top && eye.bottom<=field.bottom && document.querySelector('#provider-key').value==='isolated-draft-key');
+      }
       document.querySelector('.secret-input-visibility').click(); await delay(100);
       document.querySelector('[data-service="kimi"]').click(); await delay(150);
       check('switching to an empty draft removes reveal control', document.querySelector('#provider-key').value === '' && !document.querySelector('.secret-input-visibility'));

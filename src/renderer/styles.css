@@ -1332,7 +1332,7 @@ html[data-theme="night"] .setup-card-backdrop { background: rgba(0,0,0,.5); }
 .secret-input { position: relative; width: 100%; }
 .secret-input[data-has-value] .txt-input { padding-right: 40px; }
 .secret-input input::-ms-reveal { display: none; }
-.secret-input-visibility { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--quiet); cursor: pointer; }
+.secret-input-visibility { position: absolute; right: 5px; top: 50%; translate: 0 -50%; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--quiet); cursor: pointer; }
 .secret-input-visibility:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
 .secret-input-visibility:focus-visible { outline: 2px solid var(--slate); outline-offset: 1px; }
 .secret-input-visibility:disabled { opacity: .5; cursor: default; }
