@@ -319,7 +319,10 @@ fn windows_private_permissions(path: &Path) -> Result<()> {
         };
         LocalFree(descriptor);
         if result != 0 {
-            return Err("无法设置应用私有文件权限，未写入凭据".into());
+            return Err(format!(
+                "无法设置应用私有文件权限（Windows 错误码 {result}，路径长度 {}），未写入凭据",
+                name.len() - 1
+            ));
         }
     }
     Ok(())
