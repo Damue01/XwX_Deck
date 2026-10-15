@@ -1,7 +1,7 @@
 import {homedir} from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { mkdir, writeFile, mkdtemp, realpath, copyFile, chmod, readFile, rm } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { nativeTestBinary } from './test-support.mjs';
@@ -107,8 +107,19 @@ if (installedClientsAvailable) suites.push('installed-clients-test.mjs');
 if (process.env.XWX_INSTALLED_PI || process.env.XWX_INSTALLED_OPENCODE) suites.push('gateway-clients-test.mjs');
 const results = [];
 const temporaryRoot=await mkdtemp(join(await realpath(tmpdir()),'xwx-deck-native-tests-'));
-const binary=join(temporaryRoot,process.platform==='win32'?'xwx-deck-native.exe':'xwx-deck-native');
-await copyFile(nativeTestBinary,binary);await chmod(binary,0o700);
+let binary=join(temporaryRoot,process.platform==='win32'?'xwx-deck-native.exe':'xwx-deck-native');
+const original=resolve(nativeTestBinary), appRoot=dirname(dirname(dirname(original)));
+if(process.platform==='darwin' && basename(dirname(original))==='MacOS' && basename(dirname(dirname(original)))==='Contents' && appRoot.endsWith('.app')){
+  // Developer ID binaries bind their Info.plist. Freeze the complete bundle,
+  // preserving its signature instead of copying an executable out of its app.
+  const staged=join(temporaryRoot,basename(appRoot));
+  const copied=spawnSync('/usr/bin/ditto',[appRoot,staged],{encoding:'utf8'});
+  if(copied.status!==0)throw Error('Unable to stage signed test app: '+copied.stderr);
+  const verified=spawnSync('/usr/bin/codesign',['--verify','--deep','--strict',staged],{encoding:'utf8'});
+  if(verified.status!==0)throw Error('Staged test app signature mismatch: '+verified.stderr);
+  binary=join(staged,'Contents/MacOS',basename(original));
+}else{await copyFile(original,binary);await chmod(binary,0o700);}
+if(!Buffer.from(await readFile(original)).equals(await readFile(binary)))throw Error('Staged test binary changed');
 const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
 await mkdir('test-results', { recursive: true });
 const logs = join(temporaryRoot, 'logs'); await mkdir(logs, {recursive:true});
