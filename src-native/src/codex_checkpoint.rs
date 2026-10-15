@@ -54,7 +54,7 @@ pub(super) fn read_thread(
     let requested = PathBuf::from(indexed);
     let canonical_home = fs::canonicalize(home).map_err(err)?;
     let canonical = fs::canonicalize(&requested).map_err(err)?;
-    if canonical != requested
+    if !same_physical_path(&requested)?
         || !["sessions", "archived_sessions"]
             .iter()
             .any(|folder| canonical.starts_with(canonical_home.join(folder)))
@@ -167,15 +167,17 @@ pub(super) fn read_thread(
 mod tests {
     use super::*;
     struct Fixture(PathBuf);
+    static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     impl Fixture {
         fn new() -> Self {
             let root = std::env::temp_dir().join(format!(
-                "xwx-checkpoint-{}-{}",
+                "xwx-checkpoint-{}-{}-{}",
                 std::process::id(),
                 SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));
             fs::create_dir_all(root.join("sessions")).unwrap();
             Self(fs::canonicalize(root).unwrap())
@@ -192,6 +194,12 @@ mod tests {
             )
             .unwrap();
             file
+        }
+        fn index(&self, path: &str) {
+            Connection::open(self.0.join("state_5.sqlite"))
+                .unwrap()
+                .execute("UPDATE threads SET rollout_path=?1", [path])
+                .unwrap();
         }
     }
     impl Drop for Fixture {
@@ -280,5 +288,64 @@ mod tests {
             .err()
             .unwrap()
             .contains("受管目录"));
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_indexed_drive_and_forward_slash_paths_match_same_history() {
+        let fixture = Fixture::new();
+        let file = fixture.write(&source());
+        let before = fs::read(&file).unwrap();
+        let canonical = file.to_str().unwrap();
+        let ordinary = canonical.strip_prefix(r"\\?\").unwrap();
+        for indexed in [
+            ordinary.to_string(),
+            ordinary.replace('\\', "/"),
+            ordinary.to_ascii_lowercase(),
+        ] {
+            fixture.index(&indexed);
+            let saved = read_thread(&fixture.0, "thread", "exact-seal", true)
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved.provider, "openai");
+            assert_eq!(saved.input.unwrap().len(), 3);
+            assert_eq!(fs::read(&file).unwrap(), before);
+        }
+    }
+    #[test]
+    fn indexed_parent_components_remain_refused_inside_history() {
+        let fixture = Fixture::new();
+        fixture.write(&source());
+        let home = fixture.0.to_string_lossy();
+        #[cfg(target_os = "windows")]
+        let home = home.trim_start_matches(r"\\?\");
+        fixture.index(&format!("{home}/sessions/../sessions/thread.jsonl"));
+        assert!(read_thread(&fixture.0, "thread", "exact-seal", true)
+            .err()
+            .unwrap()
+            .contains("受管目录"));
+    }
+    #[test]
+    fn indexed_directory_alias_cannot_redirect_history_reads() {
+        let fixture = Fixture::new();
+        let file = fixture.write("BROKEN_PRIVATE_BODY");
+        let alias = fixture.0.join("history-alias");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(fixture.0.join("sessions"), &alias).unwrap();
+        #[cfg(target_os = "windows")]
+        {
+            let output = std::process::Command::new("cmd.exe")
+                .args(["/c", "mklink", "/J"])
+                .arg(&alias)
+                .arg(fixture.0.join("sessions"))
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+        }
+        fixture.index(alias.join("thread.jsonl").to_str().unwrap());
+        assert!(read_thread(&fixture.0, "thread", "exact-seal", true)
+            .err()
+            .unwrap()
+            .contains("受管目录"));
+        assert_eq!(fs::read_to_string(file).unwrap(), "BROKEN_PRIVATE_BODY");
     }
 }
