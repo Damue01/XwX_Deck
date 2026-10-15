@@ -454,6 +454,36 @@ fn migrate_private_files(root: &Path) -> Result<()> {
         let encrypted = envelope(source).is_some();
         documents.push((path, before, plaintext, encrypted));
     }
+    // Check every intended stage before replacing any document. A known foreign
+    // stage must not leave a partially converted directory on the next launch.
+    let mut stages = vec![];
+    let marker = root.join(PRIVATE_MARKER);
+    if raw(&marker)?.is_none() {
+        stages.push(marker.with_extension("pilot-tmp"));
+    }
+    for (path, _, _, encrypted) in &documents {
+        if !encrypted {
+            continue;
+        }
+        stages.push(path.with_extension("pilot-tmp"));
+        let backup = root
+            .join("credential-private-migration-originals")
+            .join(path.strip_prefix(root).map_err(err)?);
+        match fs::symlink_metadata(&backup) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                stages.push(backup.with_extension("pilot-tmp"));
+            }
+            Err(_) => return Err("无法检查迁移备份，原目录已保留".into()),
+        }
+    }
+    for stage in stages {
+        match fs::symlink_metadata(&stage) {
+            Ok(_) => return Err("临时文件已存在，保留现场".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("无法检查迁移临时文件，原目录已保留".into()),
+        }
+    }
     for (path, before, plaintext, encrypted) in &documents {
         private_parents(root, path)?;
         private_permissions(path, false)?;
