@@ -232,7 +232,8 @@
       await wait(() => fileRequests.at(-1)?.sources?.some(source=>source.path==='/isolated/manual.json'), 'auto-detected manual file');
       await wait(() => !document.querySelector('.configuration-import-refresh').disabled, 'manual file preview');
       check('manual file uses format detection and never imports before confirmation', fileRequests.at(-1).sources.at(-1).source==='auto' && importRequests.length===0);
-      document.querySelector('.configuration-import-actions .btn:not(.primary)').click(); await delay(100);
+      document.querySelector('.configuration-import-actions .btn:not(.primary)').click();
+      await wait(() => document.querySelector('.configuration-header .configuration-tabs') && document.activeElement===document.querySelector('.configuration-import-entry'), 'import Cancel restores the directory and focus');
       check('Cancel restores the configuration directory and keyboard focus without writing', !!document.querySelector('.configuration-header .configuration-tabs') && document.activeElement===document.querySelector('.configuration-import-entry') && importRequests.length===0 && (await window.xwxDeck.getProviders()).connections.length===0);
       document.querySelector('.configuration-import-entry').click();
       await wait(() => document.querySelector('.configuration-import-actions .primary')?.disabled===false,'reopened import');
