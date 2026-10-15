@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs';
 // Every suite gets its own process, configuration root and local test service.
 // Keep checking after a failure so a platform run reports all blocking issues.
 const suites = [
+  "public-binary-boundary-test.mjs",
   "public-boundary-test.mjs",
   "source-fingerprint-test.mjs",
   "regressions.mjs",

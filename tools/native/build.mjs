@@ -8,6 +8,7 @@ import { sourceFingerprint, directoryFingerprint } from './source-fingerprint.mj
 import { rustToolchain } from './toolchain.mjs';
 import { buildMacDmg } from './macos-dmg.mjs';
 import { appleReleaseConfig, appleTool, signMac, notarizeMac, notarizeApp } from './macos-signing.mjs';
+import { assertPublicBinary } from './public-binary-boundary.mjs';
 
 const pilot = import.meta.dirname;
 const requiredPlatform = process.argv.find(a => a.startsWith('--require-platform='))?.split('=')[1];
@@ -63,6 +64,7 @@ await writeFile(resolve(root,'test-results/native-frontend/licenses.html'),'<!do
 const embeddedFrontendSha256 = await directoryFingerprint(resolve(root, 'test-results/native-frontend'));
 const embeddedAssetsSha256 = await directoryFingerprint(resolve(root, 'test-results/native-assets'));
 run(cargo, ['build', '--locked', '--release', ...(acceptance ? ['--features', 'manual-acceptance'] : []), '--manifest-path', resolve(root, 'src-native/Cargo.toml')]);
+await assertPublicBinary(resolve(env.CARGO_TARGET_DIR, 'release/xwx-deck-native' + (process.platform === 'win32' ? '.exe' : '')), root);
 if (embeddedFrontendSha256 !== await directoryFingerprint(resolve(root, 'test-results/native-frontend')) || embeddedAssetsSha256 !== await directoryFingerprint(resolve(root, 'test-results/native-assets'))) throw Error('原生编译期间嵌入资源发生变化，未登记候选；请重新构建。');
 if (process.platform !== 'darwin') {
   if (process.platform === 'win32') {

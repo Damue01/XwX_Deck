@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { appleTool, appleReleaseConfig } from './macos-signing.mjs';
 import { sourceFingerprint } from './source-fingerprint.mjs';
+import { assertPublicBinary } from './public-binary-boundary.mjs';
 
 export async function verifyMacRelease(root = resolve('.')) {
   assert.equal(process.platform, 'darwin');
@@ -12,6 +13,8 @@ export async function verifyMacRelease(root = resolve('.')) {
   const report = JSON.parse(await readFile(join(output, 'native-build-report.json'), 'utf8'));
   const apple = await appleReleaseConfig(root);
   const { app, dmg, binary } = report.candidate;
+  await assertPublicBinary(binary, root);
+  await assertPublicBinary(join(app, 'Contents/Helpers/update-helper'), root);
   const checks = [];
   const check = (name, value) => { assert.ok(value, name); checks.push(name); };
   const sha = async path => createHash('sha256').update(await readFile(path)).digest('hex');
