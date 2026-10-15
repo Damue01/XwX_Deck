@@ -71,9 +71,7 @@ impl Drop for DetailLease {
                 store.recording.remove(&self.id);
             }
         }
-        if store.limit == 0 {
-            store.apply_retention();
-        }
+        store.apply_retention();
     }
 }
 fn trace_error(record: &Value) -> bool {
@@ -604,7 +602,7 @@ impl TraceStore {
         sessions
     }
     pub fn state(&self, active: bool) -> Value {
-        json!({"theme":self.theme,"language":self.language,"active":active,"rootPath":self.root,"generatedAt":iso(millis()),"sessions":self.view_sessions(),"traces":[],"storage":{"rootPath":self.root,"totalBytes":self.size(),"maxBytes":self.limit}})
+        json!({"theme":self.theme,"language":self.language,"active":active,"rootPath":self.root,"generatedAt":iso(millis()),"sessions":self.view_sessions(),"usageSummaries":self.retained_usage_summaries(),"traces":[],"storage":{"rootPath":self.root,"totalBytes":self.size(),"maxBytes":self.limit}})
     }
     pub fn stats(&self) -> Value {
         let now = millis();
@@ -619,7 +617,7 @@ impl TraceStore {
                 .as_array()
                 .into_iter()
                 .flatten(),
-        ) {
+        ).chain(self.index["usageOnly"]["summaries"].as_array().into_iter().flatten()) {
             if !session["nativeUsage"].is_array() {
                 let tokens = session["totalTokens"].as_u64().unwrap_or(0);
                 total["tokens"] = json!(total["tokens"].as_u64().unwrap_or(0) + tokens);
@@ -884,10 +882,10 @@ impl TraceStore {
         }
         Ok(canonical)
     }
-    pub fn delete(&mut self, id: &str) -> Result<bool> {
-        self.with_writer(true, |store| store.delete_owned(id))
+    pub fn delete(&mut self, id: &str, clear_usage: bool) -> Result<bool> {
+        self.with_writer(true, |store| store.delete_owned(id, clear_usage))
     }
-    fn delete_owned(&mut self, id: &str) -> Result<bool> {
+    fn delete_owned(&mut self, id: &str, clear_usage: bool) -> Result<bool> {
         let view = self.view_sessions();
         let Some(target) = view.iter().find(|s| s["id"] == id) else {
             return Ok(false);
@@ -915,12 +913,21 @@ impl TraceStore {
                 fs::remove_file(file).map_err(err)?;
             }
         }
+        let before = self.index.clone();
+        if !clear_usage {
+            for target in &targets {
+                self.retain_session_usage(target);
+            }
+        }
         let ids: Vec<_> = targets.iter().map(|s| s["id"].clone()).collect();
         self.index["sessions"]
             .as_array_mut()
             .unwrap()
             .retain(|s| !ids.contains(&s["id"]));
-        self.persist()?;
+        if let Err(error) = self.persist() {
+            self.index = before;
+            return Err(error);
+        }
         Ok(true)
     }
     pub fn inspect_repair(&self) -> Result<Value> {
@@ -1162,7 +1169,7 @@ impl TraceStore {
             .filter_map(|s| s["id"].as_str().map(str::to_string))
             .collect();
         for id in ids {
-            self.delete_owned(&id)?;
+            self.delete_owned(&id, true)?;
         }
         self.index.as_object_mut().unwrap().remove("usageOnly");
         self.persist()?;
@@ -1192,6 +1199,55 @@ impl TraceStore {
         }
         usage
     }
+    // Accounting survives detail deletion. Keep counters and frozen prices,
+    // never conversation IDs, titles, paths, prompts or response bodies.
+    fn retain_session_usage(&mut self, session: &Value) {
+        let mut summary = json!({});
+        for key in ["source", "totalTokens", "usageByModel", "cacheHitUsage", "nativeUsage",
+            "dailyUsage", "recentRatePoints", "costViewBasis"] {
+            if let Some(value) = session.get(key) {
+                summary[key] = value.clone();
+            }
+        }
+        let usage = self.usage_only();
+        if !usage["summaries"].is_array() {
+            usage["summaries"] = json!([]);
+        }
+        usage["summaries"].as_array_mut().unwrap().push(summary);
+    }
+    fn retained_usage_summaries(&self) -> Vec<Value> {
+        let usage = &self.index["usageOnly"];
+        let mut summaries: Vec<_> = usage["summaries"].as_array().into_iter().flatten()
+            .filter(|summary| summary.is_object()).cloned().collect();
+        // Older usage-only ledgers have frozen totals but no source or input /
+        // output breakdown. Preserve known totals without inventing details.
+        let mut legacy = json!({"source":"unknown", "totalTokens":0, "usageByModel":{}});
+        for point in usage["nativeUsage"].as_array().into_iter().flatten() {
+            legacy["totalTokens"] = json!(legacy["totalTokens"].as_u64().unwrap_or(0) + point["tokens"].as_u64().unwrap_or(0));
+            let mut frozen = point.clone();
+            if frozen["knownCostUsd"].is_null() {
+                frozen["knownCostUsd"] = point["costUsd"].clone();
+            }
+            accumulate_model_usage(&mut legacy["usageByModel"], &json!({
+                "request":{"model":point["modelId"]}, "usage":{"totalTokens":point["tokens"]}, "costSnapshot":frozen
+            }));
+        }
+        if !usage["nativeUsage"].is_array() {
+            legacy["totalTokens"] = usage["totalTokens"].clone();
+        }
+        for item in usage["legacy"].as_array().into_iter().flatten() {
+            legacy["totalTokens"] = json!(legacy["totalTokens"].as_u64().unwrap_or(0) + item["totalTokens"].as_u64().unwrap_or(0));
+        }
+        if legacy["totalTokens"].as_u64().unwrap_or(0) > 0 || usage["nativeUsage"].as_array().is_some_and(|p| !p.is_empty()) {
+            summaries.push(legacy);
+        }
+        for summary in &mut summaries {
+            summary.as_object_mut().unwrap().remove("nativeUsage");
+            summary.as_object_mut().unwrap().remove("dailyUsage");
+            summary.as_object_mut().unwrap().remove("recentRatePoints");
+        }
+        summaries
+    }
     pub fn set_retention(&mut self, limit: u64, auto_cleanup: bool) {
         self.limit = limit;
         self.auto_cleanup = auto_cleanup;
@@ -1199,7 +1255,10 @@ impl TraceStore {
     }
     fn apply_retention(&mut self) {
         if self.limit != 0 {
-            self.retention_notice = None;
+            self.retention_notice = if self.auto_cleanup {
+                self.with_writer(true, |store| store.cleanup_to_limit()).err()
+                    .map(|error| format!("详细记录清理未完成：{error}；请重新应用存储设置"))
+            } else { None };
             return;
         }
         let result = self.with_writer(true, |store| store.purge_completed_details());
@@ -1217,12 +1276,9 @@ impl TraceStore {
         if let Some(ref problem) = self.read_problem {
             return Err(problem.clone());
         }
-        let completed: Vec<_> = self.index["sessions"]
-            .as_array()
-            .unwrap()
-            .iter()
+        let completed: Vec<_> = self.view_sessions()
+            .into_iter()
             .filter(|s| !self.recording.contains_key(text(s, "id")))
-            .cloned()
             .collect();
         for session in completed {
             let path = PathBuf::from(session["jsonlPath"].as_str().ok_or("索引路径无效")?);
@@ -1231,21 +1287,7 @@ impl TraceStore {
             }
             read(&path)?;
             let before = self.index.clone();
-            let usage = self.usage_only();
-            if let Some(points) = session["nativeUsage"].as_array() {
-                usage["nativeUsage"]
-                    .as_array_mut()
-                    .unwrap()
-                    .extend(points.iter().cloned());
-            } else {
-                if !usage["legacy"].is_array() {
-                    usage["legacy"] = json!([]);
-                }
-                usage["legacy"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(usage_summary(&session));
-            }
+            self.retain_session_usage(&session);
             self.index["sessions"]
                 .as_array_mut()
                 .unwrap()
@@ -1317,10 +1359,11 @@ impl TraceStore {
                 return Ok(());
             }
             let point = usage_cost_point(&self.prices, &record);
-            self.usage_only()["nativeUsage"]
-                .as_array_mut()
-                .unwrap()
-                .push(point);
+            let mut summary = json!({"source":record["source"],"totalTokens":record["usage"]["totalTokens"],"nativeUsage":[point],"usageByModel":{}});
+            record["costSnapshot"] = summary["nativeUsage"][0].clone();
+            accumulate_model_usage(&mut summary["usageByModel"], &record);
+            accumulate_cache_hit_usage(&mut summary["cacheHitUsage"], &record["usage"]);
+            self.retain_session_usage(&summary);
             self.persist()?;
             return Ok(());
         }
@@ -1450,20 +1493,7 @@ impl TraceStore {
             self.refresh_legacy_costs();
         }
         self.persist()?;
-        if self.auto_cleanup && self.limit > 0 {
-            while self.size() > self.limit && !self.index["sessions"].as_array().unwrap().is_empty()
-            {
-                let oldest = self.index["sessions"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .min_by_key(|s| s["updatedAt"].as_str().unwrap_or(""));
-                let Some(oldest) = oldest.and_then(|s| s["id"].as_str()).map(str::to_string) else {
-                    break;
-                };
-                self.delete(&oldest)?;
-            }
-        }
+        self.cleanup_to_limit()?;
         if self.index["sessions"]
             .as_array()
             .unwrap()
@@ -1473,6 +1503,29 @@ impl TraceStore {
             let _ = self
                 .events
                 .send(format!("event: trace\ndata: {record}\n\n"));
+        }
+        Ok(())
+    }
+    fn cleanup_to_limit(&mut self) -> Result<()> {
+        if self.auto_cleanup && self.limit > 0 {
+            while self.size() > self.limit && !self.index["sessions"].as_array().unwrap().is_empty()
+            {
+                let oldest = self.index["sessions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|candidate| !self.index["sessions"].as_array().unwrap().iter().any(|session| {
+                        self.recording.contains_key(text(session, "id")) &&
+                        (session["id"] == candidate["id"] ||
+                        (!text(candidate, "clientConversationKey").is_empty() &&
+                        session["clientConversationKey"] == candidate["clientConversationKey"] && session["source"] == candidate["source"]))
+                    }))
+                    .min_by_key(|s| s["updatedAt"].as_str().unwrap_or(""));
+                let Some(oldest) = oldest.and_then(|s| s["id"].as_str()).map(str::to_string) else {
+                    break;
+                };
+                self.delete_owned(&oldest, false)?;
+            }
         }
         Ok(())
     }
@@ -2551,8 +2604,16 @@ pub(super) async fn dashboard(State(context): State<DashboardState>, request: Re
                 return Ok((json!({"ok":true}).to_string(), "application/json"));
             }
             if method == axum::http::Method::DELETE {
+                let url = reqwest::Url::parse(&format!("http://localhost{}", request.uri())).map_err(err)?;
+                let options: Vec<_> = url.query_pairs().filter(|(key, _)| key == "clearUsage").collect();
+                let clear_usage = match options.as_slice() {
+                    [] => false,
+                    [(_, value)] if value == "1" => true,
+                    [(_, value)] if value == "0" => false,
+                    _ => return Err("无效的用量清理选项".into()),
+                };
                 return Ok((
-                    json!({"ok":store.delete(id)?}).to_string(),
+                    json!({"ok":store.delete(id, clear_usage)?}).to_string(),
                     "application/json",
                 ));
             }

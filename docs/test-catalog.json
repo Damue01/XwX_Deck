@@ -947,7 +947,7 @@
     {
       "id": "SE05",
       "priority": "P0",
-      "requirement": "自动清理只删最旧完整会话，保留活动记录；清理后列表/索引/金额一致",
+      "requirement": "自动清理只删最旧完整会话，保留活动记录与用量费用；手动删除统计须额外勾选",
       "moduleId": "SE",
       "automation": {
         "scripts": [
@@ -955,7 +955,7 @@
           "tools/native/trace-usage-only-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
-        "gap": "自动清理与 0 GB 在途收尾分别验证。大规模真实记录、设置页与磁盘占用仍需 U。"
+        "gap": "隔离回归覆盖自动清理、手动删除默认保留统计、明确删除对应统计、重启与 0 GB。大规模真实记录与 Windows 本轮界面仍需 U。"
       },
       "requiredEvidence": [
         "P",

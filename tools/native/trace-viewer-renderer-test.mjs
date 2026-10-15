@@ -28,6 +28,26 @@ const trace = body => ({ request: { method: 'POST', path: '/v1/responses', body 
 const messages = body => dom.window.getMessages(trace(body));
 const text = list => list.map(m => m.content.map(b => b.text ?? '').join('')).join('\n');
 try {
+  const retained = {source:'codex-cli',totalTokens:165,usageByModel:{'retained-fixture':{version:2,input:100,cacheRead:60,cacheCreation:0,output:5,total:165,capturedCost:{cost:.003,complete:true}}}};
+  dom.window.applyState({sessions:[],usageSummaries:[retained],traces:[],theme:'day'});
+  dom.window.eval('tokenMatrixOpen=true;renderDashboard()');
+  assert.equal(dom.window.document.querySelector('.dash-hero-num').textContent,'$0.003');
+  assert.match(dom.window.document.querySelector('.dash-matrix').textContent,/retained-fixture/);
+  assert.equal(dom.window.document.querySelectorAll('.dash-table tbody tr').length,0);
+  dom.window.eval("state.dashSourceFilter='claude-cli';renderDashboard()");
+  assert.equal(dom.window.document.querySelector('.dash-hero-num').textContent,'$0.0000');
+  dom.window.eval("state.dashSourceFilter='all';tokenMatrixOpen=false");
+  dom.window.applyState({sessions:[],usageSummaries:[],traces:[],theme:'day'});
+  const firstDelete = dom.window.confirmDeleteSession('fixture');
+  const usageOption = dom.window.document.querySelector('#confirmDeleteUsage');
+  assert.equal(usageOption.checked,false);
+  usageOption.checked=true;
+  dom.window.closeConfirmDelete(false);
+  assert.equal(await firstDelete,false);
+  const secondDelete = dom.window.confirmDeleteSession('fixture');
+  assert.equal(usageOption.checked,false);
+  dom.window.closeConfirmDelete(false); await secondDelete;
+  pass('retained usage remains visible without detail rows, respects source filters, and deletion opt-in resets on every opening');
   dom.window.applyState({sessions:[{id:'nav',source:'codex-cli',firstPrompt:'Navigation fixture',traceCount:1,startedAt:'2026-10-13T00:00:00Z'}],traces:[],theme:'day'});
   dom.window.gotoSession('nav');
   assert.equal(dom.window.document.querySelector('#brandHome').textContent,'返回');

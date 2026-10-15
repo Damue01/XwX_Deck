@@ -1278,7 +1278,7 @@ html[data-theme="night"] .setup-card-backdrop { background: rgba(0,0,0,.5); }
 .setup-card-link svg { width: 14px; height: 14px; }
 .setup-card-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 .setup-card-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
-.configuration-dialog { position: fixed; top: 50%; left: 50%; z-index: var(--z-dialog); width: min(740px, calc(100% - 32px)); max-height: calc(100% - 48px); display: flex; flex-direction: column; transform: translate(-50%, -50%); border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow-raise); overflow: hidden; }
+.configuration-dialog { position: fixed; top: 50%; left: 50%; z-index: var(--z-dialog); width: min(740px, calc(100% - 32px)); height: min(560px, calc(100% - 48px)); max-height: calc(100% - 48px); display: flex; flex-direction: column; transform: translate(-50%, -50%); border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow-raise); overflow: hidden; }
 .configuration-header { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 22px 8px; }
 .configuration-header-tabs { padding: 12px 22px 8px 12px; }
 .configuration-header h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
@@ -1289,7 +1289,7 @@ html[data-theme="night"] .setup-card-backdrop { background: rgba(0,0,0,.5); }
 .configuration-header .configuration-tabs button { flex-shrink: 0; white-space: nowrap; }
 .configuration-tabs button { padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--quiet); font: inherit; font-size: 13px; cursor: pointer; }
 .configuration-tabs button[aria-selected="true"] { background: var(--hover); color: var(--ink); font-weight: 550; }
-.configuration-dialog > [role="tabpanel"], .configuration-dialog > #configuration-services { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.configuration-dialog > [role="tabpanel"], .configuration-dialog > #configuration-services { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .configuration-dialog [hidden] { display: none; }
 .configuration-content { padding: 20px 22px; max-height: min(560px, calc(100dvh - 150px)); overflow-y: auto; overscroll-behavior: contain; }
 .configuration-content.has-detail { display: grid; grid-template-columns: 185px minmax(0, 1fr); height: min(500px, calc(100dvh - 150px)); padding: 0; }

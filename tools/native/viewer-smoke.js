@@ -29,6 +29,13 @@
   } finally {matrix.remove();PRICE_RULES.splice(PRICE_RULES.indexOf(fixturePrice),1);}
   check('dashboard header, columns and table rows have no dividers',getComputedStyle(document.querySelector('.top')).borderBottomWidth==='0px'&&getComputedStyle(document.querySelector('.rail')).borderRightWidth==='0px'&&[...document.querySelectorAll('.dash-table th,.dash-table td')].every(element=>getComputedStyle(element).borderBottomWidth==='0px'));
   const idleRow=document.querySelector('.dash-table tbody tr');
+  const deletePrompt = confirmDeleteSession(idleRow.dataset.sid);
+  check('native delete confirmation preserves accounting by default', !document.querySelector('#confirmDeleteUsage').checked && document.querySelector('#confirmDeleteUsageLabel').getBoundingClientRect().height>0);
+  document.querySelector('#confirmDeleteUsage').click();
+  document.querySelector('#confirmDeleteCancel').click(); await deletePrompt;
+  const reopenedDelete = confirmDeleteSession(idleRow.dataset.sid);
+  check('native delete confirmation resets the usage choice when reopened', !document.querySelector('#confirmDeleteUsage').checked);
+  document.querySelector('#confirmDeleteCancel').click(); await reopenedDelete;
   check('native dashboard omits LIVE and secondary metadata rows',!document.querySelector('.dash-status.live,.dash-first-meta')&&!idleRow.textContent.includes('LIVE'));
   check('native dashboard date time title and model remain on one line',[...document.querySelectorAll('.dash-time span,.dash-first-title,.dash-model')].every(element=>getComputedStyle(element).whiteSpace==='nowrap')&&idleRow.querySelector('.dash-time').children.length===1&&idleRow.querySelector('.dash-first-line').getBoundingClientRect().height<=20&&idleRow.getBoundingClientRect().height<=50);
   const costFixtureState=state,costFixtureMatrix=tokenMatrixOpen;

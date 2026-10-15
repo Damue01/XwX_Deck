@@ -25,6 +25,8 @@ export interface TapViewerState {
   /** Exact model IDs currently exposed by the configured service. */
   readonly pricingModelIds?: readonly string[];
   readonly sessions: TapSessionSummary[];
+  /** Accounting retained after detailed Trace records are removed. */
+  readonly usageSummaries?: readonly Partial<TapSessionSummary>[];
   /** 当前 session 的 traces（dashboard 首屏 / 静态 HTML 快照走这条；live dashboard 切到 session 时再按需拉）。 */
   readonly traces: TapTraceRecord[];
   /**
@@ -547,6 +549,8 @@ summary.diff-section-header::-webkit-details-marker{display:none}
 .modal.confirm .body{padding:8px 20px 20px;color:var(--muted);font-size:13px;line-height:1.6}
 .modal.confirm .body code{font-family:var(--mono);font-size:11.5px;background:var(--soft);padding:1px 5px;border-radius:4px;color:var(--text)}
 .modal.confirm .actions{display:flex;justify-content:flex-end;gap:10px;padding:0 20px 18px}
+.modal.confirm .usage-choice{display:flex;align-items:flex-start;gap:8px;margin:0 20px 20px;font-size:13px;line-height:1.5;color:var(--text);cursor:pointer}
+.modal.confirm .usage-choice input{flex:0 0 auto;margin:3px 0 0;accent-color:var(--blue)}
 .modal.confirm .btn{border:1px solid var(--line2);background:var(--panel);color:var(--muted);font:inherit;font-size:13px;font-weight:500;padding:0 14px;height:34px;border-radius:var(--radius-sm);cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:background .12s,color .12s,border-color .12s}
 .modal.confirm .btn:hover{background:var(--hover);color:var(--text)}
 .modal.confirm .btn:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
@@ -660,7 +664,7 @@ summary.diff-section-header::-webkit-details-marker{display:none}
 </div>
 <div class="overlay" id="searchOv"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="searchTitle"><div class="mh"><span class="title" id="searchTitle">Search current session</span><input id="globalSearch" aria-label="搜索当前会话" placeholder="Keyword" style="flex:1;border:1px solid var(--line);border-radius:6px;padding:6px 8px"><button class="close" id="searchClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg></button></div><div class="mb" id="searchBody"></div></div></div>
 <div class="overlay" id="pricingOv"><div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="pricingTitle"><div class="mh"><span class="title" id="pricingTitle">Estimated Pricing (USD / 1M tokens)</span><button class="close" id="pricingClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg></button></div><div class="mb" id="pricingBody" tabindex="0"></div></div></div>
-<div class="overlay" id="confirmDeleteOv"><div class="modal confirm" role="dialog" aria-modal="true" aria-labelledby="confirmDeleteTitle"><div class="mh"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><div><div class="title" id="confirmDeleteTitle">Delete this session?</div></div></div><div class="body" id="confirmDeleteBody">This session’s full trace will be permanently deleted. This cannot be undone.</div><div class="actions"><button type="button" class="btn" id="confirmDeleteCancel">Cancel</button><button type="button" class="btn danger" id="confirmDeleteOk">Delete</button></div></div></div>
+<div class="overlay" id="confirmDeleteOv"><div class="modal confirm" role="dialog" aria-modal="true" aria-labelledby="confirmDeleteTitle"><div class="mh"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><div><div class="title" id="confirmDeleteTitle">Delete this session?</div></div></div><div class="body" id="confirmDeleteBody">This session’s full trace will be permanently deleted. This cannot be undone.</div><label class="usage-choice"><input type="checkbox" id="confirmDeleteUsage"><span id="confirmDeleteUsageLabel">Also delete the corresponding token usage and cost statistics</span></label><div class="actions"><button type="button" class="btn" id="confirmDeleteCancel">Cancel</button><button type="button" class="btn danger" id="confirmDeleteOk">Delete</button></div></div></div>
 <script>${webviewCommonScript()}</script>
 <script>
 const LIVE_MODE = ${liveMode ? 'true' : 'false'};
@@ -788,6 +792,7 @@ function renderChromeText(){
   const cdBody = el('confirmDeleteBody'); if(cdBody) cdBody.textContent = L('会话的所有请求记录将被永久删除，此操作不可撤销。','This session’s full trace will be permanently deleted. This cannot be undone.');
   const cdCancel = el('confirmDeleteCancel'); if(cdCancel) cdCancel.textContent = L('取消','Cancel');
   const cdOk = el('confirmDeleteOk'); if(cdOk) cdOk.textContent = L('确认删除','Delete');
+  const cdUsage = el('confirmDeleteUsageLabel'); if(cdUsage) cdUsage.textContent = L('同时删除对应的 Token 用量和费用统计','Also delete the corresponding token usage and cost statistics');
 }
 
 function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -2392,16 +2397,18 @@ function renderDashboard(){
   const allSessions = allLogicalSessions.filter(s => !s.internalOnly);
   const activeSource = state.dashSourceFilter || 'all';
   const sessions = activeSource === 'all' ? allSessions : allSessions.filter(s => sourceFamily(sessionSource(s)) === activeSource);
+  const retainedUsage = (state.usageSummaries || []).filter(s => activeSource === 'all' || sourceFamily(sessionSource(s)) === activeSource);
+  const accounting = sessions.concat(retainedUsage);
   // 聚合统计：全部来自 session summary 的累加字段，不再扫 sessionTraces，避免随历史增长拖慢。
   let totalTraces = 0, totalTok = 0, totalCost = 0, knownCosts = 0, incompleteTokens = false;
-  for(const s of sessions){
+  for(const s of accounting){
     totalTraces += s.traceCount || 0;
     totalTok += s.totalTokens || 0;
     const costInfo = sessionCostInfo(s);
     incompleteTokens = incompleteTokens || sessionTokensIncomplete(s);
     if(costInfo.cost !== undefined){ totalCost += costInfo.cost; knownCosts++; }
   }
-  const cacheStats = window.XwXTraceCacheRate.details(sessions);
+  const cacheStats = window.XwXTraceCacheRate.details(accounting);
   const cacheRatio = cacheStats.rate;
   const cacheRate = cacheRatio === null ? '—' : (cacheRatio * 100).toFixed(1) + '%';
   const cacheHint = L('缓存读取 Token ÷ 输入 Token（含缓存读取和写入）','Cache read tokens / input tokens (including cache reads and writes)');
@@ -2418,8 +2425,8 @@ function renderDashboard(){
     compact: false
   });
   const heroValue = hero.unit === '$'
-    ? (knownCosts || !sessions.length ? fmtCost(totalCost) : '—')
-    : (incompleteTokens && !sessions.some(sessionHasKnownTokens) ? '—' : hero.value + (hero.unit ? '<span class="u">' + esc(hero.unit) + '</span>' : ''));
+    ? (knownCosts || !accounting.length ? fmtCost(totalCost) : '—')
+    : (incompleteTokens && !accounting.some(sessionHasKnownTokens) ? '—' : hero.value + (hero.unit ? '<span class="u">' + esc(hero.unit) + '</span>' : ''));
   const usageHint = L('累计请求用量，包含每轮发送的上下文；不是当前上下文长度。','Cumulative request usage includes context sent on each turn; it is not the current context length.');
   let html = '<div class="dash">'+
     '<div class="dash-hero">'+
@@ -2433,7 +2440,7 @@ function renderDashboard(){
         '<div class="dash-hero-stat" data-cache-hit-rate title="'+esc(cacheHint)+'"><div class="dash-hs-label">'+L('缓存命中率','Cache Hit Rate')+'</div><div class="dash-hs-val">'+esc(cacheRate)+'</div></div>'+
       '</div>'+
     '</div>'+
-    (tokenMatrixOpen ? renderTokenMatrix(sessions) : '')+
+    (tokenMatrixOpen ? renderTokenMatrix(accounting) : '')+
     '<div class="dash-filters"><span class="seg-thumb"></span>'+filters+'</div>';
   if(!sessions.length){
     const emptyCopy = allSessions.length
@@ -2914,6 +2921,8 @@ function confirmDeleteSession(sid){
         'This permanently deletes all requests across '+fragments+' stored fragments. This cannot be undone.')
     : L('将永久删除这段对话的全部请求记录，此操作不可撤销。',
         'This conversation’s full trace will be permanently deleted. This cannot be undone.');
+  if(body) body.textContent += L(' Token 用量和费用统计默认保留。',' Token usage and cost statistics are kept by default.');
+  el('confirmDeleteUsage').checked = false;
   confirmDeleteReturnFocus = document.activeElement;
   ov.classList.add('on');
   el('confirmDeleteCancel').focus();
@@ -2950,8 +2959,9 @@ function trapModalTab(overlayId, ev){
 async function deleteSession(sid){
   if(!sid) return;
   if(!await confirmDeleteSession(sid)) return;
+  const clearUsage = el('confirmDeleteUsage').checked;
   try {
-    const res = await fetch('api/session/' + encodeURIComponent(sid), { method:'DELETE' });
+    const res = await fetch('api/session/' + encodeURIComponent(sid) + (clearUsage ? '?clearUsage=1' : ''), { method:'DELETE' });
     if(!res.ok) throw new Error(L('删除失败（HTTP '+res.status+'）','Delete failed (HTTP '+res.status+')'));
   } catch (err) {
     toast(err && err.message ? err.message : L('删除会话失败','Could not delete session'));

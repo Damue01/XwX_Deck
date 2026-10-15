@@ -200,6 +200,12 @@
       check('four configuration categories use one tab row', document.querySelectorAll('.configuration-header .configuration-tabs [role=tab]').length===4 && document.querySelector('#configuration-services-tab').textContent==='API 服务');
       check('one configuration dialog with services selected by default', document.querySelectorAll('[role="dialog"]:not([data-position])').length === 1 && document.querySelector('#configuration-services-tab').getAttribute('aria-selected') === 'true');
       check('initial service grid contains icon and name for every preset', document.querySelectorAll('.configuration-grid [data-service]').length === 31 && [...document.querySelectorAll('.configuration-grid [data-service]')].every(button => button.querySelector('.provider-brand-icon')));
+      const configurationBounds = document.querySelector('.configuration-dialog').getBoundingClientRect();
+      for (const category of ['accounts', 'saved', 'clients', 'services']) {
+        document.querySelector(`#configuration-${category}-tab`).click(); await delay(100);
+        const bounds = document.querySelector('.configuration-dialog').getBoundingClientRect();
+        check(`${category} configuration tab preserves dialog position and size`, ['x','y','width','height'].every(key => Math.abs(bounds[key] - configurationBounds[key]) < 1));
+      }
       const emptyApiChoice = document.querySelector('[data-service=deepseek]'), customChoice = document.querySelector('[data-service=custom]');
       check('confirmed missing API configuration is muted but enabled; custom and import actions keep normal colors', emptyApiChoice.dataset.unconfigured === 'true' && !emptyApiChoice.disabled && !customChoice.dataset.unconfigured && !document.querySelector('.configuration-import-entry').dataset.unconfigured && getComputedStyle(emptyApiChoice).color !== getComputedStyle(customChoice).color && getComputedStyle(emptyApiChoice.querySelector('.provider-brand-icon')).opacity === '0.7');
       const originalImportPreview = window.xwxDeck.previewConfigurationImport, originalImportFile = window.xwxDeck.chooseConfigurationImportFile, originalImportApply = window.xwxDeck.importConfigurations;
