@@ -116,7 +116,8 @@ try {
   await viewer.locator('.dash-table tbody tr').filter({ hasText: '整理项目文档' }).click();
   await viewer.locator('#traceList').waitFor();
   assert.match(await viewer.locator('#detail').innerText(), /检查项目结构/);
-  assert.match(await viewer.locator('#detail').innerText(), /zsh|环境/);
+  await viewer.locator('.env-context-body').waitFor();
+  assert.match(await viewer.locator('.env-context-body').innerText(), /zsh/);
   await viewer.close();
   checks.push('WE03: production Viewer opens synthetic titled sessions and renders the current request environment');
   assert.deepEqual(errors, []);

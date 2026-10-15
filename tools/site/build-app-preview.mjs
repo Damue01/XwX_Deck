@@ -36,7 +36,7 @@ const viewerModule = await esbuild.build({
 });
 const { renderTapViewerHtml } = await import('data:text/javascript;base64,' + Buffer.from(viewerModule.outputFiles[0].text).toString('base64'));
 const time = '2026-10-15T08:30:00Z';
-const environment = '<environment_context>\n<cwd>/demo/project</cwd>\n<shell>zsh</shell>\n<current_date>2026-10-15</current_date>\n<permissions approval_policy="never" />\n</environment_context>';
+const environment = '<environment_context>\n<cwd>/demo/project</cwd>\n<shell>zsh</shell>\n<current_date>2026-10-15</current_date>\n<timezone>Asia/Shanghai</timezone>\n<filesystem><workspace_roots><root>/demo/project</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>\n</environment_context>';
 const examples = [
   { id: 'demo-codex', source: 'codex-cli', title: '整理项目文档', model: 'gpt-6.1-sol', prompt: '检查项目结构，整理一份入门说明。', answer: '已整理运行步骤、目录结构和测试入口。', cost: .014, tokens: 4820 },
   { id: 'demo-claude', source: 'claude-cli', title: '优化设置表单', model: 'claude-sonnet-5-5', prompt: '检查设置表单的键盘操作和焦点恢复。', answer: '已检查表单布局，并保留关闭弹层后的焦点。', cost: .009, tokens: 3260 }
