@@ -1433,6 +1433,7 @@ fn main() {
     let app = builder
         .build(context)
         .expect("failed to build XwX Deck native host");
+    let exit_retry_pending = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     app.run(move |handle, event| match event {
         tauri::RunEvent::Ready if !smoke => {
             let shared=pilot.clone();let app=handle.clone();
@@ -1458,7 +1459,26 @@ fn main() {
             if std::env::args().any(|a| a == "--smoke") {
                 eprintln!("native-exit-requested");
             }
-            if tauri::async_runtime::block_on(async { pilot.lock().await.active() }) {
+            // RPC tasks can hold Pilot while waiting for the main thread. Never
+            // block that thread on the same mutex during an exit request.
+            let active = match pilot.try_lock() {
+                Ok(state) => state.active(),
+                Err(_) => {
+                    api.prevent_exit();
+                    if !exit_retry_pending.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                        let shared = pilot.clone();
+                        let handle = handle.clone();
+                        let pending = exit_retry_pending.clone();
+                        tauri::async_runtime::spawn(async move {
+                            drop(shared.lock().await);
+                            pending.store(false, std::sync::atomic::Ordering::Release);
+                            handle.exit(0);
+                        });
+                    }
+                    return;
+                }
+            };
+            if active {
                 api.prevent_exit();
                 {
                     let shared = pilot.clone();

@@ -626,7 +626,7 @@
     document.querySelector('.rail [data-page="settings"]').click(); await delay(100);
     document.querySelector('#automaticUpdatesToggle').click();await wait(()=>!document.querySelector('#automaticUpdatesToggle').disabled, 'update preference saved');
     document.querySelector('#currentVersion').click();
-    const currentParts=(await window.xwxDeck.getState()).version.split('.').map(Number);
+    const currentParts=(await window.xwxDeck.getUpdateState()).currentVersion.split('.').map(Number);
     const expectedUpdate=currentParts[0]+'.'+currentParts[1]+'.'+(currentParts[2]+1);
     await wait(()=>document.body.textContent.includes('XwX Deck '+expectedUpdate+' 可更新')&&document.body.textContent.includes('立即下载'), 'update notification while automatic updates disabled');
     check('new release notification includes manual download with automatic updates disabled', (await window.xwxDeck.getState()).automaticUpdates===false);
