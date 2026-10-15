@@ -37,12 +37,12 @@ const server = createServer(async (request, response) => {
 });
 server.listen(0, '127.0.0.1'); await once(server, 'listening');
 const url = `http://127.0.0.1:${server.address().port}`;
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const browser = await chromium.launch({ ...(process.env.XWX_PLAYWRIGHT_CHANNEL === 'chromium' ? {} : { channel: 'chrome' }), headless: true });
 try {
   const page = await browser.newPage({ reducedMotion: 'reduce' });
   page.on('pageerror', error => errors.push(String(error)));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-  for (const width of [390, 780, 1440]) {
+  for (const width of [320, 390, 780, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(url, { waitUntil: 'networkidle' });
     assert.equal(page.url(), url + '/');
@@ -64,12 +64,17 @@ try {
       const api = window.xwxDeck;
       const providers = await api.getProviders();
       const config = await api.getCodexConfig();
+      const models = await api.fetchModels();
       return { selected: Object.keys(providers.selected).sort(), mode: config.mode, hasCompatible: !!config.compatible,
+        model: config.compatible.model, context: config.modelContextWindow, solContext: models.find(model => model.id === 'gpt-6.1-sol')?.contextWindow,
         removedMethods: methods.filter(method => typeof api[method] !== 'undefined') };
     }, policy.forbiddenRpcMethods);
     assert.deepEqual(boundary.selected, ['claude', 'codex']);
     assert.equal(boundary.mode, 'compatible');
     assert.equal(boundary.hasCompatible, true);
+    assert.equal(boundary.model, 'gpt-6.1-sol');
+    assert.equal(boundary.context, 500000);
+    assert.equal(boundary.solContext, 500000);
     assert.deepEqual(boundary.removedMethods, []);
     await page.getByRole('tab', { name: '集中管理服务' }).click();
     await page.locator('iframe').waitFor();
@@ -87,15 +92,33 @@ try {
     }
     checks.push(`WE01/WE03: title, visible content, overflow, tabs and real renderer at ${width}px`);
   }
-  await page.locator('[data-download="windows"]').last().click();
-  assert.match(await page.locator('.dl-msg').innerText(), /未配置下载地址/);
+  for (const [platform, file] of [['windows', 'XwX-Deck-windows-x64.exe'], ['mac', 'XwX-Deck-mac-arm64.dmg']]) {
+    const hrefs = await page.locator(`[data-download="${platform}"]`).evaluateAll(nodes => nodes.map(node => node.href));
+    assert.equal(hrefs.length, 2);
+    assert.ok(hrefs.every(href => href === 'https://github.com/Damue01/XwX_Deck/releases/latest/download/' + file));
+  }
   await page.getByRole('link', { name: '查看已发布版本' }).getAttribute('href').then(href => assert.equal(href, 'https://github.com/Damue01/XwX_Deck/releases'));
-  checks.push('WE02: missing download URL gives an actionable status');
+  checks.push('WE02: Windows and Apple Silicon links point to the verified GitHub latest release');
   await page.goto(url + '/configured/index.html', { waitUntil: 'networkidle' });
   const download = page.waitForEvent('download');
   await page.locator('[data-download="windows"]').last().click();
   assert.equal((await download).suggestedFilename(), 'fixture.exe');
   checks.push('WE02: configured download resolves to the selected artifact fixture');
+  const popupEvent = page.waitForEvent('popup');
+  await page.getByRole('link', { name: '体验仪表盘' }).click();
+  const viewer = await popupEvent;
+  await viewer.waitForLoadState('networkidle');
+  assert.equal(await viewer.title(), 'XwX Deck 仪表盘示例');
+  assert.equal(await viewer.locator('.dash-table tbody tr').count(), 2);
+  assert.match(await viewer.locator('.dash-table').innerText(), /整理项目文档/);
+  assert.match(await viewer.locator('.dash-table').innerText(), /gpt-6.1-sol/);
+  assert.doesNotMatch(await viewer.locator('.dash-table').innerText(), /LIVE/);
+  await viewer.locator('.dash-table tbody tr').filter({ hasText: '整理项目文档' }).click();
+  await viewer.locator('#traceList').waitFor();
+  assert.match(await viewer.locator('#detail').innerText(), /检查项目结构/);
+  assert.match(await viewer.locator('#detail').innerText(), /zsh|环境/);
+  await viewer.close();
+  checks.push('WE03: production Viewer opens synthetic titled sessions and renders the current request environment');
   assert.deepEqual(errors, []);
   if (process.env.XWX_SITE_TEST_SCREENSHOT) await page.screenshot({ path: process.env.XWX_SITE_TEST_SCREENSHOT, fullPage: true });
   const report = { passed: true, previewDirectory: 'test-results/site-preview', evidenceLevel: 'P', browser: 'Chrome/Playwright', browserPlugin: 'not available', checks, consoleErrors: errors,

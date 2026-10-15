@@ -58,7 +58,8 @@ check(published.includes('tools/native/published-artifact-test.mjs') && !publish
 
 const pages = await readFile(path.join(workflowRoot, 'pages.yml'), 'utf8');
 check(pages.includes('deploy-pages'), 'Pages workflow must deploy with actions/deploy-pages');
-check(pages.includes('DOCS_BASE: /XwX_Deck/'), 'Pages workflow must set the repository base path');
+check(pages.includes('DOCS_BASE: /docs/'), 'Pages workflow must publish documentation beneath the website');
+check(pages.includes('npm run build:site') && pages.includes('npm run test:site') && pages.includes('path: test-results/site-preview'), 'Pages must build and verify the actual website before deployment');
 
 if (failures.length) {
   console.error('GitHub workflow check failed:');

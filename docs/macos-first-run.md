@@ -1,23 +1,20 @@
 # macOS 首次运行
 
-当前公开 macOS 包没有 Developer ID 签名和 Apple 公证。它只能作为开源测试版本分发，macOS 可能阻止首次启动。
+公开版本 1.1.1 的 Apple Silicon Mac 包已经 Developer ID 签名、Apple 公证与票据装订。
+发布后下载的 App 和 DMG 均通过 Gatekeeper 检查。
 
-## 推荐顺序
+## 安装与更新
 
-1. 将 `XwX Deck.app` 拖入“应用程序”。
-2. 在 Finder 中右键应用，选择“打开”。
-3. 如果仍被阻止，前往“系统设置 → 隐私与安全性”，确认你信任当前 GitHub Release 后选择仍要打开。
-4. 如果系统仍保留下载隔离标记，可以在终端执行：
+1. 从 [GitHub Releases](https://github.com/Damue01/XwX_Deck/releases) 下载 `XwX-Deck-mac-arm64.dmg`。
+2. 核对发布页提供的 SHA-256。
+3. 打开 DMG，将 `XwX Deck.app` 拖入“应用程序”。
+4. 更新时先安全退出旧应用，再拖拽替换。
 
-```bash
-xattr -dr com.apple.quarantine "/Applications/XwX Deck.app"
-```
+macOS 采用手动 DMG 更新。
+当前没有 Intel Mac 发行包。
 
-然后重新打开应用。
+## 版本边界
 
-## 安全提醒
-
-- 只从 [Damue01/XwX_Deck Releases](https://github.com/Damue01/XwX_Deck/releases) 下载。
-- 执行命令前核对 Release 中的 SHA-256。
-- 该命令会移除该应用的下载隔离属性；不要对来源不明的应用执行。
-- 未签名包不等同于经过 Apple 公证的正式发行包。
+本说明对应已发布的签名包。
+自行编译的 ad-hoc 包不自动获得 Apple 公证。
+若签名发行包被系统阻止，请保留具体提示并核对来源、版本和哈希。

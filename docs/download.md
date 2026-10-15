@@ -6,7 +6,7 @@
 
 在 Releases 中选择与你的系统对应的安装包：Windows 下载 EXE，Apple Silicon Mac 下载 arm64 DMG。下载后核对该版本提供的 SHA-256。
 
-macOS 安装时，将应用拖入“应用程序”。当前 macOS 测试包尚未经过 Developer ID 签名与 Apple 公证；首次打开遇到系统提示，请参照 [macOS 首次运行](./macos-first-run.md)。
+当前公开版本为 1.1.1。macOS Apple Silicon 包已经 Developer ID 签名、Apple 公证和票据装订，将应用拖入“应用程序”即可安装。Windows x64 包没有 Authenticode 签名，请核对 Release 提供的 SHA-256。安装说明见 [macOS 首次运行](./macos-first-run.md)。
 
 ## ChatGPT 客户端
 

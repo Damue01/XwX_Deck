@@ -1,6 +1,9 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
+<link rel="canonical" href="https://xwxdeck.com/">
+<meta property="og:url" content="https://xwxdeck.com/">
+<meta property="og:title" content="XwX Deck：让 AI 更简单一点">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
@@ -133,7 +136,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
 <header id="header">
   <div class="wrap">
     <a class="brand" href="#" aria-label="XwX Deck"><svg viewBox="0 0 1024 1024" aria-hidden="true"><rect x="24" y="24" width="976" height="976" rx="176" fill="#17181A"/><g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round"><path d="M178 420 L372 610 M372 420 L178 610 M654 420 L850 610 M850 420 L654 610" stroke-width="42"/><path d="M439 548 L472 607 L512 554 L552 607 L585 548" stroke-width="38"/></g></svg>XwX Deck</a>
-    <nav aria-label="主导航"><a href="#experience">体验</a><a href="#safety">安全</a><a href="#support">支持</a><a class="btn" href="#download">下载</a></nav>
+    <nav aria-label="主导航"><a href="#experience">体验</a><a href="#safety">安全</a><a href="#support">支持</a><a href="./docs/">文档</a><a class="btn" href="#download">下载</a></nav>
   </div>
 </header>
 
@@ -144,7 +147,8 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
       <div class="hero-details">
       <p class="lead">轻松配置 Claude、ChatGPT 等客户端，<br>把时间留给你想做的事</p>
       <div class="actions">
-        <a class="btn large" href="#" data-download="windows"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1 2.6 6.6 1.8v5.4H1zm6.4-.9L15 .6v6.6H7.4zM1 8h5.6v5.4L1 12.6zm6.4 0H15v6.6l-7.6-1.1z"/></svg>下载 Windows 版</a>
+        <a class="btn large" href="https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64.exe" data-download="windows"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1 2.6 6.6 1.8v5.4H1zm6.4-.9L15 .6v6.6H7.4zM1 8h5.6v5.4L1 12.6zm6.4 0H15v6.6l-7.6-1.1z"/></svg>下载 Windows 版</a>
+        <a class="btn large" href="https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-mac-arm64.dmg" data-download="mac">下载 macOS 版</a>
         <span class="note">本地优先，配置与请求记录保留在您的电脑上</span>
       </div>
       </div>
@@ -166,7 +170,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
         <iframe title="XwX Deck 功能演示" loading="lazy"></iframe>
         <div class="cover">正在加载交互预览</div>
       </div>
-      <p class="demo-note"><span>交互预览使用示例数据</span><a class="demo-link" href="app.html?trace-live=1#models" target="_blank" rel="noopener">打开完整预览</a></p>
+      <p class="demo-note"><span>1.1.1 界面预览使用示例数据</span> <a href="viewer.html" target="_blank" rel="noopener">体验仪表盘</a><a class="demo-link" href="app.html?trace-live=1#models" target="_blank" rel="noopener">打开完整预览</a></p>
     </div>
   </section>
 
@@ -174,7 +178,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
     <div class="wrap safety-layout">
       <div class="title"><h2 id="safety-title">您的配置与数据，<br>都留在本机</h2></div>
       <div class="safety">
-        <div><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-lock" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg><h3>记录只保存在本机</h3><p>请求记录写在这台电脑上，不经过任何中转服务器。不开 Trace 时不记录。</p></div>
+        <div><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-lock" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg><h3>记录只保存在本机</h3><p>请求记录保存在本机，模型请求发送到您选择的服务商。不开 Trace 时不记录。</p></div>
         <div><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-archive" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"></rect><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"></path><path d="M10 12h4"></path></svg><h3>先备份，再写入</h3><p>修改配置前先备份。停止时按字段合并，保留您和其他软件做的修改。</p></div>
         <div><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-check" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path><path d="m9 15 2 2 4-4"></path></svg><h3>登录文件保持不变</h3><p>官方登录文件始终不动。停止或退出时，客户端回到原来的连接。</p></div>
         <div><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-scan-search" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><circle cx="12" cy="12" r="3"></circle><path d="m16 16-1.9-1.9"></path></svg><h3>检测不读取登录信息</h3><p>识别已安装的客户端时，只确认应用是否存在，不改动配置。</p></div>
@@ -196,8 +200,9 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
     <div class="wrap download-layout">
       <div class="title"><h2 id="download-title">下载 XwX Deck</h2></div>
       <div class="actions">
-        <a class="btn large" href="#" data-download="windows"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1 2.6 6.6 1.8v5.4H1zm6.4-.9L15 .6v6.6H7.4zM1 8h5.6v5.4L1 12.6zm6.4 0H15v6.6l-7.6-1.1z"/></svg>下载 Windows 版</a>
-        <span class="note">Windows 使用便携版。macOS 使用 DMG 手动安装。</span>
+        <a class="btn large" href="https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64.exe" data-download="windows"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1 2.6 6.6 1.8v5.4H1zm6.4-.9L15 .6v6.6H7.4zM1 8h5.6v5.4L1 12.6zm6.4 0H15v6.6l-7.6-1.1z"/></svg>下载 Windows 版</a>
+        <a class="btn large" href="https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-mac-arm64.dmg" data-download="mac">下载 macOS 版</a>
+        <span class="note">当前版本 1.1.1。Windows x64 便携版，macOS Apple Silicon 已签名、公证。</span>
         <p class="dl-msg" role="status"></p>
         <a href="https://github.com/Damue01/XwX_Deck/releases" target="_blank" rel="noopener">查看已发布版本</a>
       </div>
@@ -209,7 +214,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
 
 <script>
 /* 只填已发布并核实的制品地址。留空时明确提示不可下载。 */
-const DOWNLOADS = { windows: '', mac: '' };
+const DOWNLOADS = { windows: 'https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64.exe', mac: 'https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-mac-arm64.dmg' };
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* The embedded app must never move this page. Only the visitor scrolls it. */

@@ -38,6 +38,10 @@ const gpt = (id: string, displayName: string, contextWindow: number, defaultReas
   contextWindow, reasoning: true, toolCalling: true, vision: true, inputModalities: ['text', 'image'], reasoningLevels: levels, defaultReasoningLevel
 });
 const CHATGPT = [
+  gpt('gpt-6.1-sol', 'GPT-6.1 Sol', 500_000, 'low'),
+  gpt('gpt-6-astra', 'GPT-6 Astra', 500_000),
+  gpt('gpt-6-sol', 'GPT-6 Sol', 500_000, 'low'),
+  gpt('gpt-6-luna', 'GPT-6 Luna', 500_000),
   gpt('gpt-5.6-sol', 'GPT-5.6 Sol', 1_050_000, 'low'),
   gpt('gpt-5.6-terra', 'GPT-5.6 Terra', 1_050_000),
   gpt('gpt-5.6-luna', 'GPT-5.6 Luna', 1_050_000),
@@ -113,19 +117,19 @@ const subscription = (accountId: string, displayName: string, accountLabel: stri
 const custom = (id: string, displayName: string, baseUrl: string, adapter: string, codexModel: string, claudeModels: typeof empty) => ({
   id, displayName, baseUrl, bearerToken: 'sk-••••••••', adapter, codexApiFormat: adapter === 'anthropic-messages' ? 'responses' : adapter, codexProviderId: 'xwx_deck', codexModel, codexContextWindow: 0, claudeModels
 });
-const chatgptRoles = { fable: '', opus: 'gpt-5.6-sol', sonnet: 'gpt-5.6-terra', haiku: 'gpt-5.4-mini' };
+const chatgptRoles = { fable: '', opus: 'gpt-6.1-sol', sonnet: 'gpt-6-sol', haiku: 'gpt-6-luna' };
 let connections: any[] = [
-  subscription('official-chatgpt', '林青', 'lin.qing@example.com', 'responses', 'https://chatgpt.com/backend-api', 'gpt-5.6-sol', chatgptRoles),
-  subscription('official-chatgpt-studio', '陈雨', 'chen.yu@example.com', 'responses', 'https://chatgpt.com/backend-api', 'gpt-5.6-sol', chatgptRoles),
-  subscription('official-chatgpt-team', '周默', 'zhou.mo@example.com', 'responses', 'https://chatgpt.com/backend-api', 'gpt-5.6-sol', chatgptRoles),
+  subscription('official-chatgpt', '林青', 'lin.qing@example.com', 'responses', 'https://chatgpt.com/backend-api', 'gpt-6.1-sol', chatgptRoles),
+  subscription('official-chatgpt-studio', '陈雨', 'chen.yu@example.com', 'responses', 'https://chatgpt.com/backend-api', 'gpt-6.1-sol', chatgptRoles),
+  subscription('official-chatgpt-team', '周默', 'zhou.mo@example.com', 'responses', 'https://chatgpt.com/backend-api', 'gpt-6.1-sol', chatgptRoles),
   subscription('claude-subscription-lin', '林青', 'lin.qing@example.com', 'anthropic-messages', 'https://api.anthropic.com/v1', 'claude-sonnet-5-5', { fable: 'claude-fable-5-1', opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5' }),
   custom('svc-zhipu', '智谱 GLM', 'https://open.bigmodel.cn/api/paas/v4', 'chat-completions', 'glm-5.3', { fable: '', opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3-flash' }),
   custom('svc-deepseek', 'DeepSeek', 'https://api.deepseek.com', 'responses', 'deepseek-v4-pro', { fable: '', opus: 'deepseek-v4-pro', sonnet: 'deepseek-v4-pro', haiku: 'deepseek-v4-flash' }),
   custom('svc-kimi', 'Kimi', 'https://api.moonshot.cn/v1', 'chat-completions', 'kimi-k3', { fable: '', opus: 'kimi-k3', sonnet: 'kimi-k3', haiku: 'kimi-k3-fast' })
 ];
 let selected: Record<string, string | null> = { codex: 'subscription-official-chatgpt', claude: 'svc-zhipu' };
-let officialModel = 'gpt-5.6-sol';
-let contextWindows: Record<string, number | undefined> = {};
+let officialModel = 'gpt-6.1-sol';
+let contextWindows: Record<string, number | undefined> = { 'subscription-official-chatgpt': 500_000, 'subscription-official-chatgpt-studio': 500_000, 'subscription-official-chatgpt-team': 500_000 };
 const providers = () => clone({ version: 1, identityVersion: 2, connections, selected, active: { ...selected } });
 const find = (id: string | null | undefined) => connections.find(c => c.id === id);
 
@@ -166,6 +170,7 @@ if (base.onState) api.onState = (listener: (state: unknown) => void) => base.onS
 for (const name of ['getState', 'refresh', 'toggleTracing', 'toggleClient', 'setTraceStoragePolicy', 'setTraceAppearance', 'setTheme', 'setStartupEnabled', 'updateTraceDirectories']) wrapState(name);
 
 Object.assign(api, {
+  openDashboard: async () => { window.open(new URL('./viewer.html', location.href).href, '_blank', 'noopener'); },
   getProviders: async () => providers(),
   saveProvider: async (input: any) => {
     const existing = find(input.id);
