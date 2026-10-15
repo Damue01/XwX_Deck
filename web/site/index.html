@@ -52,8 +52,10 @@ nav > a:hover { color: var(--ink); }
 .hero-details { margin-top: 32px; }
 .hero .lead { margin: 0; font-size: clamp(18px, 1.5vw, 21px); line-height: 1.9; color: var(--graphite); text-wrap: pretty; }
 .actions { display: grid; justify-items: start; gap: 16px; margin-top: 32px; }
-.hero .actions { margin-top: 40px; justify-items: center; }
+.hero .actions { grid-template-columns: repeat(2, max-content); justify-content: center; margin-top: 40px; justify-items: stretch; }
 .hero .btn.large { min-height: 56px; padding-inline: 32px; font-size: 16px; }
+.hero .note { margin: 20px 0 0; }
+.dl-msg:empty { display: none; }
 /* Common region: the controls, explanation and live app belong to one demo. */
 .features { padding-top: 80px; }
 .features .title { text-align: center; margin-bottom: 40px; }
@@ -86,9 +88,9 @@ section.block { padding-top: var(--section-space); }
 .track .provider-brand-icon.deepseek { color: #4d6bfe; }
 .track .gen, .track li.extra { color: var(--graphite); }
 /* Continuity: the closing action returns to the same content columns. */
-.download { padding-bottom: 128px; }
-.download-layout { display: grid; justify-items: center; text-align: center; gap: 32px; }
-.download .actions { margin: 0; justify-items: center; }
+.community { padding-bottom: 128px; }
+.community-layout { display: grid; justify-items: center; text-align: center; gap: 32px; }
+.community .actions { margin: 0; justify-items: center; }
 .dl-msg { min-height: 1.7em; margin: 0; font-size: 14px; color: var(--graphite); }
 footer { padding: 24px 0 32px; font-size: 13px; color: var(--quiet); }
 footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
@@ -107,7 +109,8 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
   .hero h1 .slogan-end { display: block; }
   .hero-details { margin-top: 28px; }
   .hero .lead { font-size: 16px; }
-  .hero .actions { margin-top: 32px; }
+  .hero .actions { margin-top: 32px; gap: 10px; }
+  .hero .btn.large { min-height: 48px; padding-inline: 10px; font-size: 13px; white-space: nowrap; gap: 6px; }
   .features { padding-top: 64px; }
   .features .title { margin-bottom: 32px; }
   .demo-controls { gap: 18px; margin-bottom: 28px; }
@@ -118,8 +121,8 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
   .demo-note { display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .demo-link { display: inline; color: var(--slate); text-underline-offset: 3px; }
   .track { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 16px; }
-  .download-layout { gap: 28px; }
-  .download { padding-bottom: 88px; }
+  .community-layout { gap: 28px; }
+  .community { padding-bottom: 88px; }
 }
 @media (max-width: 380px) {
   .seg button { padding-inline: 6px; font-size: 12px; white-space: nowrap; }
@@ -141,7 +144,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
 </header>
 
 <main id="main">
-  <section class="hero" aria-labelledby="title">
+  <section class="hero" id="download" aria-labelledby="title">
     <div class="wrap hero-content">
       <h1 id="title">让 AI <span class="slogan-end">更简单一点</span></h1>
       <div class="hero-details">
@@ -149,8 +152,9 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
       <div class="actions">
         <a class="btn large" href="https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64.exe" data-download="windows"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1 2.6 6.6 1.8v5.4H1zm6.4-.9L15 .6v6.6H7.4zM1 8h5.6v5.4L1 12.6zm6.4 0H15v6.6l-7.6-1.1z"/></svg>下载 Windows 版</a>
         <a class="btn large" href="https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-mac-arm64.dmg" data-download="mac">下载 macOS 版</a>
-        <span class="note">本地优先，配置与请求记录保留在您的电脑上</span>
       </div>
+      <p class="note">本地优先，配置与请求记录保留在您的电脑上</p>
+      <p class="dl-msg" role="status"></p>
       </div>
     </div>
   </section>
@@ -170,7 +174,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
         <iframe title="XwX Deck 功能演示" loading="lazy"></iframe>
         <div class="cover">正在加载交互预览</div>
       </div>
-      <p class="demo-note"><span>1.1.1 界面预览使用示例数据</span> <a href="viewer.html" target="_blank" rel="noopener">体验仪表盘</a><a class="demo-link" href="app.html?trace-live=1#models" target="_blank" rel="noopener">打开完整预览</a></p>
+      <p class="demo-note"><span>应用预览使用示例配置，仪表盘展示已脱敏的真实请求</span> <a href="view.html" target="_blank" rel="noopener">体验仪表盘</a><a class="demo-link" href="app.html?trace-live=1#models" target="_blank" rel="noopener">打开完整预览</a></p>
     </div>
   </section>
 
@@ -196,18 +200,17 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
     </div>
   </section>
 
-  <section class="block download" id="download" aria-labelledby="download-title">
-    <div class="wrap download-layout">
-      <div class="title"><h2 id="download-title">下载 XwX Deck</h2></div>
+  <section class="block community" id="community" aria-labelledby="community-title">
+    <div class="wrap community-layout">
+      <div class="title"><h2 id="community-title">一起完善 XwX Deck</h2></div>
+      <p class="feature-copy">在 GitHub 关注项目、反馈问题，分享你的使用建议。</p>
       <div class="actions">
-        <a class="btn large" href="https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64.exe" data-download="windows"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1 2.6 6.6 1.8v5.4H1zm6.4-.9L15 .6v6.6H7.4zM1 8h5.6v5.4L1 12.6zm6.4 0H15v6.6l-7.6-1.1z"/></svg>下载 Windows 版</a>
-        <a class="btn large" href="https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-mac-arm64.dmg" data-download="mac">下载 macOS 版</a>
-        <span class="note">当前版本 1.1.1。Windows x64 便携版，macOS Apple Silicon 已签名、公证。</span>
-        <p class="dl-msg" role="status"></p>
-        <a href="https://github.com/Damue01/XwX_Deck/releases" target="_blank" rel="noopener">查看已发布版本</a>
+        <a class="btn large" href="https://github.com/Damue01/XwX_Deck" target="_blank" rel="noopener noreferrer">前往 GitHub</a>
+        <a href="https://github.com/Damue01/XwX_Deck/issues" target="_blank" rel="noopener noreferrer">反馈问题</a>
       </div>
     </div>
   </section>
+
 </main>
 
 <footer><div class="wrap"><span>XwX Deck</span><span>© 2026 XwX Deck</span></div></footer>
@@ -271,7 +274,7 @@ const msg = document.querySelector('.dl-msg');
 document.querySelectorAll('[data-download]').forEach(a => {
   const url = DOWNLOADS[a.dataset.download];
   if (url) { a.href = url; return; }
-  a.addEventListener('click', e => { e.preventDefault(); msg.textContent = '当前未配置下载地址，请查看已发布版本。'; if (!a.closest('#download')) document.getElementById('download').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' }); });
+  a.addEventListener('click', e => { e.preventDefault(); msg.textContent = '当前未配置下载地址，请查看已发布版本。';  });
 });
 </script>
 </body>

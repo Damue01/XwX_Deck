@@ -170,7 +170,7 @@ if (base.onState) api.onState = (listener: (state: unknown) => void) => base.onS
 for (const name of ['getState', 'refresh', 'toggleTracing', 'toggleClient', 'setTraceStoragePolicy', 'setTraceAppearance', 'setTheme', 'setStartupEnabled', 'updateTraceDirectories']) wrapState(name);
 
 Object.assign(api, {
-  openDashboard: async () => { window.open(new URL('./viewer.html', location.href).href, '_blank', 'noopener'); },
+  openDashboard: async () => { window.open(new URL('./view.html', location.href).href, '_blank', 'noopener'); },
   getProviders: async () => providers(),
   saveProvider: async (input: any) => {
     const existing = find(input.id);

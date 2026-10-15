@@ -4,6 +4,7 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { once } from 'node:events';
+import { validateRealExamples } from './real-example-contract.mjs';
 
 // Uses an explicitly supplied installed Playwright module, or the usual package.
 const module = process.env.XWX_PLAYWRIGHT_MODULE;
@@ -11,6 +12,11 @@ const { chromium } = await import(module ? pathToFileURL(resolve(module)).href :
 const root = resolve(import.meta.dirname, '../..');
 const site = resolve(process.env.XWX_SITE_PREVIEW_DIR ?? join(root, 'test-results/site-preview'));
 const policy = JSON.parse(await readFile(join(root, 'public-release-policy.json'), 'utf8'));
+const examples = JSON.parse(await readFile(join(root, 'web/site/dashboard-examples.json'), 'utf8'));
+validateRealExamples(examples);
+const unsafeExample = structuredClone(examples);
+unsafeExample.state.traces[0].request.headers = { authorization: 'private fixture' };
+assert.throws(() => validateRealExamples(unsafeExample), /Private field/);
 const checks = [];
 const errors = [];
 const server = createServer(async (request, response) => {
@@ -50,6 +56,10 @@ try {
     await page.getByRole('heading', { level: 1 }).waitFor();
     assert.match(await page.getByRole('heading', { level: 1 }).textContent(), /让 AI\s*更简单一点/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    const windowsBox = await page.locator('[data-download="windows"]').boundingBox();
+    const macBox = await page.locator('[data-download="mac"]').boundingBox();
+    assert.ok(Math.abs(windowsBox.y - macBox.y) < 1 && macBox.x >= windowsBox.x + windowsBox.width, 'platform downloads stay side by side');
+    assert.equal(await page.locator('#community [data-download]').count(), 0);
     if (process.env.XWX_SITE_TEST_SCREENSHOT_DIR) {
       await mkdir(process.env.XWX_SITE_TEST_SCREENSHOT_DIR, { recursive: true });
       await page.screenshot({ path: join(process.env.XWX_SITE_TEST_SCREENSHOT_DIR, `public-site-hero-${width}.png`), fullPage: false });
@@ -94,11 +104,12 @@ try {
   }
   for (const [platform, file] of [['windows', 'XwX-Deck-windows-x64.exe'], ['mac', 'XwX-Deck-mac-arm64.dmg']]) {
     const hrefs = await page.locator(`[data-download="${platform}"]`).evaluateAll(nodes => nodes.map(node => node.href));
-    assert.equal(hrefs.length, 2);
+    assert.equal(hrefs.length, 1);
     assert.ok(hrefs.every(href => href === 'https://github.com/Damue01/XwX_Deck/releases/latest/download/' + file));
   }
-  await page.getByRole('link', { name: '查看已发布版本' }).getAttribute('href').then(href => assert.equal(href, 'https://github.com/Damue01/XwX_Deck/releases'));
-  checks.push('WE02: Windows and Apple Silicon links point to the verified GitHub latest release');
+  assert.equal(await page.getByRole('link', { name: '前往 GitHub', exact: true }).getAttribute('href'), 'https://github.com/Damue01/XwX_Deck');
+  assert.equal(await page.getByRole('link', { name: '反馈问题', exact: true }).getAttribute('href'), 'https://github.com/Damue01/XwX_Deck/issues');
+  checks.push('WE02: one side-by-side platform download pair uses GitHub latest; the closing section links to the project and issues');
   await page.goto(url + '/configured/index.html', { waitUntil: 'networkidle' });
   const download = page.waitForEvent('download');
   await page.locator('[data-download="windows"]').last().click();
@@ -108,22 +119,31 @@ try {
   await page.getByRole('link', { name: '体验仪表盘' }).click();
   const viewer = await popupEvent;
   await viewer.waitForLoadState('networkidle');
-  assert.equal(await viewer.title(), 'XwX Deck 仪表盘示例');
-  assert.equal(await viewer.locator('.dash-table tbody tr').count(), 2);
-  assert.match(await viewer.locator('.dash-table').innerText(), /整理项目文档/);
+  assert.ok(new URL(viewer.url()).pathname.endsWith('/view.html'));
+  assert.equal(await viewer.title(), 'XwX Deck 仪表盘：真实请求脱敏示例');
+  assert.equal(await viewer.locator('.dash-table tbody tr').count(), 3);
+  assert.match(await viewer.locator('.site-example-label').innerText(), /真实请求，已脱敏/);
   assert.match(await viewer.locator('.dash-table').innerText(), /gpt-6.1-sol/);
   assert.doesNotMatch(await viewer.locator('.dash-table').innerText(), /LIVE/);
-  await viewer.locator('.dash-table tbody tr').filter({ hasText: '整理项目文档' }).click();
-  await viewer.locator('#traceList').waitFor();
-  assert.match(await viewer.locator('#detail').innerText(), /检查项目结构/);
-  await viewer.locator('.env-context-body').waitFor();
-  assert.match(await viewer.locator('.env-context-body').innerText(), /zsh/);
+  if (process.env.XWX_SITE_TEST_SCREENSHOT_DIR) await viewer.screenshot({ path: join(process.env.XWX_SITE_TEST_SCREENSHOT_DIR, 'real-dashboard.png') });
+  for (const session of examples.state.sessions) {
+    const row = viewer.locator('.dash-table tbody tr').filter({ hasText: session.title });
+    assert.equal(Number((await row.locator('[data-col="tokens"]').innerText()).replace(/\D/g, '')), session.totalTokens);
+    await row.click();
+    await viewer.locator('#traceList').waitFor();
+    assert.ok((await viewer.locator('#detail').innerText()).includes(session.firstPrompt));
+    assert.ok((await viewer.locator('#detail').innerText()).includes(examples.state.sessionTraces[session.id][0].response.body.output.find(item => item.type === 'message').content[0].text.slice(0, 30)));
+    if (session.title.includes('天气') && process.env.XWX_SITE_TEST_SCREENSHOT_DIR) await viewer.screenshot({ path: join(process.env.XWX_SITE_TEST_SCREENSHOT_DIR, 'real-weather-request.png') });
+    await viewer.locator('#brandHome').click();
+  }
   await viewer.close();
-  checks.push('WE03: production Viewer opens synthetic titled sessions and renders the current request environment');
+  assert.equal(await readFile(join(site, 'view.html'), 'utf8'), await readFile(join(site, 'viewer.html'), 'utf8'));
+  checks.push('WE03: three reviewed real requests render their original public prompts, replies and usage; view.html and viewer.html agree');
+  checks.push('Privacy: reviewed fixture passes the public-field contract and a credential-bearing fixture is rejected');
   assert.deepEqual(errors, []);
   if (process.env.XWX_SITE_TEST_SCREENSHOT) await page.screenshot({ path: process.env.XWX_SITE_TEST_SCREENSHOT, fullPage: true });
   const report = { passed: true, previewDirectory: 'test-results/site-preview', evidenceLevel: 'P', browser: 'Chrome/Playwright', browserPlugin: 'not available', checks, consoleErrors: errors,
-    scope: 'Local static site and real renderer with synthetic accounts and download fixtures; no deployment, installation or real authorization.' };
+    scope: 'Local static site and production renderer; three sanitized real official upstream requests, synthetic configuration accounts and download fixtures. No credentials are used during browser tests.' };
   if (process.env.XWX_SITE_TEST_REPORT) { await mkdir(resolve(process.env.XWX_SITE_TEST_REPORT, '..'), { recursive: true }); await writeFile(process.env.XWX_SITE_TEST_REPORT, JSON.stringify(report, null, 2) + '\n'); }
   console.log(JSON.stringify(report, null, 2));
 } finally {
