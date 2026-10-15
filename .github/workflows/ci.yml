@@ -106,9 +106,26 @@ jobs:
             test-results/native-target
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
+      - name: Repeat Windows private-file and reset regressions
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($round in 1..3) {
+            node tools/native/run-backend-tests.mjs --suite=credential-private-files-test.mjs --suite=preferences-test.mjs 2>&1 | Tee-Object -FilePath "test-results/windows-private-reset-$round.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
       - name: Run isolated backend tests
         run: npm run test:rust:backend
 
       - name: Verify native WebView interactions
         if: runner.os == 'macOS'
         run: node tools/native/native-test.mjs
+
+      - name: Save Windows regression diagnostics
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-regression-diagnostics
+          path: test-results/windows-*.log
+          if-no-files-found: ignore
