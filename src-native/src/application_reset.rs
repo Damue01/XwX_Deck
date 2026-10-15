@@ -801,6 +801,7 @@ mod tests {
         };
         (root, job)
     }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[test]
     fn archive_resumes_and_rolls_back_exact_bytes() {
         let (root, job) = fixture();
@@ -814,6 +815,7 @@ mod tests {
         );
         fs::remove_dir_all(root).unwrap();
     }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[test]
     fn drift_and_newer_rollback_sources_are_retained() {
         let (root, job) = fixture();
@@ -831,6 +833,7 @@ mod tests {
         );
         fs::remove_dir_all(root).unwrap();
     }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[test]
     fn client_removal_resumes_private_staging_and_preserves_new_sources() {
         let (root, job) = fixture();
@@ -849,6 +852,30 @@ mod tests {
         remove_client_file(path, expected, "fixture").unwrap();
         assert!(!temporary.exists());
         assert!(!directory.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[test]
+    fn unsupported_archive_preserves_original_and_destination() {
+        let (root, job) = fixture();
+        assert!(archive(&job)
+            .unwrap_err()
+            .contains("此平台尚未验证独占归档"));
+        assert_eq!(
+            fs::read_to_string(&job.moves[0].source).unwrap(),
+            "original"
+        );
+        assert!(!job.moves[0].destination.exists());
+        fs::write(&job.moves[0].destination, "existing").unwrap();
+        assert!(exclusive_move(&job.moves[0].source, &job.moves[0].destination).is_err());
+        assert_eq!(
+            fs::read_to_string(&job.moves[0].source).unwrap(),
+            "original"
+        );
+        assert_eq!(
+            fs::read_to_string(&job.moves[0].destination).unwrap(),
+            "existing"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

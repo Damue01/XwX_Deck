@@ -18,6 +18,7 @@ const binary = resolve(env.CARGO_TARGET_DIR, 'debug', process.platform === 'win3
 const npm = script => [process.execPath, [process.env.npm_execpath, 'run', script]];
 if (!process.env.npm_execpath) throw Error('Run this check through npm run check:quality.');
 const manifest = ['--manifest-path', resolve(root, 'src-native/Cargo.toml')];
+const nativeBackendSupported = ['darwin', 'win32'].includes(process.platform);
 const steps = [
   ['frontend compile and repository checks', ...npm('compile')],
   ['existing behavior and shared contracts', ...npm('test:built')],
@@ -26,8 +27,9 @@ const steps = [
   ['Rust static checks', cargo, ['clippy', '--locked', ...manifest, '--all-targets', '--', '-D', 'warnings']],
   ['Rust unit tests', cargo, ['test', '--locked', ...manifest]],
   ['current native test executable', cargo, ['build', '--locked', ...manifest]],
-  ['isolated native requests and lifecycle', process.execPath, ['tools/native/run-backend-tests.mjs']],
+  ...(nativeBackendSupported ? [['isolated native requests and lifecycle', process.execPath, ['tools/native/run-backend-tests.mjs']]] : []),
 ];
+if (!nativeBackendSupported) console.log('SKIP desktop backend acceptance: this public release targets Windows and macOS; source, Rust and frontend checks still run.');
 const results = [];
 for (const [name, command, args] of steps) {
   console.log(`\nQuality check: ${name}`);
@@ -41,6 +43,6 @@ const built = results.some(row => row.name === 'current native test executable' 
 const binarySha256 = built ? createHash('sha256').update(await readFile(binary)).digest('hex') : null;
 const passed = sourceUnchanged && results.length === steps.length && results.every(row => row.passed);
 await mkdir(resolve(root, 'test-results'), { recursive: true });
-await writeFile(resolve(root, 'test-results/quality-summary.json'), JSON.stringify({ passed, ...baseline, sourceUnchanged, binarySha256, results,
+await writeFile(resolve(root, 'test-results/quality-summary.json'), JSON.stringify({ passed, ...baseline, sourceUnchanged, binarySha256, nativeBackendSupported, results,
   scope: 'Current source, isolated synthetic upstreams; GUI, real authorization, billing statements and other platforms are separate acceptance gates.' }, null, 2) + '\n');
 if (!passed) process.exitCode = 1;

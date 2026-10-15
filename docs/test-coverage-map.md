@@ -239,4 +239,7 @@
 新增或调整断言时，应补充对应编号。
 本表不会自动创建验收项目或通过结果。
 
-当前没有未关联编号的已声明入口。
+| 脚本 | 执行入口 |
+| --- | --- |
+| [public-binary-boundary-test.mjs](../tools/native/public-binary-boundary-test.mjs) | 后端默认入口 |
+| [public-history-test.mjs](../tools/tests/public-history-test.mjs) | test:built 入口 |

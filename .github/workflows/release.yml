@@ -100,6 +100,9 @@ jobs:
       - name: Build Windows portable package
         run: npm run build:win
 
+      - name: Verify Windows Rust unit tests
+        run: cargo test --locked --features manual-acceptance --manifest-path src-native/Cargo.toml
+
       - name: Save compiled Rust dependencies
         if: steps.native-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -177,6 +180,9 @@ jobs:
 
       - name: Build unsigned macOS arm64 package
         run: npm run build:mac:arm64
+
+      - name: Verify macOS Rust unit tests
+        run: cargo test --locked --features manual-acceptance --manifest-path src-native/Cargo.toml
 
       - name: Save compiled Rust dependencies
         if: steps.native-cache.outputs.cache-hit != 'true'
