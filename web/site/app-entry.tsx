@@ -1,3 +1,4 @@
+try { localStorage.setItem('xwx-deck.sidebar', 'collapsed'); } catch { /* usable without storage */ }
 import { createPreviewApi } from '../../src/renderer/bridge/previewApi';
 import { changeLanguage, isLanguage } from '../../src/renderer/lib/i18n';
 
@@ -275,3 +276,8 @@ addEventListener('hashchange', () => go(location.hash.slice(1)));
 // Parent page can switch views without reloading the frame.
 addEventListener('message', event => { if (event.source === window.parent && event.origin === location.origin && typeof event.data?.deckPage === 'string') go(event.data.deckPage); });
 import('../../src/renderer/main').then(() => { const p = location.hash.slice(1); if (p) setTimeout(() => go(p), 60); });
+
+api.openDashboard = async () => {
+  if (window.parent !== window) window.parent.postMessage({ deckDashboard: true }, location.origin);
+  else window.open(new URL('./view.html', location.href).href, '_blank', 'noopener');
+};

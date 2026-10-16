@@ -1,4 +1,5 @@
 @import "tailwindcss" source(none);
+@import "./typography.css";
 @source "./";
 
 /* The desktop UI only needs the Latin mono glyphs for paths, identifiers,
@@ -39,7 +40,7 @@
   --shadow-soft: 0 1px 2px rgba(40,47,54,.05), 0 6px 18px rgba(40,47,54,.045);
   --shadow-raise: 0 1px 2px rgba(40,47,54,.06), 0 12px 30px rgba(40,47,54,.09);
   --shadow-key: 0 1px 2px rgba(23,24,26,.10), 0 14px 34px rgba(23,24,26,.14);
-  --sans: "Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --sans: "Urbanist","Noto Sans SC",system-ui,sans-serif;
   --mono: "Geist Mono Variable","Cascadia Mono","SFMono-Regular",Consolas,"Microsoft YaHei UI",monospace;
   --ease: cubic-bezier(.22,1,.36,1);
   --dur-micro: 120ms;
@@ -132,9 +133,9 @@ html[data-theme="night"] {
   --animate-toast-success-even: toast-success-even 0.32s cubic-bezier(0.5, 1, 0.89, 1);
   --animate-toast-error-odd: toast-error-odd 0.28s cubic-bezier(0.5, 1, 0.89, 1);
   --animate-toast-error-even: toast-error-even 0.28s cubic-bezier(0.5, 1, 0.89, 1);
-  --font-heading: "Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;
+  --font-heading: "Urbanist","Noto Sans SC",system-ui,sans-serif;
   --font-mono: "Geist Mono Variable","Cascadia Mono","SFMono-Regular",Consolas,"Microsoft YaHei UI",monospace;
-  --font-sans: "Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --font-sans: "Urbanist","Noto Sans SC",system-ui,sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -1934,3 +1935,10 @@ html[data-theme="night"] .tour-backdrop-full { background: rgba(0,0,0,.7); }
 .routing-service-row > .provider-menu-trigger { grid-column:5; grid-row:1; }
 .routing-role-row { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:36px; color:var(--quiet); font-size:12px; }
 .routing-role-trigger { min-height:32px; font-size:12px; }
+
+/* Balanced typography shared with the standalone dashboard. */
+body { font-weight: 400; }
+:is(h1, h2, h3, h4) { font-weight: 550; }
+:is(.btn, .txt-action, .src-add, .model-client-name, .prov-name, .provider-name, .trace-row-label) { font-weight: 500; }
+.src-t { font-weight: 400; }
+.src-t.on { font-weight: 550; }

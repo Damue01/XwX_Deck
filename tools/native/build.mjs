@@ -52,6 +52,8 @@ const metadataRun=spawnSync(cargo,['metadata','--locked','--format-version','1',
 if(metadataRun.status) throw new Error(metadataRun.stderr);
 const metadata=JSON.parse(metadataRun.stdout);const resolved=new Set(metadata.resolve.nodes.map(n=>n.id));const licenseTexts=await Promise.all(['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','docs/licenses/magpie-MIT.txt','docs/licenses/magpie-community-MIT.txt'].map(name=>readFile(resolve(root,name),'utf8')));
 const notices=[];
+notices.push('Urbanist and Noto Sans SC — SIL Open Font License 1.1');
+for (const name of ['urbanist-OFL.txt', 'notosanssc-OFL.txt']) licenseTexts.push('\n===== ' + name + ' =====\n' + await readFile(resolve(root, 'assets/fonts', name), 'utf8'));
 for(const pkg of metadata.packages.filter(p=>resolved.has(p.id)&&p.source)){
   notices.push(`${pkg.name} ${pkg.version} — ${pkg.license??'see license file'} — ${pkg.repository??''}`);
   const directory=resolve(pkg.manifest_path,'..');const names=await readdir(directory);
