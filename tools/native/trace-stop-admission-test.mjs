@@ -57,7 +57,7 @@ try {
   for(const reader of [first,second])while(!(await reader.read()).done){}
   await wait(async()=> (await rpc('getState')).activeRequests===0);
   const completed=await rpc('toggleTracing',false);assert.equal(completed.tracingEnabled,false);
-  assert.doesNotMatch(await readFile(join(root,'codex/config.toml'),'utf8'),/127\.0\.0\.1:452(?:3[3-9]|4[0-2])/);
+  assert.ok(!(await readFile(join(root,'codex/config.toml'),'utf8')).includes(new URL(state.localBaseUrl).host));
   assert.ok(completed.revision>state.revision);assert.equal((await rpc('getState')).revision,completed.revision);
   assert.equal((await rpc('getCodexConfig')).activeBaseUrl,baseUrl);
   await assert.rejects(readFile(join(root,'gateway-recovery.json')),{code:'ENOENT'});
@@ -67,7 +67,7 @@ try {
   const cancelled=await request();await cancelled.cancel();await wait(async()=>(await rpc('getState')).activeRequests===0);
   pass('client body cancellation releases the active request lease');
   const liveConfig=await readFile(join(root,'codex/config.toml'),'utf8');
-  const external = liveConfig.replace(/127\.0\.0\.1:452(?:3[3-9]|4[0-2])/, '127.0.0.1:55001');
+  const external = liveConfig.replace(new URL(state.localBaseUrl).host, '127.0.0.1:1');
   assert.notEqual(external, liveConfig);
   await writeFile(join(root,'codex/config.toml'), external);
   const conflict=await call('toggleTracing',false);assert.equal(conflict.ok,false);assert.match(conflict.error,/外部.*变化/);
