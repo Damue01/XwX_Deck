@@ -1616,7 +1616,13 @@ impl Pilot {
         claude: Option<Provider>,
     ) -> Result<()> {
         let mut listener = None;
-        for port in 45233..=45242 {
+        // Isolated acceptance must never receive requests from normal clients.
+        let ports = if self.isolated {
+            vec![0]
+        } else {
+            (45233..=45242).collect()
+        };
+        for port in ports {
             if let Ok(bound) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
                 listener = Some(bound);
                 break;

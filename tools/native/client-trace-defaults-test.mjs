@@ -47,6 +47,7 @@ try {
   assert.equal(enabled(await rpc('getState'),'codex'),true);
   assert.deepEqual(await rpc('getModelClients'),['claude','codex']);
   state=await rpc('toggleTracing',true);assert.equal(state.tracingEnabled,true);
+  assert.ok(Number(new URL(state.localBaseUrl).port)>0);assert.ok(!Array.from({length:10},(_,i)=>45233+i).includes(Number(new URL(state.localBaseUrl).port)),'isolated Gateway must not bind normal client ports');
   const managed=await readFile(join(root,'codex/config.toml'),'utf8');assert.match(managed,/model_provider = "external_fixture"/);assert.match(managed,/inactive\.invalid/);
   await fetch(state.localBaseUrl+'/v1/responses',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer client-only-key'},body:JSON.stringify({model:'client-model',input:'isolated external route'})}).then(r=>r.json());
   assert.equal(calls.at(-1).path,'/v1/responses');assert.equal(calls.at(-1).auth,'Bearer client-only-key');
