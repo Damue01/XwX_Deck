@@ -7,10 +7,12 @@ import { resolve } from 'node:path';
 import { rawTextPlugin } from '../build/raw-text-plugin.mjs';
 import { validateRealExamples } from './real-example-contract.mjs';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 const root = resolve(import.meta.dirname, '../..');
 const output = resolve(process.env.XWX_SITE_OUTPUT_DIR ?? resolve(root, 'test-results/site-preview'));
 assert.ok(output.startsWith(resolve(root, 'test-results') + '/'), 'Site output must stay in test-results');
+const assetVersion = async name => createHash('sha256').update(await readFile(resolve(output, name))).digest('hex').slice(0, 12);
 const examples = JSON.parse(await readFile(resolve(root, 'web/site/dashboard-examples.json'), 'utf8'));
 validateRealExamples(examples);
 const sampleTraces = examples.state.traces;
@@ -63,8 +65,8 @@ await esbuild.build({
 await writeFile(resolve(output, 'app.html'), `<!doctype html>
 <html lang="zh-CN" data-theme="day">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>XwX Deck 示例预览</title>
-<link rel="stylesheet" href="./app.css"></head>
-<body><div id="root"></div><script src="./app-preview.js"></script></body></html>
+<link rel="stylesheet" href="./app.css?v=${await assetVersion('app.css')}"></head>
+<body><div id="root"></div><script src="./app-preview.js?v=${await assetVersion('app-preview.js')}"></script></body></html>
 `);
 // Curated real requests are reviewed and sanitized before entering the repo.
 // This offline build never reads local logs, accounts or credentials.
@@ -81,6 +83,14 @@ const capturedDate = new Date(examples.provenance.capturedAt).toLocaleDateString
 viewer = viewer.replace('<div class="top-actions">', '<div class="top-actions"><span class="site-example-label" style="font-size:12px;color:var(--muted)">真实请求，已脱敏　采集于 '+capturedDate+'</span>');
 await writeFile(resolve(output, 'view.html'), viewer);
 await writeFile(resolve(output, 'viewer.html'), viewer); // Keep existing preview links working.
+// Keep cached entry documents from combining old demo scripts with a new site.
+let indexHtml = await readFile(resolve(output, 'index.html'), 'utf8');
+for (const name of ['fonts.css', 'site.css', 'hero-field.js']) {
+  indexHtml = indexHtml.replaceAll('./' + name, './' + name + '?v=' + await assetVersion(name));
+}
+indexHtml = indexHtml.replace('app.html?trace-live=1', 'app.html?v=' + await assetVersion('app.html') + '&amp;trace-live=1');
+indexHtml = indexHtml.replace("'view.html'", "'view.html?v=" + await assetVersion('view.html') + "'");
+await writeFile(resolve(output, 'index.html'), indexHtml);
 await writeFile(resolve(output, 'CNAME'), 'xwxdeck.com\n');
 await writeFile(resolve(output, '.nojekyll'), '');
 const bytes = (await readFile(resolve(output, 'app-preview.js'))).length + (await readFile(resolve(output, 'app.css'))).length;
