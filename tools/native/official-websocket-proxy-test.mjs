@@ -55,11 +55,11 @@ try {
   assert.equal(await readFile(join(root, 'codex/auth.json'), 'utf8'), auth);
   console.log('PASS official WebSocket uses the configured HTTP proxy, preserves path/query/refreshed auth, and restores direct configuration');
   invalid = true; await rpc('toggleTracing', true);
-  const rejected = new WebSocket(url);
+  const rejected = new WebSocket((await rpc('getState')).localBaseUrl.replace('http:', 'ws:') + '/responses?proxy=1', {handshakeTimeout:10000});
   const status = await new Promise((resolve, reject) => {
     rejected.once('open', () => reject(Error('Invalid upstream handshake accepted')));
     rejected.once('unexpected-response', (_req, res) => { res.resume(); rejected.terminate(); resolve(res.statusCode); });
-    rejected.on('error', () => {});
+    rejected.once('error', reject);
   });
   assert.equal(status, 502); await rpc('toggleTracing', false);
   console.log('PASS invalid upstream WebSocket acceptance key is rejected before client upgrade');
