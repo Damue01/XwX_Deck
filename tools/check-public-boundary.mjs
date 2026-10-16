@@ -2,6 +2,7 @@ import { readFile, readdir, lstat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import ts from 'typescript';
+import { createHash } from 'node:crypto';
 import { inspectPublicHistory } from './checks/public-history.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -24,8 +25,25 @@ const production = /^(?:src-native\/src|src\/renderer|src\/shared|web\/site)\//u
 const artifacts = ['dist/renderer', 'test-results/native-frontend', 'test-results/native-assets', 'test-results/site-preview'];
 let sourceFiles = 0;
 let artifactFiles = 0;
+// Font compression can coincidentally contain a forbidden short name in base64.
+// Only omit exact bundled WOFF2 bytes; arbitrary data URLs still get scanned.
+const fontDigests = new Set();
+for (const directory of ['assets/fonts', 'node_modules/@fontsource-variable/geist-mono/files']) {
+  if (!(await exists(directory))?.isDirectory()) continue;
+  for (const name of await readdir(path.join(root, directory))) if (name.endsWith('.woff2')) {
+    const bytes = await readFile(path.join(root, directory, name));
+    if (bytes.toString('ascii', 0, 4) === 'wOF2') fontDigests.add(createHash('sha256').update(bytes).digest('hex'));
+  }
+}
+function withoutBundledFonts(content) {
+  return content.replace(/data:font\/woff2;base64,([A-Za-z0-9+/=]+)/gu, (url, encoded) => {
+    const bytes = Buffer.from(encoded, 'base64');
+    return fontDigests.has(createHash('sha256').update(bytes).digest('hex')) ? 'bundled-woff2-font' : url;
+  });
+}
 
 function rejectedPatterns(content, relative, generated) {
+  content = withoutBundledFonts(content);
   if (!generated || !/\.[cm]?js$/iu.test(relative)) return patterns.filter(pattern => pattern.test(content));
   // Minifiers may use any short local binding. Product strings and public
   // property names retain meaning, including escaped and template literals.
@@ -46,6 +64,13 @@ function rejectedPatterns(content, relative, generated) {
   visit(source);
   return patterns.filter(pattern => (!shortPatterns.has(pattern) && pattern.test(content)) || literalTexts.some(text => pattern.test(text)));
 }
+
+// Exact known font bytes may be skipped; unknown payloads and surrounding text may not.
+const fontFixturePath = 'assets/fonts/' + (await readdir(path.join(root, 'assets/fonts'))).find(name => name.endsWith('.woff2'));
+const fontFixture = 'data:font/woff2;base64,' + (await readFile(path.join(root, fontFixturePath))).toString('base64');
+check(withoutBundledFonts(fontFixture) === 'bundled-woff2-font', 'bundled fonts must match their actual bytes');
+check(withoutBundledFonts('data:font/woff2;base64,eDM=') === 'data:font/woff2;base64,eDM=', 'unknown data payloads must remain inspected');
+check(rejectedPatterns(fontFixture + ' ' + shortName, 'fixture.css', true).length > 0, 'text around bundled fonts must remain inspected');
 
 // Exercise the generated-code exception without writing fixtures into a build.
 const generatedFixture = 'function ' + shortName + '(e){return e.visibility}const ' + shortName.toUpperCase() + '=10;';

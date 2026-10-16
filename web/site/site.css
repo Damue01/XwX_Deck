@@ -1,0 +1,108 @@
+/* Confirmed website layout, product preview and support marks. */
+.hero { position: relative; isolation: isolate; min-height: clamp(640px, 88svh, 820px); overflow: clip; }
+.hero-field { position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: var(--field-opacity, .44); mask-image: linear-gradient(transparent 10%, #000 28%, #000 86%, transparent 100%); -webkit-mask-image: linear-gradient(transparent 10%, #000 28%, #000 86%, transparent 100%); }
+.hero-field .field { display: block; width: 100%; height: 100%; mask-image: radial-gradient(ellipse 44% 30% at 50% 44%, transparent 48%, #000 100%); -webkit-mask-image: radial-gradient(ellipse 44% 30% at 50% 44%, transparent 48%, #000 100%); }
+body[data-field-motion='off'] .hero-field { visibility: hidden; }
+.hero h1 { font-family: var(--hero-font, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei UI', sans-serif); font-size: clamp(48px, 5.6vw, 76px); font-weight: var(--hero-weight, 500); line-height: 1.24; letter-spacing: -.035em; }
+.hero-details { width: 100%; margin-top: 0; }
+.hero .actions { grid-template-columns: repeat(2, minmax(0, 150px)); gap: 24px; margin-top: 52px; }
+.hero .btn.large { position: relative; height: var(--download-height, 38px); min-height: var(--download-height, 38px); padding: 0 14px; border-radius: 8px; gap: 8px; font: 400 13px/1 var(--hero-font, var(--sans)); white-space: nowrap; }
+.hero .btn::after { content: ''; position: absolute; inset: -4px 0; }
+.hero .btn svg { width: 15px; height: 15px; flex: none; }
+body[data-download-style='outline'] .hero .btn { background: var(--paper); color: var(--ink); border-color: #B9BDC1; }
+body[data-download-style='outline'] .hero .btn:hover { background: var(--sunk); border-color: var(--ink); }
+.hero .dl-msg:not(:empty) { margin-top: 20px; }
+.safety-layout { grid-template-columns: 1fr; gap: 56px; }
+.safety-layout > .title, #support > .wrap > .title { text-align: center; max-width: none; }
+.safety { width: min(100%, 880px); margin-inline: auto; column-gap: 72px; }
+.community .actions { grid-template-columns: repeat(4, minmax(0, 150px)); width: min(100%, 672px); gap: 24px; }
+.community-link { position: relative; min-height: var(--download-height, 38px); padding: 0 14px; border-radius: 8px; gap: 8px; font: 400 13px/1.4 var(--hero-font, var(--sans)); }
+.community-link::after { content: ''; position: absolute; inset: -4px 0; }
+.community-link svg { width: 15px; height: 15px; }
+@media (max-width: 1024px) {
+  .community .actions { grid-template-columns: repeat(2, minmax(0, 150px)); width: min(100%, 324px); }
+}
+@media (max-width: 760px) {
+  .hero { min-height: max(600px, 86svh); }
+  .hero h1 { font-size: clamp(44px, 8vw, 60px); line-height: 1.28; }
+  .hero .actions { grid-template-columns: repeat(2, minmax(0, 148px)); margin-top: 44px; gap: 20px; }
+  .hero .btn.large { padding-inline: 12px; font-size: 12px; gap: 7px; }
+  .hero-field .field { mask-image: radial-gradient(ellipse 55% 28% at 50% 42%, transparent 50%, #000 100%); -webkit-mask-image: radial-gradient(ellipse 55% 28% at 50% 42%, transparent 50%, #000 100%); }
+  .seg { display: grid; grid-template-columns: repeat(2, 1fr); }
+  .seg button { min-height: 38px; }
+  .safety { column-gap: 36px; }
+  .safety-layout { gap: 40px; }
+  .community .actions { gap: 20px; }
+  .community-link { white-space: nowrap; padding-inline: 10px; font-size: 12px; gap: 7px; }
+}
+@media (max-width: 380px) {
+  .hero .btn.large { padding-inline: 8px; font-size: 11px; gap: 6px; }
+  .hero .btn svg { width: 14px; height: 14px; }
+}
+
+/* Typography controls affect the landing page, never the embedded product UI. */
+body { font-weight: var(--body-weight, 400); letter-spacing: var(--body-tracking, 0); line-height: var(--body-leading, 1.7); }
+.hero h1 { font-size: clamp(calc(48px * var(--hero-scale, 1)), calc(5.6vw * var(--hero-scale, 1)), calc(76px * var(--hero-scale, 1))); font-weight: var(--hero-weight, 500); letter-spacing: var(--hero-tracking, -.035em); line-height: var(--hero-leading, 1.24); }
+.title h2 { font-size: clamp(calc(30px * var(--section-scale, 1)), calc(3vw * var(--section-scale, 1)), calc(42px * var(--section-scale, 1))); font-weight: var(--section-weight, 660); letter-spacing: var(--section-tracking, -.035em); line-height: var(--section-leading, 1.3); }
+.safety h3 { font-size: calc(17px * var(--section-scale, 1)); font-weight: var(--section-weight, 640); letter-spacing: var(--section-tracking, 0); line-height: var(--section-leading, 1.5); }
+.row h3 { font-size: calc(15px * var(--section-scale, 1)); font-weight: var(--section-weight, 650); letter-spacing: var(--section-tracking, 0); line-height: var(--section-leading, 1.5); }
+.safety p, .track li { font-size: calc(14px * var(--body-scale, 1)); font-weight: var(--body-weight, 400); line-height: var(--body-leading, 1.7); }
+.feature-copy { font-family: var(--sans); letter-spacing: var(--body-tracking, 0); font-size: calc(16px * var(--body-scale, 1)); font-weight: var(--body-weight, 400); line-height: var(--body-leading, 1.7); }
+footer { font-size: calc(13px * var(--body-scale, 1)); }
+nav > a:not(.btn) { font-size: calc(14px * var(--control-scale, 1)); }
+.brand { font-size: calc(15px * var(--control-scale, 1)); }
+.brand, nav > a, .seg button, .hero .btn.large, .community-link { font-weight: var(--control-weight, 400); letter-spacing: var(--control-tracking, 0); line-height: var(--control-leading, 1.4); }
+.seg button { font-size: calc(14px * var(--control-scale, 1)); }
+.hero .btn.large, .community-link { font-size: calc(13px * var(--control-scale, 1)); }
+.hero .btn.large { height: auto; padding-block: 8px; }
+body[data-font-mode='original'] .safety h3 { font-weight: 640; letter-spacing: normal; line-height: 1.5; }
+body[data-font-mode='original'] .row h3 { font-weight: 650; letter-spacing: normal; line-height: 1.7; }
+body[data-font-mode='original'] .track li { line-height: 1.5; }
+body[data-font-mode='original'] .brand { font-weight: 650; letter-spacing: -.01em; line-height: 1.7; }
+body[data-font-mode='original'] .seg button { font-weight: 500; line-height: 1; }
+
+/* Accepted footer directions, with the previous button version available for comparison. */
+.community-copy { margin: 24px 0 0; font-size: calc(17px * var(--body-scale, 1)); color: var(--graphite); font-weight: var(--body-weight, 400); line-height: var(--body-leading, 1.7); }
+body[data-footer-layout='original'] .community-copy { display: none; }
+body:not([data-footer-layout='original']) .community { padding-top: 136px; padding-bottom: 92px; }
+body:not([data-footer-layout='original']) .community-layout { gap: 40px; }
+body:not([data-footer-layout='original']) .community .title h2 { font-size: clamp(32px, 3.6vw, calc(44px * var(--section-scale, 1))); }
+body:not([data-footer-layout='original']) .community .actions { display: flex; flex-wrap: wrap; justify-content: center; width: auto; gap: 16px 40px; }
+body:not([data-footer-layout='original']) .community-link { min-height: 36px; padding: 6px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-family: var(--sans); font-size: calc(15px * var(--control-scale, 1)); }
+body:not([data-footer-layout='original']) .community-link svg { display: none; }
+body:not([data-footer-layout='original']) .community-link::after { display: none; }
+body:not([data-footer-layout='original']) .community-link:hover { background: transparent; text-decoration: underline; text-underline-offset: 5px; }
+
+@media (max-width: 760px) {
+  .hero h1 { font-size: clamp(calc(44px * var(--hero-scale, 1)), calc(8vw * var(--hero-scale, 1)), calc(60px * var(--hero-scale, 1))); }
+  body[data-font-mode='original'] .hero h1 { line-height: 1.28; }
+  .hero .btn.large { font-size: calc(12px * var(--control-scale, 1)); }
+  .feature-copy { font-size: calc(15px * var(--body-scale, 1)); }
+  body:not([data-footer-layout='original']) .community { padding-top: 96px; padding-bottom: 64px; }
+  body:not([data-footer-layout='original']) .community .title h2 { font-size: calc(30px * var(--section-scale, 1)); }
+  body:not([data-footer-layout='original']) .community .actions { gap: 12px 28px; }
+}
+
+/* Approved typography and button settings, saved 2026-10-17. */
+:root {
+  --sans: "Urbanist", "Noto Sans SC", system-ui, sans-serif;
+  --hero-font: "Urbanist", "Noto Sans SC", system-ui, sans-serif;
+  --download-height: 34px;
+  --field-opacity: .65;
+  --hero-weight: 300;
+  --hero-scale: 0.98;
+  --hero-tracking: 0.025em;
+  --hero-leading: 1.4;
+  --section-weight: 300;
+  --section-scale: 1.0;
+  --section-tracking: -0.035em;
+  --section-leading: 1.3;
+  --body-weight: 300;
+  --body-scale: 1.0;
+  --body-tracking: 0em;
+  --body-leading: 1.7;
+  --control-weight: 400;
+  --control-scale: 1.0;
+  --control-tracking: 0em;
+  --control-leading: 1.4;
+}

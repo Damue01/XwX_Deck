@@ -22,7 +22,7 @@ export const WEBVIEW_TOKEN_CSS = `:root {
   --shadow-soft: 0 1px 2px rgba(40,47,54,.05), 0 6px 18px rgba(40,47,54,.045);
   --shadow-raise: 0 1px 2px rgba(40,47,54,.06), 0 12px 30px rgba(40,47,54,.09);
   --shadow-key: 0 1px 2px rgba(23,24,26,.10), 0 14px 34px rgba(23,24,26,.14);
-  --sans: "Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --sans: "Urbanist","Noto Sans SC",system-ui,sans-serif;
   --mono: "Cascadia Mono","SFMono-Regular",Consolas,"Microsoft YaHei UI",monospace;
   --ease: cubic-bezier(.22,1,.36,1);
   --z-menu: 30;

@@ -9,6 +9,7 @@ import { webviewCommonScript } from './common';
 import { VIEWER_TOKEN_ALIASES, WEBVIEW_TOKEN_CSS, WEBVIEW_NIGHT_TOKEN_CSS } from './tokens';
 import xwxIconSvg from '../../../assets/icon.svg?raw';
 import viewerTranslations from './locales.json';
+import bundledTypography from '../typography.css?raw';
 
 export interface TapViewerState {
   readonly theme?: 'day' | 'night' | 'system';
@@ -59,6 +60,7 @@ export function renderTapViewerHtml(input: {
 ${WEBVIEW_TOKEN_CSS}
 ${WEBVIEW_NIGHT_TOKEN_CSS}
 ${VIEWER_TOKEN_ALIASES}
+${bundledTypography}
 /* 底色分层（fill-tier）约定：卡片层级靠底色白↔灰↔白交替表达，边框只给最外层容器。
    T0 外框内壁/T2 叶子 = var(--panel) 白；T1 分组面 = var(--soft) 灰；页面底 = var(--bg)。
    往内一律不再描边。分隔默认靠留白；仅相邻同底色文本块用 var(--line-faint) 补极淡线。

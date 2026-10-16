@@ -52,24 +52,24 @@ try {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(url, { waitUntil: 'networkidle' });
     assert.equal(page.url(), url + '/');
-    assert.equal(await page.title(), 'XwX Deck：让 AI 更简单一点');
+    assert.equal(await page.title(), 'XwX Deck：让 AI 工具更顺手');
     await page.getByRole('heading', { level: 1 }).waitFor();
-    assert.match(await page.getByRole('heading', { level: 1 }).textContent(), /让 AI\s*更简单一点/);
+    assert.match(await page.getByRole('heading', { level: 1 }).textContent(), /让 AI 工具\s*更顺手/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     const windowsBox = await page.locator('[data-download="windows"]').boundingBox();
     const macBox = await page.locator('[data-download="mac"]').boundingBox();
-    assert.ok(Math.abs(windowsBox.y - macBox.y) < 1 && macBox.x >= windowsBox.x + windowsBox.width, 'platform downloads stay side by side');
+    assert.ok(Math.abs(windowsBox.y - macBox.y) < 1 && windowsBox.x >= macBox.x + macBox.width, 'platform downloads stay side by side');
     assert.equal(await page.locator('#community [data-download]').count(), 0);
     if (process.env.XWX_SITE_TEST_SCREENSHOT_DIR) {
       await mkdir(process.env.XWX_SITE_TEST_SCREENSHOT_DIR, { recursive: true });
       await page.screenshot({ path: join(process.env.XWX_SITE_TEST_SCREENSHOT_DIR, `public-site-hero-${width}.png`), fullPage: false });
     }
     await page.getByRole('tab', { name: '切换模型服务' }).click();
-    const frame = page.frameLocator('iframe');
+    const frame = page.frameLocator('#app-demo');
     await frame.locator('#page-models.current').waitFor();
-    assert.match(await frame.locator('#page-models').innerText(), /智谱 GLM/);
-    assert.match(await frame.locator('#page-models').innerText(), /glm-5\.3/);
-    const publicState = await (await page.locator('iframe').elementHandle()).contentFrame();
+    assert.match(await frame.locator('#page-models').innerText(), /ChatGPT 官方登录/);
+    assert.match(await frame.locator('#page-models').innerText(), /gpt-6\.1-sol/);
+    const publicState = await (await page.locator('#app-demo').elementHandle()).contentFrame();
     const boundary = await publicState.evaluate(async methods => {
       const api = window.xwxDeck;
       const providers = await api.getProviders();
@@ -87,7 +87,7 @@ try {
     assert.equal(boundary.solContext, 500000);
     assert.deepEqual(boundary.removedMethods, []);
     await page.getByRole('tab', { name: '集中管理服务' }).click();
-    await page.locator('iframe').waitFor();
+    await page.locator('#app-demo').waitFor();
     await frame.locator('#page-settings.current').waitFor();
     assert.equal(await page.locator('#tab-settings').getAttribute('aria-selected'), 'true');
     assert.equal(await frame.locator('#page-settings h1').innerText(), '设置');
@@ -107,21 +107,26 @@ try {
     assert.equal(hrefs.length, 1);
     assert.ok(hrefs.every(href => href === 'https://github.com/Damue01/XwX_Deck/releases/latest/download/' + file));
   }
-  assert.equal(await page.getByRole('link', { name: '前往 GitHub', exact: true }).getAttribute('href'), 'https://github.com/Damue01/XwX_Deck');
-  assert.equal(await page.getByRole('link', { name: '反馈问题', exact: true }).getAttribute('href'), 'https://github.com/Damue01/XwX_Deck/issues');
-  checks.push('WE02: one side-by-side platform download pair uses GitHub latest; the closing section links to the project and issues');
+  assert.equal(await page.getByRole('link', { name: 'GitHub', exact: true }).getAttribute('href'), 'https://github.com/Damue01/XwX_Deck');
+  assert.equal(await page.getByRole('link', { name: '反馈问题', exact: true }).count(), 0);
+  assert.equal(await page.locator('header nav a').count(), 1);
+  assert.equal(await page.locator('.preview-tools').count(), 0);
+  assert.equal(await page.locator('.community-copy').innerText(), '感谢您的使用');
+  assert.match(await page.locator('body').evaluate(el => getComputedStyle(el).fontFamily), /Urbanist.*Noto Sans SC/);
+  checks.push('WE02: one side-by-side platform download pair uses GitHub latest; the closing section has three community text links');
   await page.goto(url + '/configured/index.html', { waitUntil: 'networkidle' });
   const download = page.waitForEvent('download');
   await page.locator('[data-download="windows"]').last().click();
   assert.equal((await download).suggestedFilename(), 'fixture.exe');
   checks.push('WE02: configured download resolves to the selected artifact fixture');
-  const popupEvent = page.waitForEvent('popup');
-  await page.getByRole('link', { name: '体验仪表盘' }).click();
-  const viewer = await popupEvent;
+  await page.getByRole('tab', { name: '查看仪表盘', exact: true }).click();
+  await page.frameLocator('#dashboard-demo').locator('.dash-table').waitFor();
+  const viewer = await browser.newPage();
+  await viewer.goto(url + '/view.html', { waitUntil: 'networkidle' });
   await viewer.waitForLoadState('networkidle');
   assert.ok(new URL(viewer.url()).pathname.endsWith('/view.html'));
   assert.equal(await viewer.title(), 'XwX Deck 仪表盘：真实请求脱敏示例');
-  assert.equal(await viewer.locator('.dash-table tbody tr').count(), 3);
+  assert.equal(await viewer.locator('.dash-table tbody tr').count(), examples.state.sessions.length);
   assert.match(await viewer.locator('.site-example-label').innerText(), /真实请求，已脱敏/);
   assert.match(await viewer.locator('.dash-table').innerText(), /gpt-6.1-sol/);
   assert.doesNotMatch(await viewer.locator('.dash-table').innerText(), /LIVE/);
@@ -131,19 +136,21 @@ try {
     assert.equal(Number((await row.locator('[data-col="tokens"]').innerText()).replace(/\D/g, '')), session.totalTokens);
     await row.click();
     await viewer.locator('#traceList').waitFor();
-    assert.ok((await viewer.locator('#detail').innerText()).includes(session.firstPrompt));
-    assert.ok((await viewer.locator('#detail').innerText()).includes(examples.state.sessionTraces[session.id][0].response.body.output.find(item => item.type === 'message').content[0].text.slice(0, 30)));
+    const last = examples.state.traces.filter(trace => trace.sessionId === session.id).at(-1);
+    await viewer.locator('#traceList [data-id="' + last.id + '"]').click();
+    assert.equal(await viewer.locator('#traceList [aria-pressed="true"]').count(), 1);
+    assert.match(await viewer.locator('#detail').innerText(), new RegExp(last.usage.totalTokens.toLocaleString('en-US')));
     if (session.title.includes('天气') && process.env.XWX_SITE_TEST_SCREENSHOT_DIR) await viewer.screenshot({ path: join(process.env.XWX_SITE_TEST_SCREENSHOT_DIR, 'real-weather-request.png') });
     await viewer.locator('#brandHome').click();
   }
   await viewer.close();
   assert.equal(await readFile(join(site, 'view.html'), 'utf8'), await readFile(join(site, 'viewer.html'), 'utf8'));
-  checks.push('WE03: three reviewed real requests render their original public prompts, replies and usage; view.html and viewer.html agree');
+  checks.push('WE03: the reviewed weather conversation renders all requests and preserved usage; view.html and viewer.html agree');
   checks.push('Privacy: reviewed fixture passes the public-field contract and a credential-bearing fixture is rejected');
   assert.deepEqual(errors, []);
   if (process.env.XWX_SITE_TEST_SCREENSHOT) await page.screenshot({ path: process.env.XWX_SITE_TEST_SCREENSHOT, fullPage: true });
   const report = { passed: true, previewDirectory: 'test-results/site-preview', evidenceLevel: 'P', browser: 'Chrome/Playwright', browserPlugin: 'not available', checks, consoleErrors: errors,
-    scope: 'Local static site and production renderer; three sanitized real official upstream requests, synthetic configuration accounts and download fixtures. No credentials are used during browser tests.' };
+    scope: 'Local static site and production renderer; 12 sanitized real official upstream requests, synthetic configuration accounts and download fixtures. No credentials are used during browser tests.' };
   if (process.env.XWX_SITE_TEST_REPORT) { await mkdir(resolve(process.env.XWX_SITE_TEST_REPORT, '..'), { recursive: true }); await writeFile(process.env.XWX_SITE_TEST_REPORT, JSON.stringify(report, null, 2) + '\n'); }
   console.log(JSON.stringify(report, null, 2));
 } finally {
