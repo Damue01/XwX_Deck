@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, realpath, mkdir, writeFile, chmod } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, mkdir, writeFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -8,6 +8,10 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 
 
+const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-rust-pilot-native-'));
+const installations=join(root,'installations');
+let binary = process.env.XWX_NATIVE_TEST_BINARY ? resolve(process.env.XWX_NATIVE_TEST_BINARY) : resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwXDeck Rust Validation.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
+const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
 let stagedAppDirectory;
 if (process.platform === 'darwin' && binary.includes('.app/Contents/MacOS/')) {
   stagedAppDirectory = await mkdtemp(join(await realpath(tmpdir()), 'xwx-webview-bundle-'));
@@ -17,10 +21,6 @@ if (process.platform === 'darwin' && binary.includes('.app/Contents/MacOS/')) {
   assert.equal(copy.status, 0, copy.stderr);
   binary = staged + binary.slice(bundle.length);
 }
-const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-rust-pilot-native-'));
-const installations=join(root,'installations');
-let binary = process.env.XWX_NATIVE_TEST_BINARY ? resolve(process.env.XWX_NATIVE_TEST_BINARY) : resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwXDeck Rust Validation.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
-const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
 const requests = [];
 const currentVersion=JSON.parse(await readFile(new URL('../../package.json',import.meta.url),'utf8')).version;
 const updateParts=currentVersion.split('.').map(Number);
