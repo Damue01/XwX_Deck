@@ -33,7 +33,7 @@ const server = createServer(async (req, res) => {
       : { data: [{ id: model }] })); return;
   }
   if (req.url === '/release.json') {
-    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ schemaVersion: 1, channel: 'release', version: '99.0.0', tag: 'v99.0.0', publishedAt: '2026-10-10T00:00:00Z', files: [{ platform: process.platform === 'darwin' ? 'darwin' : 'windows', arch: process.arch, name: 'XwX-Deck-fixture' + (process.platform === 'darwin' ? '.dmg' : '.exe'), url: base + '/installer', size: payload.length, sha256: createHash('sha256').update(payload).digest('hex') }] })); return;
+    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ schemaVersion: 1, channel: 'release', releaseSeries: 'native-v1', version: '99.0.0', tag: 'v99.0.0', publishedAt: '2026-10-10T00:00:00Z', files: [{ platform: process.platform === 'darwin' ? 'darwin' : 'windows', arch: process.arch, name: 'XwX-Deck-fixture' + (process.platform === 'darwin' ? '.dmg' : '.exe'), url: base + '/installer', size: payload.length, sha256: createHash('sha256').update(payload).digest('hex') }] })); return;
   }
   if (req.url === '/installer') {
     res.writeHead(200, { 'content-length': payload.length });
