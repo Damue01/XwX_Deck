@@ -1,20 +1,24 @@
-# macOS 首次运行
+# macOS 安装
 
-公开版本 1.1.1 的 Apple Silicon Mac 包已经 Developer ID 签名、Apple 公证与票据装订。
-发布后下载的 App 和 DMG 均通过 Gatekeeper 检查。
+公开版新候选从 1.0.0 重新编号。
+签名构建分别校验 App 和 DMG。
+每个包需要完成 Apple 公证和票据装订。
+本次候选状态见 [验收记录](trace-installation-acceptance.md)。
 
 ## 安装与更新
 
-1. 从 [GitHub Releases](https://github.com/Damue01/XwX_Deck/releases) 下载 `XwX-Deck-mac-arm64.dmg`。
-2. 核对发布页提供的 SHA-256。
+1. 下载对应的 Apple Silicon Mac 安装包。
+2. 核对候选记录或发布页的 SHA-256。
 3. 打开 DMG，将 `XwX Deck.app` 拖入“应用程序”。
-4. 更新时先安全退出旧应用，再拖拽替换。
+4. 替换旧版前，关闭 Trace 并退出旧应用。
 
-macOS 采用手动 DMG 更新。
+macOS 继续采用手动 DMG 更新。
+签名包不再附带首次放行提示。
 当前没有 Intel Mac 发行包。
 
 ## 版本边界
 
-本说明对应已发布的签名包。
-自行编译的 ad-hoc 包不自动获得 Apple 公证。
-若签名发行包被系统阻止，请保留具体提示并核对来源、版本和哈希。
+重新编号不会自动将已安装的 1.1.1 降级。
+首次切换到 1.0.0 需要手动安装。
+后续更新只接受 `native-v1` 发行序列。
+本地构建与公开发布分别记录。

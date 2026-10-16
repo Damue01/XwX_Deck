@@ -17,7 +17,7 @@ const updateParts=currentVersion.split('.').map(Number);
 const fixtureUpdateVersion=`${updateParts[0]}.${updateParts[1]}.${updateParts[2]+1}`;
 const updatePayload=Buffer.from('isolated update download fixture');let updateDownloads=0;
 const upstream = createServer(async (req, res) => {
-  if(req.url==='/release.json'){res.setHeader('content-type','application/json');res.end(JSON.stringify({schemaVersion:1,channel:'release',version:fixtureUpdateVersion,tag:'v'+fixtureUpdateVersion,changelog:'Isolated update notification',files:[{platform:process.platform==='darwin'?'darwin':'windows',arch:process.arch,name:process.platform==='darwin'?'fixture.dmg':'fixture.exe',url:base.replace('/v1','')+'/update-fixture',size:updatePayload.length,sha256:createHash('sha256').update(updatePayload).digest('hex')}]}));return;}
+  if(req.url==='/release.json'){res.setHeader('content-type','application/json');res.end(JSON.stringify({schemaVersion:1,channel:'release',releaseSeries:'native-v1',version:fixtureUpdateVersion,tag:'v'+fixtureUpdateVersion,changelog:'Isolated update notification',files:[{platform:process.platform==='darwin'?'darwin':'windows',arch:process.arch,name:process.platform==='darwin'?'fixture.dmg':'fixture.exe',url:base.replace('/v1','')+'/update-fixture',size:updatePayload.length,sha256:createHash('sha256').update(updatePayload).digest('hex')}]}));return;}
   if(req.url==='/update-fixture'){updateDownloads++;res.end(updatePayload);return;}
   if (req.url === '/v1/models') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'pilot-model' }] })); return; }
   let body = ''; for await (const part of req) body += part;

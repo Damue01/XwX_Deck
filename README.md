@@ -4,7 +4,7 @@ XwX Deck 是一个独立的本地 Claude / ChatGPT 请求追踪与模型网关�
 
 项目使用 [Apache License 2.0](LICENSE) 开源。
 
-当前源码版本：`1.1.1`。
+当前源码版本：`1.0.0`。
 
 本仓库按能力吸收上游修复，维护独立 Git 历史、应用身份和发布渠道。具体范围见 [技术吸收记录](docs/upstream-port.md)。当前独立版包含：
 
@@ -32,7 +32,7 @@ XwX Deck 是一个独立的本地 Claude / ChatGPT 请求追踪与模型网关�
 | Windows x64 | [下载 EXE](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64.exe) | 放在可写目录后双击运行；支持应用内自动替换和重启。 |
 | Mac Apple Silicon（M 系列） | [下载 DMG](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-mac-arm64.dmg) | 拖入“应用程序”；应用内下载并校验更新后，手动拖拽替换。 |
 
-当前没有 Intel Mac、Windows ARM64 或 Linux 安装包。Mac 安装包没有 Apple Developer ID 签名和公证，首次打开请参照 [安装说明](docs/macos-first-run.md)。[版本记录与文件校验](https://github.com/Damue01/XwX_Deck/releases/latest) 集中在 Release 页面。
+当前没有 Intel Mac、Windows ARM64 或 Linux 安装包。新 Mac 候选包采用 Apple Developer ID 签名，并单独完成公证。[安装说明](docs/macos-first-run.md) 介绍拖拽安装流程。[版本记录与文件校验](https://github.com/Damue01/XwX_Deck/releases/latest) 集中在 Release 页面。
 
 新安装没有 API 连接。首次引导可检测并导入 Magpie、CC Switch 或客户端的已有配置；源文件保留，不自动切换连接。“设置 → 添加配置”提供 API 服务、订阅账号、我的配置和客户端管理四个标签。服务预设默认只显示名称、URL、Key，已有明确协议与模型设置继续保留。ChatGPT、Claude、GitHub Copilot、Grok、Cursor 订阅分别合并为一个模型服务，可管理多个账号和轮换策略；不支持的官方额度显示未知。
 
@@ -84,7 +84,7 @@ npm run docs:build
 - 应用 ID：`app.xwxdeck.desktop`
 - 数据目录命名空间：`xwx-deck`
 - Gateway 默认端口段：`45233-45242`
-- 当前版本：`1.1.1`
+- 当前版本：`1.0.0`
 - 自动更新：默认读取 GitHub Releases；可用 `XWX_DECK_UPDATE_SERVER_URL` 覆盖
 
 这些设置用于避免与内部 XwX Deck 安装共享配置、Trace 数据、单实例身份和 Gateway 端口。
@@ -115,9 +115,9 @@ npm run test:rust
 - Release workflow 只创建 **Draft Release**；人工核对制品后再发布。
 - GitHub Release 同时提供更新清单、SHA-256 和构建来源证明。
 
-## macOS 未签名包
+## macOS 签名包
 
-当前没有 Apple Developer ID。macOS 构建不应描述为已签名或已公证正式包。
+使用 `npm run build:native:mac:signed` 构建签名候选。每个包单独完成 Apple 公证、票据装订和 Gatekeeper 验证。构建不发布线上版本。
 
 用户确认安装包来自本仓库并核对 SHA-256 后，可以按 [macOS 首次运行说明](docs/macos-first-run.md) 手动处理下载隔离属性。
 

@@ -325,6 +325,85 @@ impl Pilot {
             "unknown"
         }
     }
+    // Trace can observe an existing client connection without importing it into Deck.
+    pub(super) fn client_codex(&self) -> Result<Option<Provider>> {
+        let mut config = self.config()?;
+        if let Some(gateway) = self.gateway.as_ref().filter(|g| g.codex_official) {
+            config = doc(&restore_codex_fields(
+                &config.to_string(),
+                &gateway.before,
+                &gateway.managed,
+                true,
+            )?)?;
+        }
+        let id = config
+            .get("model_provider")
+            .and_then(Item::as_str)
+            .unwrap_or("openai");
+        if id == "openai"
+            || (id == "xwx_deck" && self.settings.codex_enhancements["unifySessionHistory"] == true)
+        {
+            return self.official_codex();
+        }
+        let table = config
+            .get("model_providers")
+            .and_then(|v| v.get(id))
+            .ok_or("当前 Codex 服务缺少配置，请在客户端补齐后重试")?;
+        let base = table
+            .get("base_url")
+            .and_then(Item::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .ok_or("当前 Codex 服务缺少 API 地址，请在客户端补齐后重试")?;
+        let url = reqwest::Url::parse(base).map_err(|_| "当前 Codex API 地址无效，原配置已保留")?;
+        if !["http", "https"].contains(&url.scheme())
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err("当前 Codex API 地址无效，原配置已保留".into());
+        }
+        if [Some("127.0.0.1"), Some("localhost"), Some("::1")].contains(&url.host_str())
+            && !std::env::args().any(|a| a == "--rpc" || a == "--smoke")
+        {
+            return Err("当前 Codex 仍依赖其他本地代理，已保留配置；请先恢复直连".into());
+        }
+        let wire = table
+            .get("wire_api")
+            .and_then(Item::as_str)
+            .unwrap_or("responses");
+        if !["responses", "chat"].contains(&wire) {
+            return Err("当前 Codex 协议暂不支持 Trace，原配置已保留".into());
+        }
+        Ok(Some(Provider {
+            id: "client-codex".into(),
+            codex_provider_id: id.into(),
+            display_name: table
+                .get("name")
+                .and_then(Item::as_str)
+                .unwrap_or(id)
+                .into(),
+            base_url: base.trim_end_matches('/').into(),
+            adapter: if wire == "chat" {
+                "chat-completions"
+            } else {
+                "responses"
+            }
+            .into(),
+            codex_api_format: if wire == "chat" {
+                "chat-completions"
+            } else {
+                "responses"
+            }
+            .into(),
+            codex_model: config
+                .get("model")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .into(),
+            // The CLI supplies its existing auth header; never borrow an official account.
+            official: true,
+            ..Provider::default()
+        }))
+    }
     pub(super) fn official_codex(&self) -> Result<Option<Provider>> {
         if !self.config_path().exists() && !self.codex_home().join("auth.json").exists() {
             return Ok(None);
@@ -355,6 +434,21 @@ impl Pilot {
             })
             .transpose()?
             .unwrap_or(Value::Null);
+        if auth["tokens"]["access_token"]
+            .as_str()
+            .is_none_or(str::is_empty)
+            && auth["OPENAI_API_KEY"].as_str().is_none_or(str::is_empty)
+            && !["openai_base_url", "chatgpt_base_url"].iter().any(|key| {
+                config
+                    .get(key)
+                    .and_then(Item::as_str)
+                    .is_some_and(|v| !v.is_empty())
+            })
+            && !(active == "xwx_deck"
+                && self.settings.codex_enhancements["unifySessionHistory"] == true)
+        {
+            return Ok(None);
+        }
         let oauth = auth["tokens"]["access_token"]
             .as_str()
             .is_some_and(|s| !s.is_empty());
@@ -419,7 +513,31 @@ impl Pilot {
         if !self.claude_path().exists() {
             return Ok(None);
         }
-        let config = self.claude_config()?;
+        let mut config = self.claude_config()?;
+        if let Some((before, managed)) = self.gateway.as_ref().and_then(|g| g.claude.as_ref()) {
+            config = self.check_claude_restore_source(&config.to_string(), before, managed)?;
+        }
+        let configured = [
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+        ]
+        .iter()
+        .any(|key| {
+            config["env"][key]
+                .as_str()
+                .is_some_and(|v| !v.trim().is_empty())
+        });
+        let logged_in = read(&self.claude_dir().join(".credentials.json"))?
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .is_some_and(|v| {
+                v["claudeAiOauth"]["accessToken"]
+                    .as_str()
+                    .is_some_and(|t| !t.is_empty())
+            });
+        if !configured && !logged_in {
+            return Ok(None);
+        }
         let base = config["env"]["ANTHROPIC_BASE_URL"]
             .as_str()
             .filter(|s| !s.is_empty())
@@ -720,9 +838,7 @@ impl Pilot {
         port: u16,
         path: &Path,
     ) -> Result<Option<(String, String)>> {
-        if !self.settings.client_enabled["claude"]
-            .as_bool()
-            .unwrap_or(true)
+        if !self.client_enabled("claude")
             || (self.selected_for("claude").is_none() && self.official_claude()?.is_none())
         {
             return Ok(None);

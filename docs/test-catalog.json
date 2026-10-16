@@ -171,7 +171,8 @@
           "tools/native/trace-viewer-renderer-test.mjs",
           "tools/native/portability-test.mjs",
           "tools/native/claude-native-sessions-test.mjs",
-          "tools/native/routing-consumption-test.mjs"
+          "tools/native/routing-consumption-test.mjs",
+          "tools/native/client-trace-defaults-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -668,7 +669,8 @@
           "tools/native/codex-client-compatibility-test.mjs",
           "tools/native/model-metadata-consumption-test.mjs",
           "tools/native/routing-consumption-test.mjs",
-          "tools/native/installed-clients-test.mjs"
+          "tools/native/installed-clients-test.mjs",
+          "tools/native/client-trace-defaults-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"

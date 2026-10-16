@@ -42,14 +42,16 @@ try {
   await writeFile(join(root, 'codex/config.toml'), codexConfig);
   await writeFile(join(root, 'claude/settings.json'), claudeConfig);
   const providers = await rpc('getProviders');
-  assert.deepEqual(await rpc('getModelClients'), ['claude', 'codex']);
+  assert.deepEqual(await rpc('getModelClients'), []);
   const snapshot = await rpc('detectClientInstallations');
   assert.equal(snapshot.available, true);
   assert.ok(snapshot.clients.every(client => client.installed === false));
   assert.equal((await call('addModelClient', 'cursor')).ok, false);
-  assert.deepEqual(await rpc('getModelClients'), ['claude', 'codex']);
+  assert.deepEqual(await rpc('getModelClients'), []);
   console.log('PASS missing installations cannot create tabs');
 
+  await file(process.platform === 'win32' ? '.local/bin/claude.cmd' : '.local/bin/claude', true);
+  await file(process.platform === 'win32' ? '.local/bin/codex.cmd' : '.local/bin/codex', true);
   await file('Applications/Cursor.app/Contents/Info.plist');
   assert.equal((await call('addModelClient', 'cursor')).ok, false);
   await file('Applications/Cursor.app/Contents/MacOS/Cursor', true);

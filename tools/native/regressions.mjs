@@ -21,6 +21,7 @@ const upstream = createServer(async (req, res) => {
     res.end(JSON.stringify(catalogOnline ? { data: [{ id: 'pilot-model' }] } : { error: 'offline' })); return;
   }
   let body = ''; for await (const chunk of req) body += chunk;
+  if (!body) { res.writeHead(200, {'content-type':'application/json'}); res.end('{}'); return; }
   requests.push({ path: req.url, auth: req.headers.authorization, clientHeader: req.headers['x-client-test'], apiKey: req.headers['x-api-key'], body: JSON.parse(body) });
   if (JSON.parse(body).stream) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'x-upstream-test': 'native-rust' });
@@ -111,7 +112,7 @@ try {
   await rpc('toggleTracing',true);const goodClaude=await readFile(claudePath,'utf8');const conflictClaude=JSON.parse(goodClaude);conflictClaude.env.ANTHROPIC_AUTH_TOKEN='external-choice';await writeFile(claudePath,JSON.stringify(conflictClaude));
   assert.equal((await call('toggleTracing',false)).ok,false);assert.equal((await rpc('getState')).backgroundGatewayActive,true);assert.equal(JSON.parse(await readFile(claudePath,'utf8')).env.ANTHROPIC_AUTH_TOKEN,'external-choice');
   await writeFile(claudePath,goodClaude);await rpc('toggleTracing',false);pass('Claude managed-field conflict keeps both Gateway and external changes');
-  await rpc('switchClientProvider',{client:'codex',providerId:null});await rpc('toggleClient','codex-cli');const officialBefore=await readFile(configPath,'utf8');const claudeOnly=await rpc('toggleTracing',true);assert.equal(await readFile(configPath,'utf8'),officialBefore);await rpc('toggleTracing',false);assert.equal(await readFile(configPath,'utf8'),officialBefore);pass('Claude-only capture never modifies the disabled Codex configuration');await rpc('toggleClient','codex-cli');
+  await rpc('switchClientProvider',{client:'codex',providerId:null});if((await rpc('getState')).clients.find(c=>c.id==='codex-cli').enabled)await rpc('toggleClient','codex-cli');const officialBefore=await readFile(configPath,'utf8');const claudeOnly=await rpc('toggleTracing',true);assert.equal(await readFile(configPath,'utf8'),officialBefore);await rpc('toggleTracing',false);assert.equal(await readFile(configPath,'utf8'),officialBefore);pass('Claude-only capture never modifies the disabled Codex configuration');await rpc('toggleClient','codex-cli');
   await rpc('switchClientProvider',{client:'claude',providerId:null});assert.equal((await rpc('getModelServices')).claude,false);assert.equal(JSON.parse(await readFile(claudePath,'utf8')).env?.ANTHROPIC_BASE_URL,undefined);pass('switching Claude back to official restores the original managed fields');
   await rpc('switchClientProvider',{client:'codex',providerId:'Local_Test'});const crash=await rpc('toggleTracing',true);const exited=once(child,'exit');child.kill('SIGKILL');await exited;start();assert.equal((await rpc('getState')).backgroundGatewayActive,false);assert.ok((await readFile(configPath,'utf8')).includes(base));assert.ok(!(await readFile(configPath,'utf8')).includes(crash.localBaseUrl));pass('process crash releases OS lock; reopening restores direct config from durable journal');
   assert.equal((await call('downloadUpdate')).ok, false); assert.equal((await call('queryCodexConversations', {})).ok, false); pass('unavailable operations explicitly report errors without deleting retained pages');

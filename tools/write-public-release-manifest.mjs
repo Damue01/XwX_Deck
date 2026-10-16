@@ -62,6 +62,7 @@ const publishedAt = new Date().toISOString();
 await writeFile(path.join(directory, 'release.json'), `${JSON.stringify({
   schemaVersion: 1,
   channel: 'release',
+  releaseSeries: 'native-v1',
   version,
   tag,
   publishedAt,
@@ -84,7 +85,7 @@ await writeFile(path.join(directory, 'release-notes.md'), [
   '',
   '## macOS 说明',
   '',
-  'macOS 制品尚未使用 Developer ID 签名或 Apple 公证。请只从本仓库 Release 下载，核对 SHA-256，并按照 DMG 内的《首次打开说明》操作。',
+  'macOS 制品的签名、公证和票据装订结果见对应制品的验收记录。请从本仓库 Release 下载，并核对 SHA-256。',
   '',
   '## 校验',
   '',

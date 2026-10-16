@@ -17,7 +17,7 @@ export async function buildMacDmg({ root, app, dmg, productName, isolated, accep
   try {
     const backgrounds = join(temporary, 'backgrounds');
     await mkdir(backgrounds);
-    run('/usr/bin/swift', [resolve(root, 'tools/generate-macos-dmg-background.swift'), '--output-directory', backgrounds, isolated ? '--validation' : '--native']);
+    run('/usr/bin/swift', [resolve(root, 'tools/generate-macos-dmg-background.swift'), '--output-directory', backgrounds, isolated ? '--validation' : '--native', ...(signed ? ['--signed'] : [])]);
     const background = join(temporary, 'background.tiff');
     run('/usr/bin/tiffutil', ['-cathidpicheck', join(backgrounds, 'dmg-background.png'), join(backgrounds, 'dmg-background@2x.png'), '-out', background]);
     const guide = join(temporary, isolated ? '验证说明.txt' : '首次打开说明.txt');
@@ -26,7 +26,7 @@ export async function buildMacDmg({ root, app, dmg, productName, isolated, accep
     } else {
       await cp(resolve(root, 'assets/macos/首次打开说明.txt'), guide);
     }
-    const contents = config.contents.map(item => item.type === 'link'
+    const contents = config.contents.filter(item => !signed || item.type === 'link' || !item.path).map(item => item.type === 'link'
       ? { ...item }
       : item.path
         ? { ...item, path: guide, name: isolated ? '验证说明.txt' : item.name }

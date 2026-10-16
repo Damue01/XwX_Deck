@@ -410,6 +410,28 @@ fn restore_codex_fields(
             return Err("外部配置变化已保留，Gateway 继续运行；请恢复受管字段后重试".into());
         }
     }
+    if official {
+        if let Some(id) = previous
+            .get("model_provider")
+            .and_then(Item::as_str)
+            .filter(|id| !["openai", "xwx_deck"].contains(id))
+        {
+            let old = provider_field(&previous, id, "base_url");
+            let expected_url = provider_field(&expected, id, "base_url");
+            let actual = provider_field(&current, id, "base_url");
+            if semantic(old) != semantic(expected_url) {
+                if semantic(actual) != semantic(expected_url) && semantic(actual) != semantic(old) {
+                    return Err(
+                        "外部服务配置变化已保留，Gateway 继续运行；请恢复受管字段后重试".into(),
+                    );
+                }
+                if let Some(old) = old {
+                    let restored = restored_value(old, actual);
+                    current["model_providers"][id]["base_url"] = restored;
+                }
+            }
+        }
+    }
     let fields = CODEX_PROVIDER_FIELDS
         .iter()
         .filter(|key| {
@@ -527,15 +549,42 @@ impl Pilot {
                 return client_installations::Discovery::for_home(&home);
             }
         }
-        client_installations::Discovery::system()
+        if self.isolated {
+            client_installations::Discovery::for_home(&self.root.join("installations"))
+        } else {
+            client_installations::Discovery::system()
+        }
+    }
+    fn client_configured(&self, client: &str) -> bool {
+        if self
+            .selected_for(client)
+            .is_some_and(|p| !p.base_url.trim().is_empty())
+        {
+            return true;
+        }
+        match client {
+            "codex" => self.client_codex().ok().flatten().is_some(),
+            "claude" => self.official_claude().ok().flatten().is_some(),
+            _ => false,
+        }
+    }
+    pub(super) fn client_enabled(&self, client: &str) -> bool {
+        self.settings.client_enabled[client]
+            .as_bool()
+            .unwrap_or_else(|| self.client_configured(client))
     }
     fn model_clients(&self) -> Vec<String> {
-        let mut clients: Vec<String> =
-            if self.settings.other.get("modelClientsVersion") == Some(&json!(2)) {
-                vec![]
-            } else {
-                vec!["claude".into(), "codex".into()]
-            };
+        let mut clients: Vec<String> = if self.settings.other.get("modelClientsVersion")
+            == Some(&json!(2))
+        {
+            vec![]
+        } else {
+            ["claude", "codex"]
+                .into_iter()
+                .filter(|id| self.client_discovery().installed(id) || self.client_configured(id))
+                .map(str::to_string)
+                .collect()
+        };
         for id in self
             .settings
             .other
@@ -849,7 +898,7 @@ impl Pilot {
           "localBaseUrl":self.gateway.as_ref().map(|g|format!("http://127.0.0.1:{}",g.port)),"traceRoot":self.trace_root(),"logRoot":self.log_root(),"claudeConfigDir":self.claude_dir(),"claudeConfigPath":self.claude_path(),
           "backgroundGatewayActive":active,"backgroundGatewayAction":if active {Some("close")} else {None},"chatGptRestartRecommended":false,
           "sessions":sessions,"traces":count,"storageText":format_bytes(bytes),"traceStorageBytes":bytes,"traceWarningGB":self.settings.trace_warning_gb,"traceAutoCleanup":self.settings.trace_auto_cleanup,"traceStorageNotice":self.store.lock().unwrap().retention_notice,
-          "clients":[{"id":"claude-cli","label":"Claude","enabled":self.settings.client_enabled["claude"],"status":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"taken"}else{"idle"},"statusText":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"追踪中"}else{"待命"},"detail":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"客户端请求正在追踪"}else{"客户端直连"}},{"id":"codex-cli","label":"ChatGPT","enabled":self.settings.client_enabled["codex"],"status":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"taken"}else{"idle"},"statusText":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"追踪中"}else{"待命"},"detail":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"客户端请求正在追踪"}else{"客户端直连"}}],
+          "clients":[{"id":"claude-cli","label":"Claude","enabled":self.client_enabled("claude"),"status":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"taken"}else{"idle"},"statusText":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"追踪中"}else{"待命"},"detail":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"客户端请求正在追踪"}else{"客户端直连"}},{"id":"codex-cli","label":"ChatGPT","enabled":self.client_enabled("codex"),"status":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"taken"}else{"idle"},"statusText":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"追踪中"}else{"待命"},"detail":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"客户端请求正在追踪"}else{"客户端直连"}}],
           "metadata":self.metadata.state(),"lastError":self.settings_problem.clone().or_else(||self.recovery_problem.clone()).or_else(||self.renderer_preferences_problem.clone()).or_else(||self.settings.claude_desktop["syncWarning"].as_str().map(str::to_string)).or_else(||self.store.lock().unwrap().read_problem.clone()).or_else(||self.config().err()),"theme":self.settings.theme,"language":self.settings.language.clone().unwrap_or_else(crate::language::system_language),"automaticUpdates":self.settings.automatic_updates,"traceAppearance":self.trace_appearance(),"startup":{"enabled":self.settings.startup_enabled,"desiredEnabled":self.settings.startup_enabled,"supported":!self.isolated&&cfg!(any(target_os="macos",target_os="windows")),"launchHidden":true,"warning":if self.isolated {Some("隔离验证不注册系统登录项")}else{None}},"update":self.update_state()});
         if let Some(rows) = state["clients"].as_array_mut() {
             let routes = self.generic_routes();
@@ -877,7 +926,7 @@ impl Pilot {
             let clients = [("codex", "ChatGPT"), ("claude", "Claude")]
                 .into_iter()
                 .filter(|(client, _)| {
-                    self.settings.client_enabled[*client] != false
+                    self.client_enabled(client)
                         && self
                             .selected_for(client)
                             .is_some_and(|p| self.needs_gateway(p, client))
@@ -1222,22 +1271,25 @@ impl Pilot {
         &mut self,
         validate: bool,
     ) -> Result<(Option<Provider>, Option<Provider>)> {
-        let provider = if self.settings.client_enabled["codex"]
-            .as_bool()
-            .unwrap_or(true)
+        // Unreadable client settings are actionable errors, not empty configurations.
+        // An explicit off choice excludes that client from route preparation.
+        if self.settings.client_enabled["codex"] != false && self.selected().is_none() {
+            self.client_codex()?;
+        }
+        if self.settings.client_enabled["claude"] != false && self.selected_for("claude").is_none()
         {
+            self.official_claude()?;
+        }
+        let provider = if self.client_enabled("codex") {
             if let Some(p) = self.selected() {
                 Some(p.clone())
             } else {
-                self.official_codex()?
+                self.client_codex()?
             }
         } else {
             None
         };
-        let claude = if self.settings.client_enabled["claude"]
-            .as_bool()
-            .unwrap_or(true)
-        {
+        let claude = if self.client_enabled("claude") {
             if let Some(p) = self.selected_for("claude") {
                 Some(p.clone())
             } else {
@@ -1282,7 +1334,15 @@ impl Pilot {
         let before = read(&self.config_path())?.unwrap_or_default();
         let mut managed = doc(&before)?;
         if codex_managed {
-            if codex_official {
+            if codex_official && provider.as_ref().is_some_and(|p| p.id == "client-codex") {
+                let p = provider.as_ref().unwrap();
+                set_codex_provider_field(
+                    &mut managed,
+                    &p.codex_provider_id,
+                    "base_url",
+                    value(format!("http://127.0.0.1:{port}/v1")),
+                );
+            } else if codex_official {
                 set_codex_field(
                     &mut managed,
                     "openai_base_url",
@@ -2173,16 +2233,14 @@ impl Pilot {
                 if was_active {
                     self.stop().await?;
                 }
-                self.settings.client_enabled[client] = json!(!self.settings.client_enabled[client]
-                    .as_bool()
-                    .unwrap_or(true));
+                self.settings.client_enabled[client] = json!(!self.client_enabled(client));
                 self.persist()?;
                 if was_active {
                     self.start().await?;
                 }
                 Ok(self.state())
             }
-            "disableBreaksCodex" => Ok(json!(self.settings.client_enabled["codex"]!=false && self.selected().is_some_and(|p|!p.subscription_account_id.is_empty() || resolve_wire(&self.root,p,Some(&p.codex_model),"responses")!="responses"))),
+            "disableBreaksCodex" => Ok(json!(self.client_enabled("codex") && self.selected().is_some_and(|p|!p.subscription_account_id.is_empty() || resolve_wire(&self.root,p,Some(&p.codex_model),"responses")!="responses"))),
             "saveProvider" => {
                 if self.active() {
                     return Err("修改连接前请先停止 Trace".into());

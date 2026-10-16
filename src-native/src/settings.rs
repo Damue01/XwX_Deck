@@ -54,7 +54,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             claude_models: json!({"fable":"","opus":"","sonnet":"","haiku":""}),
-            client_enabled: json!({"claude":true,"codex":true}),
+            client_enabled: json!({}),
             theme: "day".into(),
             language: None,
             connections: vec![],

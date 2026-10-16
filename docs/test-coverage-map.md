@@ -21,6 +21,7 @@
 | 脚本 | 执行入口 | 关联编号 |
 | --- | --- | --- |
 | [claude-native-sessions-test.mjs](../tools/native/claude-native-sessions-test.mjs) | 后端默认入口 | TR01 |
+| [client-trace-defaults-test.mjs](../tools/native/client-trace-defaults-test.mjs) | 后端默认入口 | TR01、CL01 |
 | [codex-client-compatibility-test.mjs](../tools/native/codex-client-compatibility-test.mjs) | 后端默认入口 | TR05、MO01、CL01、CL02 |
 | [dashboard-layout-test.mjs](../tools/native/dashboard-layout-test.mjs) | 独立专题入口 | TR08、CO03 |
 | [official-websocket-proxy-test.mjs](../tools/native/official-websocket-proxy-test.mjs) | 后端默认入口 | TR07 |
@@ -85,6 +86,7 @@
 | [client-config-merge-test.mjs](../tools/native/client-config-merge-test.mjs) | 后端默认入口 | CL01、CL03、CL04、CL05、CL07、CL08 |
 | [client-management-test.mjs](../tools/native/client-management-test.mjs) | 后端默认入口 | CL07 |
 | [client-models-renderer-test.mjs](../tools/native/client-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |
+| [client-trace-defaults-test.mjs](../tools/native/client-trace-defaults-test.mjs) | 后端默认入口 | TR01、CL01 |
 | [codex-client-compatibility-test.mjs](../tools/native/codex-client-compatibility-test.mjs) | 后端默认入口 | TR05、MO01、CL01、CL02 |
 | [codex-models-renderer-test.mjs](../tools/native/codex-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |
 | [desktop-lifecycle-test.mjs](../tools/native/desktop-lifecycle-test.mjs) | 后端默认入口 | CL06、LF02、LF03、LF04、LF05 |

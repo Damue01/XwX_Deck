@@ -150,8 +150,8 @@ impl Updates {
         } else {
             "x64"
         };
-        let newer =
-            version(text(&manifest, "version")) > version(text(&inner.state, "currentVersion"));
+        let newer = manifest["releaseSeries"] == "native-v1"
+            && version(text(&manifest, "version")) > version(text(&inner.state, "currentVersion"));
         let artifact = manifest["files"]
             .as_array()
             .and_then(|files| {

@@ -95,6 +95,7 @@ const suites = [
   "desktop-model-routing-test.mjs",
   "reasoning-test.mjs",
   "client-management-test.mjs",
+  "client-trace-defaults-test.mjs",
   "language-test.mjs",
   "language-renderer-test.mjs",
   "toggle-renderer-test.mjs",

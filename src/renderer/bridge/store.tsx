@@ -59,7 +59,7 @@ const BOOT_REQUEST_TIMEOUT_MS = 8_000;
 export function BridgeProvider({ children }: Props): React.ReactElement {
   const api = React.useMemo(() => getApi(), []);
   const [state, setState] = React.useState<BridgeData>({
-    modelClients: ["claude", "codex"],
+    modelClients: [],
     compatibleServiceConfig: null,
     providers: null,
     runtime: null,
