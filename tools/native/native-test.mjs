@@ -7,9 +7,19 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 
+
+let stagedAppDirectory;
+if (process.platform === 'darwin' && binary.includes('.app/Contents/MacOS/')) {
+  stagedAppDirectory = await mkdtemp(join(await realpath(tmpdir()), 'xwx-webview-bundle-'));
+  const bundle = binary.slice(0, binary.indexOf('.app/Contents/MacOS/') + 4);
+  const staged = join(stagedAppDirectory, 'XwX Deck.app');
+  const copy = spawnSync('/usr/bin/ditto', [bundle, staged], { encoding: 'utf8' });
+  assert.equal(copy.status, 0, copy.stderr);
+  binary = staged + binary.slice(bundle.length);
+}
 const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-rust-pilot-native-'));
 const installations=join(root,'installations');
-const binary = process.env.XWX_NATIVE_TEST_BINARY ? resolve(process.env.XWX_NATIVE_TEST_BINARY) : resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwXDeck Rust Validation.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
+let binary = process.env.XWX_NATIVE_TEST_BINARY ? resolve(process.env.XWX_NATIVE_TEST_BINARY) : resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwXDeck Rust Validation.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
 const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
 const requests = [];
 const currentVersion=JSON.parse(await readFile(new URL('../../package.json',import.meta.url),'utf8')).version;
@@ -29,6 +39,12 @@ const upstream = createServer(async (req, res) => {
 upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
 const base = `http://127.0.0.1:${upstream.address().port}/v1`;
 const keepOpen = process.argv.includes('--keep-open');
+await writeFile(join(root, '.xwx-rust-pilot'), 'isolated-rust-pilot-v1\n');
+for (const name of ['claude', 'codex']) {
+  const path = join(installations, '.local/bin', process.platform === 'win32' ? name + '.cmd' : name);
+  await mkdir(resolve(path, '..'), {recursive:true});
+  await writeFile(path, 'isolated installed-client fixture', {mode:0o755});
+}
 const child = spawn(binary, ['--pilot-root', root, '--smoke', '--smoke-upstream', base, ...(!keepOpen ? ['--smoke-exit'] : [])], { env: {...process.env, XWX_DECK_UPDATE_SERVER_URL:base.replace('/v1',''), XWX_SYSTEM_LANGUAGE_TEST:'zh-CN', XWX_CLIENT_INSTALLATIONS_TEST_HOME:installations}, stdio: ['ignore', 'inherit', 'inherit'] });
 try {
   // The fresh isolated root is validated before installing test-only discovery fixtures.
@@ -76,6 +92,7 @@ try {
   }
 } finally {
   if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+  if (stagedAppDirectory) await rm(stagedAppDirectory, {recursive:true, force:true});
   upstream.closeAllConnections();
   if (upstream.listening) await new Promise(resolve => upstream.close(resolve));
 }

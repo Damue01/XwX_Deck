@@ -100,7 +100,7 @@ if (process.platform !== 'darwin') {
   } else console.log('Rust binary compiled.');
   process.exit(0);
 }
-const output = resolve(root, isolated ? 'test-results/rust-pilot-package' : 'release-native');
+const output = resolve(root, process.argv.find(a => a.startsWith('--output-directory='))?.slice('--output-directory='.length) ?? ( isolated ? 'test-results/rust-pilot-package' : 'release-native'));
 const app = resolve(output, `${productName}.app`);
 await rm(app,{recursive:true,force:true});
 await mkdir(resolve(app, 'Contents/MacOS'), { recursive: true });
