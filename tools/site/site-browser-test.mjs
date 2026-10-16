@@ -17,6 +17,14 @@ validateRealExamples(examples);
 const unsafeExample = structuredClone(examples);
 unsafeExample.state.traces[0].request.headers = { authorization: 'private fixture' };
 assert.throws(() => validateRealExamples(unsafeExample), /Private field/);
+const builtIndex = await readFile(join(site, 'index.html'), 'utf8');
+const builtApp = await readFile(join(site, 'app.html'), 'utf8');
+for (const asset of ['fonts.css', 'site.css', 'hero-field.js', 'app.html', 'view.html']) {
+  assert.ok(builtIndex.includes(asset + '?v='), 'website references must carry a content version: ' + asset);
+}
+for (const asset of ['app.css', 'app-preview.js']) {
+  assert.ok(builtApp.includes(asset + '?v='), 'demo resources must carry a content version: ' + asset);
+}
 const checks = [];
 const errors = [];
 const server = createServer(async (request, response) => {
