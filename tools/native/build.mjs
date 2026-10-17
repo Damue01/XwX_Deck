@@ -109,7 +109,7 @@ await rm(app,{recursive:true,force:true});
 await mkdir(resolve(app, 'Contents/MacOS'), { recursive: true });
 await mkdir(resolve(app, 'Contents/Resources'), { recursive: true });
 await cp(resolve(env.CARGO_TARGET_DIR, 'release/xwx-deck-native'), resolve(app, 'Contents/MacOS/xwx-deck-native'));
-run('/usr/bin/lipo', ['-verify_arch', process.arch === 'arm64' ? 'arm64' : 'x86_64', resolve(app, 'Contents/MacOS/xwx-deck-native')]);
+run('/usr/bin/lipo', [resolve(app, 'Contents/MacOS/xwx-deck-native'), '-verify_arch', process.arch === 'arm64' ? 'arm64' : 'x86_64']);
 await cp(resolve(root, 'assets/icon.icns'), resolve(app, 'Contents/Resources/icon.icns'));
 await writeFile(resolve(app, 'Contents/Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
