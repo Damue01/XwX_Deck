@@ -10,6 +10,17 @@ const binary = resolve(process.env.XWX_NATIVE_TEST_BINARY ?? 'test-results/rust-
 const build = JSON.parse(await readFile(resolve(process.env.XWX_NATIVE_TEST_BUILD_REPORT ?? 'test-results/rust-pilot-package/native-build-report.json'), 'utf8'));
 const provenance = await verifyCandidate({ root: resolve('.'), report: build, binary, allowManualAcceptance: Boolean(process.env.XWX_NATIVE_TEST_BINARY && process.env.XWX_NATIVE_TEST_BUILD_REPORT) });
 const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-theme-native-'));
+async function removeFixture(path) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      await rm(path, {recursive: true, force: true});
+      return;
+    } catch (error) {
+      if (!['EBUSY', 'EPERM', 'ENOTEMPTY'].includes(error.code) || attempt === 19) throw error;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  }
+}
 // A real sparse file exercises the settings path above 10 GB without allocating disk data.
 const initialized = spawnSync(binary, ['--rpc', '--pilot-root', root], { input: '{"method":"getState","args":[]}\n', encoding: 'utf8' });
 assert.equal(initialized.status, 0, initialized.stderr);
@@ -42,6 +53,6 @@ try {
   if (child.exitCode === null && child.signalCode === null) {
     child.kill('SIGTERM'); await once(child, 'exit');
   }
-  if (passed) await rm(root, { recursive: true, force: true });
+  if (passed) await removeFixture(root);
   else console.error('Failed isolated theme fixture retained:', root);
 }
