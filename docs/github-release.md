@@ -61,3 +61,37 @@ macOS 只下载并校验 DMG，用户确认后打开安装包、安全退出，�
 公开后运行 **Verify published update** workflow，输入最新版本标签。该流程匿名读取默认 GitHub 源中的清单和制品，核对版本、不可变 URL、大小、SHA-256 与旁路校验文件。下载的正式可执行文件在隔离目录中验证界面与语言重启；Windows 验证实际更新进程的替换与启动，Mac 只读挂载 DMG、复制应用、验证身份、架构与签名后启动。
 
 Actions 中的 `published-update-Windows-X64`、`published-update-macOS-ARM64` 和 `published-update-macOS-X64` artifacts 保存 `published-native-*.json`。成功记录才表示公开制品已验证。该流程不声称已经将任意用户的真实旧安装升级；旧 Electron 设置迁移由隔离迁移回归单独覆盖。源码检查或本地 HTTP 测试不能替代公开源验证。
+
+## Intel Mac 首轮验收
+
+2026 年 10 月 17 日的 [候选构建](https://github.com/Damue01/XwX_Deck/actions/runs/39003598139) 已通过。
+源码提交为 `788eccf6458024da31e399094f631da58539dfc0`，构建工作区干净。
+后续提交只调整 CI 时限与验收记录。
+
+| 项目 | 结果 |
+| --- | --- |
+| 环境 | `macos-15-intel`，原生 `x86_64`。 |
+| 版本与身份 | `1.0.0`，`app.xwxdeck.desktop`。 |
+| 制品 | `XwX-Deck-mac-x64.dmg`，9,458,559 字节。 |
+| Rust 单测 | 161 项通过。 |
+| 后端回归 | 96 组执行通过，1 组 Windows 专属场景跳过。 |
+| 包内 WebKit | 主界面 232 项、Viewer 28 项通过，发送 2 次本地请求。 |
+| 独立复核 | DMG 完整性、只读挂载、架构、身份、严格签名与哈希一致。 |
+| 签名与发布 | ad-hoc 签名，未公证；未替换正常安装，未发布 Release。 |
+
+DMG SHA-256 为 `4ab3bfd3cde13d39da198558d9228d4d03f16afd428914c3cd1241c4433d9268`。
+包内可执行文件 SHA-256 为 `1a87f38b3bb99f5d8831fc42083bedd639b33a4a617d8076201d59c5a8281f3c`。
+源码指纹为 `ef672b9ca2e3338783ff0711ef09b895f30b46cfd631b3201db435ac48802f19`。
+该指纹按 Runner 检出字节计算；依照 `.gitattributes` 的换行规则复核一致。
+
+后端回归使用编译输出，SHA-256 为 `0a5baf1ac6267a98627e8b6c856a7ab388f4d6c528523316e74a094c6b48a2ed`。
+应用签名会改变可执行文件哈希。
+包内 WebKit 与 Viewer 检查绑定签名后的可执行文件。
+这些结果来自隔离配置和合成上游。
+真实账号、最低 macOS 版本与人工拖拽安装仍需另验。
+
+首次构建在新增的架构校验处失败，原因是 `lipo` 参数顺序错误。
+修复后，上述候选流程完整通过。
+普通 Intel CI 的后端回归通过，界面检查触及 30 分钟总时限。
+Intel CI 时限已调整为 45 分钟，重跑结果以 Actions 为准。
+Windows 与 Apple Silicon 的本轮 CI 均已通过。

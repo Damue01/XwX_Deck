@@ -1,5 +1,9 @@
 # 整合验收
 
+Intel Mac 首轮候选已完成原生构建与隔离验收。
+制品哈希、运行结果与边界见 [GitHub 发布流程](../github-release.md#intel-mac-首轮验收)。
+本轮未发布新版本，下载入口保持现状。
+
 最新平台结果见 [1.0.0 平台整合验收](platform-integration-acceptance.md)。
 Windows 最终候选已包含固定端口和 API 接管清理。
 96 组后端实际执行通过，1 组 Unix 专属场景跳过。
