@@ -54,6 +54,12 @@ const url = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({ ...(process.env.XWX_PLAYWRIGHT_CHANNEL === 'chromium' ? {} : { channel: 'chrome' }), headless: true });
 try {
   const page = await browser.newPage({ reducedMotion: 'reduce' });
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'userAgentData', { value: {
+      platform: 'Windows', mobile: false,
+      getHighEntropyValues: async () => ({ architecture: 'x86', bitness: '64' }),
+    } });
+  });
   page.on('pageerror', error => errors.push(String(error)));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`); });
@@ -65,9 +71,29 @@ try {
     await page.getByRole('heading', { level: 1 }).waitFor();
     assert.match(await page.getByRole('heading', { level: 1 }).textContent(), /好工具，\s*更简单/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-    const windowsBox = await page.locator('[data-download="windows"]').boundingBox();
-    const macBox = await page.locator('[data-download="mac"]').boundingBox();
-    assert.ok(Math.abs(windowsBox.y - macBox.y) < 1 && windowsBox.x >= macBox.x + macBox.width, 'platform downloads stay side by side');
+    const primary = page.locator('#recommended-download');
+    await primary.getByText('下载 Windows 版').waitFor();
+    assert.match(await primary.getAttribute('href'), /windows-x64\.exe$/);
+    const primaryBox = await primary.boundingBox();
+    const otherBox = await page.locator('#download-options > summary').boundingBox();
+    assert.ok(Math.abs(primaryBox.x + primaryBox.width / 2 - width / 2) < 1, 'primary download aligns with the page center independently of other versions');
+    assert.ok(otherBox.x > primaryBox.x + primaryBox.width && otherBox.x + otherBox.width <= width, 'other versions stays to the right without overflowing');
+    assert.equal(await page.locator('#download-caption').count(), 0);
+    await page.locator('#download-options > summary').click();
+    for (const target of ['windows', 'mac']) assert.equal(await page.locator(`[data-download="${target}"]`).isVisible(), true);
+    assert.equal(await page.locator('.download-choices .download-choice').count(), 3);
+    const intel = page.locator('[data-unavailable-download="mac-x64"]');
+    assert.equal(await intel.getAttribute('aria-disabled'), 'true');
+    assert.equal(await intel.getAttribute('href'), null);
+    assert.match(await intel.innerText(), /Intel[\s\S]*待发布/);
+    assert.equal(await page.locator('.recommend-badge').count(), 0);
+    assert.doesNotMatch(await page.locator('.download-choices').innerText(), /推荐|↗/);
+    const panelBox = await page.locator('.download-choices').boundingBox();
+    assert.ok(panelBox.x >= 0 && panelBox.x + panelBox.width <= width, 'download choices stay inside the viewport');
+    await page.locator('[data-download="mac"]').focus();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#download-options').getAttribute('open'), null);
+    assert.equal(await page.locator('#download-options > summary').evaluate(node => node === document.activeElement), true);
     assert.equal(await page.locator('#community [data-download]').count(), 0);
     if (process.env.XWX_SITE_TEST_SCREENSHOT_DIR) {
       await mkdir(process.env.XWX_SITE_TEST_SCREENSHOT_DIR, { recursive: true });
@@ -122,12 +148,94 @@ try {
   assert.equal(await page.locator('.preview-tools').count(), 0);
   assert.equal(await page.locator('.community-copy').innerText(), '感谢您的使用');
   assert.match(await page.locator('body').evaluate(el => getComputedStyle(el).fontFamily), /Urbanist.*Noto Sans SC/);
-  checks.push('WE02: one side-by-side platform download pair uses GitHub latest; the closing section has three community text links');
+  checks.push('WE02: one recommended download and an accessible list of published packages use GitHub latest; the closing section has three community text links');
   await page.goto(url + '/configured/index.html', { waitUntil: 'networkidle' });
   const download = page.waitForEvent('download');
-  await page.locator('[data-download="windows"]').last().click();
+  await page.locator('#recommended-download').click();
   assert.equal((await download).suggestedFilename(), 'fixture.exe');
   checks.push('WE02: configured download resolves to the selected artifact fixture');
+  // Exercise browser-reported architectures and conservative fallbacks in real DOMs.
+  const profiles = [
+    { name: 'Apple Silicon', platform: 'macOS', arch: 'arm', direct: 'mac' },
+    { name: 'Intel Mac', platform: 'macOS', arch: 'x86', context: '当前暂无 Intel Mac 安装包。' },
+    { name: 'Windows x64', platform: 'Windows', arch: 'x86', direct: 'windows' },
+    { name: 'Windows ARM64', platform: 'Windows', arch: 'arm', context: '当前提供 Windows x64 下载，尚无原生 ARM64 版。' },
+    { name: 'Windows 32-bit', platform: 'Windows', arch: 'x86', bitness: '32' },
+    { name: 'Safari MacIntel', platform: 'MacIntel', hints: 'absent' },
+    { name: 'rejected hints', platform: 'macOS', hints: 'reject' },
+    { name: 'missing architecture', platform: 'macOS', arch: '' },
+    { name: 'mobile', platform: 'Android', mobile: true },
+    { name: 'iPad desktop mode', platform: 'MacIntel', touch: 5, hints: 'absent' },
+    { name: 'unknown', platform: 'unknown', hints: 'absent' },
+  ];
+  async function profilePage(profile) {
+    const context = await browser.newContext({ reducedMotion: 'reduce', viewport: { width: 390, height: 844 } });
+    await context.addInitScript(profile => {
+      Object.defineProperty(navigator, 'platform', { value: profile.platform });
+      Object.defineProperty(navigator, 'userAgent', { value: profile.platform });
+      Object.defineProperty(navigator, 'maxTouchPoints', { value: profile.touch || 0 });
+      const hints = () => {
+        if (profile.hints === 'reject') return Promise.reject(new Error('Hints denied'));
+        const data = { architecture: profile.arch, bitness: profile.bitness || '64' };
+        if (profile.hints === 'pending') return new Promise(resolve => { window.resolveDownloadHints = () => resolve(data); });
+        return Promise.resolve(data);
+      };
+      Object.defineProperty(navigator, 'userAgentData', { value: profile.hints === 'absent' ? undefined : {
+        platform: profile.platform, mobile: !!profile.mobile, getHighEntropyValues: hints,
+      } });
+    }, profile);
+    const candidate = await context.newPage();
+    candidate.on('pageerror', error => errors.push(String(error)));
+    await candidate.goto(url, { waitUntil: 'domcontentloaded' });
+    return { context, candidate };
+  }
+  for (const profile of profiles) {
+    const { context, candidate } = await profilePage(profile);
+    assert.equal(await candidate.locator('#download-caption').count(), 0);
+    if (profile.context) await candidate.getByText(profile.context, { exact: true }).waitFor({ state: 'attached' });
+    const primary = candidate.locator('#recommended-download');
+    if (profile.direct) {
+      await candidate.waitForFunction(target => document.querySelector('#recommended-download').href === document.querySelector(`[data-download="${target}"]`).href, profile.direct);
+      assert.equal(await primary.getAttribute('href'), await candidate.locator(`[data-download="${profile.direct}"]`).getAttribute('href'));
+    } else {
+      assert.equal(await primary.getAttribute('href'), '#download-choices', profile.name + ' must not guess an unavailable architecture');
+      await primary.click();
+      assert.equal(await candidate.locator('#download-options').getAttribute('open'), '');
+      assert.equal(await candidate.locator('[data-download="mac"]').evaluate(node => node === document.activeElement), true);
+      await candidate.locator('.chip-help > summary').click();
+      assert.match(await candidate.locator('.chip-help p').innerText(), /关于本机/);
+      await candidate.locator('#download-options > summary').click();
+    }
+    assert.equal(await candidate.locator('a[href*="mac-x64"]').count(), 0);
+    assert.equal(await candidate.locator('.download-history').getAttribute('href'), 'https://github.com/Damue01/XwX_Deck/releases');
+    await context.close();
+  }
+  for (const interaction of ['pointer', 'keyboard', 'timeout']) {
+    const { context, candidate } = await profilePage({ platform: 'macOS', arch: 'arm', hints: 'pending' });
+    if (interaction === 'pointer') await candidate.locator('#recommended-download').click();
+    if (interaction === 'keyboard') {
+      await candidate.locator('#download-options > summary').focus();
+      await candidate.keyboard.press('Enter');
+    }
+    if (interaction === 'timeout') await candidate.waitForTimeout(650);
+    await candidate.evaluate(() => window.resolveDownloadHints());
+    await candidate.waitForTimeout(50);
+    assert.equal(await candidate.locator('#recommended-download').getAttribute('href'), '#download-choices', 'late hints cannot replace a user choice or exceed the detection deadline');
+    if (interaction !== 'timeout') {
+      assert.equal(await candidate.locator('#download-options').getAttribute('open'), '');
+      await candidate.locator('h1').click();
+      assert.equal(await candidate.locator('#download-options').getAttribute('open'), null);
+    }
+    await context.close();
+  }
+  const noScript = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });
+  const fallback = await noScript.newPage();
+  await fallback.goto(url, { waitUntil: 'domcontentloaded' });
+  await fallback.locator('#download-options > summary').click();
+  assert.equal(await fallback.locator('[data-download="windows"]').isVisible(), true);
+  assert.equal(await fallback.locator('[data-download="mac"]').isVisible(), true);
+  await noScript.close();
+  checks.push('WE02: 11 OS/architecture profiles, mobile and iPad, missing/denied hints, pointer/keyboard choice preservation, timeout, Escape/outside dismissal and no-JavaScript downloads');
   for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(url + '/?demo=dashboard#experience', { waitUntil: 'networkidle' });

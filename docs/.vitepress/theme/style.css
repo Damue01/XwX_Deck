@@ -31,6 +31,8 @@
   --vp-custom-block-tip-border: transparent;
   --vp-custom-block-tip-text: var(--vp-c-text-1);
 }
+/* External links keep their text without decorative northeast arrows. */
+.vp-external-link-icon::after { display: none !important; }
 body { font-weight: 400; -webkit-font-smoothing: antialiased; }
 ::selection { background: #dfe5e9; }
 :focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 4px; }

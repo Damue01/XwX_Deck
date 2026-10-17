@@ -103,6 +103,11 @@ try {
     await page.goto(`${origin}/docs/${route}`, { waitUntil: 'networkidle' });
     assert.ok(((await page.locator('.vp-doc h1').textContent()).replace(/\u200b/g, '').trim()).length);
     assert.doesNotMatch(await page.locator('.vp-doc').innerText(), /[a-f0-9]{40,64}|选择性同步|源码指纹|本地候选|当前源码验收|整合验收/i);
+    const decoratedExternalLinks = await page.locator('.vp-external-link-icon, .vp-doc a[href*="://"], .vp-doc a[target="_blank"]').evaluateAll(links => links.filter(link => {
+      const after = getComputedStyle(link, '::after');
+      return !['none', 'normal'].includes(after.content) && after.display !== 'none';
+    }).length);
+    assert.equal(decoratedExternalLinks, 0, 'Documentation external links must not display decorative arrows');
     const links = await page.locator('a[href]').evaluateAll(links => links.map(link => link.href));
     for (const href of new Set(links)) {
       const url = new URL(href);
