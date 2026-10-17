@@ -1,0 +1,88 @@
+# 官网构建与部署
+
+官网源码用于介绍产品和演示界面。
+演示复用 XwX Deck 前端。
+账号、服务和额度使用合成示例。
+仪表盘使用 `dashboard-examples.json` 中的真实请求脱敏记录。
+当前示例为经用户授权的真实天气对话，已移除个人信息。
+数据来自正式上游响应，保留实际用量、耗时和冻结参考费用。
+参考费用不等于服务商账单。
+界面使用当前版本前端和 Viewer。
+演示不读取本机客户端配置或真实凭据。
+
+## 构建与验证
+
+在仓库根目录执行以下命令。
+
+```sh
+npm run build:site
+npm run test:site
+```
+
+浏览器测试复用已安装的 Playwright。
+可通过 `XWX_PLAYWRIGHT_MODULE` 指定该模块。
+`XWX_SITE_PREVIEW_DIR` 可指定待验证的预览目录。
+
+生成文件统一放在 `test-results/site-preview`。
+该目录不提交到 Git。
+源码目录不保存生成的 JavaScript 或应用快照。
+字体资源在 `assets/fonts` 中维护，采用 SIL Open Font License。
+人工审核的脱敏请求数据随源码维护。
+构建不会读取本机日志或账号文件。
+
+## 仪表盘示例
+
+`view.html` 展示纽约与上海天气对话中的 12 次真实请求。
+`viewer.html` 保留为兼容入口。
+页面注明采集日期，天气属于当时的查询结果。
+身份、鉴权头、原始会话 ID、本机路径和不透明推理项均已移除。
+公开问题、回复、联网查询、Token、耗时和参考费用按采集结果保留。
+构建校验数据白名单与用量证据，拒绝私密字段。
+
+## 下载与发布
+
+Windows x64 与 macOS Apple Silicon 默认使用 GitHub 最新 Release 制品链接。
+下载指向实际已发布制品，不以网页更新表示软件更新已发布。
+仅填写已发布并核实的制品地址。
+网页不宣称尚未发布的版本已经可用。
+
+GitHub Pages 工作流先构建并验证官网。
+文档发布在 `/docs/`。
+站点绑定 `xwxdeck.com`，Cloudflare 管理 DNS。
+下载包继续托管在 GitHub Releases。
+下载入口仅在首屏展示，Windows 与 macOS 并排。
+页尾提供 GitHub、QQ 群聊和 Discord 文字链接。
+官网采用已确认的 Urbanist 和 Noto Sans SC 字体参数。
+发布页面不包含本地调试面板。
+
+## 文档阅读页
+
+官网的“文档”直接打开 `/docs/` 的快速开始正文。
+根入口和 `getting-started` 共用一份内容，不再展示介绍首页。
+旧入口保留，快速开始只收录根入口。
+网站只构建明确列出的使用手册章节，搜索使用相同范围。
+开发说明、同步记录、历史审计与执行报告只在仓库中维护，不发布到网站。
+文档分为开始使用、使用指南、进一步了解三个目录组。
+主题复用应用的 Urbanist、Noto Sans SC 和 Geist Mono 本地字体。
+标题字重为 500，正文为 450，正文行高为 1.85。
+表格使用独立滚动区域，窄屏不会撑宽整页。
+Markdown 链接只为已发布页面或公开资源保留跳转；缺少目标的本地引用显示为普通文字。
+
+文档与官网组装后，执行 `npm run test:docs`。
+
+```sh
+DOCS_BASE=/docs/ npm run docs:build
+cp -R docs/.vitepress/dist test-results/site-preview/docs
+npm run test:docs
+```
+
+在全新的官网构建目录中组装，避免重复复制产生嵌套目录。
+该检查覆盖首页入口、目录、搜索、锚点、旧链接、表格与五档视口。
+长表格使用仓库中的功能清单作为测试样本，不加入发布目录。
+Pages 工作流在上传站点前执行此检查。
+
+## 分享演示
+
+`/?demo=dashboard#experience` 滚动到体验区并选中仪表盘。
+`/?demo=models#experience` 直接选择模型管理。
+刷新保留链接中的演示选择，未知参数沿用默认页签。

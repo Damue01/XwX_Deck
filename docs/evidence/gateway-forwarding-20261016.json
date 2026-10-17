@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-16T04:13:14.461Z",
+  "platform": {
+    "os": "macos",
+    "arch": "arm64"
+  },
+  "caseId": "CL07",
+  "scope": "Gateway ordinary-interface forwarding; isolated backend candidates only",
+  "candidates": {
+    "public": {
+      "sourceFingerprint": {
+        "sha256": "5758ffbfbcebc5038dd5e9dfb283b4f31a21213331769015a796c1ab825b0dff",
+        "fileCount": 411
+      },
+      "binarySha256": "c4fd71cd1f6a4786ef4920189e93a5749a3e2b84d1eebe97f9af492e7304572a",
+      "dirty": true,
+      "kind": "backend executable; no packaged UI or signing proof",
+      "evidence": "P",
+      "suiteCount": 9,
+      "suites": [
+        {
+          "suite": "claude-config-path-test.mjs",
+          "code": 0,
+          "skipped": false
+        },
+        {
+          "suite": "service-switching-test.mjs",
+          "code": 0,
+          "skipped": false
+        },
+        {
+          "suite": "official-test.mjs",
+          "code": 0,
+          "skipped": false
+        },
+        {
+          "suite": "official-websocket-proxy-test.mjs",
+          "code": 0,
+          "skipped": false
+        },
+        {
+          "suite": "protocol-test.mjs",
+          "code": 0,
+          "skipped": false
+        },
+        {
+          "suite": "trace-stop-admission-test.mjs",
+          "code": 0,
+          "skipped": false
+        },
+        {
+          "suite": "universal-gateway-test.mjs",
+          "code": 0,
+          "skipped": false
+        },
+        {
+          "suite": "gateway-forwarding-test.mjs",
+          "code": 0,
+          "skipped": false
+        },
+        {
+          "suite": "client-trace-defaults-test.mjs",
+          "code": 0,
+          "skipped": false
+        }
+      ],
+      "forwardingChecks": [
+        "arbitrary methods, exact bytes, original prefix, encoded path and duplicate queries",
+        "uploads exceed Trace limits, retain encoding and remove connection-specific headers",
+        "binary, cookies, redirect and unrecognized namespaces bypass conversation parsing and Trace",
+        "Claude unknown interfaces retain a separate client source",
+        "the managed Claude model URL still reaches the original model pipeline",
+        "foreign query credentials and escaping paths fail before any upstream send",
+        "model switching cannot move opaque traffic, mix credentials, trigger retries or create traces",
+        "known model requests retain their normal routing and Trace",
+        "opaque WebSocket text, binary, subprotocol, close status and upstream handshake refusal",
+        "SSE arrives incrementally, client cancellation and force stop close upstream, source config restores",
+        "a restarted Gateway recovers the original source from the existing ownership ledger",
+        "official account and model roots remain independent with their original prefixes",
+        "an unavailable original credential produces an actionable error without leaking or borrowing an account"
+      ]
+    }
+  },
+  "real": {
+    "evidence": "R",
+    "scope": "isolated public backend; official account interface and new Codex CLI conversation",
+    "binarySha256": "c4fd71cd1f6a4786ef4920189e93a5749a3e2b84d1eebe97f9af492e7304572a",
+    "refreshTokenCopied": false,
+    "accountStatus": 200,
+    "accountBypassesTrace": true,
+    "cliExitCode": 0,
+    "cliSignal": null,
+    "completed": true,
+    "exactReply": true,
+    "traceCount": 1,
+    "errorStatus": null,
+    "passed": true,
+    "normalAuthUnchanged": true,
+    "normalConfigUnchanged": true,
+    "temporaryCredentialsRemoved": true,
+    "cliVersion": "0.162.1",
+    "model": "gpt-6.1-sol"
+  },
+  "unverified": [
+    "actual desktop app interaction",
+    "real image generation",
+    "other live upstreams",
+    "Windows",
+    "packaged app signing and notarization",
+    "normal installation and publication"
+  ]
+}

@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "repositoryMode": "standalone",
+  "historyStrategy": "new-root-history",
+  "removedFeatures": [
+    "configuration-sync",
+    "excel-to-markdown",
+    "tools-page",
+    "conversation-diagnostics"
+  ],
+  "forbiddenPatterns": [],
+  "forbiddenFeaturePaths": [
+    "src/renderer/features/sync",
+    "src/renderer/features/tools",
+    "src-native/src/config_sync.rs",
+    "src-native/src/sync_adapters.rs",
+    "src-native/src/sync_plan.rs",
+    "src-native/src/sync_project.rs",
+    "src-native/src/sync_transaction.rs",
+    "src-native/src/sync_workspace.rs",
+    "src-native/src/conversation_doctor.rs",
+    "src-native/src/excel.rs",
+    "src-native/src/excel_vision.rs",
+    "src-native/src/excel-system-prompt.txt",
+    "src-native/src/excel-user-prompt.txt",
+    "src/shared/codexConversationHealth.ts"
+  ],
+  "forbiddenRpcMethods": [
+    "convertExcelToMarkdown",
+    "chooseExcelFiles",
+    "convertExcelFiles",
+    "cancelExcelConversion",
+    "readExcelOutput",
+    "openExcelOutput",
+    "discoverConfigSyncWorkspace",
+    "getSyncConfig",
+    "saveSyncConfig",
+    "previewConfigSync",
+    "runConfigSync",
+    "resolveConfigSyncConflict",
+    "openConfigSyncConflictCopies",
+    "openConfigSyncPath",
+    "diagnoseCodexConversations",
+    "getCodexConversationDetail",
+    "cancelCodexConversationScan",
+    "setCodexConversationDiagnosticsActive",
+    "openCodexConversationPath"
+  ],
+  "forbiddenRuntimeEvents": [
+    "xwxdeck-excel-progress",
+    "xwxdeck:excel-native-drop",
+    "excelProgress"
+  ],
+  "forbiddenProductionIdentifiers": [
+    "ConfigSyncConfig",
+    "ConfigSyncService",
+    "ConfigSyncTargets",
+    "ConfigSyncProfile",
+    "ConfigSyncProfilesConfig",
+    "ConfigSyncPreviewEntry",
+    "ConfigSyncIssueCode",
+    "ConfigSyncIssue",
+    "ConfigSyncPreview",
+    "ConfigSyncSourceKind",
+    "ConfigSyncSourceCounts",
+    "ConfigSyncSourceSummary",
+    "ConfigSyncRunResult",
+    "ConfigSyncResolveResult",
+    "ConfigSyncWorkspaceSuggestion",
+    "SyncPage",
+    "ToolsPage",
+    "ExcelMarkdown",
+    "ExcelMarkdownResult",
+    "ExcelMarkdownFileResult",
+    "ExcelMarkdownBatchProgress",
+    "ExcelConversionResult",
+    "onExcelProgress",
+    "CodexConversationDoctor",
+    "CodexConversationHealth",
+    "CodexConversationHealthStatus",
+    "CodexConversationWorkspaceKind",
+    "CodexConversationIssueCode",
+    "CodexConversationIssue",
+    "CodexConversationField",
+    "CodexRolloutLocation",
+    "CodexConversationHealthRow",
+    "CodexConversationDatabaseHealth",
+    "CodexConversationHealthReport",
+    "CodexConversationFilter",
+    "CodexConversationSortKey",
+    "CodexConversationSortDirection",
+    "CodexConversationHealthSummaryRow",
+    "CodexConversationScanPerformance",
+    "CodexConversationPageRequest",
+    "CodexConversationPageResponse",
+    "CodexConversationDetailRequest"
+  ],
+  "historyPatterns": [
+    "(?<![A-Za-z0-9/])/(?:Users|home)[/](?!demo\\b|example\\b|Shared\\b|runner\\b)[A-Za-z0-9_.-]+",
+    "[A-Za-z]:[\\\\]Users[\\\\](?!demo\\b|example\\b|Preview\\b|Public\\b)[^\\\\\\s\"<>]+",
+    "P[0-9]{11}",
+    "\\u516c\\u5f00\\u7248|\\u516c\\u53f8\\u7248|\\u5185\\u90e8\\u7248",
+    "-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+    "\\bgh[pousr]_[A-Za-z0-9]{30,}\\b",
+    "\\bgithub_pat_[A-Za-z0-9_]{40,}\\b",
+    "https?://(?:10\\.[0-9.]+|192\\.168\\.[0-9.]+|172\\.(?:1[6-9]|2[0-9]|3[01])\\.[0-9.]+)(?=[:/\\s\"\\x27]|$)"
+  ],
+  "historyAuthorEmailDomains": [
+    "users.noreply.github.com",
+    "github.com"
+  ],
+  "forbiddenIdentifierDigests": [
+    {
+      "length": 8,
+      "sha256": "5626e620575dac1310f64fbaa56a69bf7d1fd15348d77d7eca42caa44e44f6c1"
+    },
+    {
+      "length": 8,
+      "sha256": "237121e6e11e93445a0dc5cc6ef5d6f8e4bbe9e700b9073956b106421ad380a6"
+    },
+    {
+      "length": 9,
+      "sha256": "37d9527f34e8547d0dc91d57350d82a9742a4b9b9370a1f04670b0d1969ab2eb"
+    },
+    {
+      "length": 14,
+      "sha256": "ffa7107b90532138738d52bc11052d455bc78938e91560a971b778dd135a79f6"
+    },
+    {
+      "length": 2,
+      "sha256": "844b69c4d54cc264bc2dadb6bb70f53bc123beafc0f58d81ed8cd4a07c24a5a7",
+      "short": true
+    }
+  ]
+}

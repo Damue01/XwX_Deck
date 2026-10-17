@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-16T04:27:22.614Z",
+  "edition": "public",
+  "version": "1.0.0",
+  "commit": "aa9f3c40ef2876a77026f5e4e901f51ad4f4a945",
+  "sourceFingerprint": "5758ffbfbcebc5038dd5e9dfb283b4f31a21213331769015a796c1ab825b0dff",
+  "binarySha256": "f9001832ec364bead467b79cb4cdddecb26f7828447e0bda74d4cd7991f7c18c",
+  "dmgSha256": "d5014e0ab740ffb5b28ad28dc0dc9e09251b8ffd83b2eaba56b51c140ecb0d27",
+  "dmgBytes": 8387448,
+  "buildMode": "manual-acceptance",
+  "signature": "developer-id",
+  "notarization": {
+    "app": {
+      "id": "181ac624-ab2d-48ee-9c45-af7822daff0d",
+      "status": "Accepted"
+    },
+    "dmg": {
+      "id": "18d69ead-6391-4c0c-a229-bd7959e67db8",
+      "status": "Accepted"
+    }
+  },
+  "signatureVerified": true,
+  "backend": {
+    "passed": true,
+    "suites": 10
+  },
+  "webview": {
+    "passed": true,
+    "checks": 222,
+    "nativeHttpRequests": 2
+  },
+  "viewer": {
+    "passed": true,
+    "checks": 23
+  },
+  "rendererBuiltTestsPassed": true,
+  "scope": "P and native WebView U+P use isolated data and synthetic upstream. Earlier real-upstream evidence remains bound to its earlier binary.",
+  "finder": {
+    "visualInspection": false,
+    "backgroundMatchesInspectedLayout": true,
+    "backgroundSha256": "3d8d68faaf3e33aa74a0bb1ed29b82f200069a765a45e956647b62527dcdb5c5",
+    "visibleItems": [
+      "XwX Deck",
+      "Applications"
+    ],
+    "hiddenVolumeIcon": true
+  },
+  "installed": false,
+  "published": false,
+  "normalInstalledBinarySha256": "107392025bf087761932329f9f29a3c1ea07987e617b217fe2df06a851a3fe23",
+  "pending": [
+    "actual image generation",
+    "normal installed Desktop flow",
+    "Windows and Intel macOS",
+    "new-package real CLI and upstream"
+  ]
+}

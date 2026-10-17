@@ -1,0 +1,172 @@
+import { t, useLanguage } from '@/lib/i18n';
+import { Dialog } from '@base-ui/react/dialog';
+import * as React from 'react';
+import { ChevronRight, X } from 'lucide-react';
+import { useBridge } from '@/bridge/store';
+import {
+  DIAGNOSTIC_NOTICE_EVENT,
+  OPEN_REPAIR_EVENT,
+  RESTORE_CLIENT_CONFIG_EVENT,
+  clearLastDiagnosticNotice,
+  noticeActionLabel,
+  readLastDiagnosticNotice,
+  runNoticeAction
+} from '@/lib/toast';
+import { TraceIndexRepairSection } from './TraceIndexRepairSection';
+import { lifecycleFailure, type LifecycleNotice } from '../../../shared/lifecycleNotice';
+
+function subscribeDiagnosticNotices(listener: () => void): () => void {
+  window.addEventListener(DIAGNOSTIC_NOTICE_EVENT, listener);
+  return () => window.removeEventListener(DIAGNOSTIC_NOTICE_EVENT, listener);
+}
+
+interface Props {
+  readonly onOpenReset: () => void;
+}
+
+export function RepairCenterSheet({
+  onOpenReset,
+}: Props): React.ReactElement {
+  useLanguage();
+  const bridge = useBridge();
+  const [open, setOpen] = React.useState(false);
+  const recentNotice = React.useSyncExternalStore(subscribeDiagnosticNotices, readLastDiagnosticNotice);
+  const currentNotice = bridge.runtime?.lastError
+    ? lifecycleFailure(bridge.runtime.lastError, t('恢复运行状态'))
+    : bridge.runtime?.connectionNotice ?? bridge.runtime?.lifecycleNotice;
+  const notices = [currentNotice, recentNotice]
+    .filter((notice, index, values) => notice && values.findIndex(item =>
+      item?.message === notice.message && item?.description === notice.description) === index);
+
+  React.useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener(OPEN_REPAIR_EVENT, show);
+    return () => window.removeEventListener(OPEN_REPAIR_EVENT, show);
+  }, []);
+
+  const managedClients = (['claude', 'codex'] as const).filter(client => {
+    const id = bridge.providers?.active[client];
+    return id && bridge.providers?.connections.some(provider => provider.id === id);
+  });
+
+  const openReset = React.useCallback(() => {
+    setOpen(false);
+    window.setTimeout(onOpenReset, 180);
+  }, [onOpenReset]);
+
+  const compactActionLabel = (action: NonNullable<LifecycleNotice['action']>) =>
+    action === 'start-trace' ? t('开启') : action === 'stop-trace' ? t('重试')
+      : action === 'models' ? t('配置') : action === 'repair-settings' || action === 'repair-codex-config' ? t('修复') : t('查看');
+
+  const renderNoticeActions = (notice: LifecycleNotice): React.ReactNode => {
+    const actions = [notice.action, notice.secondaryAction]
+      .filter((action, index, values): action is NonNullable<LifecycleNotice['action']> =>
+        !!action && action !== 'repair' && values.indexOf(action) === index);
+    if (actions.length === 0) return null;
+    return (
+      <span className="repair-notice-actions">
+        {actions.map((action, index) => (
+          <button
+            type="button"
+            className="btn repair-action-button"
+            key={action}
+            aria-label={t((index === 0 ? notice.actionLabel : notice.secondaryActionLabel) ?? noticeActionLabel(action))}
+            title={t((index === 0 ? notice.actionLabel : notice.secondaryActionLabel) ?? noticeActionLabel(action))}
+            onClick={() => {
+              setOpen(false);
+              runNoticeAction(action);
+            }}
+          >
+            {compactActionLabel(action)}
+          </button>
+        ))}
+      </span>
+    );
+  };
+
+  return (
+    <section className="group repair-entry-group">
+      <Dialog.Root open={open} onOpenChange={setOpen}>
+        <Dialog.Trigger
+          render={(
+            <button
+              type="button"
+              className="repair-entry"
+              id="repairCenterTrigger"
+            />
+          )}
+        >
+          <span className="repair-entry-title">{t("诊断与修复")}</span>
+          <ChevronRight className="ic repair-entry-chevron" aria-hidden="true" />
+        </Dialog.Trigger>
+
+        <Dialog.Portal>
+          <Dialog.Backdrop className="repair-sheet-backdrop" />
+          <Dialog.Popup className="repair-sheet-popup" id="repairCenterSheet">
+            <header className="repair-sheet-header">
+              <span className="repair-sheet-heading">
+                <Dialog.Title>{t("诊断与修复")}</Dialog.Title>
+                <Dialog.Description className="sr-only">{t("查看当前问题或重置本地数据")}</Dialog.Description>
+              </span>
+              <Dialog.Close
+                type="button"
+                className="repair-sheet-close"
+                id="repairCenterClose"
+                aria-label={t("关闭诊断与修复")}
+              >
+                <X className="ic" aria-hidden="true" />
+              </Dialog.Close>
+            </header>
+
+            <div className="repair-sheet-body">
+              {notices.length > 0 ? (
+                <section className="repair-notices" aria-label={t("问题提示")}>
+                  <p className="repair-recent-label">{t("问题提示")}</p>
+                  {notices.map((notice, index) => notice ? (
+                    <article className="repair-notice" key={`${notice.message}:${notice.description}`}>
+                      <span className="repair-action-copy">
+                        <h3>{index === 0 && currentNotice ? t('当前问题') : t('最近一次失败')}：{t(notice.message)}</h3>
+                        {notice.description ? <p>{t(notice.description)}</p> : null}
+                      </span>
+                      {renderNoticeActions(notice)}
+                      {notice === recentNotice && notice !== currentNotice ? (
+                        <button type="button" className="repair-notice-dismiss"
+                          aria-label={t("移除最近一次失败")}
+                          onClick={clearLastDiagnosticNotice}>
+                          <X className="ic" aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </article>
+                  ) : null)}
+                </section>
+              ) : null}
+              <TraceIndexRepairSection />
+              {managedClients.map(client => <section className="repair-action-section" key={client}>
+                <span className="repair-action-copy">
+                  <h3>{client === 'codex' ? 'ChatGPT' : 'Claude'}{t("连接")}</h3>
+                  <p>{t("恢复客户端原有连接。")}</p>
+                </span>
+                <button type="button" className="btn repair-action-button" aria-label={t("恢复 {0} 连接", client === 'codex' ? 'ChatGPT' : 'Claude')} onClick={() => {
+                  setOpen(false);
+                  window.dispatchEvent(new CustomEvent(RESTORE_CLIENT_CONFIG_EVENT, { detail: client }));
+                }}>{t("恢复")}</button>
+              </section>)}
+              <section className="repair-action-section">
+                <span className="repair-action-copy">
+                  <h3>{t("应用数据")}</h3>
+                  <p>{t("清除 Deck 数据，客户端配置默认保留。")}</p>
+                </span>
+                <button
+                  type="button"
+                  className="btn repair-reset-button"
+                  id="resetApplication"
+                  onClick={openReset}
+                >{t("重置")}</button>
+              </section>
+            </div>
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </section>
+  );
+}

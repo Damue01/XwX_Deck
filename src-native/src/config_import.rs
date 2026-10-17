@@ -1,0 +1,1634 @@
+//! Read-only local configuration discovery. Preview contains metadata only;
+//! import rereads and verifies each selected fingerprint before one local write.
+use super::*;
+use rusqlite::{Connection, OpenFlags};
+use serde::Serialize;
+use std::collections::HashSet;
+
+const MAX_JSON: u64 = 8 * 1024 * 1024;
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceSpec {
+    source: String,
+    path: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportItem {
+    fingerprint: String,
+    name: String,
+    base_url: String,
+    adapter: String,
+    status: String,
+    reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_kind: Option<String>,
+    #[serde(skip)]
+    account: Option<imported_subscriptions::Registration>,
+    #[serde(skip)]
+    provider: Option<Provider>,
+    #[serde(skip)]
+    models: Vec<String>,
+}
+#[derive(Serialize)]
+struct ImportSource {
+    source: String,
+    name: String,
+    path: String,
+    found: bool,
+    error: String,
+    items: Vec<ImportItem>,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Preview {
+    target_digest: String,
+    sources: Vec<ImportSource>,
+}
+fn fingerprint(v: &impl Serialize) -> String {
+    storage::digest(&serde_json::to_vec(v).unwrap_or_default())
+}
+fn field<'a>(v: &'a Value, keys: &[&str]) -> &'a str {
+    keys.iter()
+        .find_map(|key| v[*key].as_str().filter(|s| !s.trim().is_empty()))
+        .unwrap_or("")
+        .trim()
+}
+pub(super) fn json_file(path: &Path) -> Result<Value> {
+    let meta = fs::metadata(path).map_err(|_| "无法读取配置文件")?;
+    if !meta.is_file() || meta.len() > MAX_JSON {
+        return Err("配置文件超过 8 MB 或不是普通文件".into());
+    }
+    serde_json::from_slice(&fs::read(path).map_err(|_| "无法读取配置文件")?)
+        .map_err(|_| "配置 JSON 无法解析，原文件已保留".into())
+}
+fn names(v: &Value) -> Vec<String> {
+    let mut result = vec![];
+    if let Some(rows) = v.as_array() {
+        for row in rows {
+            let id = row.as_str().unwrap_or_else(|| text(row, "id"));
+            if !id.is_empty() {
+                result.push(id.to_owned());
+            }
+        }
+    } else if let Some(rows) = v.as_object() {
+        result.extend(rows.keys().cloned());
+    }
+    result.sort();
+    result.dedup();
+    result
+}
+fn skipped(name: &str, raw: &Value, reason: &str) -> ImportItem {
+    ImportItem {
+        fingerprint: fingerprint(raw),
+        name: name.to_owned(),
+        base_url: String::new(),
+        adapter: String::new(),
+        status: "unsupported".into(),
+        reason: reason.into(),
+        account_kind: None,
+        account: None,
+        provider: None,
+        models: vec![],
+    }
+}
+fn entry(
+    name: String,
+    mut provider: Provider,
+    models: Vec<String>,
+    raw: &Value,
+    disabled: bool,
+    blocked_ports: &[u16],
+) -> ImportItem {
+    if provider.bearer_token.starts_with('$')
+        || provider.bearer_token.starts_with('`')
+        || provider.bearer_token.contains("{env:")
+        || provider.bearer_token.contains("{file:")
+    {
+        return skipped(&name, raw, "密钥来自环境变量、文件或命令，请手动配置");
+    }
+    let url = reqwest::Url::parse(provider.base_url.trim_end_matches('/'));
+    let skip = match &url {
+        Err(_) => Some("API 地址无效"),
+        Ok(u)
+            if !["http", "https"].contains(&u.scheme())
+                || u.host_str().is_none()
+                || !u.username().is_empty()
+                || u.password().is_some()
+                || u.query().is_some()
+                || u.fragment().is_some() =>
+        {
+            Some("API 地址包含不支持的认证或参数")
+        }
+        Ok(u)
+            if matches!(
+                u.host_str(),
+                Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+            ) && u.port().is_some_and(|port| {
+                blocked_ports.contains(&port) || (45233..=45242).contains(&port)
+            }) =>
+        {
+            Some("指向配置管理器本地代理，不能作为上游导入")
+        }
+        Ok(u)
+            if u.host_str().is_some_and(|h| {
+                h == "chatgpt.com"
+                    || h.ends_with(".githubcopilot.com")
+                    || h == "api.githubcopilot.com"
+                    || h == "api2.cursor.sh"
+                    || h == "grok.com"
+            }) || provider.bearer_token.starts_with("sk-ant-oat") =>
+        {
+            Some("此条目需要重新登录订阅账号")
+        }
+        Ok(u)
+            if provider.bearer_token.is_empty()
+                && !matches!(
+                    u.host_str(),
+                    Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+                ) =>
+        {
+            Some("没有可迁移的 API Key，请重新登录订阅或手动配置")
+        }
+        _ => None,
+    };
+    if let Some(reason) = skip {
+        return skipped(&name, raw, reason);
+    }
+    if ["PROXY_MANAGED", "PROXY_MANAGED_TOKEN", "MAGPIE_MANAGED"]
+        .contains(&provider.bearer_token.as_str())
+    {
+        return skipped(&name, raw, "只有本地代理占位密钥，不能导入");
+    }
+    provider.base_url = provider.base_url.trim_end_matches('/').to_owned();
+    provider.display_name = name.clone();
+    provider.codex_provider_id = "xwx_deck".into();
+    provider.codex_api_format = provider.adapter.clone();
+    if provider.provider_preset.is_empty() || provider.provider_preset == "custom" {
+        provider.provider_preset = match provider.base_url.as_str() {
+            "https://coding.dashscope.aliyuncs.com/v1"
+            | "https://coding.dashscope.aliyuncs.com/apps/anthropic" => "qwen-coding-plan",
+            "https://open.bigmodel.cn/api/v1"
+            | "https://open.bigmodel.cn/api/anthropic"
+            | "https://open.bigmodel.cn/api/coding/paas/v4" => "zhipu-coding-plan",
+            "https://api.z.ai/api/v1"
+            | "https://api.z.ai/api/anthropic"
+            | "https://api.z.ai/api/coding/paas/v4" => "zai-coding-plan",
+            "https://api.kimi.com/coding/v1" | "https://api.kimi.ai/coding/v1" => {
+                "kimi-coding-plan"
+            }
+            _ => "custom",
+        }
+        .into();
+    }
+    ImportItem {
+        fingerprint: fingerprint(&json!({"raw":raw,"provider":provider,"models":models})),
+        name,
+        base_url: provider.base_url.clone(),
+        adapter: provider.adapter.clone(),
+        status: if disabled { "paused" } else { "new" }.into(),
+        reason: if disabled { "来源中已停用" } else { "" }.into(),
+        account_kind: None,
+        account: None,
+        provider: Some(provider),
+        models,
+    }
+}
+fn read_magpie(path: &Path) -> Result<Vec<ImportItem>> {
+    let config = json_file(path)?;
+    let providers = config["providers"]
+        .as_array()
+        .ok_or("没有找到 Magpie providers 列表")?;
+    if providers.len() > 1000 {
+        return Err("配置条目超过 1000 个上限".into());
+    }
+    let port = json_file(&path.with_file_name("settings.json"))
+        .ok()
+        .and_then(|v| v["port"].as_u64())
+        .and_then(|v| u16::try_from(v).ok())
+        .unwrap_or(3425);
+    let mut out = vec![];
+    for raw in providers {
+        let name = field(raw, &["name", "id"]);
+        if raw["hidden"] == true {
+            continue;
+        }
+        if raw["headers"].as_object().is_some_and(|h| !h.is_empty())
+            || raw["extraBody"].as_object().is_some_and(|h| !h.is_empty())
+        {
+            out.push(skipped(
+                name,
+                raw,
+                "含自定义请求头或请求体，暂不支持完整导入",
+            ));
+            continue;
+        }
+        let endpoints: Vec<_> = [
+            ("responses", "responses"),
+            ("chat", "chat-completions"),
+            ("anthropic", "anthropic-messages"),
+        ]
+        .into_iter()
+        .filter(|(key, _)| !text(raw, key).is_empty())
+        .collect();
+        if endpoints.is_empty() {
+            out.push(skipped(
+                name,
+                raw,
+                if !text(raw, "gemini").is_empty() {
+                    "原生 Gemini 协议暂不支持导入"
+                } else {
+                    "此条目需要重新登录订阅账号"
+                },
+            ));
+            continue;
+        }
+        let keys = std::iter::once((
+            field(raw, &["keyName"]),
+            text(raw, "key"),
+            text(raw, "keyProtocol"),
+            false,
+        ))
+        .chain(raw["keys"].as_array().into_iter().flatten().map(|key| {
+            (
+                text(key, "name"),
+                text(key, "key"),
+                text(key, "protocol"),
+                key["off"] == true,
+            )
+        }));
+        for (index, (key_name, key, protocol, key_off)) in keys.enumerate() {
+            if index >= 100 {
+                return Err("单个服务商的 Key 超过 100 个上限".into());
+            }
+            for (api, adapter) in &endpoints {
+                if out.len() >= 1000 {
+                    return Err("配置条目超过 1000 个上限".into());
+                }
+                if !protocol.is_empty() && protocol != *api {
+                    continue;
+                }
+                let mut label = if name.is_empty() {
+                    "Imported".to_owned()
+                } else {
+                    name.to_owned()
+                };
+                if index > 0 || !key_name.is_empty() {
+                    label.push_str(&format!(
+                        " {}",
+                        if key_name.is_empty() {
+                            format!("Key {}", index + 1)
+                        } else {
+                            key_name.to_owned()
+                        }
+                    ));
+                }
+                if endpoints.len() > 1 {
+                    label.push_str(&format!(" ({api})"));
+                }
+                let provider = Provider {
+                    other: Default::default(),
+                    base_url: text(raw, api).into(),
+                    bearer_token: key.into(),
+                    adapter: (*adapter).into(),
+                    claude_models: json!({"fable":"","opus":"","sonnet":"","haiku":""}),
+                    ..Default::default()
+                };
+                out.push(entry(
+                    label,
+                    provider,
+                    names(&raw["models"]),
+                    raw,
+                    raw["off"] == true || key_off,
+                    &[15721, 3425, port],
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+fn cc_entry(
+    app: &str,
+    name: &str,
+    settings: &Value,
+    meta: &Value,
+    raw: &Value,
+    ports: &[u16],
+) -> ImportItem {
+    let env = &settings["env"];
+    if field(meta, &["providerType"]).contains("oauth")
+        || field(meta, &["providerType"]) == "github_copilot"
+        || meta["authBinding"]["kind"] == "managed_account"
+    {
+        return skipped(name, raw, "此条目需要重新登录订阅账号");
+    }
+    if meta["localProxyRequestOverrides"]
+        .as_object()
+        .is_some_and(|v| !v.is_empty())
+    {
+        return skipped(name, raw, "含自定义请求覆盖，暂不支持完整导入");
+    }
+    let mut p = Provider {
+        other: Default::default(),
+        claude_models: json!({"fable":"","opus":"","sonnet":"","haiku":""}),
+        ..Default::default()
+    };
+    let mut models = names(&settings["models"]);
+    match app {
+        "claude" | "claude-desktop" => {
+            if [
+                "CLAUDE_CODE_USE_BEDROCK",
+                "CLAUDE_CODE_USE_VERTEX",
+                "CLAUDE_CODE_USE_FOUNDRY",
+            ]
+            .iter()
+            .any(|k| env[*k] == "1" || env[*k] == true)
+            {
+                return skipped(name, raw, "此认证方式暂不支持导入");
+            }
+            p.bearer_token = field(env, &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]).into();
+            p.base_url = field(env, &["ANTHROPIC_BASE_URL"]).into();
+            if p.base_url.is_empty() && !p.bearer_token.is_empty() {
+                p.base_url = "https://api.anthropic.com".into();
+            }
+            p.adapter = match field(meta, &["apiFormat"]) {
+                "openai_chat" => "chat-completions",
+                "openai_responses" => "responses",
+                "" | "anthropic" | "anthropic_messages" => "anthropic-messages",
+                _ => return skipped(name, raw, "此接口协议暂不支持导入"),
+            }
+            .into();
+            for (role, keys) in [
+                ("fable", vec!["ANTHROPIC_DEFAULT_FABLE_MODEL"]),
+                ("opus", vec!["ANTHROPIC_DEFAULT_OPUS_MODEL"]),
+                (
+                    "sonnet",
+                    vec!["ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_MODEL"],
+                ),
+                (
+                    "haiku",
+                    vec![
+                        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                        "ANTHROPIC_SMALL_FAST_MODEL",
+                    ],
+                ),
+            ] {
+                let model = field(env, &keys);
+                p.claude_models[role] = json!(model);
+                if !model.is_empty() {
+                    models.push(model.into());
+                }
+            }
+        }
+        "codex" => {
+            let config = match doc(text(settings, "config")) {
+                Ok(config) => config,
+                Err(_) => return skipped(name, raw, "此条目 TOML 无法解析"),
+            };
+            let selected = config
+                .get("model_provider")
+                .and_then(Item::as_str)
+                .unwrap_or("openai");
+            let empty = Item::None;
+            let provider = config
+                .get("model_providers")
+                .and_then(|table| table.get(selected))
+                .unwrap_or(&empty);
+            if provider
+                .get("http_headers")
+                .and_then(Item::as_table_like)
+                .is_some_and(|h| !h.is_empty())
+                || provider
+                    .get("env_http_headers")
+                    .and_then(Item::as_table_like)
+                    .is_some_and(|h| !h.is_empty())
+            {
+                return skipped(name, raw, "含自定义请求头，暂不支持完整导入");
+            }
+            let env_key = provider.get("env_key").and_then(Item::as_str).unwrap_or("");
+            if !env_key.is_empty() {
+                p.bearer_token = text(env, env_key).into();
+                if p.bearer_token.is_empty() {
+                    return skipped(name, raw, "密钥来自环境变量，请手动配置");
+                }
+            } else {
+                p.bearer_token = provider
+                    .get("experimental_bearer_token")
+                    .and_then(Item::as_str)
+                    .unwrap_or("")
+                    .into();
+                if p.bearer_token.is_empty() {
+                    p.bearer_token = field(&settings["auth"], &["OPENAI_API_KEY"]).into();
+                }
+            }
+            p.base_url = provider
+                .get("base_url")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .into();
+            if p.base_url.is_empty() && !p.bearer_token.is_empty() {
+                p.base_url = "https://api.openai.com/v1".into();
+            }
+            p.adapter = match provider
+                .get("wire_api")
+                .and_then(Item::as_str)
+                .unwrap_or("responses")
+            {
+                "responses" => "responses",
+                "chat" | "chat-completions" => "chat-completions",
+                _ => return skipped(name, raw, "此接口协议暂不支持导入"),
+            }
+            .into();
+            p.codex_model = config
+                .get("model")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .into();
+            p.codex_context_window = config
+                .get("model_context_window")
+                .and_then(Item::as_integer)
+                .unwrap_or(0)
+                .max(0) as u64;
+            if !p.codex_model.is_empty() {
+                models.push(p.codex_model.clone());
+            }
+        }
+        "gemini" => return skipped(name, raw, "原生 Gemini 协议暂不支持导入"),
+        "grokbuild" => {
+            let config = match doc(text(settings, "config")) {
+                Ok(config) => config,
+                Err(_) => return skipped(name, raw, "此条目 TOML 无法解析"),
+            };
+            let selected = config
+                .get("models")
+                .and_then(|v| v.get("default"))
+                .and_then(Item::as_str)
+                .unwrap_or("");
+            let Some(model) = config.get("model").and_then(|v| v.get(selected)) else {
+                return skipped(
+                    name,
+                    raw,
+                    "没有找到 Grok Build 自定义模型，请重新登录或手动配置",
+                );
+            };
+            p.base_url = model
+                .get("base_url")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .into();
+            p.bearer_token = model
+                .get("api_key")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .into();
+            if p.bearer_token.is_empty() {
+                return skipped(name, raw, "密钥来自环境变量或未配置，请手动配置");
+            }
+            p.adapter = match model
+                .get("api_backend")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+            {
+                "responses" => "responses",
+                "chat" | "chat-completions" => "chat-completions",
+                _ => return skipped(name, raw, "此接口协议暂不支持导入"),
+            }
+            .into();
+            p.codex_model = model
+                .get("model")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .into();
+            p.codex_context_window = model
+                .get("context_window")
+                .and_then(Item::as_integer)
+                .unwrap_or(0)
+                .max(0) as u64;
+            models = if p.codex_model.is_empty() {
+                vec![]
+            } else {
+                vec![p.codex_model.clone()]
+            };
+        }
+        "opencode" | "openclaw" | "pi" | "hermes" => {
+            let options = if settings["settings"].is_object() {
+                &settings["settings"]
+            } else {
+                &settings["options"]
+            };
+            p.base_url = field(settings, &["baseUrl", "baseURL", "base_url"]).into();
+            if p.base_url.is_empty() {
+                p.base_url = field(options, &["baseURL", "baseUrl", "base_url"]).into();
+            }
+            p.bearer_token = field(settings, &["apiKey", "api_key"]).into();
+            if p.bearer_token.is_empty() {
+                p.bearer_token = field(options, &["apiKey", "api_key"]).into();
+            }
+            let api = field(settings, &["api", "npm", "package", "type"]).to_lowercase();
+            p.adapter = if api.contains("anthropic") {
+                "anthropic-messages"
+            } else if api.contains("responses")
+                || ["@ai-sdk/openai", "@opencode/ai/providers/openai"].contains(&api.as_str())
+            {
+                "responses"
+            } else if api.is_empty() || api.contains("openai") {
+                "chat-completions"
+            } else {
+                return skipped(name, raw, "此接口协议暂不支持导入");
+            }
+            .into();
+            if ["pi", "openclaw", "hermes"].contains(&app)
+                && !p.bearer_token.is_empty()
+                && !p.bearer_token.starts_with("sk-")
+                && (p.bearer_token.starts_with('!')
+                    || p.bearer_token
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+            {
+                return skipped(name, raw, "密钥来自环境变量或命令，请手动配置");
+            }
+            if settings["headers"]
+                .as_object()
+                .is_some_and(|h| !h.is_empty())
+                || options["headers"]
+                    .as_object()
+                    .is_some_and(|h| !h.is_empty())
+            {
+                return skipped(name, raw, "含自定义请求头，暂不支持完整导入");
+            }
+        }
+        _ => return skipped(name, raw, "此客户端配置格式暂不支持导入"),
+    }
+    if p.base_url.is_empty() && p.bearer_token.is_empty() {
+        return skipped(name, raw, "此条目需要重新登录订阅账号");
+    }
+    models.sort();
+    models.dedup();
+    entry(
+        name.into(),
+        p,
+        models,
+        raw,
+        settings["disabled"] == true,
+        ports,
+    )
+}
+fn read_cc(path: &Path) -> Result<Vec<ImportItem>> {
+    let mut out = vec![];
+    if path
+        .extension()
+        .is_some_and(|s| s == "db" || s == "sqlite" || s == "sqlite3")
+    {
+        if fs::metadata(path)
+            .map_err(|_| "无法读取 CC Switch 数据库")?
+            .len()
+            > 128 * 1024 * 1024
+        {
+            return Err("CC Switch 数据库超过 128 MB 上限".into());
+        }
+        let db = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|_| "无法只读打开 CC Switch 数据库")?;
+        db.busy_timeout(Duration::from_secs(1)).map_err(err)?;
+        let transaction = db
+            .unchecked_transaction()
+            .map_err(|_| "CC Switch 数据库暂不可读")?;
+        let has_meta = transaction
+            .prepare("SELECT name FROM pragma_table_info('providers') WHERE name='meta'")
+            .and_then(|mut s| s.exists([]))
+            .unwrap_or(false);
+        let mut ports = vec![15721, 3425];
+        if let Ok(mut query) = transaction.prepare("SELECT DISTINCT listen_port FROM proxy_config")
+        {
+            if let Ok(rows) = query.query_map([], |r| r.get::<_, u16>(0)) {
+                ports.extend(rows.filter_map(|r| r.ok()));
+            }
+        }
+        let sql=format!("SELECT id,app_type,name,settings_config,{} FROM providers ORDER BY app_type,id LIMIT 1001",if has_meta{"meta"}else{"'{}'"});
+        let mut query = transaction
+            .prepare(&sql)
+            .map_err(|_| "CC Switch 数据库格式不受支持")?;
+        let rows = query
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|_| "无法读取 CC Switch 服务列表")?;
+        for row in rows {
+            if out.len() >= 1000 {
+                return Err("配置条目超过 1000 个上限".into());
+            }
+            let (id, app, name, settings, meta) = row.map_err(|_| "CC Switch 条目格式不受支持")?;
+            let settings: Value = serde_json::from_str(&settings).unwrap_or(Value::Null);
+            let meta: Value = serde_json::from_str(&meta).unwrap_or(Value::Null);
+            let raw = json!({"id":id,"app":app,"name":name,"settings":settings,"meta":meta});
+            if settings.is_null() || !meta.is_object() {
+                out.push(skipped(&name, &raw, "此条目 JSON 无法解析"));
+                continue;
+            }
+            out.push(cc_entry(&app, &name, &settings, &meta, &raw, &ports));
+        }
+    } else {
+        let config = json_file(path)?;
+        let sections = config.as_object().ok_or("CC Switch 配置格式不受支持")?;
+        for (app, section) in sections {
+            for (id, row) in section["providers"].as_object().into_iter().flatten() {
+                if out.len() >= 1000 {
+                    return Err("配置条目超过 1000 个上限".into());
+                }
+                let raw = json!({"app":app,"id":id,"row":row});
+                out.push(cc_entry(
+                    app,
+                    text(row, "name"),
+                    &row["settingsConfig"],
+                    &row["meta"],
+                    &raw,
+                    &[15721, 3425],
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+fn read_deck(path: &Path) -> Result<Vec<ImportItem>> {
+    let config = json_file(path)?;
+    let rows = config["providers"]["connections"]
+        .as_array()
+        .or_else(|| config["connections"].as_array())
+        .ok_or("没有找到 XwX Deck 模型服务配置")?;
+    if rows.len() > 1000 {
+        return Err("配置条目超过 1000 个上限".into());
+    }
+    let mut out = vec![];
+    for raw in rows {
+        let name = field(raw, &["displayName", "id"]);
+        if !text(raw, "subscriptionAccountId").is_empty() {
+            out.push(skipped(name, raw, "此条目需要重新登录订阅账号"));
+            continue;
+        }
+        let mut p: Provider = serde_json::from_value(raw.clone())
+            .map_err(|_| "旧版 Deck 配置格式不受支持，原文件已保留")?;
+        if p.adapter.is_empty() {
+            p.adapter = if p.codex_api_format.is_empty() {
+                "auto".into()
+            } else {
+                p.codex_api_format.clone()
+            };
+        }
+        let mut models = names(&config["importedProviderModels"][&p.id]);
+        if !p.codex_model.is_empty() {
+            models.push(p.codex_model.clone());
+        }
+        models.sort();
+        models.dedup();
+        out.push(entry(name.into(), p, models, raw, false, &[15721, 3425]));
+    }
+    Ok(out)
+}
+fn read_accounts(path: &Path) -> Result<Vec<ImportItem>> {
+    let document = json_file(path)?;
+    let rows = document.as_array().ok_or("没有找到 Magpie 账号列表")?;
+    let mut out = vec![];
+    for row in rows {
+        let agent = text(row, "agent");
+        if !text(row, "hidden").is_empty() || row["hidden"] == true {
+            continue;
+        }
+        if !["codex", "chatgpt-api"].contains(&agent) {
+            continue;
+        }
+        let name = text(row, "user");
+        match imported_subscriptions::Registration::new(path, row, agent, &row["auth"]) {
+            Ok(account) => out.push(account_item(
+                account,
+                row,
+                row["paused"] == true || row["on"] == false,
+            )),
+            Err(reason) => out.push(skipped(name, row, &reason)),
+        }
+    }
+    Ok(out)
+}
+fn account_item(
+    account: imported_subscriptions::Registration,
+    raw: &Value,
+    paused: bool,
+) -> ImportItem {
+    let problem = account.auth(Path::new("/"), false).err();
+    ImportItem {
+        fingerprint: fingerprint(&json!({"registration":account,"source":raw})),
+        name: account.label.clone(),
+        base_url: if account.label == account.email {
+            String::new()
+        } else {
+            account.email.clone()
+        },
+        adapter: String::new(),
+        status: if problem.is_some() {
+            "needs-login"
+        } else if paused {
+            "paused"
+        } else {
+            "new"
+        }
+        .into(),
+        reason: problem
+            .unwrap_or_else(|| "复用来源登录，原应用继续负责续期；移除仅解除关联".into()),
+        account_kind: Some(account.kind.clone()),
+        account: Some(account),
+        provider: None,
+        models: vec![],
+    }
+}
+fn read_official_auth(path: &Path) -> Result<Vec<ImportItem>> {
+    let auth = json_file(path)?;
+    let mut account = imported_subscriptions::Registration::new(path, &json!({}), "codex", &auth)?;
+    account.agent = "auth-file".into();
+    Ok(vec![account_item(account, &auth, false)])
+}
+fn detect_source(path: &Path) -> Result<&'static str> {
+    match path.extension().and_then(|s| s.to_str()) {
+        Some("db" | "sqlite" | "sqlite3") => return Ok("cc-switch"),
+        Some("toml") => return Ok("codex"),
+        _ => {}
+    }
+    let v = if path.extension().is_some_and(|ext| ext == "jsonc") {
+        let meta = fs::metadata(path).map_err(|_| "无法读取配置文件")?;
+        if !meta.is_file() || meta.len() > MAX_JSON {
+            return Err("配置文件超过 8 MB 或不是普通文件".into());
+        }
+        client_wiring::parsed(&fs::read_to_string(path).map_err(|_| "无法读取配置文件")?)?
+    } else {
+        json_file(path)?
+    };
+    if v.is_array()
+        && v.as_array()
+            .is_some_and(|rows| rows.iter().any(|r| r["agent"].is_string()))
+    {
+        return Ok("magpie-accounts");
+    }
+    if v["tokens"].is_object() {
+        return Ok("codex-auth");
+    }
+    if v["providers"].is_array() {
+        return Ok("magpie");
+    }
+    if v["connections"].is_array() || v["providers"]["connections"].is_array() {
+        return Ok("xwx-deck");
+    }
+    if v.as_object()
+        .is_some_and(|o| o.values().any(|s| s["providers"].is_object()))
+    {
+        return Ok("cc-switch");
+    }
+    if v["provider"].is_object()
+        || v["providers"].as_object().is_some_and(|rows| {
+            rows.values()
+                .any(|row| row["options"].is_object() || row["settings"].is_object())
+        })
+    {
+        return Ok("opencode");
+    }
+    if v["providers"].is_object() {
+        return Ok("pi");
+    }
+    if v["customModels"].is_array() {
+        return Ok("droid");
+    }
+    if v["modelProviders"].is_object() {
+        return Ok("qwen-code");
+    }
+    if v.as_array()
+        .or_else(|| v["models"].as_array())
+        .is_some_and(|rows| rows.iter().any(|row| row["url"].is_string()))
+    {
+        return Ok("codebuddy-code");
+    }
+    if v["env"].is_object() {
+        return Ok("claude");
+    }
+    Err("无法识别配置格式，原文件已保留".into())
+}
+// Compare physical paths on both sides. Windows canonical paths use the
+// extended \?\ prefix, so comparing one against an ordinary root rejects valid files.
+pub(super) fn within_isolated_root(path: &Path, root: &Path) -> bool {
+    if !path.starts_with(root)
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    if !path.exists() {
+        return true;
+    }
+    match (fs::canonicalize(path), fs::canonicalize(root)) {
+        (Ok(path), Ok(root)) => path.starts_with(root),
+        _ => false,
+    }
+}
+
+fn read_client(path: &Path, source: &str, isolated_root: Option<&Path>) -> Result<Vec<ImportItem>> {
+    if client_wiring::automatic_client(source) {
+        return read_additional_client(path, source);
+    }
+    if source == "claude" {
+        let settings = json_file(path)?;
+        if !settings.is_object() {
+            return Err("Claude 配置格式不受支持，原文件已保留".into());
+        }
+        let raw = json!({"source":source,"settings":settings});
+        return Ok(vec![cc_entry(
+            "claude",
+            "Claude",
+            &settings,
+            &json!({}),
+            &raw,
+            &[15721, 3425],
+        )]);
+    }
+    let meta = fs::metadata(path).map_err(|_| "无法读取 Codex 配置")?;
+    if !meta.is_file() || meta.len() > MAX_JSON {
+        return Err("配置文件超过 8 MB 或不是普通文件".into());
+    }
+    let config = fs::read_to_string(path).map_err(|_| "无法读取 Codex 配置")?;
+    let parsed = doc(&config).map_err(|_| "Codex TOML 无法解析，原文件已保留")?;
+    let selected = parsed
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .unwrap_or("openai");
+    if selected == "xwx_deck"
+        || parsed
+            .get("model_catalog_json")
+            .and_then(Item::as_str)
+            .is_some_and(|p| {
+                Path::new(p)
+                    .file_name()
+                    .is_some_and(|n| n == "xwx-deck-model-catalog.json")
+            })
+    {
+        // This is Deck's generated route, not an independent import source.
+        return Ok(vec![]);
+    }
+    let empty = Item::None;
+    let provider = parsed
+        .get("model_providers")
+        .and_then(|table| table.get(selected))
+        .unwrap_or(&empty);
+    // Extract only the API key. OAuth credentials never enter the import plan.
+    let mut api_key = String::new();
+    if provider
+        .get("experimental_bearer_token")
+        .and_then(Item::as_str)
+        .unwrap_or("")
+        .is_empty()
+        && provider
+            .get("env_key")
+            .and_then(Item::as_str)
+            .unwrap_or("")
+            .is_empty()
+    {
+        let auth_path = path.with_file_name("auth.json");
+        if auth_path.exists() {
+            if isolated_root.is_some_and(|root| !within_isolated_root(&auth_path, root)) {
+                return Err("隔离验收只能读取隔离目录中的认证文件".into());
+            }
+            let auth = json_file(&auth_path)?;
+            api_key = field(&auth, &["OPENAI_API_KEY"]).into();
+            if api_key.is_empty() && (auth["tokens"].is_object() || auth["auth_mode"] == "chatgpt")
+            {
+                if let Ok(accounts) = read_official_auth(&auth_path) {
+                    return Ok(accounts);
+                }
+                return Ok(vec![skipped(
+                    "Codex",
+                    &json!({"config":config}),
+                    "此条目需要重新登录订阅账号",
+                )]);
+            }
+        }
+    }
+    let settings = json!({"config":config,"auth":{"OPENAI_API_KEY":api_key}});
+    let raw = json!({"source":source,"settings":settings});
+    Ok(vec![cc_entry(
+        "codex",
+        "Codex",
+        &settings,
+        &json!({}),
+        &raw,
+        &[15721, 3425],
+    )])
+}
+
+fn read_additional_client(path: &Path, source: &str) -> Result<Vec<ImportItem>> {
+    let meta = fs::metadata(path).map_err(|_| "无法读取客户端配置")?;
+    if !meta.is_file() || meta.len() > MAX_JSON {
+        return Err("配置文件超过 8 MB 或不是普通文件".into());
+    }
+    let value =
+        client_wiring::parsed(&fs::read_to_string(path).map_err(|_| "无法读取客户端配置")?)?;
+    let mut out = vec![];
+    let mut push = |label: &str, settings: Value| -> Result<()> {
+        if out.len() >= 1000 {
+            return Err("配置条目超过 1000 个上限".into());
+        }
+        let raw = json!({"source":source,"label":label,"settings":settings});
+        let app = if ["opencode", "mimo-code"].contains(&source) {
+            "opencode"
+        } else {
+            "pi"
+        };
+        out.push(cc_entry(
+            app,
+            label,
+            &settings,
+            &json!({}),
+            &raw,
+            &[15721, 3425],
+        ));
+        Ok(())
+    };
+    match source {
+        "opencode" | "mimo-code" | "pi" | "crush" => {
+            let rows = if value["provider"].is_object() {
+                &value["provider"]
+            } else {
+                &value["providers"]
+            };
+            if rows.is_null() {
+                return Ok(out);
+            }
+            for (id, row) in rows.as_object().ok_or("客户端 providers 格式不受支持")? {
+                if id == "xwx_deck" {
+                    continue;
+                }
+                let label = field(row, &["name"]);
+                push(if label.is_empty() { id } else { label }, row.clone())?;
+            }
+        }
+        "droid" => {
+            if value["customModels"].is_null() {
+                return Ok(out);
+            }
+            for row in value["customModels"]
+                .as_array()
+                .ok_or("Droid customModels 格式不受支持")?
+            {
+                if text(row, "id").starts_with("custom:xwx_deck/") {
+                    continue;
+                }
+                let api = match text(row, "provider") {
+                    "anthropic" => "anthropic-messages",
+                    "openai" => "openai-responses",
+                    "generic-chat-completion-api" => "openai-completions",
+                    _ => "unsupported",
+                };
+                push(
+                    field(row, &["displayName", "model", "id"]),
+                    json!({"baseUrl":field(row,&["baseUrl","baseURL"]),"apiKey":text(row,"apiKey"),"api":api,"models":[text(row,"model")],"headers":row["headers"]}),
+                )?;
+            }
+        }
+        "codebuddy-code" | "workbuddy" => {
+            for row in value
+                .as_array()
+                .or_else(|| value["models"].as_array())
+                .ok_or("没有找到客户端 models 列表")?
+            {
+                if text(row, "vendor") == "xwx_deck" {
+                    continue;
+                }
+                let url = text(row, "url");
+                let (base, api) = if let Some(base) = url.strip_suffix("/chat/completions") {
+                    (base, "openai-completions")
+                } else if let Some(base) = url.strip_suffix("/responses") {
+                    (base, "openai-responses")
+                } else if let Some(base) = url.strip_suffix("/v1/messages") {
+                    (base, "anthropic-messages")
+                } else {
+                    (url, "unsupported")
+                };
+                push(
+                    field(row, &["name", "id"]),
+                    json!({"baseUrl":base,"apiKey":text(row,"apiKey"),"api":api,"models":[text(row,"id")],"headers":row["headers"]}),
+                )?;
+            }
+        }
+        "qwen-code" => {
+            if value["modelProviders"].is_null() {
+                return Ok(out);
+            }
+            for (id, rows) in value["modelProviders"]
+                .as_object()
+                .ok_or("Qwen modelProviders 格式不受支持")?
+            {
+                if id == "xwx_deck" {
+                    continue;
+                }
+                for row in rows
+                    .as_array()
+                    .ok_or("Qwen modelProviders 条目格式不受支持")?
+                {
+                    let key = field(row, &["apiKey"]);
+                    let key = if key.is_empty() {
+                        text(&value["env"], text(row, "envKey"))
+                    } else {
+                        key
+                    };
+                    let api = match text(row, "wireApi") {
+                        "responses" => "openai-responses",
+                        "chat" | "chat-completions" => "openai-completions",
+                        "" if text(&value["providerProtocol"], id) == "openai" => {
+                            "openai-completions"
+                        }
+                        _ => "unsupported",
+                    };
+                    push(
+                        field(row, &["name", "id"]),
+                        json!({"baseUrl":text(row,"baseUrl"),"apiKey":key,"api":api,"models":[text(row,"id")],"headers":row["generationConfig"]["customHeaders"]}),
+                    )?;
+                }
+            }
+        }
+        _ => out.push(skipped(source, &value, "原生 Gemini 协议暂不支持导入")),
+    }
+    Ok(out)
+}
+
+fn same(a: &Provider, b: &Provider) -> bool {
+    a.subscription_account_id.is_empty()
+        && a.base_url.trim_end_matches('/') == b.base_url.trim_end_matches('/')
+        && a.bearer_token == b.bearer_token
+        && a.adapter == b.adapter
+}
+
+fn cc_directory(home: &Path, app_data: &Path) -> PathBuf {
+    let override_path = json_file(&app_data.join("com.ccswitch.desktop/app_paths.json"))
+        .ok()
+        .and_then(|v| v["app_config_dir_override"].as_str().map(str::to_owned));
+    if let Some(raw) = override_path {
+        let raw = raw.trim();
+        let path = if raw == "~" {
+            home.to_path_buf()
+        } else if let Some(relative) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+            home.join(relative)
+        } else {
+            PathBuf::from(raw)
+        };
+        if path.is_absolute() && path.is_dir() {
+            return path;
+        }
+    }
+    home.join(".cc-switch")
+}
+
+impl Pilot {
+    fn import_target(&self) -> Result<String> {
+        if let Some(problem) = &self.settings_problem {
+            return Err(problem.clone());
+        }
+        let disk = read(&self.root.join("settings.json"))?.unwrap_or_default();
+        if !disk.is_empty() {
+            let mut parsed: Value = serde_json::from_str(&disk)
+                .map_err(|_| "配置文件已在外部变更，请重新打开应用；原文件已保留")?;
+            if parsed.get("connections").is_none() && parsed["providers"]["connections"].is_array()
+            {
+                parsed["connections"] = parsed["providers"]["connections"].clone();
+                parsed["selected"] = parsed["providers"]["selected"].clone();
+            }
+            let target: Settings = serde_json::from_value(parsed)
+                .map_err(|_| "配置文件已在外部变更，请重新打开应用；原文件已保留")?;
+            let normalize = |s: &Settings| -> Result<Value> {
+                let mut v = serde_json::to_value(s).map_err(err)?;
+                if v.get("providers").is_some() {
+                    v["providers"] = json!({"version":1,"identityVersion":2,"connections":s.connections,"selected":s.selected});
+                }
+                Ok(v)
+            };
+            if normalize(&target)? != normalize(&self.settings)? {
+                return Err("配置文件已在外部修改，请重新打开应用；未覆盖原文件".into());
+            }
+        }
+        Ok(disk)
+    }
+    fn import_specs(&self, input: &Value) -> Result<Vec<SourceSpec>> {
+        if input.get("sources").is_some() {
+            let specs: Vec<SourceSpec> =
+                serde_json::from_value(input["sources"].clone()).map_err(|_| "无效导入来源")?;
+            if specs.len() > 64
+                || specs.iter().any(|s| {
+                    ![
+                        "magpie",
+                        "magpie-accounts",
+                        "codex-auth",
+                        "cc-switch",
+                        "claude",
+                        "codex",
+                        "xwx-deck",
+                        "auto",
+                    ]
+                    .contains(&s.source.as_str())
+                        && !client_wiring::automatic_client(&s.source)
+                        || !Path::new(&s.path).is_absolute()
+                })
+            {
+                return Err("无效导入来源".into());
+            }
+            if self.isolated
+                && specs
+                    .iter()
+                    .any(|s| !within_isolated_root(Path::new(&s.path), &self.root))
+            {
+                return Err("隔离验收只能读取隔离目录中的来源文件".into());
+            }
+            return Ok(specs);
+        }
+        let home = if self.isolated {
+            self.root.join("import-sources")
+        } else {
+            Self::home()
+        };
+        let config = if self.isolated {
+            home.join(".config")
+        } else {
+            std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .unwrap_or_else(|| home.join(".config"))
+        };
+        let app_data = if self.isolated {
+            home.join("app-data")
+        } else if cfg!(target_os = "macos") {
+            home.join("Library/Application Support")
+        } else if cfg!(windows) {
+            std::env::var_os("APPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join("AppData/Roaming"))
+        } else {
+            std::env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .unwrap_or_else(|| home.join(".local/share"))
+        };
+        let cc_store = app_data.join("com.ccswitch.desktop/app_paths.json");
+        if self.isolated && !within_isolated_root(&cc_store, &self.root) {
+            return Err("隔离验收只能读取隔离目录中的来源文件".into());
+        }
+        let cc = cc_directory(&home, &app_data);
+        if self.isolated && !within_isolated_root(&cc, &self.root) {
+            return Err("隔离验收只能读取隔离目录中的来源文件".into());
+        }
+        let cc_path = if cc.join("cc-switch.db").exists() {
+            cc.join("cc-switch.db")
+        } else if cc.join("config.json").exists() {
+            cc.join("config.json")
+        } else {
+            cc.join("cc-switch.db")
+        };
+        let mut specs = vec![
+            SourceSpec {
+                source: "xwx-deck".into(),
+                path: self
+                    .root
+                    .join("settings-before-native-migration.json")
+                    .to_string_lossy()
+                    .into(),
+            },
+            SourceSpec {
+                source: "magpie".into(),
+                path: config
+                    .join("magpie/providers.json")
+                    .to_string_lossy()
+                    .into(),
+            },
+            SourceSpec {
+                source: "cc-switch".into(),
+                path: cc_path.to_string_lossy().into(),
+            },
+            SourceSpec {
+                source: "magpie-accounts".into(),
+                path: config.join("magpie/logins.json").to_string_lossy().into(),
+            },
+            SourceSpec {
+                source: "claude".into(),
+                path: self.resolve_claude_path()?.to_string_lossy().into(),
+            },
+            SourceSpec {
+                source: "codex".into(),
+                path: self.config_path().to_string_lossy().into(),
+            },
+        ];
+        // Reuse exactly the paths used by model setup and recovery, including
+        // each client's directory overrides and JSONC preference.
+        for id in client_wiring::CLIENTS
+            .iter()
+            .filter(|id| client_wiring::automatic_client(id))
+        {
+            for path in self.wiring_paths(id)?.into_iter().filter(|path| {
+                path.extension()
+                    .is_some_and(|ext| ext == "json" || ext == "jsonc")
+                    && !(["pi", "codebuddy-code"].contains(id)
+                        && path.file_name().is_some_and(|name| name == "settings.json"))
+            }) {
+                specs.push(SourceSpec {
+                    source: (*id).into(),
+                    path: path.to_string_lossy().into(),
+                });
+            }
+        }
+        // Dock-launched Magpie uses ~/.config even if this shell sets XDG.
+        let default_magpie = home.join(".config/magpie");
+        if default_magpie != config.join("magpie") {
+            for (source, file) in [
+                ("magpie", "providers.json"),
+                ("magpie-accounts", "logins.json"),
+            ] {
+                let path = default_magpie.join(file);
+                if path.exists() {
+                    specs.push(SourceSpec {
+                        source: source.into(),
+                        path: path.to_string_lossy().into(),
+                    });
+                }
+            }
+        }
+        // CC Switch can point its clients at directories outside their defaults.
+        let cc_settings = cc.join("settings.json");
+        if cc_settings.exists() {
+            if self.isolated && !within_isolated_root(&cc_settings, &self.root) {
+                return Err("隔离验收只能读取隔离目录中的来源文件".into());
+            }
+            if let Ok(settings) = json_file(&cc_settings) {
+                for (source, key, file) in [
+                    ("claude", "claudeConfigDir", "settings.json"),
+                    ("codex", "codexConfigDir", "config.toml"),
+                    ("opencode", "opencodeConfigDir", "opencode.json"),
+                    ("pi", "piConfigDir", "models.json"),
+                    ("gemini-cli", "geminiConfigDir", "settings.json"),
+                ] {
+                    let raw = text(&settings, key).trim();
+                    if raw.is_empty() {
+                        continue;
+                    }
+                    let dir = if let Some(relative) = raw.strip_prefix("~/") {
+                        home.join(relative)
+                    } else {
+                        PathBuf::from(raw)
+                    };
+                    if !dir.is_absolute() {
+                        continue;
+                    }
+                    let path = if source == "claude"
+                        && !dir.join(file).exists()
+                        && dir.join("claude.json").exists()
+                    {
+                        dir.join("claude.json")
+                    } else if source == "opencode" && dir.join("opencode.jsonc").exists() {
+                        dir.join("opencode.jsonc")
+                    } else {
+                        dir.join(file)
+                    };
+                    if path.exists() && !specs.iter().any(|spec| Path::new(&spec.path) == path) {
+                        specs.push(SourceSpec {
+                            source: source.into(),
+                            path: path.to_string_lossy().into(),
+                        });
+                    }
+                }
+            }
+        }
+        let auth = self.config_path().with_file_name("auth.json");
+        if self.isolated && !within_isolated_root(&auth, &self.root) {
+            return Err("隔离验收不能读取外部账号文件".into());
+        }
+        if auth.exists() && json_file(&auth).is_ok_and(|v| v["tokens"].is_object()) {
+            specs.insert(
+                0,
+                SourceSpec {
+                    source: "codex-auth".into(),
+                    path: auth.to_string_lossy().into(),
+                },
+            );
+        }
+        Ok(specs)
+    }
+    async fn import_scan(&self, input: &Value) -> Result<Preview> {
+        let disk = self.import_target()?;
+        let known = self.subscriptions.snapshot().await;
+        let mut sources = vec![];
+        for mut spec in self.import_specs(input)? {
+            let path = Path::new(&spec.path);
+            if self.isolated && !within_isolated_root(path, &self.root) {
+                return Err("隔离验收只能读取隔离目录中的来源文件".into());
+            }
+            if spec.source == "auto" {
+                spec.source = detect_source(path)?.into();
+            }
+            let found = path.exists();
+            let mut source = ImportSource {
+                source: spec.source.clone(),
+                name: match spec.source.as_str() {
+                    "magpie" | "magpie-accounts" => "Magpie",
+                    "cc-switch" => "CC Switch",
+                    "claude" => "Claude",
+                    "xwx-deck" => "旧版 XwX Deck",
+                    "codex" | "codex-auth" => "ChatGPT / Codex",
+                    "opencode" => "OpenCode",
+                    "mimo-code" => "MiMo Code",
+                    "pi" => "Pi",
+                    "crush" => "Crush",
+                    "droid" => "Droid",
+                    "codebuddy-code" => "CodeBuddy Code",
+                    "workbuddy" => "WorkBuddy",
+                    "qwen-code" => "Qwen Code",
+                    "gemini-cli" => "Gemini CLI",
+                    _ => "客户端配置",
+                }
+                .into(),
+                path: spec.path.clone(),
+                found,
+                error: String::new(),
+                items: vec![],
+            };
+            if found {
+                if self.isolated && !within_isolated_root(path, &self.root) {
+                    return Err("隔离验收只能读取隔离目录中的来源文件".into());
+                }
+                if self.isolated && spec.source == "magpie" {
+                    let settings = path.with_file_name("settings.json");
+                    if settings.exists() && !within_isolated_root(&settings, &self.root) {
+                        return Err("隔离验收只能读取隔离目录中的来源文件".into());
+                    }
+                }
+                match match spec.source.as_str() {
+                    "magpie" => read_magpie(path),
+                    "magpie-accounts" => read_accounts(path),
+                    "codex-auth" => read_official_auth(path),
+                    "cc-switch" => read_cc(path),
+                    "xwx-deck" => read_deck(path),
+                    _ => read_client(
+                        path,
+                        &spec.source,
+                        if self.isolated {
+                            Some(&self.root)
+                        } else {
+                            None
+                        },
+                    ),
+                } {
+                    Ok(mut items) => {
+                        for item in &mut items {
+                            if let Some(p) = &item.provider {
+                                if self.settings.connections.iter().any(|old| same(old, p)) {
+                                    item.status = "existing".into();
+                                    item.reason = "已在 XwX Deck 中".into();
+                                }
+                            }
+                            if let Some(account) = &item.account {
+                                if known["accounts"].as_array().is_some_and(|rows| {
+                                    rows.iter().any(|old| {
+                                        old["accountKey"] == account.identity
+                                            && old["authKind"] == account.kind
+                                    })
+                                }) {
+                                    item.status = "existing".into();
+                                    item.reason = "已在 XwX Deck 中复用此登录".into();
+                                }
+                            }
+                        }
+                        source.items = items;
+                    }
+                    Err(error) => source.error = error,
+                }
+            }
+            sources.push(source);
+        }
+        // One connection may be listed once per model (Droid), or in several
+        // clients. Deduplication must retain the full imported model catalog.
+        let identity = |p: &Provider| {
+            fingerprint(&json!([
+                p.base_url.trim_end_matches('/'),
+                p.bearer_token,
+                p.adapter
+            ]))
+        };
+        let mut merged: std::collections::HashMap<String, (Provider, Vec<String>)> =
+            Default::default();
+        for item in sources.iter().flat_map(|source| &source.items) {
+            if let Some(provider) = &item.provider {
+                let (saved, models) = merged
+                    .entry(identity(provider))
+                    .or_insert_with(|| (provider.clone(), vec![]));
+                models.extend(item.models.clone());
+                if saved.codex_model.is_empty() {
+                    saved.codex_model = provider.codex_model.clone();
+                    saved.codex_context_window = provider.codex_context_window;
+                }
+                for role in ["fable", "opus", "sonnet", "haiku"] {
+                    if text(&saved.claude_models, role).is_empty()
+                        && !text(&provider.claude_models, role).is_empty()
+                    {
+                        saved.claude_models[role] = provider.claude_models[role].clone();
+                    }
+                }
+            }
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        for source in &mut sources {
+            for item in &mut source.items {
+                if let Some(account) = &item.account {
+                    if !seen.insert(format!("account:{}:{}", account.kind, account.identity)) {
+                        item.status = "duplicate".into();
+                    }
+                }
+                if let Some(p) = &item.provider {
+                    let key = identity(p);
+                    if !seen.insert(key.clone()) {
+                        item.status = "duplicate".into();
+                        item.reason = String::new();
+                    } else if let Some((provider, mut models)) = merged.remove(&key) {
+                        models.sort();
+                        models.dedup();
+                        item.fingerprint =
+                            fingerprint(&json!([item.fingerprint, provider, models]));
+                        item.provider = Some(provider);
+                        item.models = models;
+                    }
+                }
+            }
+        }
+        Ok(Preview {
+            target_digest: storage::digest(disk.as_bytes()),
+            sources,
+        })
+    }
+    pub(super) async fn preview_import(&self, input: &Value) -> Result<Value> {
+        serde_json::to_value(self.import_scan(input).await?).map_err(err)
+    }
+    pub(super) async fn apply_import(&mut self, input: &Value) -> Result<Value> {
+        if let Some(problem) = &self.settings_problem {
+            return Err(problem.clone());
+        }
+        let expected = text(input, "targetDigest");
+        let scan = self.import_scan(input).await?;
+        if expected != scan.target_digest {
+            return Err("XwX Deck 配置已变化，请刷新导入列表；原配置已保留".into());
+        }
+        let selected: Vec<String> =
+            serde_json::from_value(input["fingerprints"].clone()).map_err(|_| "无效导入选择")?;
+        if selected.is_empty() || selected.len() > 1000 {
+            return Err("请选择要导入的配置".into());
+        }
+        let mut candidates = vec![];
+        let mut accounts = vec![];
+        let mut seen = HashSet::new();
+        for selected in selected {
+            if !seen.insert(selected.clone()) {
+                continue;
+            }
+            let item = scan
+                .sources
+                .iter()
+                .flat_map(|s| &s.items)
+                .find(|i| i.fingerprint == selected)
+                .ok_or("来源配置已变化，请刷新后重新选择；未写入任何配置")?;
+            if item.status == "existing" || item.status == "duplicate" {
+                continue;
+            }
+            if let Some(account) = &item.account {
+                accounts.push(account.clone());
+                continue;
+            }
+            let p = item
+                .provider
+                .as_ref()
+                .ok_or("此条目无法完整导入，请调整选择")?;
+            candidates.push((p.clone(), item.models.clone()));
+        }
+        let old_connections = self.settings.connections.clone();
+        let old_other = self.settings.other.clone();
+        let mut added = vec![];
+        let mut added_accounts = vec![];
+        for account in accounts {
+            let value = self
+                .settings
+                .other
+                .entry(imported_subscriptions::KEY)
+                .or_insert(json!([]));
+            let rows = value
+                .as_array_mut()
+                .ok_or("导入账号记录无法读取，原设置已保留")?;
+            if rows.iter().any(|old| old["id"] == account.id) {
+                continue;
+            }
+            rows.push(serde_json::to_value(&account).map_err(err)?);
+            if let Some(removed) = self
+                .settings
+                .other
+                .get_mut("removedSubscriptionAccounts")
+                .and_then(Value::as_array_mut)
+            {
+                removed.retain(|row| row["id"] != account.id);
+            }
+            added_accounts.push(account.label.clone());
+            let provider = account.provider(
+                if account.kind == "official" {
+                    "https://chatgpt.com/backend-api"
+                } else {
+                    "https://api.openai.com/v1"
+                }
+                .into(),
+            );
+            if !self
+                .settings
+                .connections
+                .iter()
+                .any(|old| old.id == provider.id)
+            {
+                self.settings.connections.push(provider);
+            }
+        }
+        for (mut p, models) in candidates {
+            if self.settings.connections.iter().any(|old| same(old, &p)) {
+                continue;
+            }
+            let base = format!("import-{}", &fingerprint(&p)[..16]);
+            let mut id = base.clone();
+            let mut suffix = 2;
+            while self.settings.connections.iter().any(|old| old.id == id) {
+                id = format!("{base}-{suffix}");
+                suffix += 1;
+            }
+            p.id = id.clone();
+            let name = p.display_name.clone();
+            let mut suffix = 2;
+            while self
+                .settings
+                .connections
+                .iter()
+                .any(|old| old.display_name == p.display_name)
+            {
+                p.display_name = format!("{name}-{suffix}");
+                suffix += 1;
+            }
+            if !models.is_empty() {
+                let map = self
+                    .settings
+                    .other
+                    .entry("importedProviderModels")
+                    .or_insert(json!({}));
+                if !map.is_object() {
+                    *map = json!({});
+                }
+                map[&id] = json!(models);
+            }
+            added.push(p.display_name.clone());
+            self.settings.connections.push(p);
+        }
+        let result = (|| -> Result<()> {
+            let current = read(&self.root.join("settings.json"))?.unwrap_or_default();
+            if storage::digest(current.as_bytes()) != expected {
+                return Err("XwX Deck 配置已在外部修改，未覆盖原文件".into());
+            }
+            if !added.is_empty() || !added_accounts.is_empty() {
+                let backup = self
+                    .root
+                    .join(format!("settings-before-import-{}.json", millis()));
+                write(&backup, &current)?;
+                self.persist()?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.settings.connections = old_connections;
+            self.settings.other = old_other;
+            return Err(error);
+        }
+        Ok(json!({"providers":self.providers().await,"added":added,"addedAccounts":added_accounts}))
+    }
+    pub(super) fn remove_imported_account(&mut self, id: &str) -> Result<Value> {
+        self.import_target()?;
+        let old = self.settings.other.clone();
+        if let Some(rows) = self
+            .settings
+            .other
+            .get_mut(imported_subscriptions::KEY)
+            .and_then(Value::as_array_mut)
+        {
+            rows.retain(|row| row["id"] != id);
+        }
+        if let Err(e) = self.persist() {
+            self.settings.other = old;
+            return Err(e);
+        }
+        self.subscriptions.pool.quota_failed(id, "");
+        Ok(json!({"revoked":false,"unlinked":true}))
+    }
+}

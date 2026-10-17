@@ -1,0 +1,27 @@
+/* Scoped to generated design-lab previews, including the separate dashboard. */
+:root[data-app-typography='balanced'] {
+  --font-sans: 'Urbanist', 'Noto Sans SC', system-ui, sans-serif;
+  --sans: 'Urbanist', 'Noto Sans SC', system-ui, sans-serif;
+}
+html[data-app-typography='balanced'] body {
+  font-family: var(--sans);
+  font-weight: 400;
+}
+html[data-app-typography='balanced'] :is(h1, h2, h3, h4) { font-weight: 550; }
+html[data-app-typography='balanced'] :is(.btn, .txt-action, .src-add, .model-client-name, .prov-name, .provider-name, .trace-row-label) { font-weight: 500; }
+html[data-app-typography='balanced'] .src-t { font-weight: 400; }
+html[data-app-typography='balanced'] .src-t.on { font-weight: 550; }
+html[data-app-typography='balanced'] .xwx-combobox-trigger { font-weight: 500 !important; }
+/* --mono and explicit code/data fonts deliberately retain the product defaults. */
+.app-font-preview {
+  position: fixed; right: 16px; bottom: 14px; z-index: 2147483647;
+  padding: 8px 10px; border: 1px solid #dedfdd; border-radius: 8px;
+  background: #fcfcfb; color: #5a5c5f; box-shadow: 0 2px 12px #00000008;
+  font: 12px/1.5 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+}
+.app-font-preview summary { cursor: pointer; list-style: none; }
+.app-font-preview summary::-webkit-details-marker { display: none; }
+.app-font-preview > div { display: flex; gap: 4px; margin-top: 7px; }
+.app-font-preview button { padding: 4px 8px; border: 0; border-radius: 4px; background: transparent; color: #696c70; font: inherit; cursor: pointer; }
+.app-font-preview button[aria-pressed='true'] { color: #17181a; background: #ebebe8; }
+.app-font-preview button:focus-visible { outline: 2px solid #3a5169; outline-offset: 2px; }

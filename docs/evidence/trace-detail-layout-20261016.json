@@ -1,0 +1,37 @@
+{
+  "date": "2026-10-16",
+  "edition": "public",
+  "version": "1.0.0",
+  "sourceCommit": "d966924041d594ae6ac21032f3a5c713e6c26006",
+  "sourceFingerprint": "69703fd83a6e96cd9f7bab11d647df3d24122aef84f3020c25c0d7365bd952b9",
+  "baseCandidateCommit": "9bac472ba4f6db5fc699b8da527b41e3d3ac9666",
+  "binarySha256": "7d13ccd55148cc99ab5d261ea980db6a54ea902e42f523d5a104bfea56275ffc",
+  "dmgSha256": "79470c511c8d443787c371dc94c51df3db77aa4be1acd549de12116b6629426a",
+  "signed": "developer-id",
+  "notarized": true,
+  "notarization": {
+    "app": {
+      "id": "f3407a73-dfbf-420a-943f-0831e63f818e",
+      "status": "Accepted"
+    },
+    "dmg": {
+      "id": "f7d52e1e-dc4a-4d59-b8fb-98cccb2415c4",
+      "status": "Accepted"
+    }
+  },
+  "localOnly": true,
+  "installed": false,
+  "published": false,
+  "productionReady": false,
+  "changes": "Trace detail grid, control height, native disclosure markers and 40px collapsed rail. Runtime fixes from the verified base candidate are preserved.",
+  "checks": {
+    "packagedViewerBrowser": 13,
+    "viewerRenderer": 30,
+    "nativeWebView": 222,
+    "nativeViewer": 25,
+    "nativePaginationAndStorage": true,
+    "codesignGatekeeperDmg": true,
+    "copiedAppFileManifest": true
+  },
+  "acceptanceBoundary": "Actual packaged native HTTP and macOS WebKit with isolated synthetic records. No new upstream or Windows acceptance. Normal installation not replaced."
+}

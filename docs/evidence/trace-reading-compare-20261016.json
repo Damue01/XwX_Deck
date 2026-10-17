@@ -1,0 +1,130 @@
+{
+  "date": "2026-10-16",
+  "version": "1.0.0",
+  "sourceCommit": "9bac472ba4f6db5fc699b8da527b41e3d3ac9666",
+  "sourceFingerprint": "3a6237648bb7a287d7b96d7574f062c7c0f714d9116306aeb6a839be879b3fb0",
+  "binarySha256": "735ea7a22c71958ed64dec10bd1fa4eec26e57dcfe3da37963e0c8ec6f0e1e49",
+  "dmgSha256": "f6067f868cb8af6a37e8795daa982aeeeb06053851e5d9b039e462fa8e3660cb",
+  "signed": "developer-id",
+  "notarized": true,
+  "notarization": {
+    "app": {
+      "id": "9a483344-96fd-4279-b239-01c5112d255e",
+      "status": "Accepted"
+    },
+    "dmg": {
+      "id": "f90f33ec-21de-458e-92c1-8301e0e2e609",
+      "status": "Accepted"
+    }
+  },
+  "localOnly": true,
+  "installed": false,
+  "published": false,
+  "productionReady": false,
+  "baseCandidateCommit": "a5c2228815922ebdb23030afb0f43218ea866cb8",
+  "changes": "Only paginated comparison baseline loading and regression coverage changed from the verified base candidate.",
+  "checks": {
+    "packagedViewerBrowser": 12,
+    "viewerRenderer": 30,
+    "nativeWebView": 222,
+    "nativeViewer": 25,
+    "nativePaginationAndStorage": true,
+    "codesignGatekeeperDmg": true
+  },
+  "performanceBaseline": {
+    "binarySha256": "36b2f40d7c5994aeadc8812c63c7f329145a9704d26d00a06e0f3e1b7f17d6bb",
+    "method": "Isolated clone of local real logs, packaged binary HTTP and Chrome. No normal client configuration changed, no upstream requests.",
+    "measurements": [
+      {
+        "startupMs": 303
+      },
+      {
+        "logMB": 998,
+        "measurements": [
+          {
+            "phase": "cold-summary",
+            "status": 200,
+            "ms": 1051,
+            "responseBytes": 1772989,
+            "records": 200
+          },
+          {
+            "phase": "warm-summary",
+            "status": 200,
+            "ms": 22,
+            "responseBytes": 1772989,
+            "records": 200
+          },
+          {
+            "phase": "detail",
+            "status": 200,
+            "ms": 24,
+            "responseBytes": 2888880,
+            "records": 1
+          }
+        ]
+      },
+      {
+        "logMB": 29,
+        "measurements": [
+          {
+            "phase": "cold-summary",
+            "status": 200,
+            "ms": 46,
+            "responseBytes": 81988,
+            "records": 17
+          },
+          {
+            "phase": "warm-summary",
+            "status": 200,
+            "ms": 5,
+            "responseBytes": 81988,
+            "records": 17
+          },
+          {
+            "phase": "detail",
+            "status": 200,
+            "ms": 12,
+            "responseBytes": 1502766,
+            "records": 1
+          }
+        ]
+      },
+      {
+        "browserColdOpenMs": 1097,
+        "domNodes": 4188,
+        "errors": 0
+      },
+      {
+        "browserAdjacentMs": 83,
+        "domNodes": 4188,
+        "errors": 0
+      },
+      {
+        "largestRecordMB": 32,
+        "browserLargestRecordMs": 198,
+        "domNodes": 4448,
+        "errors": 0
+      }
+    ]
+  },
+  "remaining": [
+    "Cold first access still scans the full JSONL; about one second for the sampled roughly 1 GB log.",
+    "Normal installed application was not replaced.",
+    "Comparison-specific interactions verified in Chrome against packaged HTML; native WebKit smoke separately passed.",
+    "Windows, all protocol combinations and normal Desktop stop/cache-lock behavior remain unverified."
+  ],
+  "initialFailures": [
+    {
+      "scenario": "Baseline packaged Viewer comparison",
+      "failure": "Previous metadata-only request was treated as a complete empty-body baseline. New regression timed out waiting for its actual body.",
+      "resolution": "Fetch the complete baseline before comparing; same regression passes in both new packages."
+    },
+    {
+      "scenario": "Public build boundary",
+      "failure": "Copied regression file retained a pre-existing internal brand reference.",
+      "resolution": "Restored the public test baseline and transplanted only the new assertions; full public boundary check then passed."
+    }
+  ],
+  "packagedViewerHtmlSha256": "02618a0c240c2267c6cccdf5e2bc50f4fd65e9bd4fe4278d0f669fba70b76d1f"
+}

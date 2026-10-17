@@ -1,0 +1,362 @@
+[
+  {
+    "name": "owner beats lower cloud quote",
+    "catalog": {
+      "openai": {
+        "models": {
+          "gpt-fixture": {
+            "canonical_model_id": "openai/gpt-fixture",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          }
+        }
+      },
+      "azure": {
+        "models": {
+          "gpt-fixture": {
+            "canonical_model_id": "openai/gpt-fixture",
+            "cost": {
+              "input": 1,
+              "output": 5
+            }
+          }
+        }
+      }
+    },
+    "lookup": "gpt-fixture",
+    "provider": "openai",
+    "input": 2
+  },
+  {
+    "name": "AWS fallback",
+    "catalog": {
+      "amazon-bedrock": {
+        "models": {
+          "anthropic.fixture": {
+            "canonical_model_id": "anthropic/claude-fixture",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          }
+        }
+      }
+    },
+    "lookup": "claude-fixture",
+    "provider": "amazon-bedrock",
+    "input": 2
+  },
+  {
+    "name": "Azure fallback",
+    "catalog": {
+      "azure": {
+        "models": {
+          "gpt-fixture": {
+            "canonical_model_id": "openai/gpt-fixture",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          }
+        }
+      }
+    },
+    "lookup": "gpt-fixture",
+    "provider": "azure",
+    "input": 2
+  },
+  {
+    "name": "reseller is identity evidence only",
+    "catalog": {
+      "relay": {
+        "models": {
+          "custom-gpt": {
+            "canonical_model_id": "openai/gpt-fixture",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          }
+        }
+      },
+      "openai": {
+        "models": {
+          "gpt-fixture": {
+            "canonical_model_id": "openai/gpt-fixture",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          }
+        }
+      }
+    },
+    "lookup": "custom-gpt",
+    "provider": "openai",
+    "input": 2
+  },
+  {
+    "name": "reseller alone is not a standard rate",
+    "catalog": {
+      "relay": {
+        "models": {
+          "custom-gpt": {
+            "canonical_model_id": "openai/gpt-fixture",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          }
+        }
+      }
+    },
+    "lookup": "custom-gpt",
+    "provider": null
+  },
+  {
+    "name": "date alias and punctuation",
+    "catalog": {
+      "deepseek": {
+        "models": {
+          "deepseek-flash": {
+            "canonical_model_id": "deepseek/deepseek-v4.1-flash",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          }
+        }
+      }
+    },
+    "lookup": "deepseek-v4-1-flash-260910",
+    "provider": "deepseek",
+    "input": 2
+  },
+  {
+    "name": "invalid date is not removed",
+    "catalog": {
+      "deepseek": {
+        "models": {
+          "deepseek-flash": {
+            "canonical_model_id": "deepseek/deepseek-v4.1-flash",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          }
+        }
+      }
+    },
+    "lookup": "deepseek-v4-1-flash-269932",
+    "provider": null
+  },
+  {
+    "name": "different dated revisions stay distinct",
+    "catalog": {
+      "openai": {
+        "models": {
+          "fixture-260101": {
+            "canonical_model_id": "openai/fixture-260101",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          },
+          "fixture-260201": {
+            "canonical_model_id": "openai/fixture-260201",
+            "cost": {
+              "input": 3,
+              "output": 11
+            }
+          }
+        }
+      }
+    },
+    "lookup": "fixture-260201",
+    "provider": "openai",
+    "input": 3
+  },
+  {
+    "name": "ambiguous date base is not guessed",
+    "catalog": {
+      "openai": {
+        "models": {
+          "fixture-260101": {
+            "canonical_model_id": "openai/fixture-260101",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          },
+          "fixture-260201": {
+            "canonical_model_id": "openai/fixture-260201",
+            "cost": {
+              "input": 3,
+              "output": 11
+            }
+          }
+        }
+      }
+    },
+    "lookup": "fixture-260301",
+    "provider": null
+  },
+  {
+    "name": "new family version is not a price alias",
+    "catalog": {
+      "openai": {
+        "models": {
+          "gpt-5": {
+            "canonical_model_id": "openai/gpt-5",
+            "cost": {
+              "input": 2,
+              "output": 10,
+              "cache_read": 0.1,
+              "cache_write": 2.5
+            }
+          }
+        }
+      }
+    },
+    "lookup": "gpt-5.7",
+    "provider": null
+  },
+  {
+    "name": "ByteDance owner uses Volcengine standard",
+    "catalog": {
+      "volcengine": {
+        "models": {
+          "doubao-fixture": {
+            "canonical_model_id": "bytedance-seed/seed-fixture",
+            "cost": {
+              "input": 2,
+              "output": 10
+            }
+          }
+        }
+      }
+    },
+    "lookup": "seed-fixture",
+    "provider": "volcengine",
+    "input": 2
+  },
+  {
+    "name": "Meituan owner uses Longcat standard",
+    "catalog": {
+      "longcat": {
+        "models": {
+          "longcat-fixture": {
+            "canonical_model_id": "meituan/longcat-fixture",
+            "cost": {
+              "input": 2,
+              "output": 10
+            }
+          }
+        }
+      }
+    },
+    "lookup": "longcat-fixture",
+    "provider": "longcat",
+    "input": 2
+  },
+  {
+    "name": "default owner route beats regional alias",
+    "catalog": {
+      "alibaba-cn": {
+        "models": {
+          "qwen-fixture": {
+            "canonical_model_id": "alibaba/qwen-fixture",
+            "cost": {
+              "input": 1,
+              "output": 10
+            }
+          }
+        }
+      },
+      "alibaba": {
+        "models": {
+          "qwen-fixture-dated": {
+            "canonical_model_id": "alibaba/qwen-fixture",
+            "cost": {
+              "input": 2,
+              "output": 10
+            }
+          }
+        }
+      }
+    },
+    "lookup": "qwen-fixture",
+    "provider": "alibaba",
+    "input": 2
+  },
+  {
+    "name": "subscription plan cannot replace standard API quote",
+    "catalog": {
+      "zai-coding-plan": {
+        "models": {
+          "glm-fixture": {
+            "canonical_model_id": "zhipuai/glm-fixture",
+            "cost": {
+              "input": 0,
+              "output": 10
+            }
+          }
+        }
+      },
+      "zai": {
+        "models": {
+          "glm-fixture": {
+            "canonical_model_id": "zhipuai/glm-fixture",
+            "cost": {
+              "input": 2,
+              "output": 10
+            }
+          }
+        }
+      }
+    },
+    "lookup": "glm-fixture",
+    "provider": "zai",
+    "input": 2
+  },
+  {
+    "name": "subscription plan alone is not token list price",
+    "catalog": {
+      "zai-coding-plan": {
+        "models": {
+          "glm-fixture": {
+            "canonical_model_id": "zhipuai/glm-fixture",
+            "cost": {
+              "input": 0,
+              "output": 10
+            }
+          }
+        }
+      }
+    },
+    "lookup": "glm-fixture",
+    "provider": null
+  }
+]

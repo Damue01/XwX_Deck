@@ -1,0 +1,151 @@
+{
+  "name": "xwx-deck",
+  "displayName": "XwX Deck",
+  "description": "XwX Deck: local request tracing and model gateway management for Claude and ChatGPT.",
+  "author": "XwX Deck",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "npm@11.6.2",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=11.6.2 <12"
+  },
+  "scripts": {
+    "clean": "rimraf dist",
+    "compile": "npm run check-types && npm run check:docs && npm run check:icons && npm run check:release-contract && npm run check:runtime-boundary && node tools/build/esbuild.config.mjs && npm run check:repository",
+    "check-types": "tsc --noEmit",
+    "check:quality": "node tools/checks/check-quality.mjs",
+    "check:docs": "node tools/checks/check-docs.mjs",
+    "check:test-plan": "node tools/checks/check-test-plan.mjs",
+    "check:release-contract": "node tools/checks/check-release-contract.mjs",
+    "check:icons": "node tools/checks/check-icon-assets.mjs",
+    "check:public-boundary": "npm run check:repository",
+    "generate:icons": "npm run generate:icons:win",
+    "generate:icons:win": "node tools/icons/windows-icon-assets.mjs",
+    "regenerate:icons:win": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/icons/generate-icon-assets.ps1 && node tools/icons/windows-icon-assets.mjs --write",
+    "generate:icons:mac": "node tools/icons/generate-macos-app-icon.mjs",
+    "test": "npm run check:quality",
+    "test:built": "npm run test:public-history && npm run test:theme && npm run test:history-confirm && npm run test:trace-notices && npm run test:shared-core",
+    "test:public-history": "node tools/tests/public-history-test.mjs",
+    "test:shared-core": "node tools/shared-core/trace-cache-rate-test.mjs && node tools/shared-core/models-dev-unification-test.mjs",
+    "test:trace-notices": "node tools/tests/run-trace-notice-regressions.mjs && node tools/tests/run-bridge-order-regressions.mjs",
+    "test:history-confirm": "node tools/tests/run-history-confirm-regressions.mjs",
+    "test:theme": "node tools/tests/run-theme-regressions.mjs",
+    "dev": "npm run build:native:isolated && npm run start:native:isolated",
+    "start": "npm run start:native:isolated",
+    "build:win": "npm run compile && node tools/native/build.mjs --acceptance --require-platform=win32 --require-arch=x64",
+    "build:mac:arm64": "npm run compile && node tools/native/build.mjs --acceptance --require-platform=darwin --require-arch=arm64",
+    "build:mac:x64": "npm run compile && node tools/native/build.mjs --acceptance --require-platform=darwin --require-arch=x64",
+    "build:native": "npm run compile && node tools/native/build.mjs",
+    "build:native:acceptance": "npm run compile && node tools/native/build.mjs --acceptance",
+    "build:native:isolated": "npm run compile && node tools/native/build.mjs --pilot",
+    "test:native:backend": "node tools/native/run-backend-tests.mjs",
+    "test:native:webview": "node tools/native/native-test.mjs",
+    "test:native:window-lifecycle": "node tools/native/window-lifecycle-test.mjs",
+    "start:native:isolated": "node tools/native/launch.mjs",
+    "test:native:reset": "node tools/native/application-reset-test.mjs",
+    "test:native:reset-webview": "node tools/native/application-reset-ui-test.mjs",
+    "test:native:toast": "node tools/native/toast-renderer-test.mjs",
+    "build:native:mac:signed": "npm run compile && node tools/native/build.mjs --acceptance --signed --require-arch=arm64 && npm run verify:native:mac:signed",
+    "verify:native:mac:signed": "node tools/native/verify-macos-release.mjs",
+    "check:runtime-boundary": "node tools/checks/check-runtime-boundary.mjs",
+    "check:workflows": "node tools/checks/check-github-workflows.mjs",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "test:upstream": "node tools/native/run-backend-tests.mjs",
+    "build:rust": "npm run build:native",
+    "build:rust:pilot": "npm run build:native:isolated",
+    "test:rust:backend": "npm run test:native:backend",
+    "test:rust": "npm run test:native:backend && npm run test:native:webview",
+    "start:rust": "node tools/native/launch.mjs --production",
+    "start:rust:isolated": "npm run start:native:isolated",
+    "update:pricing": "node tools/dev/update-model-pricing.mjs",
+    "supplement:pricing": "node tools/dev/supplement-model-pricing.mjs",
+    "build:site": "node tools/site/build-app-preview.mjs",
+    "test:site": "node tools/site/site-browser-test.mjs",
+    "test:docs": "node tools/site/docs-browser-test.mjs",
+    "check:repository": "node tools/checks/check-repository-boundary.mjs"
+  },
+  "devDependencies": {
+    "@base-ui/react": "^1.6.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^20.14.15",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
+    "clsx": "^2.1.1",
+    "esbuild": "^0.28.1",
+    "jsdom": "26.1.0",
+    "lucide-react": "^1.25.0",
+    "postcss": "^8.5.20",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "rimraf": "^6.0.1",
+    "smol-toml": "^1.7.0",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.5.4",
+    "yaml": "^2.9.0",
+    "class-variance-authority": "^0.7.1",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
+    "ws": "^8.21.3",
+    "vitepress": "^2.0.0-alpha.19"
+  },
+  "dependencies": {},
+  "overrides": {
+    "brace-expansion": "5.0.12",
+    "tar": "7.5.22"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Damue01/XwX_Deck.git"
+  },
+  "homepage": "https://damue01.github.io/XwX_Deck/",
+  "bugs": {
+    "url": "https://github.com/Damue01/XwX_Deck/issues"
+  },
+  "keywords": [
+    "claude",
+    "chatgpt",
+    "trace",
+    "ai-gateway",
+    "openai-compatible",
+    "rust",
+    "tauri"
+  ],
+  "nativePackaging": {
+    "dmg": {
+      "title": "XwX Deck ${version}",
+      "iconSize": 72,
+      "iconTextSize": 12,
+      "window": {
+        "width": 680,
+        "height": 340
+      },
+      "contents": [
+        {
+          "x": 170,
+          "y": 140
+        },
+        {
+          "x": 510,
+          "y": 140,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 610,
+          "y": 55,
+          "type": "file",
+          "path": "assets/macos/首次打开说明.txt",
+          "name": "首次打开说明.txt"
+        }
+      ],
+      "background": "assets/macos/dmg-background.png"
+    }
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "product": "XwX Deck",
+  "edition": "standalone",
+  "versionSource": "package.json",
+  "identity": {
+    "packageName": "xwx-deck",
+    "appId": "app.xwxdeck.desktop",
+    "dataNamespace": "xwx-deck",
+    "gatewayPort": 45233
+  },
+  "features": {
+    "trace": true,
+    "modelGateway": true,
+    "repairCenter": true,
+    "safeExitRecovery": true,
+    "configurationSync": false,
+    "toolsPage": false,
+    "conversationDiagnostics": false,
+    "excelToMarkdown": false,
+    "automaticTraceCleanup": true
+  },
+  "traceRetention": {
+    "unlimitedByDefault": false,
+    "defaultStorageLimitGB": 1,
+    "automaticCleanupEnabledByDefault": true,
+    "preservesExplicitUserSettings": true
+  },
+  "updates": {
+    "enabledByDefault": true,
+    "provider": "github-releases",
+    "defaultServer": "https://github.com/Damue01/XwX_Deck/releases/latest/download",
+    "serverEnvironmentVariable": "XWX_DECK_UPDATE_SERVER_URL",
+    "metadataEnvironmentVariable": "XWX_DECK_METADATA_PUSH_URL",
+    "startupCheckDelayMs": 6000,
+    "nightly": {
+      "platform": "win32",
+      "windowLocalHours": [
+        2,
+        5
+      ],
+      "idleThresholdSeconds": 900,
+      "cancelledVersionPersists": true,
+      "requiresSafeShutdown": true
+    }
+  },
+  "platforms": {
+    "windows": {
+      "buildScript": "build:win",
+      "artifactName": "XwX Deck.exe",
+      "installMode": "automatic",
+      "publishedArtifactName": "XwX-Deck-windows-x64.exe",
+      "updateMetadata": "release.json"
+    },
+    "macosArm64": {
+      "buildScript": "build:mac:arm64",
+      "artifactName": "XwX-Deck-mac-arm64.dmg",
+      "distribution": "developer-id-notarized-dmg",
+      "developerId": true,
+      "notarized": true,
+      "installMode": "manual-dmg",
+      "updateMetadata": "release.json",
+      "automaticInstall": false
+    }
+  },
+  "openSource": {
+    "license": "Apache-2.0",
+    "repository": "Damue01/XwX_Deck",
+    "documentation": "github-pages"
+  },
+  "automation": {
+    "ci": ".github/workflows/ci.yml",
+    "pages": ".github/workflows/pages.yml",
+    "release": ".github/workflows/release.yml",
+    "releaseMode": "draft"
+  },
+  "providerFramework": {
+    "presets": [
+      "auto",
+      "openai-compatible",
+      "compatible",
+      "volcengine-ark",
+      "custom"
+    ],
+    "defaultPreset": "auto",
+    "authentication": [
+      "bearer",
+      "x-api-key"
+    ],
+    "futureAuthentication": [
+      "api-key",
+      "aws-sigv4",
+      "google-oauth"
+    ],
+    "userFields": [
+      "displayName",
+      "baseUrl",
+      "key",
+      "adapter",
+      "codexModel"
+    ],
+    "discovery": "automatic-or-explicit-adapter",
+    "protocolSelection": "explicit-adapter-or-per-model-metadata",
+    "modelDiscoveryCandidates": [
+      "base/models",
+      "base/v1/models",
+      "version-root/models",
+      "full-endpoint-derived-models",
+      "compat-suffix-root-models"
+    ],
+    "protocolFamilies": [
+      "openai-responses",
+      "chat-completions",
+      "anthropic-messages",
+      "gemini-native"
+    ],
+    "authenticationImplemented": [
+      "bearer",
+      "anthropic-api-key",
+      "oauth"
+    ],
+    "authenticationPlanned": [
+      "google-api-key",
+      "azure-api-key",
+      "aws-sigv4",
+      "custom-headers"
+    ],
+    "imageGenerationPolicy": {
+      "default": "allow",
+      "knownIncompatible": "block",
+      "restoreOnProviderChange": true,
+      "userField": false
+    },
+    "registryVersion": 1,
+    "defaultConnections": [],
+    "clients": [
+      "codex",
+      "claude"
+    ]
+  },
+  "runtime": {
+    "backend": "rust",
+    "shell": "tauri",
+    "frontend": "react",
+    "webview": "system",
+    "bundledNode": false,
+    "bundledChromium": false
+  }
+}

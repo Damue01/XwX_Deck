@@ -1,0 +1,276 @@
+import * as React from 'react';
+import { formatBytes } from '../shared/format-bytes.browser.js';
+import { DEFAULT_TRACE_LIMIT_GB } from '../shared/traceDefaults';
+import { BridgeProvider, useBridge } from '@/bridge/store';
+import { clearLifecycleNotice, closeToast, showToast, showLifecycleNotice, ToastProvider } from '@/lib/toast';
+import { lifecycleFailure } from '../shared/lifecycleNotice';
+import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog';
+import { Titlebar } from '@/features/shell/Titlebar';
+import { Rail, type PageId } from '@/features/shell/Rail';
+import { SignalPage, TRACE_TOGGLE_REQUEST_EVENT } from '@/features/trace/SignalPage';
+import { ModelsPage } from '@/features/models/ModelsPage';
+import { SettingsPage } from '@/features/settings/SettingsPage';
+import { OnboardingTour } from '@/features/onboarding/OnboardingTour';
+import { UpdateNotification } from '@/features/shell/UpdateNotification';
+import { TraceRecoveryActions } from '@/features/shell/TraceRecoveryActions';
+import { restoreLanguage, useLanguage, t } from '@/lib/i18n';
+import { applyTheme } from '@/lib/theme';
+import { userErrorMessage } from '@/lib/errors';
+
+function Shell(): React.ReactElement {
+  useLanguage();
+  const bridge = useBridge();
+  React.useLayoutEffect(() => { if (bridge.runtime) restoreLanguage(bridge.runtime.language ?? undefined); }, [bridge.runtime?.language, bridge.booted]);
+  const [activePage, setActivePage] = React.useState<PageId>('signal');
+  const [windowState, setWindowState] = React.useState({ maximized: false, fullscreen: false, nativeFrame: document.documentElement.dataset.platform === 'darwin' });
+  const latestRuntime = React.useRef(bridge.runtime);
+  latestRuntime.current = bridge.runtime;
+  const notifiedMissingProviders = React.useRef('');
+  const notifiedRuntimeIssue = React.useRef('');
+  const notifiedLoadIssues = React.useRef('');
+  const notifiedTraceWarning = React.useRef('');
+  const [retryingInitialData, setRetryingInitialData] = React.useState(false);
+
+  // Apply the authoritative theme from persistent runtime state app-wide, so it
+  // holds even if the user never opens Settings (e.g. after a portable
+  // repackage dropped the localStorage early-paint hint).
+  const runtimeTheme = bridge.runtime?.theme;
+  React.useEffect(() => {
+    if (runtimeTheme) applyTheme(runtimeTheme);
+  }, [runtimeTheme]);
+
+  // Notify particle field and other listeners when the active page changes.
+  React.useEffect(() => {
+    document.dispatchEvent(new Event('xwx:pagechange'));
+  }, [activePage]);
+
+  React.useEffect(() => {
+    const unsub = bridge.api.onWindowState(state => setWindowState(state));
+    return unsub;
+  }, [bridge.api]);
+
+  React.useEffect(() => {
+    const handler = () => setActivePage('settings');
+    window.addEventListener('xwxdeck:show-update-details', handler);
+    return () => window.removeEventListener('xwxdeck:show-update-details', handler);
+  }, []);
+
+  React.useEffect(() => bridge.api.onNotice(notice => {
+    const runtime = latestRuntime.current;
+    if (notice.runtimeRevision !== undefined && runtime && notice.runtimeRevision < (runtime.revision ?? 0) && (notice.tracingEnabled !== runtime.tracingEnabled || runtime.traceTransition)) return;
+    showLifecycleNotice(notice);
+  }), [bridge.api]);
+
+  const runtimeError = bridge.runtime?.lastError;
+  const recoveryNotice = bridge.runtime?.lifecycleNotice;
+  const connectionNotice = bridge.runtime?.connectionNotice;
+  const traceStorageBytes = bridge.runtime?.traceStorageBytes ?? 0;
+  const traceWarningGB = bridge.runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB;
+  const traceStorageText = formatBytes(traceStorageBytes);
+  React.useEffect(() => {
+    if (!bridge.booted || !bridge.runtime) return;
+    const id = 'trace-capacity-warning';
+    if (traceWarningGB === 0 || traceStorageBytes <= traceWarningGB * 1024 ** 3 || bridge.runtime.traceAutoCleanup) {
+      notifiedTraceWarning.current = '';
+      closeToast(id);
+      return;
+    }
+    const signature = `${bridge.runtime.traceRoot}:${traceWarningGB}`;
+    if (notifiedTraceWarning.current === signature) return;
+    notifiedTraceWarning.current = signature;
+    showToast(t('Trace 记录需要清理'), 'info', id, {
+      description: t("已使用 {0}，超过 {1} GB。可调整上限或开启自动清理。", traceStorageText, traceWarningGB),
+      actionProps: {
+        type: 'button',
+        children: t('查看设置'),
+        onClick: () => {
+          setActivePage('settings');
+          window.dispatchEvent(new Event('xwxdeck:open-trace-settings'));
+        }
+      }
+    });
+  }, [bridge.booted, bridge.runtime?.traceRoot, bridge.runtime?.traceAutoCleanup, traceStorageBytes, traceWarningGB, traceStorageText]);
+  React.useEffect(() => {
+    if (!bridge.booted) return;
+    const notice = runtimeError ? lifecycleFailure(runtimeError, t('恢复运行状态')) : recoveryNotice;
+    const signature = notice ? `${notice.message}\n${notice.description ?? ''}` : '';
+    if (signature === notifiedRuntimeIssue.current) return;
+    const previousSignature = notifiedRuntimeIssue.current;
+    notifiedRuntimeIssue.current = signature;
+    if (notice) showLifecycleNotice(notice, 'runtime-lifecycle-issue');
+    else if (previousSignature) clearLifecycleNotice();
+  }, [bridge.booted, runtimeError, recoveryNotice]);
+
+  const notifiedConnectionNotice = React.useRef('');
+  const connectionTraceState = React.useRef<boolean | undefined>(undefined);
+  React.useEffect(() => {
+    if (!bridge.booted) return;
+    // The stop action owns its combined result notice, including model
+    // dependencies. Runtime broadcasts can arrive before or after that result.
+    if (bridge.runtime?.traceTransition === 'stopping') {
+      connectionTraceState.current = true;
+      return;
+    }
+    if (bridge.runtime?.traceTransition === 'starting') return;
+    const stopped = connectionTraceState.current === true && bridge.runtime?.tracingEnabled === false;
+    connectionTraceState.current = bridge.runtime?.tracingEnabled;
+    const id = 'runtime-connection-notice';
+    const signature = connectionNotice
+      ? `${connectionNotice.message}\n${connectionNotice.description ?? ''}`
+      : '';
+    const stateSignature = `${signature}\n${runtimeError ? 'suppressed' : 'visible'}`;
+    if (stateSignature === notifiedConnectionNotice.current) return;
+    notifiedConnectionNotice.current = stateSignature;
+    if (stopped) return;
+    if (connectionNotice && !runtimeError) showLifecycleNotice(connectionNotice, id);
+    else closeToast(id);
+  }, [bridge.booted, bridge.runtime?.tracingEnabled, bridge.runtime?.traceTransition, connectionNotice, runtimeError]);
+
+  React.useEffect(() => {
+    if (!bridge.booted) return;
+    const key = 'initial-load-issues';
+    const signature = bridge.loadIssues.join('\u0000');
+    if (!signature) {
+      if (notifiedLoadIssues.current) closeToast(key);
+      notifiedLoadIssues.current = '';
+      setRetryingInitialData(false);
+      return;
+    }
+    if (retryingInitialData) return;
+    if (notifiedLoadIssues.current === signature) return;
+    notifiedLoadIssues.current = signature;
+    showToast(t('部分数据仍在加载'), 'warning', key, {
+      description: t('已加载内容仍可继续使用。需要时可以重新加载未就绪的数据。'),
+      actionProps: {
+        type: 'button',
+        children: t('重试'),
+        onClick: () => {
+          notifiedLoadIssues.current = '';
+          setRetryingInitialData(true);
+          showToast(t('正在重新加载…'), 'info', key, { timeout: 3000 });
+          bridge.retryInitialData();
+          window.setTimeout(() => setRetryingInitialData(false), 1000);
+        }
+      }
+    });
+  }, [bridge.booted, bridge.loadIssues, bridge.retryInitialData, retryingInitialData]);
+
+  const missingProviderSignature = [...(bridge.runtime?.missingCodexHistoryProviders ?? [])].sort().join('\u0000');
+  const codexConfigPath = bridge.codexConfig?.configPath;
+  React.useEffect(() => {
+    if (!bridge.booted || !codexConfigPath) return;
+    const id = 'codex-history-provider-missing';
+    const storageKey = `xwx.missingHistoryProviders.${codexConfigPath}`;
+    if (!missingProviderSignature) {
+      if (notifiedMissingProviders.current) closeToast(id);
+      notifiedMissingProviders.current = '';
+      return;
+    }
+    let ignored: string[] = [];
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      if (Array.isArray(saved)) ignored = saved.filter((value): value is string => typeof value === 'string');
+    } catch { /* invalid or unavailable local storage must not block the audit */ }
+    const missingProviders = missingProviderSignature.split('\u0000').filter(provider => !ignored.includes(provider));
+    const visibleSignature = missingProviders.join('\u0000');
+    if (!visibleSignature) {
+      if (notifiedMissingProviders.current) closeToast(id);
+      notifiedMissingProviders.current = '';
+      return;
+    }
+    if (notifiedMissingProviders.current === visibleSignature) return;
+    if (runtimeError || recoveryNotice) return;
+    notifiedMissingProviders.current = visibleSignature;
+    const labels: Record<string, string> = {
+      xwx_deck: 'XwX Deck',
+    };
+    const missing = missingProviders.map(provider => labels[provider] ?? provider);
+    showToast(t('ChatGPT 历史连接配置缺失'), 'warning', id, {
+      description: t("历史对话仍引用 {0}，但该连接已不在 ChatGPT 配置中。当前新对话不受影响；如需继续使用旧对话，请从可信备份恢复原连接。", missing.join('、')),
+      timeout: 12_000,
+      actionProps: {
+        type: 'button',
+        children: t('不再提醒'),
+        'aria-label': t('不再提醒这些已删除的 ChatGPT 历史连接'),
+        onClick: () => {
+          try {
+            localStorage.setItem(storageKey, JSON.stringify([...new Set([...ignored, ...missingProviders])]));
+            closeToast(id);
+          } catch {
+            showToast('无法保存“不再提醒”', 'warning', id, {
+              diagnostic: true,
+              description: '应用本地存储不可用，下次启动仍可能出现此提醒。'
+            });
+          }
+        }
+      }
+    });
+  }, [bridge.booted, codexConfigPath, missingProviderSignature, runtimeError, recoveryNotice]);
+
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const page = (e as CustomEvent<PageId>).detail;
+      if (page) setActivePage(page);
+    };
+    window.addEventListener('xwxdeck:navigate', handler as EventListener);
+    return () => window.removeEventListener('xwxdeck:navigate', handler as EventListener);
+  }, []);
+
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || activePage !== 'signal') return;
+      const target = document.activeElement;
+      if (!target || target === document.body || (target as HTMLElement).id === 'captureBtn') {
+        e.preventDefault();
+        window.dispatchEvent(new Event(TRACE_TOGGLE_REQUEST_EVENT));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activePage]);
+
+  if (!bridge.booted) {
+    return (
+      <div className={`app${windowState.nativeFrame ? ' native-frame' : ''}`}>
+        <Titlebar isMaximized={windowState.maximized} nativeFrame={windowState.nativeFrame} />
+        {/* Quiet skeleton of the rail so the shell doesn't jump when data arrives. */}
+        <div className="body boot-body" aria-busy="true">
+          <aside className="rail" aria-hidden="true">
+            {[0, 1, 2, 3].map(i => <span key={i} className="boot-row"><i /><b /></span>)}
+          </aside>
+          <main className="stage"><span className="sr-only">{t("加载中…")}</span></main>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`app${windowState.nativeFrame ? ' native-frame' : ''}`}>
+      <Titlebar isMaximized={windowState.maximized} nativeFrame={windowState.nativeFrame} />
+      <div className="body">
+        <Rail activePage={activePage} onNavigate={setActivePage} updateState={bridge.updateState} />
+        <div className="content-column">
+          <TraceRecoveryActions />
+          <div className="stage">
+          <SignalPage active={activePage === 'signal'} />
+          <ModelsPage active={activePage === 'models'} />
+          <SettingsPage active={activePage === 'settings'} />
+          </div>
+        </div>
+      </div>
+      <OnboardingTour />
+      <UpdateNotification />
+    </div>
+  );
+}
+
+export function App(): React.ReactElement {
+  useLanguage();
+  return (
+    <ToastProvider position="bottom-right" timeout={3000} limit={1}>
+      <BridgeProvider>
+        <ConfirmDialogProvider><Shell /></ConfirmDialogProvider>
+      </BridgeProvider>
+    </ToastProvider>
+  );
+}

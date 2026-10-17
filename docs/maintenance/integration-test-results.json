@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-14",
+  "version": "1.1.0",
+  "target": "Damue01/XwX_Deck main",
+  "baselineCommit": "2c228d7e81b8ef673bbaaeedf4f87753682570a0",
+  "sourceFingerprint": "f71bcf9472abd3ef0f4d8507cea06fa480d84c3b152e439aca509d1a13629c8d",
+  "nativeBinarySha256": "04e95dd3595fd9ea8c32540bf7bbfd34ed7430a972c74065e18ca46e2946d795",
+  "platform": "macOS arm64",
+  "quality": {
+    "passed": true,
+    "sourceUnchanged": true,
+    "steps": [
+      {
+        "name": "frontend compile and repository checks",
+        "passed": true
+      },
+      {
+        "name": "existing behavior and shared contracts",
+        "passed": true
+      },
+      {
+        "name": "native embedded resources",
+        "passed": true
+      },
+      {
+        "name": "Rust formatting",
+        "passed": true
+      },
+      {
+        "name": "Rust static checks",
+        "passed": true
+      },
+      {
+        "name": "Rust unit tests",
+        "passed": true
+      },
+      {
+        "name": "current native test executable",
+        "passed": true
+      },
+      {
+        "name": "isolated native requests and lifecycle",
+        "passed": true
+      }
+    ]
+  },
+  "automated": {
+    "rustUnitTests": 113,
+    "nativeSuiteEntries": 87,
+    "executedNativeSuites": 86,
+    "platformSkips": [
+      "portable-update-test.mjs"
+    ],
+    "modelsPageOrderingRegressions": 25,
+    "dashboardBrowserChecks": 12,
+    "toastBrowserScenarios": 4,
+    "sessionReadingBrowserChecks": 6,
+    "websiteBrowserChecks": 5,
+    "dependencyVulnerabilities": 0
+  },
+  "nativeWebView": {
+    "passed": true,
+    "applicationChecks": 207,
+    "viewerChecks": 21,
+    "persistentResetChecks": 15,
+    "upstreamHttpRequests": 2,
+    "consoleErrors": [],
+    "automaticResetRelaunch": true,
+    "ownPersistentStoreRemoved": true
+  },
+  "installedClients": {
+    "scope": "Installed Codex and Claude CLI with isolated configuration and synthetic local upstreams; no paid services or normal credentials.",
+    "versions": {
+      "codex": "codex-cli 0.162.1",
+      "claude": "2.1.228 (Claude Code)"
+    },
+    "checks": 12
+  },
+  "testPlan": {
+    "modules": 13,
+    "requirements": 72,
+    "scriptEntrypoints": 59,
+    "mappingIsExecutionEvidence": false
+  },
+  "pending": [
+    "Remote CI on the pushed commit",
+    "Real service authorization, billing and same-session continuation after provider switching",
+    "Windows physical EXE replacement, Linux desktop operations, minimum macOS and physical multi-screen operations",
+    "Codex side-chat design remains a preview"
+  ],
+  "productionReady": false,
+  "normalApplicationModified": false,
+  "installerPublished": false,
+  "tagOrReleaseCreated": false,
+  "scope": "Current public source and isolated synthetic upstreams. Programmatic regression, installed CLI fixtures and actual native WebView operations are recorded separately; neither proves real service billing or authorization."
+}

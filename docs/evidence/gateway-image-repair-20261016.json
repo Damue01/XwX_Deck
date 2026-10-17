@@ -1,0 +1,141 @@
+{
+  "date": "2026-10-16",
+  "platform": "darwin-arm64",
+  "variant": "public",
+  "sourceFingerprint": "efb374811038d70619bf13b9b3972ab5b5185f01896e72be2255558361cc51c3",
+  "sourceCandidate": {
+    "binarySha256": "10c22d72c26d884612da6f202834b72bafa7a54107897e3bcd758756a735317c",
+    "programmaticSuites": 6,
+    "passed": true,
+    "normalAppReplaced": false
+  },
+  "realImageCalls": [
+    {
+      "kind": "edit",
+      "tool": "built-in image_gen",
+      "binarySha256": "10c22d72c26d884612da6f202834b72bafa7a54107897e3bcd758756a735317c",
+      "result": "actual PNG returned",
+      "image": "exec-09bef9d5-0a21-42ec-9ca4-69f0c97c67ca.png",
+      "imageSha256": "0e5ed3710696952ce8b17f4b0c76f85472dcd2c289e7d24e0e931c74eb2f7d94",
+      "dimensions": [
+        1774,
+        887
+      ],
+      "elapsedSeconds": 20.6,
+      "traceCountAfter": 0,
+      "activeRequestsAfter": 0
+    },
+    {
+      "kind": "edit",
+      "tool": "built-in image_gen",
+      "binarySha256": "c79dce8538e4a85de08e8d2d647363361f7196a710a959478569a0b9a83c27c8",
+      "result": "actual PNG returned through final signed App",
+      "image": "exec-1e071580-fb13-404f-a3fb-dbb0a24fe816.png",
+      "imageSha256": "944e550bab03b597d4fe62b63afb498e08310407569166d7b1d483e27463f2a1",
+      "dimensions": [
+        1774,
+        887
+      ],
+      "elapsedSeconds": 15.1,
+      "traceCountAfter": 0,
+      "activeRequestsAfter": 0
+    }
+  ],
+  "signedPackage": {
+    "status": "built-and-verified",
+    "version": "1.0.0",
+    "commit": "4750bb95a51f34d15914956d42800ceddd7cbd39",
+    "sourceFingerprint": "efb374811038d70619bf13b9b3972ab5b5185f01896e72be2255558361cc51c3",
+    "binarySha256": "c79dce8538e4a85de08e8d2d647363361f7196a710a959478569a0b9a83c27c8",
+    "dmgSha256": "9ebdc8a3af4dd0c5d9f9eed89af52a9a50c3819f309ab62fc656c50039dab5e4",
+    "dmgBytes": 8392299,
+    "notarization": {
+      "app": {
+        "id": "64f8476b-039d-4759-90c0-17a337ca9c16",
+        "status": "Accepted"
+      },
+      "dmg": {
+        "id": "6c1173ea-9ed9-45d1-b9a7-96fdf607af28",
+        "status": "Accepted"
+      }
+    },
+    "signatureAndGatekeeperPassed": true,
+    "installed": false,
+    "published": false,
+    "productionReady": false,
+    "checks": {
+      "backend": {
+        "passed": true,
+        "checks": 94,
+        "skipped": 1,
+        "binarySha256": "c79dce8538e4a85de08e8d2d647363361f7196a710a959478569a0b9a83c27c8",
+        "passedSuites": 93
+      },
+      "webview": {
+        "passed": true,
+        "checks": 222,
+        "skipped": 0,
+        "binarySha256": "c79dce8538e4a85de08e8d2d647363361f7196a710a959478569a0b9a83c27c8"
+      },
+      "viewer": {
+        "passed": true,
+        "checks": 23,
+        "skipped": 0,
+        "binarySha256": "c79dce8538e4a85de08e8d2d647363361f7196a710a959478569a0b9a83c27c8"
+      }
+    },
+    "exactSignedBinaryRealImagePassed": true
+  },
+  "published": false,
+  "normalClientRestarted": false,
+  "backgroundAdopted": false,
+  "localConfigRepair": {
+    "ownedField": "openai_base_url",
+    "retiredValue": "http://127.0.0.1:44233",
+    "operation": "remove exact stale owned field",
+    "beforeSha256": "d63911cfa7fbc58dd67def04f01cdcfd3c82451785a6a57553beab3613e943b4",
+    "afterSha256": "8cb69a48797a1e9a7d43f45fd4712f12c0d015aa6e9a5228f02a08645ca810d7",
+    "otherFieldsPreserved": true
+  },
+  "retainedFailures": [
+    {
+      "phase": "before-fix",
+      "observed": "built-in image generation HTTP 502, empty body",
+      "elapsedSeconds": 19.4
+    },
+    {
+      "phase": "retired-port-probe",
+      "observed": "built-in tool returned exact unique local HTTP 503 marker",
+      "elapsedSeconds": 3.2
+    },
+    {
+      "phase": "same-session-after-config-write",
+      "observed": "HTTP 502; in-memory old provider remained in use",
+      "elapsedSeconds": 10.5
+    }
+  ],
+  "testTopology": "built-in tool -> temporary raw TCP entry -> isolated Rust candidate -> original official source; no HTTP rewriting in TCP entry; no mock image response; no refresh token copied; temporary credentials and listeners removed",
+  "priorFullRun": {
+    "binarySha256": "1d15c08a254e4d0e03ff32c0e3b492b3f9c174e26323c74564285d2ff163aeda",
+    "passed": false,
+    "suites": 94,
+    "failedSuites": [
+      "gateway-forwarding-test.mjs"
+    ],
+    "note": "Full run started before native rebuild finished; final source candidate reran all six affected suites successfully.",
+    "observedMismatch": {
+      "actual": "/model-root/codex/images/generations",
+      "expected": "/model-root/images/generations",
+      "failedSuite": "gateway-forwarding-test.mjs",
+      "finalSignedPackageRerunPassed": true
+    }
+  },
+  "scopeBoundaries": {
+    "normalInstallationReplaced": false,
+    "normalClientReloaded": false,
+    "productionGateOpened": false,
+    "published": false,
+    "windowsThisRun": "not-tested",
+    "intelMacThisRun": "not-tested"
+  }
+}

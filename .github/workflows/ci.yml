@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate source
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux native prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Compile and run core tests
+        run: |
+          npm test
+          npm run check:test-plan
+
+      - name: Build documentation
+        run: npm run docs:build
+
+      - name: Validate public boundary and workflows
+        run: |
+          npm run check:public-boundary
+          npm run check:workflows
+
+  platform-compile:
+    name: Compile on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test-results/native-target
+          key: ${{ runner.os }}-native-rust-${{ hashFiles('src-native/Cargo.lock') }}
+
+      - name: Compile native candidate
+        run: npm run build:rust:pilot
+
+      - name: Save compiled Rust dependencies
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test-results/native-target
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Repeat Windows private-file and reset regressions
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($round in 1..3) {
+            node tools/native/run-backend-tests.mjs --suite=credential-private-files-test.mjs --suite=preferences-test.mjs 2>&1 | Tee-Object -FilePath "test-results/windows-private-reset-$round.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Run isolated backend tests
+        run: npm run test:rust:backend
+
+      - name: Verify native WebView interactions
+        if: runner.os == 'macOS'
+        run: node tools/native/native-test.mjs
+
+      - name: Save Windows regression diagnostics
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-regression-diagnostics
+          path: test-results/windows-*.log
+          if-no-files-found: ignore

@@ -1,0 +1,44 @@
+// Actual subscription page, official allowance and account selection interactions.
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {resolve} from 'node:path';
+import esbuild from 'esbuild';
+import {JSDOM} from 'jsdom';
+const base=resolve(import.meta.dirname,'../..');
+const dom=new JSDOM('<!doctype html><div id="root"></div><footer id="actions"></footer>',{url:'https://deck.test/'});
+for(const name of ['window','document','navigator','HTMLElement','HTMLInputElement','HTMLButtonElement','Element','Node','DocumentFragment','ShadowRoot','MutationObserver','Event','CustomEvent','MouseEvent','localStorage'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:dom.window[name]});
+globalThis.getComputedStyle=dom.window.getComputedStyle.bind(dom.window);
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame=cb=>setTimeout(()=>cb(performance.now()),0);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame=clearTimeout;
+globalThis.ResizeObserver=dom.window.ResizeObserver=class{observe(){} unobserve(){} disconnect(){}};
+dom.window.HTMLElement.prototype.scrollIntoView=()=>{};
+globalThis.PointerEvent=dom.window.PointerEvent=dom.window.MouseEvent;
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+dom.window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
+const require=createRequire(resolve(base,'package.json'));
+const React=require('react'),{act}=React,{createRoot}=require('react-dom/client');
+
+const notices=[],writes=[],results=[];let fail=false,scanFail=false;
+const item=(fingerprint,name,status,accountKind)=>({fingerprint,name,status,accountKind,adapter:'responses',baseUrl:accountKind?name+'@example.test':'https://api.example.test',reason:'账号信息'});
+const preview={targetDigest:'before',sources:[{source:'magpie-accounts',path:'/fixture/logins.json',name:'Magpie',found:true,error:'',items:[item('official','Official','new','official'),item('api','API','new','api'),item('paused','Paused','paused','api'),item('expired','Expired','needs-login','official'),item('existing','Existing','existing','official')]},{source:'magpie',path:'/fixture/providers.json',name:'Magpie',found:true,error:'',items:[item('service','Service','new')]}]};
+const fixture={api:{previewConfigurationImport:async()=>{if(scanFail)throw Error('读取失败，请重新检测');return structuredClone(preview)},importConfigurations:async input=>{writes.push(input);if(fail)throw Error('保存失败');return{providers:{active:{codex:null},connections:[]},added:['Service'],addedAccounts:['Official','Expired']}}},patch:()=>{}};
+globalThis.__importFixture={fixture,notices};
+const result=await esbuild.build({entryPoints:[resolve(base,'src/renderer/features/settings/ImportConfigurations.tsx')],bundle:true,platform:'node',format:'cjs',write:false,alias:{'@':resolve(base,'src/renderer')},external:['react','react/*','react-dom','react-dom/*'],plugins:[{name:'fixture',setup(build){build.onResolve({filter:/^@\/(bridge\/store|lib\/i18n|lib\/toast)$/},args=>({path:args.path,namespace:'fixture'}));build.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:args.path.endsWith('store')?'export const useBridge=()=>globalThis.__importFixture.fixture':args.path.endsWith('i18n')?'export const t=(s,...args)=>s.replace(/\\{(\\d+)\\}/g,(_,n)=>args[n]??_);export const useLanguage=()=>{}':'export const showToast=(...v)=>globalThis.__importFixture.notices.push(v);export const showErrorToast=(...v)=>globalThis.__importFixture.notices.push(v);'}));}}]});
+const mod={exports:{}};new Function('require','module','exports',result.outputFiles[0].text)(require,mod,mod.exports);const root=createRoot(document.getElementById('root'));
+const busy=()=>{};await act(async()=>root.render(React.createElement(mod.exports.ImportConfigurations,{visible:true,onBack:()=>{},onBusyChange:busy,onImported:r=>results.push(r),onboarding:true,actionsContainer:document.getElementById('actions')})));
+const check=name=>document.querySelector('input[aria-label="导入 Magpie '+name+'"]');
+try{
+ assert.ok(document.querySelector('#actions .configuration-import-actions'));assert.equal(document.querySelector('#root .configuration-import-actions'),null);assert.ok(!document.querySelector('.configuration-import-meta').textContent.includes('·'));
+ assert.ok(!check('Official').checked&&!check('API').checked&&check('Service').checked);assert.ok(!check('Paused').checked&&!check('Expired').checked);assert.equal(check('Existing'),null);assert.ok(document.body.textContent.includes('官方账号登录'));assert.ok(document.body.textContent.includes('API 授权'));assert.ok(document.body.textContent.includes('需登录'));
+ console.log('PASS detected official/API accounts require explicit opt in; existing Deck accounts remain disabled');
+ await act(async()=>check('Official').click());await act(async()=>check('Expired').click());scanFail=true;await act(async()=>document.querySelector('button[aria-label="重新检测"]').click());assert.ok(document.body.textContent.includes('读取失败'));assert.ok(!check('API').checked&&check('Expired').checked&&check('Official').checked);scanFail=false;await act(async()=>document.querySelector('button[aria-label="重新检测"]').click());assert.ok(!check('API').checked&&check('Expired').checked);
+ console.log('PASS failed rescan retains the displayed list and user choices; successful rescan keeps deselections and explicit recovery-account selection');
+ fail=true;await act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='导入并继续').click());assert.deepEqual(writes.at(-1).fingerprints.sort(),['expired','official','service']);assert.equal(results.length,0);assert.ok(!check('API').checked&&check('Expired').checked);fail=false;await act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='导入并继续').click());assert.equal(results.length,1);assert.ok(notices.some(n=>n[0]==='已导入 3 个配置与账号'));
+ console.log('PASS failed save keeps selections and stays in onboarding; Retry imports only chosen services/accounts before advancing');
+ const beforeSkip=writes.length;let skipped=0;preview.sources=preview.sources.filter(source=>source.source==='magpie-accounts');
+ await act(async()=>root.render(React.createElement(mod.exports.ImportConfigurations,{key:'skip-accounts',visible:true,onBack:()=>skipped++,onBusyChange:busy,onboarding:true})));
+ assert.ok([...document.querySelectorAll('input[type="checkbox"]')].every(input=>!input.checked));
+ await act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='继续').click());
+ assert.equal(skipped,1);assert.equal(writes.length,beforeSkip);
+ console.log('PASS continuing without selecting detected accounts never calls import');
+}finally{await act(async()=>root.unmount());dom.window.close()}

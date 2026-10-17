@@ -1,0 +1,88 @@
+name: Website and documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "web/site/**"
+      - "src/renderer/**"
+      - "src/shared/**"
+      - "tools/site/**"
+      - "tools/build/**"
+      - "README.md"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      configured: ${{ steps.pages.outcome == 'success' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Configure Pages
+        id: pages
+        continue-on-error: true
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and verify website
+        run: |
+          npm run build:site
+          npm install --prefix "$RUNNER_TEMP/site-browser" --no-save playwright
+          node "$RUNNER_TEMP/site-browser/node_modules/playwright/cli.js" install --with-deps chromium
+          XWX_PLAYWRIGHT_MODULE="$RUNNER_TEMP/site-browser/node_modules/playwright/index.mjs" XWX_PLAYWRIGHT_CHANNEL=chromium npm run test:site
+
+      - name: Build documentation
+        env:
+          DOCS_BASE: /docs/
+        run: npm run docs:build
+
+      - name: Assemble website and documentation
+        run: cp -R docs/.vitepress/dist test-results/site-preview/docs
+
+      - name: Verify documentation navigation and typography
+        env:
+          XWX_PLAYWRIGHT_MODULE: ${{ runner.temp }}/site-browser/node_modules/playwright/index.mjs
+          XWX_PLAYWRIGHT_CHANNEL: chromium
+        run: npm run test:docs
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: test-results/site-preview
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    if: needs.build.outputs.configured == 'true'
+    steps:
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

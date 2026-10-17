@@ -1,0 +1,62 @@
+{
+  "date": "2026-10-16",
+  "version": "1.0.0",
+  "sourceCommit": "a5c2228815922ebdb23030afb0f43218ea866cb8",
+  "sourceFingerprint": "2bccde0053b2c92633746ec87d322a260ecd24bf3f47fd6b75759a4eef49b2ff",
+  "binarySha256": "36b2f40d7c5994aeadc8812c63c7f329145a9704d26d00a06e0f3e1b7f17d6bb",
+  "dmgSha256": "164143950c837358b665653dd08721edec6920c4278a6ba2be0b5c1520de8885",
+  "notarization": {
+    "app": {
+      "id": "e2a798f1-ab73-42c4-8004-173b03d087f4",
+      "status": "Accepted"
+    },
+    "dmg": {
+      "id": "ad42e4d9-034d-482a-b9ae-2d05751531f0",
+      "status": "Accepted"
+    }
+  },
+  "signed": "developer-id",
+  "notarized": true,
+  "localOnly": true,
+  "installed": false,
+  "published": false,
+  "productionReady": false,
+  "checks": {
+    "backendSuites": 95,
+    "platformSpecificSkips": 1,
+    "rustUnitTests": 153,
+    "rustfmt": "passed",
+    "clippy": "passed",
+    "nativeWebViewChecks": 222,
+    "nativeViewerChecks": 25,
+    "windowLifecycleChecks": 23,
+    "realCodexCompactions": 2,
+    "realRequests": 5,
+    "realProvider": "DeepSeek",
+    "realModel": "deepseek-v4-pro",
+    "normalSettingsUnchanged": true,
+    "mountedPayloadAndGatekeeper": "passed",
+    "windowHarness": "explicit isolated installed-client fixtures; old harness initial-client assumption corrected",
+    "dmgAppearance": "Trace dots and equal-dot straight feather arrow; only app and Applications visible"
+  },
+  "remaining": [
+    "Installed user application was not replaced",
+    "Real Desktop stop/cache-lock scenario remains unverified",
+    "Real WS compaction and other provider combinations remain unverified",
+    "Windows, Intel and minimum macOS not verified"
+  ],
+  "initialFailures": [
+    {
+      "scenario": "window lifecycle",
+      "classification": "test fixture",
+      "failure": "old harness assumed two default clients without installation fixtures",
+      "resolution": "explicit isolated installations; final 23 checks passed"
+    },
+    {
+      "scenario": "real compact mode",
+      "binarySha256": "498088f0dab5b2ac33593c334017f8079cb36ccf402115e85555dbcc1765e847",
+      "failure": "two compact labels existed but compactionMode was overwritten to upstream",
+      "resolution": "annotate after context metadata initialization; final two client-summary requests and same-thread memory passed"
+    }
+  ]
+}

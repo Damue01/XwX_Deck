@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+const output=await build({entryPoints:['src/shared/codexContextVariants.ts'],bundle:true,platform:'node',format:'esm',write:false,logLevel:'silent'});
+const {codexContextVariants,codexDefaultContextWindow}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].text).toString('base64'));
+const model={id:'gpt-6.1-sol',contextWindow:1050000,codexContextWindow:500000,capabilitySources:{contextWindow:'models.dev'}};
+assert.deepEqual(codexContextVariants(model),[{modelId:model.id,label:model.id+'[500K]',contextWindow:null},{modelId:model.id,label:model.id+'[1M]',contextWindow:1000000}]);
+assert.equal(codexDefaultContextWindow(model),500000);
+assert.deepEqual(codexContextVariants({...model,codexContextWindow:600000})[0],{modelId:model.id,label:model.id+'[600K]',contextWindow:null});
+assert.equal(codexContextVariants({...model,codexContextWindow:1000000}).length,1);
+assert.equal(codexContextVariants({...model,codexContextWindow:undefined})[0].contextWindow,null);
+assert.equal(codexDefaultContextWindow({...model,codexContextWindow:undefined}),1050000);
+assert.equal(codexDefaultContextWindow({...model,contextWindow:128000}),128000);
+assert.equal(codexContextVariants({...model,contextWindow:872000})[0].label,model.id+'[500K]');
+assert.deepEqual(codexContextVariants({id:'unknown',contextWindow:262144,capabilitySources:{contextWindow:'fallback'}}),[{modelId:'unknown',label:'unknown',contextWindow:null}]);
+console.log('PASS current Codex default follows 500K/600K client metadata without freezing a TOML override; verified capacity and explicit 1M choice remain distinct');
+
+const unknownCapacity={id:'gpt-future',contextWindow:262144,codexContextWindow:500000,codexContextWindowSource:'codex',capabilitySources:{contextWindow:'fallback'}};
+assert.equal(codexDefaultContextWindow(unknownCapacity),500000);
+assert.deepEqual(codexContextVariants(unknownCapacity),[{modelId:'gpt-future',label:'gpt-future[500K]',contextWindow:null}]);
+assert.equal(codexDefaultContextWindow({...unknownCapacity,codexContextWindowSource:'fallback'}),undefined);

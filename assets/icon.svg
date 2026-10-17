@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="XwX">
+  <title>XwX geometric mark</title>
+  <rect x="24" y="24" width="976" height="976" rx="176" fill="#000000"/>
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M178 420 L372 610 M372 420 L178 610" stroke-width="30"/>
+    <path d="M654 420 L850 610 M850 420 L654 610" stroke-width="30"/>
+    <path d="M439 548 L472 607 L512 554 L552 607 L585 548" stroke-width="27"/>
+  </g>
+</svg>

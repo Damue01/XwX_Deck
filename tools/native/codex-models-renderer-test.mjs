@@ -1,0 +1,305 @@
+// Actual ChatGPT model page/selectors. The native snapshot may be official while
+// a subscription is selected and Trace is stopped; it must not pick the write target.
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {resolve} from 'node:path';
+import {execFileSync} from 'node:child_process';
+import esbuild from 'esbuild';
+import {JSDOM} from 'jsdom';
+const base=resolve(import.meta.dirname,'../..');
+const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'https://deck.test/'});
+for(const name of ['window','document','navigator','HTMLElement','HTMLInputElement','HTMLButtonElement','Element','Node','DocumentFragment','ShadowRoot','MutationObserver','Event','CustomEvent','MouseEvent','localStorage'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?dom.window:dom.window[name]});
+globalThis.getComputedStyle=dom.window.getComputedStyle.bind(dom.window);
+globalThis.requestAnimationFrame=dom.window.requestAnimationFrame=cb=>setTimeout(()=>cb(performance.now()),0);
+globalThis.cancelAnimationFrame=dom.window.cancelAnimationFrame=clearTimeout;
+globalThis.ResizeObserver=dom.window.ResizeObserver=class{observe(){} unobserve(){} disconnect(){}};
+dom.window.HTMLElement.prototype.scrollIntoView=()=>{};
+globalThis.PointerEvent=dom.window.PointerEvent=dom.window.MouseEvent;
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+dom.window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
+const require=createRequire(resolve(base,'package.json'));
+const React=require('react'),{act}=React,{createRoot}=require('react-dom/client');
+const notices=[],writes=[],checks=[];const providerId='subscription-fixture';
+let saved={mode:'official',officialModel:'deepseek-v4-pro',compatible:{model:'deepseek-v4-pro',baseUrl:'https://api.openai.com/v1',bearerToken:''},configOwnership:'deck',modelCatalogSource:'none'};
+let hold=null,readHold=null,fail=false,mismatch=false,clientWindow;
+const deferred=()=>{let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j});return{promise,resolve,reject}};
+const bridge={modelClients:['codex'],runtime:{tracingEnabled:false},codexConfig:saved,codexEnhancements:{},providers:{active:{codex:providerId,claude:null},connections:[{id:'official-configured',displayName:'Official_fixture',subscriptionAccountId:'official-chatgpt-fixture',baseUrl:'https://api.openai.com/v1',adapter:'responses',codexApiFormat:'responses',claudeModels:{}},{id:providerId,displayName:'Fixture_e740eed2',subscriptionAccountId:'account',baseUrl:'https://api.openai.com/v1',adapter:'responses',codexApiFormat:'responses',claudeModels:{}}]},modelCatalog:[],patch:()=>{},api:{
+ getCodexConfig:async()=>readHold?readHold.promise:structuredClone(saved),
+ fetchModels:async()=>['gpt-6.1-sol','gpt-6-luna'].map(id=>({id,vendor:'OpenAI',protocols:['openai-responses'],clients:['codex'],...(clientWindow&&id==='gpt-6.1-sol'?{contextWindow:1050000,codexContextWindow:clientWindow,capabilitySources:{contextWindow:'models.dev'}}:{})})),
+ updateCodexConfig:async input=>{writes.push(input);if(hold)await hold.promise;if(fail)throw Error('External configuration changed');if(mismatch)return structuredClone(saved);saved={...saved,officialModel:input.expectedProviderId===null?input.officialModel:saved.officialModel,compatible:{...saved.compatible,model:input.expectedProviderId===null?saved.compatible.model:input.compatibleModel},modelContextWindow:input.modelContextWindow??undefined,warning:bridge.runtime.tracingEnabled?undefined:'模型选择已保存，需要开启 Trace 后用于客户端请求。'};return structuredClone(saved);},
+ getOfficialChatgptAccount:async()=>({id:"official-chatgpt",label:"本机官方登录",email:"official@example.test",status:"connected",quotaDetails:{windows:[],httpStatus:200}}),
+ switchClientProvider:async({providerId:id})=>{bridge.providers={...bridge.providers,active:{...bridge.providers.active,codex:id}};return bridge.providers;},
+ getModelServices:async()=>({}),
+ getCodexEnhancements:async()=>({}),getClaudeModels:async()=>({}),setupWebsites:{}
+}};
+globalThis.__codexModelFixture={bridge,notices,confirmations:[],confirmResult:true};
+const entry=resolve(base,'src/renderer/features/models/ModelsPage.tsx');
+const result=await esbuild.build({stdin:{contents: `export { ModelsPage } from './src/renderer/features/models/ModelsPage'; export { ModelPicker } from './src/renderer/features/models/ModelPicker'; export { ProviderConnectionChecks } from './src/renderer/features/settings/ProviderConnectionChecks'; export { OfficialChatgptAccount } from './src/renderer/features/models/OfficialChatgptAccount'; export { ProviderPicker } from './src/renderer/features/models/ProviderPicker';`,resolveDir:base,loader:'tsx'},bundle:true,platform:'node',format:'cjs',write:false,alias:{'@':resolve(base,'src/renderer')},external:['react','react/*','react-dom','react-dom/*'],plugins:[{name:'fixtures',setup(build){
+ if(process.argv.includes('--baseline'))build.onLoad({filter:/ModelsPage\.tsx$/},()=>({contents:execFileSync('git',['show','HEAD:src/renderer/features/models/ModelsPage.tsx'],{cwd:base,encoding:'utf8'}),loader:'tsx',resolveDir:resolve(entry,'..')}));
+ build.onResolve({filter:/^\.\/(CodexEnhancements|ClaudeEnhancements|GatewayClientModels|compatibleQuota)$/},args=>({path:args.path.slice(2),namespace:'empty'}));
+ build.onLoad({filter:/.*/,namespace:'empty'},args=>({contents:`export const ${args.path}=()=>null;`}));
+ build.onResolve({filter:/^@\/(bridge\/store|lib\/i18n|lib\/toast|components\/ui\/confirm-dialog)$/},args=>({path:args.path,namespace:'fixture'}));
+ build.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:args.path.endsWith('i18n')?'export const t=(s,...args)=>s.replace(/\\{(\\d+)\\}/g,(_,n)=>args[n]??_);export const useLanguage=()=>{};export const getLanguage=()=>"zh-CN";':args.path.endsWith('store')?'export const useBridge=()=>globalThis.__codexModelFixture.bridge;':args.path.endsWith('confirm-dialog')?'export const useConfirm=()=>async input=>{globalThis.__codexModelFixture.confirmations.push(input);return globalThis.__codexModelFixture.confirmResult;};':`export const showToast=(...v)=>globalThis.__codexModelFixture.notices.push(['toast',...v]);export const showErrorToast=(...v)=>globalThis.__codexModelFixture.notices.push(['error',...v]);export const showLifecycleNotice=(...v)=>globalThis.__codexModelFixture.notices.push(['lifecycle',...v]);export const clearLifecycleNotice=()=>{};export const closeToast=()=>{};export const openConfiguration=()=>{};export const openProviderSettings=()=>{};export const runNoticeAction=()=>{};export const REPAIR_CODEX_CONFIG_EVENT='repair';export const RESTORE_CLIENT_CONFIG_EVENT='restore';`}));
+}}]});
+const mod={exports:{}};new Function('require','module','exports',result.outputFiles[0].text)(require,mod,mod.exports);
+const root=createRoot(document.getElementById('root'));
+const render=active=>act(async()=>root.render(React.createElement(React.Fragment,null,React.createElement(mod.exports.ModelsPage,{active}),React.createElement(mod.exports.OfficialChatgptAccount,{active:!active,manage:true}))));
+const button=()=>document.querySelector('[data-codex-model] button');
+const pass=name=>{checks.push(name);console.log('PASS '+name)};
+async function wait(test,label){for(let n=0;n<100;n++){await act(async()=>new Promise(r=>setTimeout(r,10)));if(test())return}throw Error(label+' '+document.body.textContent)}
+async function choose(label){await act(async()=>button().click());await wait(()=>[...document.querySelectorAll('[role="option"]')].some(e=>e.textContent.includes(label)),'open '+label);await act(async()=>{const option=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent.includes(label));const down=new MouseEvent('pointerdown',{bubbles:true,button:0,buttons:1});Object.defineProperty(down,'pointerType',{value:'mouse'});option.dispatchEvent(down);option.click()});}
+try{
+ await render(true);await wait(()=>button()&&!button().disabled,'initial model');
+ assert.equal(document.querySelectorAll('.models-switch [role="tab"]').length,0);
+ assert.equal(document.querySelector('#models-single-client').textContent,'ChatGPT');
+ assert.equal(document.querySelector('#client-panel-codex').getAttribute('role'),'region');
+ assert.equal(document.querySelector('#client-panel-codex').getAttribute('aria-labelledby'),'models-single-client');
+ assert.ok(document.querySelector('.models-manage-clients'));
+ pass('one client has a named region and management entry without a redundant tab switcher');
+ const originalSwitch=bridge.api.switchClientProvider;const resumeSwitches=[];
+ bridge.api.switchClientProvider=async input=>{resumeSwitches.push(input);saved={...saved,configOwnership:'deck'};return {...bridge.providers,warning:'旧会话连接已更新。请等待当前回答结束后重启 Codex，再打开原会话继续。'}};
+ saved={...saved,configOwnership:'external'};await render(false);await render(true);
+ const adopt=()=>[...document.querySelectorAll('#client-panel-codex button')].find(b=>b.textContent==='接管当前服务');
+ await wait(()=>adopt(),'same-service adoption entry');
+ globalThis.__codexModelFixture.confirmResult=false;await act(async()=>adopt().click());
+ assert.equal(resumeSwitches.length,0);assert.equal(globalThis.__codexModelFixture.confirmations.at(-1).confirmText,'备份并切换');
+ globalThis.__codexModelFixture.confirmResult=true;await act(async()=>adopt().click());
+ await wait(()=>!adopt(),'adoption completed');
+ assert.deepEqual(resumeSwitches,[{client:'codex',providerId,takeOverExternalConfig:true}]);
+ assert.ok(notices.some(n=>n[4]?.description?.includes('重启 Codex')));
+ bridge.api.switchClientProvider=originalSwitch;
+ pass('external resume configuration can adopt the already selected service: cancel leaves it untouched, confirm passes explicit takeover and displays the reload instruction');
+
+ bridge.modelClients=['claude','codex'];await render(true);
+ assert.equal(document.querySelectorAll('.models-switch [role="tab"]').length,2);
+ assert.equal(document.querySelector('[data-client-tab="codex"]').getAttribute('aria-selected'),'true');
+ await act(async()=>document.querySelector('[data-client-tab="claude"]').click());
+ bridge.modelClients=['codex'];await render(true);await wait(()=>!document.querySelector('#client-panel-codex').hidden,'remaining client panel');
+ assert.equal(document.querySelectorAll('.models-switch [role="tab"]').length,0);
+ assert.equal(document.querySelector('#models-single-client').textContent,'ChatGPT');
+ bridge.modelClients=['claude','codex'];await render(true);
+ const codexTab=document.querySelector('[data-client-tab="codex"]');
+ assert.equal(codexTab.getAttribute('aria-selected'),'true');
+ assert.equal(document.querySelector('#client-panel-codex').getAttribute('role'),'tabpanel');
+ assert.equal(document.querySelector('#client-panel-codex').getAttribute('aria-labelledby'),codexTab.id);
+ pass('removing the selected client shows the survivor; adding a second restores correctly labelled tabs without changing the survivor');
+ bridge.modelClients=[];await render(true);
+ assert.equal(document.querySelectorAll('.models-switch [role="tab"],#models-single-client').length,0);
+ assert.ok(document.querySelector('.model-client-status'));
+ assert.ok(document.querySelector('.models-manage-clients'));
+ bridge.modelClients=['codex'];await render(true);await wait(()=>button()&&!button().disabled,'restored model client');
+ pass('an empty client list retains the management continuation and recovers when a client is added');
+ await choose('gpt-6.1-sol');await wait(()=>!button().disabled,'saved model');
+ assert.equal(writes.at(-1).compatibleModel,'gpt-6.1-sol','subscription selection must not write the new model only to officialModel');
+ assert.equal(writes.at(-1).officialModel,'deepseek-v4-pro');assert.ok(button().textContent.includes('gpt-6.1-sol'));
+ assert.ok(notices.some(n=>n[4]?.description?.includes('需要开启 Trace')));
+ await render(false);await render(true);assert.ok(button().textContent.includes('gpt-6.1-sol'));
+ pass('subscription selection writes and displays the selected service model while the actual disk route stays official, including page re-entry');
+ readHold=deferred();await render(false);await render(true);hold=deferred();await choose('gpt-6-luna');
+ assert.ok(button().textContent.includes('gpt-6-luna'));assert.equal(button().disabled,true);
+ await act(async()=>readHold.resolve({...saved,compatible:{...saved.compatible,model:'old-read'}}));readHold=null;
+ assert.ok(button().textContent.includes('gpt-6-luna'));await act(async()=>hold.resolve());hold=null;await wait(()=>!button().disabled,'write completed');
+ pass('pending choice is visible immediately and a stale read cannot overwrite it');
+ fail=true;await choose('gpt-6.1-sol');await wait(()=>!button().disabled,'failed write');assert.ok(button().textContent.includes('gpt-6.1-sol'));
+ await render(false);await render(true);assert.ok(button().textContent.includes('gpt-6.1-sol'));
+ fail=false;await act(async()=>notices.findLast(n=>n[0]==='error')[4].actionProps.onClick());assert.equal(saved.compatible.model,'gpt-6.1-sol');
+ pass('write failure retains the exact choice across navigation and provides a working Retry');
+ mismatch=true;const before=notices.length;await choose('gpt-6-luna');await wait(()=>!button().disabled,'mismatched save');
+ assert.ok(notices.slice(before).some(n=>n[0]==='error'&&n[2].message.includes('回读')));assert.ok(!notices.slice(before).some(n=>n[0]==='toast'));
+ await render(false);await render(true);assert.ok(button().textContent.includes('gpt-6-luna'));
+ mismatch=false;await act(async()=>notices.findLast(n=>n[0]==='error')[4].actionProps.onClick());assert.equal(saved.compatible.model,'gpt-6-luna');
+ pass('a successful RPC returning the wrong model cannot produce a success toast, erase the choice, or prevent retry');
+ bridge.runtime={tracingEnabled:true};saved={...saved,mode:'compatible'};await render(false);await render(true);await choose('gpt-6.1-sol');await wait(()=>!button().disabled,'active Trace save');assert.equal(saved.compatible.model,'gpt-6.1-sol');
+ pass('the same selection path also saves while Trace is active');
+ clientWindow=500000;saved={...saved,modelContextWindow:262144};await render(false);await render(true);await wait(()=>button()?.textContent.includes('256K'),'saved explicit window remains');
+ await choose('gpt-6.1-sol[500K]');await wait(()=>!button().disabled,'automatic window saved');assert.equal(writes.at(-1).modelContextWindow,null);assert.equal(saved.compatible.model,'gpt-6.1-sol');assert.equal(saved.modelContextWindow,undefined);
+ await choose('gpt-6.1-sol[1M]');await wait(()=>!button().disabled,'explicit extended window saved');assert.equal(saved.modelContextWindow,1000000);
+ clientWindow=600000;await render(false);await render(true);await wait(()=>button()?.textContent.includes('[1M]'),'explicit extension retained after metadata refresh');
+ await choose('gpt-6.1-sol[600K]');await wait(()=>!button().disabled,'refreshed automatic window saved');assert.equal(writes.at(-1).modelContextWindow,null);assert.equal(saved.modelContextWindow,undefined);
+ clientWindow=undefined;await render(false);await render(true);await wait(()=>!button().disabled,'ordinary labels restored');
+ pass('actual model selector retains the saved 256K choice, clears its override only on selecting the 500K/600K default, preserves explicit 1M across refresh and keeps the canonical model ID');
+
+
+ const picker=document.querySelector('[data-client-panel="codex"] .provider-choice button');await act(async()=>picker.click());await wait(()=>[...document.querySelectorAll('[role="option"]')].some(e=>e.textContent==='ChatGPT 官方登录'),'official service option');
+ await act(async()=>{const option=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent==='ChatGPT 官方登录');const down=new MouseEvent('pointerdown',{bubbles:true,button:0,buttons:1});Object.defineProperty(down,'pointerType',{value:'mouse'});option.dispatchEvent(down);option.click()});
+ await wait(()=>bridge.providers.active.codex==='official-configured','explicit configured official account selected');
+ assert.equal(bridge.providers.connections.find(p=>p.id==='official-configured').subscriptionAccountId,'official-chatgpt-fixture');
+ pass('official menu channel exists only because this fixture explicitly configured an account');
+ await render(false);await act(async()=>[...document.querySelectorAll('.official-chatgpt-account button')].find(e=>e.textContent==='使用此账号').click());
+ await wait(()=>bridge.providers.active.codex===null,'explicit direct restoration');await render(true);
+ saved={...saved,mode:'official',officialModel:'gpt-6.1-sol'};
+ await render(false);await render(true);await choose('gpt-6-luna');await wait(()=>!button().disabled,'official save');
+ assert.equal(writes.at(-1).expectedProviderId,null);assert.equal(writes.at(-1).officialModel,'gpt-6-luna');assert.equal(saved.compatible.model,'gpt-6.1-sol');assert.ok(button().textContent.includes('gpt-6-luna'));
+ pass('explicit official selection updates only the official model and retains the subscription model');
+ await act(async()=>document.querySelector('[data-client-panel="codex"] .provider-choice button').click());
+ await wait(()=>[...document.querySelectorAll('[role="option"]')].some(e=>e.textContent==='ChatGPT API 授权'),'independent service option');
+ await act(async()=>{const option=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent==='ChatGPT API 授权');const down=new MouseEvent('pointerdown',{bubbles:true,button:0,buttons:1});Object.defineProperty(down,'pointerType',{value:'mouse'});option.dispatchEvent(down);option.click()});
+ await wait(()=>bridge.providers.active.codex===providerId,'independent choice before subscription page');
+ await render(false);await act(async()=>[...document.querySelectorAll('.official-chatgpt-account button')].find(e=>e.textContent==='使用此账号').click());await wait(()=>bridge.providers.active.codex===null,'subscription page selection completed');await render(true);
+ assert.equal(document.querySelector('[data-client-panel="codex"] .provider-choice button').textContent,'选择模型服务');
+ pass('subscription page official action uses the same guarded service selection while the model page is hidden');
+ await act(async()=>root.render(null));
+ const makeProvider=(id,subscriptionAccountId)=>({id,displayName:id,subscriptionAccountId,baseUrl:'https://api.openai.com/v1',adapter:'responses',codexApiFormat:'responses',claudeModels:{}});
+ const raceApi={...bridge.api},raceProviders=bridge.providers,raceRuntime=bridge.runtime;
+ const raceCatalog=['gpt-6.1-sol','gpt-6-luna'].map(id=>({id,vendor:'OpenAI',protocols:['openai-responses'],clients:['codex'],...(clientWindow&&id==='gpt-6.1-sol'?{contextWindow:1050000,codexContextWindow:clientWindow,capabilitySources:{contextWindow:'models.dev'}}:{})}));
+ let selectionReads=[],interceptReads=false;
+ bridge.modelClients=['codex'];bridge.runtime={tracingEnabled:true};
+ bridge.providers={active:{codex:'race-first',claude:null},connections:['race-first','race-second','race-third'].map(id=>makeProvider(id))};
+ saved={...saved,mode:'compatible',compatible:{...saved.compatible,model:'gpt-6.1-sol'}};bridge.codexConfig=saved;
+ bridge.api.getCodexConfig=async()=>{if(!interceptReads)return structuredClone(saved);const read=deferred();selectionReads.push(read);return read.promise};
+ bridge.api.fetchModels=async()=>raceCatalog;
+ async function chooseProvider(label){await act(async()=>document.querySelector('[data-client-panel="codex"] .provider-choice button').click());await wait(()=>[...document.querySelectorAll('[role=option]')].some(item=>item.textContent===label),'provider '+label);await selectOption([...document.querySelectorAll('[role=option]')].find(item=>item.textContent===label));}
+ await render(true);await wait(()=>button()&&!button().disabled,'race initial state');
+ interceptReads=true;const raceStart=notices.length;
+ await chooseProvider('race-second');await wait(()=>selectionReads.length===1,'first provider read pending');
+ assert.ok(!notices.slice(raceStart).some(n=>n[1]==='模型服务已切换'),'a pending read is not a verified successful switch');
+ // The write stays usable after its foreground deadline. Re-entry starts a
+ // newer read of the same committed provider before the original read ends.
+ await act(async()=>new Promise(resolve=>setTimeout(resolve,2050)));await render(false);await render(true);
+ await wait(()=>selectionReads.length===2,'newer same-provider read');
+ const fresh={...saved,compatible:{...saved.compatible,model:'gpt-6-luna'}};
+ await act(async()=>selectionReads[1].resolve(fresh));
+ await act(async()=>selectionReads[0].resolve({...saved,compatible:{...saved.compatible,model:'obsolete-model'}}));
+ await wait(()=>notices.slice(raceStart).some(n=>n[1]==='模型服务已切换'),'superseded read must not suppress switch success');
+ assert.ok(button().textContent.includes('gpt-6-luna'));
+ assert.equal(notices.slice(raceStart).filter(n=>n[1]==='模型服务已切换').length,1);
+ assert.ok(notices.slice(raceStart).some(n=>n[4]?.description?.includes('新请求使用所选服务')));
+ pass('overlapping same-provider reads preserve the newer model and still notify a committed hot switch once');
+ selectionReads=[];const failureStart=notices.length;
+ await chooseProvider('race-third');await wait(()=>selectionReads.length===1,'read before genuine failure');
+ await act(async()=>new Promise(resolve=>setTimeout(resolve,2050)));await render(false);await render(true);
+ await wait(()=>selectionReads.length===2,'superseding read before genuine failure');
+ await act(async()=>selectionReads[1].reject(Error('isolated config read failed')));
+ await act(async()=>selectionReads[0].resolve(saved));
+ await wait(()=>notices.slice(failureStart).some(n=>n[1]==='模型配置暂未读取，服务选择保留'),'real failure continuation');
+ assert.ok(!notices.slice(failureStart).some(n=>n[1]==='模型服务已切换'));
+ assert.equal(bridge.providers.active.codex,'race-third');
+ pass('a failed newer read retains the service and actionable retry without a false switch success');
+ selectionReads=[];const staleStart=notices.length;
+ await chooseProvider('race-first');await wait(()=>selectionReads.length===1,'obsolete provider read');
+ await chooseProvider('race-second');await wait(()=>selectionReads.length===2,'latest provider read');
+ await act(async()=>selectionReads[1].resolve(fresh));
+ await wait(()=>notices.slice(staleStart).some(n=>n[1]==='模型服务已切换'),'latest provider verified');
+ await act(async()=>selectionReads[0].resolve({...saved,compatible:{...saved.compatible,model:'obsolete-provider-model'}}));
+ assert.equal(bridge.providers.active.codex,'race-second');assert.ok(button().textContent.includes('gpt-6-luna'));
+ assert.equal(notices.slice(staleStart).filter(n=>n[1]==='模型服务已切换').length,1);
+ pass('a newer provider choice suppresses the previous read and its success notice');
+ interceptReads=false;
+ bridge.api.switchClientProvider=async({client,providerId:id})=>{bridge.providers={...bridge.providers,active:{...bridge.providers.active,[client]:id}};return bridge.providers};
+ bridge.api.getClaudeEnvironmentOverrides=async()=>({overrides:[]});bridge.api.getClaudeModels=async()=>({sonnet:'gpt-6.1-sol'});
+ for(const client of ['codex','claude']) {
+   await act(async()=>root.render(null));bridge.modelClients=[client];bridge.providers={...bridge.providers,active:{...bridge.providers.active,[client]:'race-first'}};
+   let catalogReads=[],interceptCatalog=false,deadlines=[];
+   const readCatalog=async()=>{if(!interceptCatalog)return raceCatalog;const read=deferred();catalogReads.push(read);return read.promise};
+   bridge.api.fetchModels=client==='codex'?readCatalog:async()=>raceCatalog;bridge.api.fetchProviderModels=client==='claude'?readCatalog:async()=>raceCatalog;
+   await render(true);await wait(()=>document.querySelector(`[data-client-panel="${client}"] .provider-choice button`),'catalog race initial '+client);
+   const normalTimeout=globalThis.setTimeout;
+   globalThis.setTimeout=(callback,ms,...args)=>{const timer=normalTimeout(callback,ms,...args);if(ms===2000)deadlines.push(()=>{clearTimeout(timer);callback(...args)});return timer};
+   const change=async label=>{await act(async()=>document.querySelector(`[data-client-panel="${client}"] .provider-choice button`).click());await wait(()=>[...document.querySelectorAll('[role=option]')].some(item=>item.textContent===label),'catalog provider '+label);await selectOption([...document.querySelectorAll('[role=option]')].find(item=>item.textContent===label));};
+   const verifyCatalog=async expected=>{const trigger=document.querySelector(client==='codex'?'[data-codex-model] button':'[data-claude-model=sonnet] button');await act(async()=>trigger.click());await wait(()=>[...document.querySelectorAll('[role=option]')].some(item=>item.textContent.includes(expected)),'latest catalog '+expected);assert.ok(![...document.querySelectorAll('[role=option]')].some(item=>item.textContent.includes('obsolete-catalog')));await act(async()=>document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Escape',bubbles:true})));};
+   try {
+     interceptCatalog=true;let start=notices.length;await change('race-second');await wait(()=>catalogReads.length===1,'old catalog '+client);
+     // Release only the write's responsiveness timer. The catalogue's shared
+     // foreground deadline continues running, so overlapping reads get no new budget.
+     await act(async()=>deadlines.shift()());await act(async()=>window.dispatchEvent(new Event('xwxdeck:metadata-changed')));
+     await wait(()=>catalogReads.length===2,'newer same-provider catalog '+client);
+     await act(async()=>catalogReads[1].resolve([{id:'gpt-6-luna',vendor:'OpenAI',protocols:['openai-responses'],clients:['codex','claude']}]));
+     await act(async()=>catalogReads[0].resolve([{id:'obsolete-catalog',vendor:'Synthetic'}]));
+     await wait(()=>notices.slice(start).some(n=>n[1]==='模型服务已切换'),'superseded catalog success '+client);
+     assert.equal(notices.slice(start).filter(n=>n[1]==='模型服务已切换').length,1);assert.ok(!notices.slice(start).some(n=>n[1]==='模型列表未加载'));await verifyCatalog('gpt-6-luna');
+     pass(client+' overlapping catalogs preserve the latest list and hot-switch notification');
+     catalogReads=[];deadlines=[];start=notices.length;await change('race-third');await wait(()=>catalogReads.length===1,'failing old catalog '+client);
+     await act(async()=>deadlines.shift()());await act(async()=>window.dispatchEvent(new Event('xwxdeck:metadata-changed')));await wait(()=>catalogReads.length===2,'failing newer catalog '+client);
+     await act(async()=>catalogReads[1].reject(Error('isolated latest catalog failure')));await act(async()=>catalogReads[0].resolve(raceCatalog));
+     await wait(()=>notices.slice(start).some(n=>n[1]==='模型列表未加载'),'catalog failure recovery '+client);assert.ok(!notices.slice(start).some(n=>n[1]==='模型服务已切换'));
+     const retry=notices.slice(start).findLast(n=>n[1]==='模型列表未加载')[4].actionProps;assert.equal(retry.children,'重试列表');await act(async()=>retry.onClick());await wait(()=>catalogReads.length===3,'catalog Retry '+client);await act(async()=>catalogReads[2].resolve(raceCatalog));await verifyCatalog('gpt-6.1-sol');
+     pass(client+' actual latest-catalog failure offers working Retry and cannot fake switch success');
+     catalogReads=[];deadlines=[];start=notices.length;const started=Date.now();await change('race-first');await wait(()=>catalogReads.length===1,'budget old catalog '+client);
+     await act(async()=>deadlines.shift()());await act(async()=>window.dispatchEvent(new Event('xwxdeck:metadata-changed')));await wait(()=>catalogReads.length===2,'budget newer catalog '+client);await act(async()=>catalogReads[0].resolve(raceCatalog));
+     await act(async()=>new Promise(resolve=>normalTimeout(resolve,2050)));await wait(()=>notices.slice(start).some(n=>n[1]==='模型服务已切换'),'bounded catalog wait '+client);
+     assert.ok(Date.now()-started<2900);assert.ok(notices.slice(start).some(n=>n[4]?.description?.includes('列表仍在加载')));await act(async()=>catalogReads[1].resolve(raceCatalog));
+     pass(client+' superseding catalogue requests share one foreground budget while remaining usable');
+   } finally { globalThis.setTimeout=normalTimeout; }
+ }
+ await act(async()=>root.render(null));Object.assign(bridge.api,raceApi);bridge.providers=raceProviders;bridge.runtime=raceRuntime;
+ const registry={active:{codex:'official-second',claude:null},connections:[makeProvider('official-first','official-chatgpt'),makeProvider('official-second','official-chatgpt-second'),makeProvider('api-first','account'),makeProvider('compatible')]};
+ const channelWrites=[];
+ const renderPicker=value=>act(async()=>root.render(React.createElement(mod.exports.ProviderPicker,{registry,client:'codex',value,onChange:id=>channelWrites.push(id)})));
+ async function options(){await act(async()=>document.querySelector('.provider-choice button').click());await wait(()=>document.querySelector('[role="option"]'),'channel menu');return [...document.querySelectorAll('[role="option"]')];}
+ async function selectOption(option){await act(async()=>{const down=new MouseEvent('pointerdown',{bubbles:true,button:0,buttons:1});Object.defineProperty(down,'pointerType',{value:'mouse'});option.dispatchEvent(down);option.click()});}
+ await renderPicker('official-second');
+ assert.ok(document.querySelector('.provider-choice button').textContent.includes('ChatGPT 官方登录'));
+ let items=await options();assert.equal(items.filter(e=>e.textContent==='ChatGPT 官方登录').length,1);
+ assert.equal(items.filter(e=>e.textContent==='ChatGPT API 授权').length,1);
+ assert.ok(!items.some(e=>e.textContent==='ChatGPT 官方账号'));assert.deepEqual(channelWrites,[]);
+ await selectOption(items.find(e=>e.textContent==='ChatGPT 官方登录'));assert.ok(channelWrites.every(id=>id==='official-second'));
+ await renderPicker(null);assert.equal(document.querySelector('.provider-choice button').textContent,'选择模型服务');items=await options();await selectOption(items.find(e=>e.textContent==='ChatGPT 官方登录'));assert.equal(channelWrites.at(-1),'official-second');
+ await renderPicker('compatible');items=await options();await selectOption(items.find(e=>e.textContent==='ChatGPT 官方登录'));assert.equal(channelWrites.at(-1),'official-second');
+ await renderPicker('official-second');await renderPicker('compatible');items=await options();await selectOption(items.find(e=>e.textContent==='ChatGPT 官方登录'));assert.equal(channelWrites.at(-1),'official-second');
+ pass('one official channel keeps API separate and keeps each explicitly configured pool account selected and never synthesizes a default direct-login item');
+ await act(async()=>root.render(null));
+ const originalRead=bridge.api.getOfficialChatgptAccount;
+ const quotaAccount={id:'official-chatgpt',label:'Cache account',accountKey:'first',status:'connected',quotaDetails:{windows:[{limitId:'codex',window:'primary',remainingPercent:77,windowSeconds:18000,resetsAt:2000000000}]}};
+ let localAccount=structuredClone(quotaAccount),remoteAccount=structuredClone(quotaAccount),localWait=null,remoteWait=null,remoteFailure=false;
+ bridge.api.getOfficialChatgptAccount=async input=>{if(input?.refresh===false){if(localWait)await localWait.promise;return structuredClone(localAccount)}if(remoteWait)await remoteWait.promise;if(remoteFailure)throw Error('network unavailable');return structuredClone(remoteAccount)};
+ const renderAccount=()=>act(async()=>root.render(React.createElement(mod.exports.OfficialChatgptAccount,{active:true})));
+ const meters=()=>document.querySelectorAll('[role="meter"]');
+ await renderAccount();await wait(()=>meters().length===1&&!document.querySelector('button[aria-label="刷新额度"]').disabled,'initial allowance');
+ localWait=deferred();remoteWait=deferred();
+ await act(async()=>window.dispatchEvent(new Event('focus')));assert.equal(meters().length,1);
+ await act(async()=>localWait.resolve());localWait=null;assert.equal(meters().length,1);
+ await act(async()=>remoteWait.resolve());remoteWait=null;await wait(()=>!document.querySelector('button[aria-label="刷新额度"]').disabled,'refresh finished');
+ await act(async()=>root.render(null));localWait=deferred();await renderAccount();assert.equal(meters().length,1);
+ remoteFailure=true;await act(async()=>localWait.resolve());localWait=null;await wait(()=>document.body.textContent.includes('network unavailable'),'cached failure');assert.equal(meters().length,1);
+ remoteWait=deferred();localAccount=structuredClone(quotaAccount);remoteFailure=true;
+ await act(async()=>document.querySelector('button[aria-label="刷新额度"]').click());assert.equal(meters().length,1);
+ localAccount={id:'official-chatgpt',label:'Changed during read',accountKey:'second',status:'connected'};
+ await act(async()=>remoteWait.resolve());remoteWait=null;await wait(()=>!document.querySelector('button[aria-label="刷新额度"]').disabled,'changed login failure');
+ assert.equal(meters().length,0);assert.ok(document.body.textContent.includes('Changed during read'));
+ localAccount=structuredClone(quotaAccount);
+ remoteFailure=false;remoteAccount={...quotaAccount,quotaDetails:{windows:[]}};
+ await act(async()=>document.querySelector('button[aria-label="刷新额度"]').click());assert.equal(meters().length,0);
+ localAccount={id:'official-chatgpt',label:'Another account',accountKey:'second',status:'connected'};remoteAccount=localAccount;
+ await act(async()=>document.querySelector('button[aria-label="刷新额度"]').click());assert.equal(meters().length,0);assert.ok(document.body.textContent.includes('Another account'));
+ localAccount={...localAccount,status:'signed-out'};
+ await act(async()=>document.querySelector('button[aria-label="刷新额度"]').click());assert.equal(meters().length,0);assert.ok(document.body.textContent.includes('已退出'));
+ bridge.api.getOfficialChatgptAccount=originalRead;
+ pass('model quota survives focus refresh, slow local read and full remount; network failure keeps validated cache, authoritative empty/identity change/logout and identity changes during a failed network read remove old bars');
+ await act(async()=>root.render(null));
+ const lifecycleModels=[{id:'retired-fixture',vendor:'Service',lifecycleStatus:'Shutdown',protocols:['chat-completions'],clients:['codex']},{id:'retiring-fixture',vendor:'Service',lifecycleStatus:'Retiring',protocols:['chat-completions'],clients:['codex']},{id:'unknown-status-fixture',vendor:'Service',protocols:['chat-completions'],clients:['codex']}];
+ let selected='';
+ await act(async()=>root.render(React.createElement(mod.exports.ModelPicker,{value:'retired-fixture',catalog:lifecycleModels,onChange:id=>selected=id})));
+ const lifecycleButton=()=>document.querySelector('.xwx-combobox button');
+ assert.ok(lifecycleButton().textContent.includes('retired-fixture'));assert.ok(lifecycleButton().textContent.includes('已下线'));
+ await act(async()=>lifecycleButton().click());
+ await wait(()=>document.querySelectorAll('[role="option"]').length===2,'available lifecycle options');
+ assert.ok(![...document.querySelectorAll('[role="option"]')].some(e=>e.textContent.includes('retired-fixture')));
+ assert.ok([...document.querySelectorAll('[role="option"]')].some(e=>e.textContent.includes('unknown-status-fixture')));
+ await act(async()=>{const option=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent.includes('retiring-fixture'));const down=new MouseEvent('pointerdown',{bubbles:true,button:0,buttons:1});Object.defineProperty(down,'pointerType',{value:'mouse'});option.dispatchEvent(down);option.click()});
+ assert.equal(selected,'retiring-fixture');
+ pass('actual Base UI menu hides Shutdown including the saved value, preserves its trigger/status and allows Retiring or unknown models');
+ await act(async()=>root.render(null));
+ const purposeModels=[...lifecycleModels,{id:'alias-embedding',vendor:'Service',taskTypes:['TextEmbedding']},{id:'alias-video',vendor:'Service',outputModalities:['video']},{id:'gpt-image-2',vendor:'Service'},{id:'vision-chat',vendor:'Service',inputModalities:['image','text'],outputModalities:['text']}];
+ await act(async()=>root.render(React.createElement(mod.exports.ModelPicker,{value:'alias-embedding',catalog:purposeModels,onChange:id=>selected=id})));
+ assert.ok(lifecycleButton().textContent.includes('alias-embedding'));
+ await act(async()=>lifecycleButton().click());
+ await wait(()=>document.querySelectorAll('[role="option"]').length===3,'conversational options only');
+ const purposeOptions=[...document.querySelectorAll('[role="option"]')].map(e=>e.textContent);
+ for(const id of ['alias-embedding','alias-video','gpt-image-2'])assert.ok(!purposeOptions.some(s=>s.includes(id)));
+ assert.ok(purposeOptions.some(s=>s.includes('vision-chat')));
+ await act(async()=>{const option=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent.includes('vision-chat'));const down=new MouseEvent('pointerdown',{bubbles:true,button:0,buttons:1});Object.defineProperty(down,'pointerType',{value:'mouse'});option.dispatchEvent(down);option.click()});
+ assert.equal(selected,'vision-chat');
+ pass('actual model picker excludes image/video/embedding including a saved alias, while keeping image-input text-output chat selectable');
+ await act(async()=>root.render(null));
+ let catalogFails=false;
+ bridge.api.fetchProviderModels=async()=>{if(catalogFails)throw Error('HTTP 503');return purposeModels};
+ await act(async()=>root.render(React.createElement(mod.exports.ProviderConnectionChecks,{provider:{...bridge.providers.connections[0],codexModel:'alias-embedding',claudeModels:{}},disabled:false,draftChanged:false})));
+ await wait(()=>document.querySelectorAll('.provider-model-row').length===3,'provider model rows');
+ assert.ok(!document.querySelector('.provider-models-list').textContent.includes('retired-fixture'));
+ for(const id of ['alias-embedding','alias-video','gpt-image-2'])assert.ok(!document.querySelector('.provider-models-list').textContent.includes(id));
+ catalogFails=true;await act(async()=>document.querySelector('#provider-read-models').click());
+ await wait(()=>document.querySelector('.provider-models-notice')?.textContent.includes('5xx'),'refresh failure notice');
+ assert.equal(document.querySelectorAll('.provider-model-row').length,3);
+ pass('provider test list also omits a saved Shutdown model; failed refresh displays the error and retains the last available rows');
+ console.log(JSON.stringify({passed:true,checks,scope:'Actual React ModelsPage and Base UI ModelPicker with native-shaped synthetic bridge snapshots; backend and live account checks separate'}));
+}finally{await act(async()=>root.unmount());dom.window.close();delete globalThis.__codexModelFixture;}

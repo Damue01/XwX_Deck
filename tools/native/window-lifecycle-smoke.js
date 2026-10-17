@@ -1,0 +1,94 @@
+(async () => {
+  const checks = [], geometry = [];
+  const rpc = (method, ...args) => window.__TAURI__.core.invoke('pilot_rpc', { method, args });
+  const wait = async (test, label) => { for (let i = 0; i < 200; i++) { if (await test()) return; await new Promise(resolve => setTimeout(resolve, 50)); } throw Error(label); };
+  const check = (label, value) => { if (!value) throw Error(label); checks.push(label); };
+  try {
+    await wait(() => document.querySelector('.tour-skip'), 'fresh onboarding');
+    document.querySelector('.tour-skip').click();
+    await wait(() => !document.querySelector('.tour-root'), 'skip onboarding');
+    document.querySelector('[data-page="signal"]').click();
+    await wait(() => document.querySelector('#page-signal.current canvas[data-rendering="active"]'), 'Trace page and field are active');
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    let ripples = 0;
+    document.addEventListener('xwx:field-ripple', () => { ripples++; });
+    document.querySelector('#appearanceTriggerIdle').click();
+    await wait(() => document.querySelector('#appearanceDrawer.open'), 'appearance panel opens');
+    check('Trace appearance entry emits one ripple', ripples === 1);
+    document.querySelector('#systemThemeToggle').click();
+    check('appearance panel switches do not emit ripples', ripples === 1);
+    document.querySelector('.appearance-close').click();
+    check('appearance panel close does not emit a ripple', ripples === 1);
+    document.querySelector('#railToggle').click();
+    check('Trace rail action emits one ripple', ripples === 2);
+    document.querySelector('[data-page="models"]').click();
+    await wait(() => document.querySelectorAll('.models-switch [role="tab"]').length === 2, 'initial client tabs');
+    const beforeRemoval = await window.xwxDeck.getClaudeModels();
+    document.querySelector('.models-manage-clients').click();
+    await wait(() => document.querySelector('#configuration-clients [data-client-download="claude"]'), 'client manager');
+    document.querySelector('#configuration-clients [data-client-download="claude"]').click();
+    const removalButton = () => document.querySelector('.configuration-client-actions .configuration-destructive');
+    await wait(() => removalButton() && !removalButton().disabled, 'Claude removal action');
+    removalButton().click();
+    await wait(() => document.querySelector('[role="alertdialog"]')?.textContent.includes('Claude'), 'Claude removal confirmation');
+    [...document.querySelectorAll('[role="alertdialog"] button')].find(button => button.textContent === '取消').click();
+    await wait(() => !document.querySelector('[role="alertdialog"]'), 'Claude removal cancelled');
+    check('cancelled client removal retains both clients and model configuration', (await window.xwxDeck.getModelClients()).includes('claude') && JSON.stringify(await window.xwxDeck.getClaudeModels()) === JSON.stringify(beforeRemoval));
+    removalButton().click();
+    await wait(() => document.querySelector('[role="alertdialog"]'), 'Claude removal retry');
+    [...document.querySelectorAll('[role="alertdialog"] button')].find(button => button.textContent === '移除').click();
+    await wait(() => document.querySelector('#models-single-client')?.textContent === 'ChatGPT', 'remaining client name');
+    check('removing Claude leaves one named client without a tab switcher', document.querySelectorAll('.models-switch [role="tab"]').length === 0);
+    check('client removal retains model configuration', JSON.stringify(await window.xwxDeck.getClaudeModels()) === JSON.stringify(beforeRemoval));
+    const closeClientManager = () => document.querySelector('.client-manager-dialog .configuration-header-actions button[aria-label^="关闭"]');
+    await wait(() => closeClientManager() && !closeClientManager().disabled, 'client manager close is ready');
+    closeClientManager().click();
+    await wait(() => !document.querySelector('#add-configuration-dialog'), 'client manager closes');
+    document.querySelector('[data-page="signal"]').click();
+    await wait(() => document.querySelector('#page-signal.current'), 'Trace returns');
+    check('removed Claude is absent from both idle and live source controls before Trace starts', !document.querySelector('#page-signal [data-client^="claude-"]'));
+    await window.xwxDeck.openDashboard();
+    await wait(async () => !!(await rpc('smokeDashboardWindow')), 'dashboard created');
+    geometry.push(await rpc('smokeDashboardWindow'));
+    check('dashboard opens at a usable logical size', geometry[0].width >= 900 && geometry[0].height >= 600);
+    await wait(async () => (await rpc('smokeViewerReport'))?.passed, 'dashboard content paints');
+    check('dashboard has meaningful rendered content', true);
+    await rpc('smokeDashboardWindow', 'minimize');
+    await wait(async () => (await rpc('smokeDashboardWindow'))?.minimized, 'minimized');
+    await window.xwxDeck.openDashboard();
+    await wait(async () => !(await rpc('smokeDashboardWindow'))?.minimized, 'reopen restores minimized viewer');
+    check('reopening restores a minimized dashboard', true);
+    await window.xwxDeck.toggleTracing(true);
+    check('isolated Trace runs for the close regression', (await window.xwxDeck.getState()).tracingEnabled);
+    check('enabled runtime state cannot resurrect removed Claude after Trace starts', !document.querySelector('#page-signal [data-client^="claude-"]'));
+    for (let cycle = 0; cycle < 2; cycle++) {
+      // AppKit rejects a new fullscreen request during its one-second Space
+      // animation. The first cycle still exercises immediate fullscreen-close;
+      // allow that OS animation to settle before requesting fullscreen again.
+      if (cycle > 0) await new Promise(resolve => setTimeout(resolve, 1200));
+      const previousViewer = await rpc('smokeViewerReport');
+      await rpc('smokeDashboardWindow', 'fullscreen');
+      await wait(async () => (await rpc('smokeDashboardWindow'))?.fullscreen, 'entered fullscreen');
+      await rpc('smokeDashboardWindow', 'close');
+      await wait(async () => (await rpc('smokeDashboardWindow')) === null, 'fullscreen close destroys dashboard rather than hiding it');
+      check(`fullscreen close releases the native window, cycle ${cycle + 1}`, true);
+      check('main window and Trace remain available', document.querySelector('#page-signal.current') && (await window.xwxDeck.getState()).tracingEnabled);
+      await window.xwxDeck.openDashboard();
+      await wait(async () => (await rpc('smokeDashboardWindow'))?.visible, 'reopened dashboard');
+      geometry.push(await rpc('smokeDashboardWindow'));
+      check('reopened dashboard has normal bounds and leaves fullscreen', !geometry.at(-1).fullscreen && geometry.at(-1).width >= 900 && geometry.at(-1).height >= 600);
+      await wait(async () => { const next = await rpc('smokeViewerReport'); return next?.passed && next.openedAt !== previousViewer.openedAt; }, 'reopened viewer paints fresh content');
+      check('reopened dashboard paints fresh content', true);
+    }
+    await rpc('smokeDashboardWindow', 'close');
+    await wait(async () => (await rpc('smokeDashboardWindow')) === null, 'windowed close');
+    check('windowed dashboard also closes while Trace is active', true);
+    await window.xwxDeck.toggleTracing(false);
+    check('no native renderer errors', window.__pilotErrors.length === 0);
+    await window.__TAURI__.core.invoke('pilot_smoke_report', { report: { passed: true, checks, geometry, errors: window.__pilotErrors, nativeWebView: true, isolatedFixtures: true } });
+  } catch (error) {
+    await rpc('smokeCloseViewer').catch(() => {});
+    await window.xwxDeck.toggleTracing(false).catch(() => {});
+    await window.__TAURI__.core.invoke('pilot_smoke_report', { report: { passed: false, checks, geometry, error: String(error), errors: window.__pilotErrors, nativeWebView: true, isolatedFixtures: true } });
+  }
+})();
