@@ -81,6 +81,13 @@ try {
     assert.equal(await page.locator('#download-caption').count(), 0);
     await page.locator('#download-options > summary').click();
     for (const target of ['windows', 'mac']) assert.equal(await page.locator(`[data-download="${target}"]`).isVisible(), true);
+    assert.equal(await page.locator('.download-choices .download-choice').count(), 3);
+    const intel = page.locator('[data-unavailable-download="mac-x64"]');
+    assert.equal(await intel.getAttribute('aria-disabled'), 'true');
+    assert.equal(await intel.getAttribute('href'), null);
+    assert.match(await intel.innerText(), /Intel[\s\S]*待发布/);
+    assert.equal(await page.locator('.recommend-badge').count(), 0);
+    assert.doesNotMatch(await page.locator('.download-choices').innerText(), /推荐|↗/);
     const panelBox = await page.locator('.download-choices').boundingBox();
     assert.ok(panelBox.x >= 0 && panelBox.x + panelBox.width <= width, 'download choices stay inside the viewport');
     await page.locator('[data-download="mac"]').focus();

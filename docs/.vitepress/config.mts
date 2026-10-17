@@ -39,6 +39,7 @@ export default defineConfig({
     ['meta', { name: 'theme-color', content: '#fcfcfb' }]
   ],
   themeConfig: {
+    externalLinkIcon: false,
     logo: '/icon.png',
     siteTitle: 'XwX Deck',
     nav: [
