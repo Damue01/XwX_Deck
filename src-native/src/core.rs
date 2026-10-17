@@ -1337,16 +1337,9 @@ impl Pilot {
             } else {
                 d.remove("model_context_window");
             }
-            if let Some(preserve) =
-                self.settings.codex_enhancements["preserveOfficialLogin"].as_bool()
-            {
-                set_codex_provider_field(
-                    &mut d,
-                    direct_id,
-                    "requires_openai_auth",
-                    value(preserve && self.auth_mode() == "chatgpt"),
-                );
-            }
+            // A compatible-service provider authenticates with its own bearer
+            // token. Never send the ChatGPT login to a third-party endpoint.
+            set_codex_provider_field(&mut d, direct_id, "requires_openai_auth", value(false));
             let catalog_path = self.codex_home().join("xwx-deck-model-catalog.json");
             let pointer = d.get("model_catalog_json").and_then(Item::as_str);
             if pointer.is_some_and(|path| Path::new(path) != catalog_path) && !takeover {

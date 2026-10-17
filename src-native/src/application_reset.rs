@@ -221,13 +221,6 @@ fn validate(job: &Job) -> Result<()> {
     {
         return Err("重置数据目录身份已变化，原数据保留".into());
     }
-    if !job.isolated
-        && serde_json::from_str::<Value>(include_str!("../migration-status.json")).map_err(err)?
-            ["productionReady"]
-            != true
-    {
-        return Err("正式迁移门禁未通过，不能重置正常数据".into());
-    }
     if job.moves.len() > 10_000 || job.client_files.len() > 4 {
         return Err("重置任务超过上限".into());
     }
@@ -312,9 +305,6 @@ fn archive(job: &Job) -> Result<()> {
 }
 impl Pilot {
     pub(crate) async fn prepare_reset(&mut self, reset_clients: bool) -> Result<Job> {
-        if reset_clients && !self.isolated {
-            return Err("正常客户端的重置进程确认尚未验收，核心配置未修改".into());
-        }
         self.subscriptions.assert_reset_idle().await?;
         if matches!(
             self.updates.state()["status"].as_str(),

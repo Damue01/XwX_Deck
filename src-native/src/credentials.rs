@@ -860,6 +860,8 @@ impl CliHome {
                 command.pre_exec(move || clear_cli_lease_cloexec(fd));
             }
         }
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
         let child = command
             .kill_on_drop(true)
             .spawn()
@@ -885,6 +887,8 @@ impl CliHome {
                 command.pre_exec(move || clear_cli_lease_cloexec(fd));
             }
         }
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
         let mut child = command
             .kill_on_drop(true)
             .spawn()

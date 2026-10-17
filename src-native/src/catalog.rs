@@ -521,7 +521,20 @@ impl Catalog {
             row["context_window"]=json!(context);row["max_context_window"]=json!(r["contextWindow"].as_u64().unwrap_or(context).max(context));row.as_object_mut().unwrap().remove("auto_compact_token_limit");for (key,value) in compatibility::resolve(r,exact,&entry_wire(p,Some(r),"responses"))["values"].as_object().unwrap() {row[key]=value.clone();}
             row["input_modalities"]=if vision{json!(["text","image"])}else{json!(["text"])};row["supports_image_detail_original"]=json!(vision);row.as_object_mut().unwrap().remove("supports_parallel_tool_calls");
             if exact.is_none() || r["reasoningLevels"].is_array() || (r["reasoning"] == false && r["capabilitySources"]["reasoning"] != "fallback") {
-                row["supported_reasoning_levels"]=json!(r["reasoningLevels"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|s|["none","minimal","low","medium","high","xhigh","max"].contains(s)).map(|s|json!({"effort":s,"description":format!("{s} reasoning effort")})).collect::<Vec<_>>());
+                let mut levels: Vec<String> = r["reasoningLevels"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|s| s.to_string()).collect();
+                // DeepSeek thinking uses none/low/high/max. models.dev can
+                // under-report this set; keep the picker aligned with the
+                // request mapping in reasoning::chat instead of dropping tiers.
+                let deepseek = p.base_url.to_lowercase().contains("deepseek")
+                    || r["id"].as_str().is_some_and(|id| id.to_lowercase().contains("deepseek"));
+                if deepseek {
+                    for tier in ["none", "low", "high", "max"] {
+                        if !levels.iter().any(|s| s.as_str() == tier) {
+                            levels.push(tier.to_string());
+                        }
+                    }
+                }
+                row["supported_reasoning_levels"]=json!(levels.into_iter().filter(|s|["none","minimal","low","medium","high","xhigh","max"].contains(&s.as_str())).map(|s|{let description=format!("{s} reasoning effort");json!({"effort":s,"description":description})}).collect::<Vec<_>>());
 
             }
             let default = r["defaultReasoningLevel"].as_str().or_else(|| exact.and_then(|native| native["default_reasoning_level"].as_str()));
