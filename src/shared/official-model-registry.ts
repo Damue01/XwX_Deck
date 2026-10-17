@@ -222,26 +222,6 @@ export const OFFICIAL_MODEL_REGISTRY: readonly OfficialModelRecord[] = [
     protocols: ['chat-completions', 'anthropic-messages'],
     claudeOneMillionRoles: [],
     codexRecommendedProtocol: 'chat-completions'
-  },
-  {
-    modelId: 'kimi-k2.5',
-    vendor: 'Kimi',
-    verifiedAt: '2026-10-17',
-    sources: [
-      { label: 'Kimi model catalog', url: KIMI_MODELS },
-      { label: 'Kimi Claude Code integration', url: KIMI_CLAUDE_CODE }
-    ],
-    capability: {
-      contextWindow: 262_144,
-      inputModalities: ['text', 'image'],
-      vision: true,
-      reasoning: true,
-      interleavedThinking: true,
-      toolCalling: true
-    },
-    protocols: ['chat-completions', 'anthropic-messages'],
-    claudeOneMillionRoles: [],
-    codexRecommendedProtocol: 'chat-completions'
   }
 ];
 
@@ -261,6 +241,9 @@ function canonicalModelId(value: string): string {
   // `deepseek-v4-pro-ga-260813`) share one official capability contract with
   // the base id (`deepseek-v4-pro`). Collapse a trailing `-<date>` or
   // `-ga-<date>` build suffix so a snapshot id resolves to its base record.
-  const base = bare.replace(/(?:-ga)?-\d{4,8}$/, '');
+  const base = bare
+    .replace(/-\d{4}-\d{2}-\d{2}$/, '')
+    .replace(/(?:-ga)?-\d{4,8}$/, '')
+    .replace(/-ga$/, '');
   return base.replace(/[^a-z0-9]/g, '');
 }

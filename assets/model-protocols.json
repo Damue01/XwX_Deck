@@ -1,0 +1,1267 @@
+{
+  "version": 1,
+  "verifiedAt": "2026-10-18",
+  "sources": {
+    "deepseek-pricing": {
+      "label": "DeepSeek Models & Pricing",
+      "url": "https://api-docs.deepseek.com/quick_start/pricing"
+    },
+    "deepseek-responses": {
+      "label": "DeepSeek Responses API",
+      "url": "https://api-docs.deepseek.com/guides/responses_api/"
+    },
+    "deepseek-anthropic": {
+      "label": "DeepSeek Claude Code integration",
+      "url": "https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code"
+    },
+    "deepseek-thinking": {
+      "label": "DeepSeek Thinking Mode",
+      "url": "https://api-docs.deepseek.com/guides/thinking_mode"
+    },
+    "kimi-models": {
+      "label": "Kimi model catalog",
+      "url": "https://platform.kimi.com/docs/models"
+    },
+    "kimi-k3": {
+      "label": "Kimi K3 guide",
+      "url": "https://platform.kimi.com/docs/guide/kimi-k3-quickstart"
+    },
+    "kimi-k27": {
+      "label": "Kimi K2.7 Code guide",
+      "url": "https://platform.kimi.com/docs/guide/kimi-k2-7-code-quickstart"
+    },
+    "kimi-k26": {
+      "label": "Kimi K2.6 guide",
+      "url": "https://platform.kimi.com/docs/guide/kimi-k2-6-quickstart"
+    },
+    "kimi-thinking": {
+      "label": "Kimi thinking models",
+      "url": "https://platform.kimi.com/docs/guide/use-thinking-models"
+    },
+    "kimi-reasoning-effort": {
+      "label": "Kimi reasoning effort",
+      "url": "https://platform.kimi.com/docs/guide/use-reasoning-effort"
+    },
+    "kimi-codex": {
+      "label": "Kimi Codex integration",
+      "url": "https://platform.kimi.com/docs/guide/codex-kimi"
+    },
+    "kimi-claude": {
+      "label": "Kimi Claude Code integration",
+      "url": "https://platform.kimi.com/docs/guide/claude-code-kimi"
+    },
+    "kimi-api-chat": {
+      "label": "Kimi Chat Completions API",
+      "url": "https://platform.kimi.com/docs/api/chat"
+    },
+    "kimi-api-responses": {
+      "label": "Kimi Responses API",
+      "url": "https://platform.kimi.com/docs/api/responses"
+    },
+    "kimi-api-messages": {
+      "label": "Kimi Messages API",
+      "url": "https://platform.kimi.com/docs/api/messages"
+    },
+    "glm-53": {
+      "label": "GLM-5.3 model guide",
+      "url": "https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3"
+    },
+    "glm-53-flash": {
+      "label": "GLM-5.3-Flash model guide",
+      "url": "https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash"
+    },
+    "glm-52": {
+      "label": "GLM-5.2 model guide",
+      "url": "https://docs.bigmodel.cn/cn/guide/models/text/glm-5.2"
+    },
+    "glm-coding-plan": {
+      "label": "GLM Coding Plan model switching",
+      "url": "https://docs.bigmodel.cn/cn/coding-plan/latest-model"
+    },
+    "glm-codex": {
+      "label": "GLM Codex integration",
+      "url": "https://docs.bigmodel.cn/cn/coding-plan/tool/codex"
+    },
+    "glm-responses": {
+      "label": "BigModel Response API compatibility",
+      "url": "https://docs.bigmodel.cn/cn/guide/develop/responses/introduction"
+    },
+    "glm-claude": {
+      "label": "BigModel Claude API compatibility",
+      "url": "https://docs.bigmodel.cn/cn/guide/develop/claude/introduction"
+    },
+    "alibaba-models": {
+      "label": "Alibaba Cloud Model Studio models",
+      "url": "https://www.alibabacloud.com/help/en/model-studio/models"
+    },
+    "alibaba-text-generation": {
+      "label": "Alibaba Cloud text generation API",
+      "url": "https://www.alibabacloud.com/help/en/model-studio/text-generation"
+    },
+    "alibaba-responses": {
+      "label": "Alibaba Cloud Responses API supported models",
+      "url": "https://www.alibabacloud.com/help/en/model-studio/compatibility-with-openai-responses-api"
+    },
+    "alibaba-messages": {
+      "label": "Alibaba Cloud Anthropic Messages supported models",
+      "url": "https://www.alibabacloud.com/help/en/model-studio/anthropic-api-messages"
+    },
+    "alibaba-claude-code": {
+      "label": "Alibaba Cloud Claude Code setup",
+      "url": "https://www.alibabacloud.com/help/en/model-studio/claude-code"
+    },
+    "minimax-openai-chat": {
+      "label": "MiniMax OpenAI Chat Completions",
+      "url": "https://platform.minimax.cn/docs/api-reference/text-chat-openai"
+    },
+    "minimax-anthropic": {
+      "label": "MiniMax Anthropic SDK",
+      "url": "https://platform.minimax.cn/docs/api-reference/text-anthropic-api"
+    },
+    "minimax-responses": {
+      "label": "MiniMax OpenAI Responses",
+      "url": "https://platform.minimax.cn/docs/api-reference/responses-create"
+    },
+    "minimax-models": {
+      "label": "MiniMax OpenAI SDK supported models",
+      "url": "https://platform.minimax.cn/docs/api-reference/text-openai-api"
+    }
+  },
+  "models": [
+    {
+      "modelId": "deepseek-flash",
+      "vendor": "DeepSeek",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "deepseek-pricing",
+        "deepseek-responses",
+        "deepseek-anthropic",
+        "deepseek-thinking"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 393216,
+        "inputModalities": [
+          "text",
+          "image"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "defaultLevel": "high"
+      }
+    },
+    {
+      "modelId": "deepseek-v4-pro",
+      "vendor": "DeepSeek",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "deepseek-pricing",
+        "deepseek-responses",
+        "deepseek-anthropic",
+        "deepseek-thinking"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 393216,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "levels": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "defaultLevel": "high"
+      }
+    },
+    {
+      "modelId": "deepseek-v4-flash",
+      "vendor": "DeepSeek",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "deepseek-pricing",
+        "deepseek-responses",
+        "deepseek-anthropic",
+        "deepseek-thinking"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 393216,
+        "inputModalities": [
+          "text",
+          "image"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "defaultLevel": "high"
+      },
+      "notes": "Legacy alias of deepseek-flash."
+    },
+    {
+      "modelId": "deepseek-v4.1-flash",
+      "vendor": "DeepSeek",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "deepseek-pricing",
+        "deepseek-responses",
+        "deepseek-anthropic",
+        "deepseek-thinking"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 393216,
+        "inputModalities": [
+          "text",
+          "image"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "defaultLevel": "high"
+      },
+      "notes": "Versioned name of deepseek-flash."
+    },
+    {
+      "modelId": "deepseek-v4-flash-vision-exp",
+      "vendor": "DeepSeek",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "deepseek-pricing",
+        "deepseek-responses",
+        "deepseek-anthropic",
+        "deepseek-thinking"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 393216,
+        "inputModalities": [
+          "text",
+          "image"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "defaultLevel": "high"
+      }
+    },
+    {
+      "modelId": "kimi-k3",
+      "vendor": "Kimi",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-models",
+        "kimi-k3",
+        "kimi-thinking",
+        "kimi-reasoning-effort",
+        "kimi-codex",
+        "kimi-claude",
+        "kimi-api-chat",
+        "kimi-api-responses",
+        "kimi-api-messages"
+      ],
+      "capability": {
+        "contextWindow": 1048576,
+        "maxOutputTokens": 1048576,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "low",
+          "high",
+          "max"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "kimi-k2.7-code",
+      "vendor": "Kimi",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-models",
+        "kimi-k27",
+        "kimi-thinking",
+        "kimi-claude",
+        "kimi-api-chat",
+        "kimi-api-messages"
+      ],
+      "capability": {
+        "contextWindow": 262144,
+        "maxOutputTokens": 262144,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "kimi-k2.7-code-highspeed",
+      "vendor": "Kimi",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-models",
+        "kimi-k27",
+        "kimi-thinking",
+        "kimi-claude",
+        "kimi-api-chat",
+        "kimi-api-messages"
+      ],
+      "capability": {
+        "contextWindow": 262144,
+        "maxOutputTokens": 262144,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "kimi-k2.6",
+      "vendor": "Kimi",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-models",
+        "kimi-k26",
+        "kimi-thinking",
+        "kimi-claude",
+        "kimi-api-chat",
+        "kimi-api-messages"
+      ],
+      "capability": {
+        "contextWindow": 262144,
+        "maxOutputTokens": 262144,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "glm-5.3",
+      "vendor": "Zhipu",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "glm-53",
+        "glm-responses",
+        "glm-claude"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "levels": [
+          "low",
+          "high",
+          "max"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "defaultLevel": "max"
+      }
+    },
+    {
+      "modelId": "glm-5.3-flash",
+      "vendor": "Zhipu",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "glm-53-flash",
+        "glm-coding-plan",
+        "glm-responses",
+        "glm-claude"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "low",
+          "high",
+          "max"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "defaultLevel": "max"
+      }
+    },
+    {
+      "modelId": "glm-5.3-flashx",
+      "vendor": "Zhipu",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "glm-53-flash"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "low",
+          "high",
+          "max"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "defaultLevel": "max"
+      },
+      "notes": "Official model page documents Chat Completions; Responses and Messages are not stated for FlashX."
+    },
+    {
+      "modelId": "glm-5.2",
+      "vendor": "Zhipu",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "glm-52",
+        "glm-claude"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "levels": [
+          "high",
+          "max"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "qwen3.8-max",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation",
+        "alibaba-responses",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "low",
+          "medium",
+          "xhigh"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "qwen3.8-flash",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation",
+        "alibaba-responses",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "low",
+          "medium",
+          "xhigh"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "qwen3.8-omni-flash",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation",
+        "alibaba-responses"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text",
+          "image",
+          "audio",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "none",
+          "low",
+          "medium",
+          "xhigh"
+        ],
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "qwen3.7-max",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-responses",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "qwen3.7-plus",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-responses",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "qwen3.7-flash",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-responses",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "qwen3.6-plus",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-responses",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 65536,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "qwen3.6-flash",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-responses",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 65536,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "qwen3.5-plus",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-responses",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 65536,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "qwen3.5-flash",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-responses",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 65536,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "interleavedThinking": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      }
+    },
+    {
+      "modelId": "qwen3-max",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation"
+      ],
+      "capability": {
+        "contextWindow": 262144,
+        "maxOutputTokens": 65536,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": false,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "qwen3-coder-plus",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation"
+      ],
+      "capability": {
+        "contextWindow": 1048576,
+        "maxOutputTokens": 65536,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": false,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "qwen3-coder-flash",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 65536,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": false,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "qwen-plus",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 32768,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "qwen-max",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation"
+      ],
+      "capability": {
+        "contextWindow": 32768,
+        "maxOutputTokens": 8192,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": false,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "qwen-turbo",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 16384,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "qwen-flash",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 32768,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "qwen3-vl-plus",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-models",
+        "alibaba-text-generation",
+        "alibaba-messages",
+        "alibaba-claude-code"
+      ],
+      "capability": {
+        "contextWindow": 262144,
+        "maxOutputTokens": 32768,
+        "inputModalities": [
+          "text",
+          "image"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "MiniMax-M3.1-Flash-Preview",
+      "vendor": "MiniMax",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-models",
+        "minimax-openai-chat",
+        "minimax-anthropic",
+        "minimax-responses"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultLevel": "max",
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "MiniMax-M3",
+      "vendor": "MiniMax",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-models",
+        "minimax-openai-chat",
+        "minimax-anthropic",
+        "minimax-responses"
+      ],
+      "capability": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 512000,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "vision": true,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "MiniMax-M2.7",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-models",
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ],
+      "capability": {
+        "contextWindow": 204800,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "MiniMax-M2.7-highspeed",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-models",
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ],
+      "capability": {
+        "contextWindow": 204800,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "MiniMax-M2.5",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-models",
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ],
+      "capability": {
+        "contextWindow": 204800,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "MiniMax-M2.5-highspeed",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-models",
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ],
+      "capability": {
+        "contextWindow": 204800,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "MiniMax-M2.1",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-models",
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ],
+      "capability": {
+        "contextWindow": 204800,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "MiniMax-M2.1-highspeed",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-models",
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ],
+      "capability": {
+        "contextWindow": 204800,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    },
+    {
+      "modelId": "MiniMax-M2",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-models",
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ],
+      "capability": {
+        "contextWindow": 204800,
+        "maxOutputTokens": 131072,
+        "inputModalities": [
+          "text"
+        ],
+        "vision": false,
+        "reasoning": true,
+        "toolCalling": true
+      }
+    }
+  ]
+}

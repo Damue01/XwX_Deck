@@ -100,6 +100,39 @@ pub(super) fn with_service_metadata(mut entry: Value, raw: &Value) -> Value {
 fn normalize_id(id: &str) -> String {
     id.trim().trim_start_matches("models/").to_lowercase()
 }
+// Official records use the base model ID. Service directories may add a build
+// or date suffix, so compare the same canonical identity used by the shared
+// registry instead of requiring the raw IDs to match.
+pub(super) fn official_model_key(id: &str) -> String {
+    let id = normalize_id(id);
+    let bare = id.rsplit('/').next().unwrap_or(&id);
+    let mut base = bare;
+    if let Some((prefix, day)) = base.rsplit_once('-') {
+        if day.len() == 2 && day.chars().all(|c| c.is_ascii_digit()) {
+            if let Some((month_prefix, month)) = prefix.rsplit_once('-') {
+                if month.len() == 2 && month.chars().all(|c| c.is_ascii_digit()) {
+                    if let Some((year_prefix, year)) = month_prefix.rsplit_once('-') {
+                        if year.len() == 4 && year.chars().all(|c| c.is_ascii_digit()) {
+                            base = year_prefix;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some((prefix, suffix)) = bare.rsplit_once('-') {
+        if base == bare
+            && (4..=8).contains(&suffix.len())
+            && suffix.chars().all(|c| c.is_ascii_digit())
+        {
+            base = prefix;
+        }
+    }
+    if let Some(prefix) = base.strip_suffix("-ga") {
+        base = prefix;
+    }
+    base.chars().filter(|c| c.is_ascii_alphanumeric()).collect()
+}
 pub(super) fn connection_root(base: &str) -> &str {
     let base = base.trim().trim_end_matches('/');
     ["/anthropic/v1", "/gemini/v1beta", "/v1"]
@@ -198,7 +231,7 @@ fn enrich(mut entry: Value, remote: &Value) -> Value {
         .as_array()
         .and_then(|a| {
             a.iter()
-                .find(|r| normalize_id(text(r, "modelId")) == normalize_id(&id))
+                .find(|r| official_model_key(text(r, "modelId")) == official_model_key(&id))
         })
         .cloned()
         .unwrap_or(Value::Null);
@@ -959,6 +992,60 @@ mod client_contract_tests {
             ),
             "anthropic-messages"
         );
+    }
+    #[test]
+    fn official_protocol_table_covers_current_provider_models() {
+        let official = official_protocol_registry();
+        let protocols = |id: &str| -> Vec<String> {
+            official
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["modelId"] == id))
+                .and_then(|row| row["protocols"].as_array())
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert!(protocols("qwen3.8-max")
+            .iter()
+            .any(|p| p == "openai-responses"));
+        assert!(protocols("qwen3.8-max")
+            .iter()
+            .any(|p| p == "anthropic-messages"));
+        assert_eq!(protocols("qwen3-coder-plus"), vec!["chat-completions"]);
+        assert!(protocols("MiniMax-M3")
+            .iter()
+            .any(|p| p == "anthropic-messages"));
+        assert!(protocols("glm-5.3-flash")
+            .iter()
+            .any(|p| p == "openai-responses"));
+        assert!(protocols("kimi-k2.7-code")
+            .iter()
+            .any(|p| p == "anthropic-messages"));
+        assert!(!protocols("kimi-k2.7-code")
+            .iter()
+            .any(|p| p == "openai-responses"));
+        for id in [
+            "qwen3.8-max-0902",
+            "qwen3.7-max-2026-05-20",
+            "deepseek-v4-pro-0813",
+            "deepseek-v4-pro-ga-260813",
+        ] {
+            let entry = enrich(
+                json!({"id":id,"catalogEndpoints":[],"protocolsDeclared":false}),
+                &json!({"modelsDev":[]}),
+            );
+            assert!(
+                entry["officialProtocols"]
+                    .as_array()
+                    .is_some_and(|values| values.contains(&json!("openai-responses"))),
+                "{id} must resolve the base official record"
+            );
+        }
     }
     #[test]
     fn unknown_models_use_the_connection_default_instead_of_a_guess() {

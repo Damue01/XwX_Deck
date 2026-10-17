@@ -516,6 +516,7 @@
           "tools/native/catalog-contract-edges-test.mjs",
           "tools/native/provider-validation-test.mjs",
           "tools/native/protocol-test.mjs",
+      "tools/native/model-protocols-test.mjs",
           "tools/native/models-dev-unification-test.mjs",
           "tools/native/catalog-contract-test.mjs",
           "tools/native/official-catalog-test.mjs",

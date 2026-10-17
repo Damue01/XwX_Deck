@@ -11,6 +11,8 @@
 | 服务目录、能力合并与协议选择 | [catalog.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/catalog.rs) |
 | 显式能力字段与模型用途 | [catalog_metadata.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/catalog_metadata.rs) |
 | models.dev 解析与保守匹配 | [model_metadata.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/model_metadata.rs) |
+| 可维护的官方协议表 | [model-protocols.json](https://github.com/Damue01/XwX_Deck/blob/main/assets/model-protocols.json) |
+| 协议表校验与合并 | [official-models.mjs](https://github.com/Damue01/XwX_Deck/blob/main/tools/build/official-models.mjs) |
 | 公共目录刷新与最后成功缓存 | [metadata.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/metadata.rs) |
 | 服务声明的价格 | [provider_pricing.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/provider_pricing.rs) |
 | 请求费用与历史快照 | [trace_pricing.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/trace_pricing.rs) |
@@ -85,6 +87,12 @@ models.dev 和 OpenRouter 的公开模型资料都不声明 Responses、Chat Com
 不从相似型号或聚合目录推测协议。
 实际转发仍以当前连接和请求入口为准。
 
+当前协议表位于 `assets/model-protocols.json`。
+每行只记录 `modelId`、`vendor`、`protocols` 和官方 `sourceIds`。
+构建时由 `tools/build/official-models.mjs` 合并到 `official-models.json`，已有静态能力字段优先，不会被协议表覆盖。
+表中的来源域名受白名单限制，协议值只允许 Responses、Chat Completions 和 Messages。
+未知协议、重复 canonical 型号或非官方来源会使构建失败，而不是静默写入。
+
 推理开关与推理力度是不同能力。
 目录只发布有明确来源的控制选项。
 转换过程应保留可表达的工具结果和推理选项。
@@ -141,6 +149,7 @@ HTTP 状态本身不能证明是否收费。
 | --- | --- |
 | `tools/native/catalog-contract-test.mjs` | 服务显式字段与来源优先级 |
 | `tools/native/catalog-contract-edges-test.mjs` | 缺失字段、冲突与目录边界 |
+| `tools/native/model-protocols-test.mjs` | 协议表来源、合并优先级与重复型号 |
 | `tools/native/models-dev-unification-test.mjs` | 能力主来源与协议边界 |
 | `tools/native/price-catalog-test.mjs` | 价格单位、来源与匹配 |
 | `tools/native/trace-billing-test.mjs` | 每请求快照与计费完整性 |
