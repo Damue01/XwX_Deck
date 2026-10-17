@@ -74,6 +74,11 @@ try {
     const primary = page.locator('#recommended-download');
     await primary.getByText('下载 Windows 版').waitFor();
     assert.match(await primary.getAttribute('href'), /windows-x64\.exe$/);
+    const primaryBox = await primary.boundingBox();
+    const otherBox = await page.locator('#download-options > summary').boundingBox();
+    assert.ok(Math.abs(primaryBox.x + primaryBox.width / 2 - width / 2) < 1, 'primary download aligns with the page center independently of other versions');
+    assert.ok(otherBox.x > primaryBox.x + primaryBox.width && otherBox.x + otherBox.width <= width, 'other versions stays to the right without overflowing');
+    assert.equal(await page.locator('#download-caption').count(), 0);
     await page.locator('#download-options > summary').click();
     for (const target of ['windows', 'mac']) assert.equal(await page.locator(`[data-download="${target}"]`).isVisible(), true);
     const panelBox = await page.locator('.download-choices').boundingBox();
@@ -144,17 +149,17 @@ try {
   checks.push('WE02: configured download resolves to the selected artifact fixture');
   // Exercise browser-reported architectures and conservative fallbacks in real DOMs.
   const profiles = [
-    { name: 'Apple Silicon', platform: 'macOS', arch: 'arm', direct: 'mac', caption: 'Apple Silicon' },
-    { name: 'Intel Mac', platform: 'macOS', arch: 'x86', caption: 'Intel 版尚未发布' },
-    { name: 'Windows x64', platform: 'Windows', arch: 'x86', direct: 'windows', caption: 'x64' },
-    { name: 'Windows ARM64', platform: 'Windows', arch: 'arm', caption: '选择下载版本' },
-    { name: 'Windows 32-bit', platform: 'Windows', arch: 'x86', bitness: '32', caption: '选择适合你的 Windows 版本' },
-    { name: 'Safari MacIntel', platform: 'MacIntel', hints: 'absent', caption: '选择适合你的 Mac 芯片' },
-    { name: 'rejected hints', platform: 'macOS', hints: 'reject', caption: '选择适合你的 Mac 芯片' },
-    { name: 'missing architecture', platform: 'macOS', arch: '', caption: '选择适合你的 Mac 芯片' },
-    { name: 'mobile', platform: 'Android', mobile: true, caption: '适用于 macOS 和 Windows' },
-    { name: 'iPad desktop mode', platform: 'MacIntel', touch: 5, hints: 'absent', caption: '适用于 macOS 和 Windows' },
-    { name: 'unknown', platform: 'unknown', hints: 'absent', caption: '适用于 macOS 和 Windows' },
+    { name: 'Apple Silicon', platform: 'macOS', arch: 'arm', direct: 'mac' },
+    { name: 'Intel Mac', platform: 'macOS', arch: 'x86', context: '当前暂无 Intel Mac 安装包。' },
+    { name: 'Windows x64', platform: 'Windows', arch: 'x86', direct: 'windows' },
+    { name: 'Windows ARM64', platform: 'Windows', arch: 'arm', context: '当前提供 Windows x64 下载，尚无原生 ARM64 版。' },
+    { name: 'Windows 32-bit', platform: 'Windows', arch: 'x86', bitness: '32' },
+    { name: 'Safari MacIntel', platform: 'MacIntel', hints: 'absent' },
+    { name: 'rejected hints', platform: 'macOS', hints: 'reject' },
+    { name: 'missing architecture', platform: 'macOS', arch: '' },
+    { name: 'mobile', platform: 'Android', mobile: true },
+    { name: 'iPad desktop mode', platform: 'MacIntel', touch: 5, hints: 'absent' },
+    { name: 'unknown', platform: 'unknown', hints: 'absent' },
   ];
   async function profilePage(profile) {
     const context = await browser.newContext({ reducedMotion: 'reduce', viewport: { width: 390, height: 844 } });
@@ -179,9 +184,11 @@ try {
   }
   for (const profile of profiles) {
     const { context, candidate } = await profilePage(profile);
-    await candidate.waitForFunction(caption => document.querySelector('#download-caption').textContent === caption, profile.caption);
+    assert.equal(await candidate.locator('#download-caption').count(), 0);
+    if (profile.context) await candidate.getByText(profile.context, { exact: true }).waitFor({ state: 'attached' });
     const primary = candidate.locator('#recommended-download');
     if (profile.direct) {
+      await candidate.waitForFunction(target => document.querySelector('#recommended-download').href === document.querySelector(`[data-download="${target}"]`).href, profile.direct);
       assert.equal(await primary.getAttribute('href'), await candidate.locator(`[data-download="${profile.direct}"]`).getAttribute('href'));
     } else {
       assert.equal(await primary.getAttribute('href'), '#download-choices', profile.name + ' must not guess an unavailable architecture');

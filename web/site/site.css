@@ -137,12 +137,10 @@ body:not([data-footer-layout='original']) .community-link:hover { background: tr
 /* A single recommendation, with every published package one step away. */
 .hero { overflow: visible; }
 .hero-field { overflow: clip; }
-.hero .download-actions { position: relative; display: flex; align-items: flex-start; justify-content: center; gap: 24px; width: max-content; max-width: 100%; margin-inline: auto; }
-.download-main { width: 184px; }
+.hero .download-actions { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 184px minmax(0, 1fr); align-items: start; justify-content: stretch; gap: 24px; width: 100%; max-width: none; margin-inline: auto; }
+.download-main { grid-column: 2; width: 100%; }
 .download-main .btn { width: 100%; }
-.hero .download-caption { margin: 12px 0 0; color: var(--quiet); font-size: 12px; line-height: 1.5; }
-.download-actions:has(.download-options[open]) .download-caption { visibility: hidden; }
-.download-options { text-align: left; z-index: 3; }
+.download-options { grid-column: 3; justify-self: start; text-align: left; z-index: 3; }
 .download-options > summary { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; color: var(--graphite); font-size: 13px; cursor: pointer; list-style: none; }
 .download-options > summary::-webkit-details-marker, .chip-help > summary::-webkit-details-marker { display: none; }
 .download-options > summary svg { width: 13px; height: 13px; transition: transform .18s var(--ease); }
@@ -168,7 +166,10 @@ body:not([data-footer-layout='original']) .community-link:hover { background: tr
 .chip-help p { margin: 8px 0; line-height: 1.8; }
 .download-history { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 0; padding: 10px; color: var(--graphite); font-size: 12px; text-decoration: none; border-radius: 6px; }
 .download-history:hover { background: var(--sunk); color: var(--ink); }
+@media (max-width: 760px) {
+  .hero .download-actions { grid-template-columns: minmax(0, 1fr) 166px minmax(0, 1fr); gap: 16px; }
+}
 @media (max-width: 380px) {
-  .hero .download-actions { gap: 16px; }
-  .download-main { width: 166px; }
+  .hero .download-actions { grid-template-columns: minmax(0, 1fr) 144px minmax(0, 1fr); gap: 8px; }
+  .download-options > summary { font-size: 12px; gap: 6px; }
 }
