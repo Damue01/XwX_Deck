@@ -21,14 +21,28 @@ Viewer 与价格资源由当前共享模块生成。
 ## 候选包
 
 在 Actions 中手动运行 **Build desktop packages**。
-选择 `main`，流程只构建 Intel Mac 候选。
-`macos-15-intel` Runner 使用原生 x64 工具链。
-构建校验 Mach-O 架构、应用签名和 DMG 完整性。
-随后执行 Rust 单测、隔离后端与实际 WebKit 回归。
+选择 `main`，将 `target` 保持为默认的 `all`。
+一次运行会分别构建以下三个候选包。
 
-成功后下载 `macos-x64` artifact。
-验证记录位于 `macos-x64-verification` artifact。
-候选使用 ad-hoc 签名，未完成 Developer ID 签名和公证。
+| 系统 | 架构 | 下载 artifact | 文件 |
+| --- | --- | --- | --- |
+| Windows | x64 | `windows-x64` | `XwX-Deck-windows-x64.exe` |
+| Mac | Apple Silicon | `macos-arm64` | `XwX-Deck-mac-arm64.dmg` |
+| Mac | Intel | `macos-x64` | `XwX-Deck-mac-x64.dmg` |
+
+也可选择 `windows-x64`、`macos-arm64` 或 `macos-x64`，只构建对应候选。
+命令行可在仓库目录执行：
+
+```bash
+gh workflow run release.yml --ref main -f target=all
+```
+
+三个目标分别使用原生 Windows、Apple Silicon 和 Intel Runner。
+每个目标执行 Rust 单测、隔离后端与实际 WebView 回归。
+Mac 额外校验 Mach-O 架构、应用签名和 DMG 完整性。
+验证记录分别位于 `windows-verification`、`macos-arm64-verification` 和 `macos-x64-verification` artifact。
+
+Mac 候选使用 ad-hoc 签名，未完成 Developer ID 签名和公证。
 此操作不创建标签、Release 或更新清单。
 下载入口在正式发布和制品验收后另行调整。
 

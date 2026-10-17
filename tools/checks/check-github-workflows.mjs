@@ -51,14 +51,22 @@ check(release.includes("pattern: '*-x64'"), 'release assembly must exclude verif
 
 const releaseWorkflow = parse(release);
 check(Object.hasOwn(releaseWorkflow.on, 'workflow_dispatch'), 'candidate builds require manual dispatch');
-for (const job of ['windows', 'release-draft']) check(releaseWorkflow.jobs[job]?.if === "github.event_name == 'push'", `${job}: manual candidates must not publish or build Windows`);
+const targetInput = releaseWorkflow.on.workflow_dispatch?.inputs?.target;
+check(targetInput?.type === 'choice' && targetInput.required === true && targetInput.default === 'all'
+  && JSON.stringify(targetInput.options) === JSON.stringify(['all', 'windows-x64', 'macos-arm64', 'macos-x64']),
+  'candidate builds must default to all three packages and allow individual targets');
+check(releaseWorkflow.jobs.windows?.if === "github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'windows-x64'",
+  'Windows candidates must run for all or windows-x64 selections and release tags');
+check(releaseWorkflow.jobs.macos?.if === "github.event_name == 'push' || inputs.target != 'windows-x64'",
+  'Windows-only candidates must skip Mac builds');
+check(releaseWorkflow.jobs['release-draft']?.if === "github.event_name == 'push'",
+  'manual candidates must not assemble or publish a release');
 const matrix = releaseWorkflow.jobs.macos?.strategy?.matrix?.include ?? '';
-const choices = [...matrix.matchAll(/'([\[{][^']+)'/g)].map(match => JSON.parse(match[1]));
-check(matrix.includes("github.event_name == 'workflow_dispatch'") && choices.length === 2
-  && JSON.stringify(choices[0]) === JSON.stringify([{os:'macos-15-intel', arch:'x64'}])
-  && choices[1].some(target => target.os === 'macos-15' && target.arch === 'arm64')
-  && choices[1].some(target => target.os === 'macos-15-intel' && target.arch === 'x64'),
-  'release must build both Mac architectures; manual dispatch builds only Intel');
+const armMatrix = JSON.stringify([{os:'macos-15', arch:'arm64'}]);
+const intelMatrix = JSON.stringify([{os:'macos-15-intel', arch:'x64'}]);
+const allMacMatrix = JSON.stringify([{os:'macos-15', arch:'arm64'}, {os:'macos-15-intel', arch:'x64'}]);
+check(matrix === `\${{ fromJSON(inputs.target == 'macos-arm64' && '${armMatrix}' || inputs.target == 'macos-x64' && '${intelMatrix}' || '${allMacMatrix}') }}`,
+  'Mac candidates must select the requested native architecture; all packages and release tags must build both');
 check(releaseWorkflow.jobs['release-draft'].needs.includes('macos'), 'draft assembly must wait for all Mac candidates');
 const ciWorkflow = parse(await readFile(path.join(workflowRoot, 'ci.yml'), 'utf8'));
 check(ciWorkflow.jobs['platform-compile'].strategy.matrix.os.includes('macos-15-intel'), 'CI must validate native Intel Mac');

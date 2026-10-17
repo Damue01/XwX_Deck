@@ -2,6 +2,17 @@ name: Build desktop packages
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Candidate packages to build
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - windows-x64
+          - macos-arm64
+          - macos-x64
   push:
     tags:
       - "v*.*.*"
@@ -72,7 +83,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
   windows:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'windows-x64'
     name: Windows x64
     needs: validate
     runs-on: windows-latest
@@ -152,12 +163,13 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: github.event_name == 'push' || inputs.target != 'windows-x64'
     name: macOS ${{ matrix.arch }}
     needs: validate
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '[{"os":"macos-15-intel","arch":"x64"}]' || '[{"os":"macos-15","arch":"arm64"},{"os":"macos-15-intel","arch":"x64"}]') }}
+        include: ${{ fromJSON(inputs.target == 'macos-arm64' && '[{"os":"macos-15","arch":"arm64"}]' || inputs.target == 'macos-x64' && '[{"os":"macos-15-intel","arch":"x64"}]' || '[{"os":"macos-15","arch":"arm64"},{"os":"macos-15-intel","arch":"x64"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
