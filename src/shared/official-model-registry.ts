@@ -97,6 +97,29 @@ export const OFFICIAL_MODEL_REGISTRY: readonly OfficialModelRecord[] = [
     codexRecommendedProtocol: 'responses'
   },
   {
+    modelId: 'deepseek-flash',
+    vendor: 'DeepSeek',
+    verifiedAt: '2026-10-17',
+    sources: [
+      { label: 'DeepSeek Models & Pricing', url: DEEPSEEK_MODELS },
+      { label: 'DeepSeek Responses API', url: DEEPSEEK_RESPONSES },
+      { label: 'DeepSeek Thinking Mode', url: DEEPSEEK_THINKING }
+    ],
+    capability: {
+      contextWindow: 1_000_000,
+      maxOutputTokens: 393_216,
+      reasoning: true,
+      levels: ['none', 'low', 'high', 'max'],
+      defaultLevel: 'high',
+      interleavedThinking: true,
+      toolCalling: true,
+      structuredOutput: true
+    },
+    protocols: ['openai-responses', 'chat-completions', 'anthropic-messages'],
+    claudeOneMillionRoles: [],
+    codexRecommendedProtocol: 'responses'
+  },
+  {
     modelId: 'glm-5.3',
     vendor: '智谱',
     verifiedAt: '2026-10-12',

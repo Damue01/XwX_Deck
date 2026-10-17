@@ -913,6 +913,28 @@ mod client_contract_tests {
             ),
             "chat-completions"
         );
+        let flash = enrich(
+            json!({
+                "id":"deepseek-flash",
+                "catalogEndpoints":[],
+                "protocolsDeclared":false
+            }),
+            &json!({"modelsDev":[],"litellm":[]}),
+        );
+        assert!(flash["officialProtocols"]
+            .as_array()
+            .is_some_and(|p| p.contains(&json!("openai-responses"))));
+        assert_eq!(
+            entry_wire(
+                &Provider {
+                    codex_api_format: "responses".into(),
+                    ..Provider::default()
+                },
+                Some(&flash),
+                "responses"
+            ),
+            "responses"
+        );
         let k27 = json!({
             "id":"kimi-k2.7-code",
             "catalogEndpoints":[],
