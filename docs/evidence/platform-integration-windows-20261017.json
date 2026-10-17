@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-17",
+  "status": "automated-pass-manual-visual-pending",
+  "platform": "Windows 11 Pro x64 (10.0.26200)",
+  "source": {
+    "commit": "b208dc4d9134840790e588a111ce97b87fd2538d",
+    "fingerprint": "d1f8184634e6e58f6f122dfcaf6bb59b6aae6eaecf9828cdb032198c04c9e95a",
+    "fileCount": 539,
+    "clean": true,
+    "fullIndependentClone": true,
+    "currentRemoteTagsFetched": true,
+    "oldReferencesImported": false
+  },
+  "artifact": {
+    "name": "XwX Deck.exe",
+    "version": "1.0.0",
+    "bytes": 17887232,
+    "sha256": "bc6a0a101ad1ce2dcf74828525c93ffe8fa29cd16cb6456a4f560f9070ee20f5",
+    "buildMode": "manual-acceptance",
+    "applicationId": "app.xwxdeck.desktop",
+    "signature": "NotSigned",
+    "runtime": "System WebView2; Edge 155",
+    "location": "%TEMP%\\xwx-public-acceptance-20261017\\final-b208dc4\\package\\XwX Deck.exe"
+  },
+  "staticGates": {
+    "passed": true,
+    "steps": 11,
+    "rustUnitTests": 154,
+    "rustUnitFailures": 0,
+    "strictClippy": true,
+    "formatting": true,
+    "sourceUnchanged": true,
+    "fullCheckQualityCommandRepeated": false,
+    "finalPackagedBackendReplacesDebugBackendRepeat": true
+  },
+  "specialties": {
+    "webview": {
+      "passed": true,
+      "checks": 231
+    },
+    "viewer": {
+      "passed": true,
+      "checks": 28
+    },
+    "windowLifecycle": {
+      "passed": true,
+      "checks": 24
+    },
+    "resetWebview": {
+      "passed": true,
+      "checks": 15
+    },
+    "fixedPort": {
+      "passed": true,
+      "checks": 5
+    },
+    "dashboardApi": {
+      "passed": true,
+      "checks": 7
+    },
+    "reading": {
+      "passed": true,
+      "checks": 12
+    }
+  },
+  "checkCountConvention": "Successful named checks; nested low-level assertions are not summed.",
+  "reading": {
+    "syntheticRequests": 1000,
+    "continuousMessages": 435,
+    "initialMessageCount": 16,
+    "sourceOrderPreserved": true,
+    "rawReadStatePreserved": true,
+    "fontRequestsFromSameExecutable": 43,
+    "expectedConsoleFault": "Injected HTTP 503; explicit retry recovered",
+    "unexpectedScriptErrors": 0
+  },
+  "offlineFonts": {
+    "bundledTypographyResources": 103,
+    "managerAndViewerNativeLoadChecksPassed": true,
+    "nativeHttpFontBytesAndHashesVerified": true
+  },
+  "fixedPort": {
+    "port": 45233,
+    "normalRootUnderDisposableAppData": true,
+    "occupiedFailsWithoutFallback": true,
+    "occupyingProcessPreserved": true,
+    "stopReleasesListener": true,
+    "completeExitReleasesListener": true,
+    "reopenUsesSameAddress": true,
+    "syntheticAuthorizationByteIdentical": true,
+    "localRequests": 3
+  },
+  "apiTakeover": {
+    "passed": true,
+    "suite": "official-test.mjs",
+    "provenStaleGlobalRootRemoved": true,
+    "unconfirmedExternalChangePreserved": true,
+    "mixedAliasRepaired": true,
+    "independentRootsAndCustomPathsPreserved": true,
+    "loginBytesPreserved": true,
+    "directRestoreAndRestartDoNotResurrectOldRoot": true
+  },
+  "backend": {
+    "command": "npm run test:upstream",
+    "registered": 97,
+    "returnedSuccessfully": 97,
+    "executed": 96,
+    "passed": 96,
+    "failed": 0,
+    "skipped": [
+      {
+        "suite": "cli-home-lifecycle-test.mjs",
+        "reason": "Unix CLI home lease lifecycle is not implemented on Windows"
+      }
+    ],
+    "isolatedFixturesCleaned": true
+  },
+  "futurePortableUpdate": {
+    "passed": true,
+    "cases": [
+      "wait-replace-restart",
+      "reject-wrong-hash",
+      "reject-changed-download",
+      "keep-new-file-and-backup-on-launch-failure"
+    ],
+    "scope": "Disposable EXE fixtures only; no normal installation replaced"
+  },
+  "cleanup": {
+    "backendFixturesCleaned": true,
+    "persistentResetStoreRemoved": true,
+    "windowFixtureCleanupPassed": true,
+    "fixedPortSyntheticFixtureRetainedForEvidence": true,
+    "historicalFailureFixturesRetained": true
+  },
+  "provenanceVerifiedAfterAllChecks": {
+    "sourceUnchanged": true,
+    "binaryUnchanged": true,
+    "embeddedFrontendUnchanged": true,
+    "embeddedAssetsUnchanged": true
+  },
+  "boundaries": {
+    "syntheticUpstreamsOnly": true,
+    "realCredentialsUsed": false,
+    "paidRequests": false,
+    "normalUserDataModified": false,
+    "companyApplicationModified": false,
+    "updateChannelsChanged": false,
+    "installed": false,
+    "published": false,
+    "pushedAfterFinalSourceSelection": false
+  },
+  "pending": [
+    "Manual native screenshots, mouse/keyboard and Explorer selection: Windows desktop remained locked; no desktop control after lock detection",
+    "Physical multiple displays, scaling and normal installed client experience",
+    "Real authorization, real OS credential store, paid upstream and billing statement verification",
+    "Actual installed-application update and distribution signing"
+  ],
+  "conditionalSuitesNotSelected": [
+    "installed-clients-test.mjs",
+    "gateway-clients-test.mjs"
+  ],
+  "skippedSubchecks": [
+    "Real OS credential-store probe",
+    "Real OS credential validation; argument guards ran"
+  ],
+  "historicalEvidence": {
+    "previousCandidatesKeptSeparately": true,
+    "originalFixtureFailuresAndRetestsRetained": true,
+    "countsFromOldCandidatesNotUsedAsFinalResults": true
+  },
+  "logsLocation": "%TEMP%\\xwx-public-acceptance-20261017\\final-b208dc4",
+  "postRun": {
+    "port45233Listeners": 0,
+    "candidateProcesses": 0
+  }
+}
