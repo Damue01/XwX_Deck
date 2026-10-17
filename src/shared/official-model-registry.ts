@@ -38,28 +38,33 @@ export interface OfficialModelRecord {
 
 const KIMI_MODELS = 'https://platform.kimi.com/docs/models';
 const KIMI_CLAUDE_CODE = 'https://platform.kimi.com/docs/guide/claude-code-kimi';
+const KIMI_RESPONSES = 'https://platform.kimi.com/docs/api/responses';
+const KIMI_CODEX = 'https://platform.kimi.com/docs/guide/codex-kimi';
 const GLM_52 = 'https://docs.z.ai/guides/llm/glm-5.2';
 const GLM_CLAUDE_CODE = 'https://docs.z.ai/devpack/latest-model#switching-models-in-claude-code';
 const DEEPSEEK_MODELS = 'https://api-docs.deepseek.com/quick_start/pricing';
 const DEEPSEEK_CLAUDE_CODE = 'https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code';
 const DEEPSEEK_RESPONSES = 'https://api-docs.deepseek.com/guides/responses_api/';
+const DEEPSEEK_THINKING = 'https://api-docs.deepseek.com/guides/thinking_mode';
 
 export const OFFICIAL_MODEL_REGISTRY: readonly OfficialModelRecord[] = [
   {
     modelId: 'deepseek-v4-pro',
     vendor: 'DeepSeek',
-    verifiedAt: '2026-09-24',
+    verifiedAt: '2026-10-17',
     sources: [
       { label: 'DeepSeek Models & Pricing', url: DEEPSEEK_MODELS },
       { label: 'DeepSeek Claude Code integration', url: DEEPSEEK_CLAUDE_CODE },
-      { label: 'DeepSeek Responses API', url: DEEPSEEK_RESPONSES }
+      { label: 'DeepSeek Responses API', url: DEEPSEEK_RESPONSES },
+      { label: 'DeepSeek Thinking Mode', url: DEEPSEEK_THINKING }
     ],
     capability: {
       contextWindow: 1_000_000,
       maxOutputTokens: 393_216,
       reasoning: true,
-      levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+      levels: ['none', 'low', 'high', 'max'],
       defaultLevel: 'high',
+      interleavedThinking: true,
       toolCalling: true,
       structuredOutput: true
     },
@@ -70,18 +75,20 @@ export const OFFICIAL_MODEL_REGISTRY: readonly OfficialModelRecord[] = [
   {
     modelId: 'deepseek-v4-flash',
     vendor: 'DeepSeek',
-    verifiedAt: '2026-09-24',
+    verifiedAt: '2026-10-17',
     sources: [
       { label: 'DeepSeek Models & Pricing', url: DEEPSEEK_MODELS },
       { label: 'DeepSeek Claude Code integration', url: DEEPSEEK_CLAUDE_CODE },
-      { label: 'DeepSeek Responses API', url: DEEPSEEK_RESPONSES }
+      { label: 'DeepSeek Responses API', url: DEEPSEEK_RESPONSES },
+      { label: 'DeepSeek Thinking Mode', url: DEEPSEEK_THINKING }
     ],
     capability: {
       contextWindow: 1_000_000,
       maxOutputTokens: 393_216,
       reasoning: true,
-      levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+      levels: ['none', 'low', 'high', 'max'],
       defaultLevel: 'high',
+      interleavedThinking: true,
       toolCalling: true,
       structuredOutput: true
     },
@@ -134,9 +141,11 @@ export const OFFICIAL_MODEL_REGISTRY: readonly OfficialModelRecord[] = [
   {
     modelId: 'kimi-k3',
     vendor: 'Kimi',
-    verifiedAt: '2026-07-28',
+    verifiedAt: '2026-10-17',
     sources: [
       { label: 'Kimi model catalog', url: KIMI_MODELS },
+      { label: 'Kimi Responses API', url: KIMI_RESPONSES },
+      { label: 'Kimi Codex integration', url: KIMI_CODEX },
       { label: 'Kimi Claude Code integration', url: KIMI_CLAUDE_CODE }
     ],
     capability: {
@@ -144,55 +153,70 @@ export const OFFICIAL_MODEL_REGISTRY: readonly OfficialModelRecord[] = [
       inputModalities: ['text', 'image', 'video'],
       vision: true,
       reasoning: true,
+      levels: ['low', 'high', 'max'],
+      defaultLevel: 'max',
+      interleavedThinking: true,
       toolCalling: true
     },
-    protocols: ['chat-completions', 'anthropic-messages'],
+    protocols: ['openai-responses', 'chat-completions', 'anthropic-messages'],
     claudeOneMillionRoles: ['fable', 'opus', 'sonnet', 'haiku'],
-    codexRecommendedProtocol: 'chat-completions'
+    codexRecommendedProtocol: 'responses'
   },
   {
     modelId: 'kimi-k2.7-code',
     vendor: 'Kimi',
-    verifiedAt: '2026-07-28',
-    sources: [{ label: 'Kimi model catalog', url: KIMI_MODELS }],
+    verifiedAt: '2026-10-17',
+    sources: [
+      { label: 'Kimi model catalog', url: KIMI_MODELS },
+      { label: 'Kimi Claude Code integration', url: KIMI_CLAUDE_CODE }
+    ],
     capability: {
       contextWindow: 262_144,
       reasoning: true,
+      interleavedThinking: true,
       toolCalling: true
     },
-    protocols: ['chat-completions'],
+    protocols: ['chat-completions', 'anthropic-messages'],
     claudeOneMillionRoles: [],
     codexRecommendedProtocol: 'chat-completions'
   },
   {
     modelId: 'kimi-k2.6',
     vendor: 'Kimi',
-    verifiedAt: '2026-07-28',
-    sources: [{ label: 'Kimi model catalog', url: KIMI_MODELS }],
+    verifiedAt: '2026-10-17',
+    sources: [
+      { label: 'Kimi model catalog', url: KIMI_MODELS },
+      { label: 'Kimi Claude Code integration', url: KIMI_CLAUDE_CODE }
+    ],
     capability: {
       contextWindow: 262_144,
       inputModalities: ['text', 'image'],
       vision: true,
       reasoning: true,
+      interleavedThinking: true,
       toolCalling: true
     },
-    protocols: ['chat-completions'],
+    protocols: ['chat-completions', 'anthropic-messages'],
     claudeOneMillionRoles: [],
     codexRecommendedProtocol: 'chat-completions'
   },
   {
     modelId: 'kimi-k2.5',
     vendor: 'Kimi',
-    verifiedAt: '2026-07-28',
-    sources: [{ label: 'Kimi model catalog', url: KIMI_MODELS }],
+    verifiedAt: '2026-10-17',
+    sources: [
+      { label: 'Kimi model catalog', url: KIMI_MODELS },
+      { label: 'Kimi Claude Code integration', url: KIMI_CLAUDE_CODE }
+    ],
     capability: {
       contextWindow: 262_144,
       inputModalities: ['text', 'image'],
       vision: true,
       reasoning: true,
+      interleavedThinking: true,
       toolCalling: true
     },
-    protocols: ['chat-completions'],
+    protocols: ['chat-completions', 'anthropic-messages'],
     claudeOneMillionRoles: [],
     codexRecommendedProtocol: 'chat-completions'
   }

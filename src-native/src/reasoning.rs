@@ -12,6 +12,51 @@ fn normalized(model: &str) -> String {
 fn family(id: &str, prefix: &str) -> bool {
     id == prefix || id.starts_with(&format!("{prefix}-"))
 }
+fn kimi_k3(id: &str) -> bool {
+    family(id, "kimi-k3") || id == "k3" || id == "k3-256k"
+}
+fn kimi_k27(id: &str) -> bool {
+    id.starts_with("kimi-k2-7-code") || id.starts_with("kimi-for-coding-highspeed")
+}
+fn kimi_coding_effort(id: &str) -> bool {
+    id.starts_with("kimi-k2-8")
+        || id == "kimi-for-coding"
+        || id.starts_with("kimi-for-coding-") && !id.starts_with("kimi-for-coding-highspeed")
+}
+fn kimi_k26(id: &str) -> bool {
+    family(id, "kimi-k2-6") || family(id, "kimi-k2-5")
+}
+fn aliyun_host(haystack: &str) -> bool {
+    ["dashscope", "bailian", "aliyuncs.com"]
+        .iter()
+        .any(|name| haystack.contains(name))
+}
+fn deepseek_effort(effort: &str) -> &str {
+    match effort {
+        "minimal" | "low" => "low",
+        "max" | "ultra" => "max",
+        _ => "high",
+    }
+}
+fn three_tier_effort(effort: &str) -> &str {
+    match effort {
+        "minimal" | "low" => "low",
+        "medium" | "high" => "high",
+        "xhigh" | "max" | "ultra" => "max",
+        _ => "max",
+    }
+}
+fn high_max_effort(effort: &str) -> &str {
+    match effort {
+        "max" | "ultra" => "max",
+        _ => "high",
+    }
+}
+fn fixed_sampling(out: &mut Value) {
+    for key in ["temperature", "top_p"] {
+        out.as_object_mut().unwrap().remove(key);
+    }
+}
 /// Ark's Responses reasoning effort does not consistently enable thinking.
 /// Preserve explicit provider-native controls; only translate an omitted toggle.
 pub(super) fn responses(out: &mut Value, provider: &Provider) {
@@ -46,6 +91,11 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
     let base = provider.base_url.to_lowercase();
     let haystack = format!("{base} {id}");
     out.as_object_mut().unwrap().remove("reasoning_effort");
+    // Qwen3-Coder-Plus is a non-reasoning model. A client-wide reasoning
+    // setting must not leak an unsupported field into its request.
+    if family(&id, "qwen3-coder-plus") {
+        return;
+    }
     // OpenAI-compatible Chat services accept reasoning_effort by default.
     // Provider-specific branches below either replace that field, add the
     // service's thinking toggle, or map the requested tier.
@@ -53,6 +103,7 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
     let mut field = "reasoning_effort";
     let mut mapping = "passthrough";
     let mut on = "enabled";
+    let mut always_thinking = false;
     // A relay's OpenAI-compatible route is not evidence that it understands a
     // vendor-only thinking parameter. Known aggregators therefore use the
     // generic reasoning_effort field even when the model id looks like GLM/Qwen.
@@ -79,14 +130,73 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
     } else if haystack.contains("siliconflow") {
         if family(&id, "glm-5-3") || family(&id, "glm-5-2") {
             field = "reasoning_effort";
+            mapping = if family(&id, "glm-5-3") {
+                "three_tier"
+            } else {
+                "high_max"
+            };
         } else {
             toggle = "enable_thinking";
             field = "none";
         }
+    } else if aliyun_host(&haystack) {
+        // Aliyun-hosted Qwen, DeepSeek, GLM and Kimi use enable_thinking even
+        // when the model id is the same as a vendor-native endpoint.
+        let qwen = ["qwen", "qwq"].iter().any(|name| id.starts_with(name));
+        let deepseek = id.starts_with("deepseek");
+        let kimi = ["kimi", "moonshot", "mimo"]
+            .iter()
+            .any(|name| id.starts_with(name));
+        let glm = id.starts_with("glm") || id.starts_with("chatglm");
+        if qwen && !family(&id, "qwen3-coder-plus") {
+            toggle = "enable_thinking";
+            if family(&id, "qwen3-8") {
+                field = "reasoning_effort";
+            } else {
+                field = "none";
+            }
+        } else if deepseek {
+            toggle = "enable_thinking";
+            field = "reasoning_effort";
+            mapping = "deepseek";
+        } else if kimi {
+            if kimi_k3(&id) {
+                toggle = "enable_thinking";
+                field = "reasoning_effort";
+                mapping = "kimi";
+            } else if kimi_k27(&id) {
+                // K2.7 Code only accepts an enabled thinking mode.
+                field = "none";
+            } else if kimi_coding_effort(&id) {
+                toggle = "enable_thinking";
+                field = "reasoning_effort";
+                mapping = "kimi";
+            } else {
+                toggle = "enable_thinking";
+                field = "none";
+            }
+        } else if glm {
+            if family(&id, "glm-5-3") || family(&id, "glm-5-2") {
+                field = "reasoning_effort";
+                if family(&id, "glm-5-3") {
+                    always_thinking = true;
+                    mapping = "three_tier";
+                } else {
+                    mapping = "high_max";
+                }
+            } else {
+                field = "none";
+            }
+            if !family(&id, "glm-5-3") {
+                toggle = "enable_thinking";
+            }
+        }
     } else if haystack.contains("deepseek") {
         toggle = "thinking";
         field = "reasoning_effort";
-        mapping = "deepseek";
+        if base.contains("api.deepseek.com") {
+            mapping = "deepseek";
+        }
     } else if family(&id, "minimax-m3") {
         toggle = "thinking";
         field = "none";
@@ -101,15 +211,36 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
             mapping = "low_high";
         }
     } else if generic_effort_provider {
-        // field stays reasoning_effort
+        if family(&id, "glm-5-3") {
+            mapping = "three_tier";
+        } else if family(&id, "glm-5-2") {
+            mapping = "high_max";
+        }
     } else if family(&id, "glm-5-3") || family(&id, "glm-5-2") {
         // These GLM generations expose effort without a separate toggle.
+        if family(&id, "glm-5-3") {
+            always_thinking = true;
+            mapping = "three_tier";
+        } else {
+            mapping = "high_max";
+        }
     } else if family(&id, "glm-5") || family(&id, "glm-5v") || family(&id, "glm-4") {
         toggle = "thinking";
         field = "none";
-    } else if family(&id, "kimi-k3") {
+    } else if kimi_k3(&id) {
+        // K3 always reasons and does not accept the K2.x thinking parameter.
+        field = "reasoning_effort";
+        mapping = "kimi";
+        always_thinking = true;
+    } else if kimi_k27(&id) {
+        // K2.7 Code always reasons and only accepts an enabled control when
+        // one is sent at all. Omitting it is the documented request shape.
+        field = "none";
+        always_thinking = true;
+    } else if kimi_coding_effort(&id) {
         toggle = "thinking";
         field = "reasoning_effort";
+        mapping = "kimi";
     } else if ["kimi", "moonshot", "mimo"]
         .iter()
         .any(|name| haystack.contains(name))
@@ -130,6 +261,10 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
         toggle = "thinking";
         field = "reasoning_effort";
     }
+    let kimi_model = kimi_k3(&id) || kimi_k27(&id) || kimi_k26(&id) || kimi_coding_effort(&id);
+    if kimi_model {
+        fixed_sampling(out);
+    }
     match toggle {
         "thinking" => out["thinking"] = json!({"type":if enabled{on}else{"disabled"}}),
         "enable_thinking" => out["enable_thinking"] = json!(enabled),
@@ -137,6 +272,14 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
         _ => {}
     }
     if !enabled {
+        if always_thinking {
+            // Kimi K3 cannot disable thinking. The documented closest choice
+            // is the lowest effort tier instead of an unsupported toggle.
+            if field == "reasoning_effort" {
+                out["reasoning_effort"] = json!("low");
+            }
+            return;
+        }
         if field == "reasoning.effort" {
             out["reasoning"] = json!({"effort":"none"});
         } else if field == "reasoning_effort" && toggle == "none" {
@@ -147,15 +290,10 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
         return;
     }
     let mapped = match mapping {
-        "deepseek" => {
-            if effort == "low" {
-                "low"
-            } else if effort == "max" {
-                "max"
-            } else {
-                "high"
-            }
-        }
+        "deepseek" => deepseek_effort(effort),
+        "kimi" => three_tier_effort(effort),
+        "three_tier" => three_tier_effort(effort),
+        "high_max" => high_max_effort(effort),
         "low_high" => {
             if ["minimal", "low"].contains(&effort) {
                 "low"
@@ -180,10 +318,21 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
 }
 pub(super) fn messages(out: &mut Value, body: &Value) {
     let effort = text(&body["reasoning"], "effort");
-    if effort.is_empty() || ["none", "off", "disabled"].contains(&effort) {
+    if effort.is_empty() {
         return;
     }
     let id = normalized(text(body, "model"));
+    let disabled = ["none", "off", "disabled"].contains(&effort);
+    if disabled {
+        // DeepSeek and Kimi K3 default to thinking on. Their Messages APIs
+        // accept an explicit disabled toggle, so a converted "none" must not
+        // silently leave the vendor default in place.
+        if id.starts_with("deepseek") || kimi_k3(&id) || kimi_k26(&id) {
+            out["thinking"] = json!({"type":"disabled"});
+            fixed_sampling(out);
+        }
+        return;
+    }
     let adaptive = id.contains("claude-fable-")
         || [
             "claude-opus-4-7",
@@ -210,6 +359,37 @@ pub(super) fn messages(out: &mut Value, body: &Value) {
         if adaptive {
             out["thinking"] = json!({"type":"adaptive"});
         }
+        return;
+    }
+    if id.starts_with("deepseek") {
+        // DeepSeek ignores thinking.budget_tokens and reads the tier from
+        // output_config. effort.
+        out["thinking"] = json!({"type":"enabled"});
+        out["output_config"] = json!({"effort":deepseek_effort(effort)});
+        return;
+    }
+    if kimi_k3(&id) {
+        // Kimi K3's Anthropic-compatible Messages API has no thinking budget;
+        // it reads the tier from output_config. effort.
+        out["output_config"] = json!({"effort":three_tier_effort(effort)});
+        fixed_sampling(out);
+        return;
+    }
+    if kimi_k27(&id) {
+        // K2.7 Code only accepts an enabled, preserved-thinking control.
+        out["thinking"] = json!({"type":"enabled","keep":"all"});
+        fixed_sampling(out);
+        return;
+    }
+    if kimi_k26(&id) {
+        out["thinking"] = json!({"type":"enabled"});
+        fixed_sampling(out);
+        return;
+    }
+    if kimi_coding_effort(&id) {
+        out["thinking"] = json!({"type":"enabled"});
+        out["output_config"] = json!({"effort":three_tier_effort(effort)});
+        fixed_sampling(out);
         return;
     }
     let budget = match effort {
@@ -273,7 +453,7 @@ mod chat_tests {
                 "kimi-k3",
                 "high",
                 Some("high"),
-                Some("enabled"),
+                None,
             ),
             (
                 "https://api.moonshot.cn/v1",
@@ -281,6 +461,34 @@ mod chat_tests {
                 "high",
                 None,
                 Some("enabled"),
+            ),
+            (
+                "https://api.moonshot.cn/v1",
+                "kimi-k2.7-code",
+                "high",
+                None,
+                None,
+            ),
+            (
+                "https://api.kimi.com/coding/v1",
+                "kimi-for-coding",
+                "max",
+                Some("max"),
+                Some("enabled"),
+            ),
+            (
+                "https://coding.dashscope.aliyuncs.com/v1",
+                "kimi-k2.6",
+                "high",
+                None,
+                None,
+            ),
+            (
+                "https://coding.dashscope.aliyuncs.com/v1",
+                "deepseek-v4-pro",
+                "max",
+                Some("max"),
+                None,
             ),
             (
                 "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -437,9 +645,59 @@ mod chat_tests {
         );
         assert_eq!(deepseek_off["thinking"]["type"], "disabled");
         assert!(deepseek_off["reasoning_effort"].is_null());
+        let ark_deepseek = mapped(
+            "https://ark.cn-beijing.volces.com/api/v3",
+            "custom",
+            "deepseek-v4-pro-ga-260813",
+            "medium",
+        );
+        assert_eq!(ark_deepseek["thinking"]["type"], "enabled");
+        assert_eq!(ark_deepseek["reasoning_effort"], "medium");
+        let glm_off = mapped(
+            "https://open.bigmodel.cn/api/paas/v4",
+            "custom",
+            "glm-5.3",
+            "none",
+        );
+        assert!(glm_off["thinking"].is_null());
+        assert_eq!(glm_off["reasoning_effort"], "low");
+        let glm_medium = mapped(
+            "https://open.bigmodel.cn/api/paas/v4",
+            "custom",
+            "glm-5.3",
+            "medium",
+        );
+        assert_eq!(glm_medium["reasoning_effort"], "high");
+        let glm52_low = mapped("https://api.z.ai/api/paas/v4", "custom", "glm-5.2", "low");
+        assert_eq!(glm52_low["reasoning_effort"], "high");
+        let coder = mapped(
+            "https://coding.dashscope.aliyuncs.com/v1",
+            "custom",
+            "qwen3-coder-plus",
+            "high",
+        );
+        assert!(coder["reasoning_effort"].is_null());
+        assert!(coder["thinking"].is_null());
+        assert!(coder["enable_thinking"].is_null());
         let kimi_off = mapped("https://api.moonshot.cn/v1", "custom", "kimi-k3", "none");
-        assert_eq!(kimi_off["thinking"]["type"], "disabled");
-        assert!(kimi_off["reasoning_effort"].is_null());
+        assert!(kimi_off["thinking"].is_null());
+        assert_eq!(kimi_off["reasoning_effort"], "low");
+        let kimi_k27_off = mapped(
+            "https://api.moonshot.cn/v1",
+            "custom",
+            "kimi-k2.7-code",
+            "none",
+        );
+        assert!(kimi_k27_off["thinking"].is_null());
+        assert!(kimi_k27_off["reasoning_effort"].is_null());
+        let aliyun_kimi_off = mapped(
+            "https://coding.dashscope.aliyuncs.com/v1",
+            "custom",
+            "kimi-k2.6",
+            "none",
+        );
+        assert_eq!(aliyun_kimi_off["enable_thinking"], false);
+        assert!(aliyun_kimi_off["thinking"].is_null());
         let qwen_off = mapped(
             "https://coding.dashscope.aliyuncs.com/v1",
             "custom",
@@ -455,6 +713,37 @@ mod chat_tests {
             "none",
         );
         assert_eq!(effort(&generic_off), Some("none"));
+    }
+
+    #[test]
+    fn aliyun_hosted_vendor_models_use_enable_thinking() {
+        let deepseek = mapped(
+            "https://coding.dashscope.aliyuncs.com/v1",
+            "custom",
+            "deepseek-v4-pro",
+            "high",
+        );
+        assert_eq!(deepseek["enable_thinking"], true);
+        assert_eq!(deepseek["reasoning_effort"], "high");
+        assert!(deepseek["thinking"].is_null());
+        let kimi = mapped(
+            "https://coding.dashscope.aliyuncs.com/v1",
+            "custom",
+            "kimi-k3",
+            "max",
+        );
+        assert_eq!(kimi["enable_thinking"], true);
+        assert_eq!(kimi["reasoning_effort"], "max");
+        assert!(kimi["thinking"].is_null());
+        let glm = mapped(
+            "https://coding.dashscope.aliyuncs.com/v1",
+            "custom",
+            "glm-5.2",
+            "max",
+        );
+        assert_eq!(glm["enable_thinking"], true);
+        assert_eq!(glm["reasoning_effort"], "max");
+        assert!(glm["thinking"].is_null());
     }
 }
 
@@ -497,6 +786,32 @@ mod messages_tests {
         let disabled = converted("claude-opus-4-8", "none");
         assert!(disabled["output_config"].is_null());
         assert!(disabled["thinking"].is_null());
+    }
+
+    #[test]
+    fn vendor_messages_apis_use_their_documented_thinking_controls() {
+        let deepseek = converted("deepseek-v4-pro", "low");
+        assert_eq!(deepseek["thinking"]["type"], "enabled");
+        assert_eq!(deepseek["output_config"]["effort"], "low");
+        assert!(deepseek["thinking"]["budget_tokens"].is_null());
+        let deepseek_off = converted("deepseek-v4-pro", "none");
+        assert_eq!(deepseek_off["thinking"]["type"], "disabled");
+        assert!(deepseek_off["output_config"].is_null());
+
+        let k3 = converted("kimi-k3", "high");
+        assert_eq!(k3["output_config"]["effort"], "high");
+        assert!(k3["thinking"].is_null());
+        let k3_off = converted("kimi-k3", "none");
+        assert_eq!(k3_off["thinking"]["type"], "disabled");
+
+        let k27 = converted("kimi-k2.7-code", "high");
+        assert_eq!(k27["thinking"]["type"], "enabled");
+        assert_eq!(k27["thinking"]["keep"], "all");
+        assert!(k27["thinking"]["budget_tokens"].is_null());
+
+        let k26 = converted("kimi-k2.6", "high");
+        assert_eq!(k26["thinking"]["type"], "enabled");
+        assert!(k26["thinking"]["budget_tokens"].is_null());
     }
 }
 

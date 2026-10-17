@@ -314,12 +314,16 @@ fn enrich(mut entry: Value, remote: &Value) -> Value {
     if entry["protocolsDeclared"] != true
         && entry["catalogEndpoints"]
             .as_array()
-            .is_some_and(|a| a.iter().any(|v| v == "openai"))
+            .is_some_and(|a| a.is_empty() || a.iter().any(|v| v == "openai"))
     {
         let published = official["protocols"].as_array().map(|protocols| {
             protocols
                 .iter()
-                .filter(|p| **p == "openai-responses" || **p == "chat-completions")
+                .filter(|p| {
+                    **p == "openai-responses"
+                        || **p == "chat-completions"
+                        || **p == "anthropic-messages"
+                })
                 .cloned()
                 .collect::<Vec<_>>()
         });
@@ -811,6 +815,21 @@ fn entry_wire(p: &Provider, entry: Option<&Value>, incoming: &str) -> String {
     if let Some(e) = entry {
         let ps = &e["protocols"];
         if e["protocolsDeclared"] != true {
+            let official = &e["officialProtocols"];
+            if incoming == "anthropic-messages" && supported(official, "anthropic-messages") {
+                return "anthropic-messages".into();
+            }
+            let chat = supported(official, "chat-completions");
+            let responses = supported(official, "openai-responses");
+            if default == "chat-completions" && chat {
+                return "chat-completions".into();
+            }
+            if responses {
+                return "responses".into();
+            }
+            if chat {
+                return "chat-completions".into();
+            }
             return default.into();
         }
         if incoming == "anthropic-messages" && supported(ps, "anthropic-messages") {
@@ -844,6 +863,84 @@ mod client_contract_tests {
         let mut absent = json!({"slug":"codex-auto-review"});
         ensure_codex_instructions(&mut absent);
         assert!(absent["base_instructions"].is_string());
+    }
+    #[test]
+    fn official_protocols_survive_an_empty_openai_directory() {
+        let entry = enrich(
+            json!({
+                "id":"kimi-k3",
+                "catalogEndpoints":[],
+                "protocolsDeclared":false
+            }),
+            &json!({"modelsDev":[],"litellm":[]}),
+        );
+        assert!(entry["officialProtocols"]
+            .as_array()
+            .is_some_and(|p| p.contains(&json!("openai-responses"))));
+        assert!(entry["officialProtocols"]
+            .as_array()
+            .is_some_and(|p| p.contains(&json!("anthropic-messages"))));
+        assert_eq!(
+            entry_wire(
+                &Provider {
+                    codex_api_format: "responses".into(),
+                    ..Provider::default()
+                },
+                Some(&entry),
+                "responses"
+            ),
+            "responses"
+        );
+        assert_eq!(
+            entry_wire(
+                &Provider {
+                    codex_api_format: "responses".into(),
+                    ..Provider::default()
+                },
+                Some(&entry),
+                "anthropic-messages"
+            ),
+            "anthropic-messages"
+        );
+        assert_eq!(
+            entry_wire(
+                &Provider {
+                    codex_api_format: "chat-completions".into(),
+                    ..Provider::default()
+                },
+                Some(&entry),
+                "responses"
+            ),
+            "chat-completions"
+        );
+        let k27 = json!({
+            "id":"kimi-k2.7-code",
+            "catalogEndpoints":[],
+            "protocolsDeclared":false,
+            "officialProtocols":["chat-completions","anthropic-messages"]
+        });
+        assert_eq!(
+            entry_wire(
+                &Provider {
+                    codex_api_format: "responses".into(),
+                    ..Provider::default()
+                },
+                Some(&k27),
+                "responses"
+            ),
+            "chat-completions"
+        );
+        assert_eq!(
+            entry_wire(
+                &Provider {
+                    codex_api_format: "responses".into(),
+                    ..Provider::default()
+                },
+                Some(&k27),
+                "anthropic-messages"
+            ),
+            "anthropic-messages"
+        );
     }
     fn efforts(levels: &[&str], reasoning: bool, base_url: &str, source: &str) -> Vec<String> {
         let mut row = json!({"reasoning":reasoning,"reasoningLevels":levels});

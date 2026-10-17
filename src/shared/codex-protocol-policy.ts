@@ -27,7 +27,7 @@ export function resolveProviderCodexProtocol(
   // the official API does, so the owner's published protocols decide, and
   // the connection default applies only when those are unknown.
   if (entry.catalogEndpoints) {
-    if (!entry.catalogEndpoints.includes('openai')) {
+    if (entry.catalogEndpoints.length > 0 && !entry.catalogEndpoints.includes('openai')) {
       return entry.catalogEndpoints.includes('anthropic') ? 'anthropic-messages' : fallback;
     }
     return officialOpenAiProtocol(entry, fallback) ?? fallback;
@@ -60,7 +60,11 @@ export function resolveClaudeModelProtocol(
 ): ClaudeModelProtocol | undefined {
   if (isKnownNonConversationalModel(entry.id)) return undefined;
   const protocols = new Set(entry.protocols);
-  if (protocols.has('anthropic-messages')) return 'anthropic-messages';
+  const official = new Set(entry.officialProtocols ?? []);
+  if (
+    protocols.has('anthropic-messages')
+    || (!entry.protocolsDeclared && official.has('anthropic-messages'))
+  ) return 'anthropic-messages';
   // A Messages-only connection has no OpenAI endpoint to bridge to.
   if (provider?.adapter === 'anthropic-messages') return undefined;
   if (protocols.has('openai-responses')) return 'responses';
@@ -69,7 +73,7 @@ export function resolveClaudeModelProtocol(
   // 兼容服务's OpenAI directory does not say which OpenAI protocol a model
   // speaks. Like Codex: the official API's published protocols decide, else
   // the connection default (Responses unless set to Chat); never the name.
-  if (entry.catalogEndpoints?.includes('openai')) {
+  if (entry.catalogEndpoints && (entry.catalogEndpoints.length === 0 || entry.catalogEndpoints.includes('openai'))) {
     const preferred = provider?.codexApiFormat === 'chat-completions' ? 'chat-completions' : 'responses';
     return officialOpenAiProtocol(entry, preferred) ?? preferred;
   }

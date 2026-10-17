@@ -959,7 +959,7 @@ impl Pilot {
                     let declared=m["protocols"].as_array().or_else(||m["supported_endpoint_types"].as_array()).map(|values|values.iter().filter_map(|v|v.as_str()).filter_map(|s|match s {"responses"|"openai-responses"=>Some("openai-responses"),"chat"|"chat-completions"|"chat_completion"=>Some("chat-completions"),"anthropic"|"messages"|"anthropic-messages"=>Some("anthropic-messages"),_=>None}).map(|s|json!(s)).collect::<Vec<_>>()).filter(|a|!a.is_empty());
                     let protocols=if let Some(p)=explicit{json!([p])}else if let Some(p)=declared.clone(){json!(p)}else if let Some(e)=known{e["protocols"].clone()}else{json!(["openai-responses","chat-completions","anthropic-messages"])};
                     let mut result=json!({"id":id,"vendor":m["owned_by"].as_str().or_else(||known.and_then(|e|e["vendor"].as_str())).unwrap_or("custom"),"protocols":protocols,"protocolsDeclared":explicit.is_some()||declared.is_some()||known.is_some(),"clients":["codex","claude"]});
-                    for key in ["contextWindow","maxOutputTokens","vision","reasoning","toolCalling","structuredOutput","interleavedThinking","inputModalities","reasoningLevels","defaultReasoningLevel"] {if let Some(v)=m.get(key).or_else(||known.and_then(|e|e["capability"].get(key))){result[key]=v.clone();}}
+                    merge_known_capability(&mut result, m, known);
                     for (source,key) in [("context_length","contextWindow"),("max_output_tokens","maxOutputTokens")] {if let Some(v)=m.get(source).filter(|v|v.is_u64()){result[key]=v.clone();}}
                     result
                 })).collect();
@@ -1243,6 +1243,38 @@ pub(super) async fn validate_provider(
     )
 }
 
+fn merge_known_capability(result: &mut Value, service: &Value, known: Option<&Value>) {
+    for key in [
+        "contextWindow",
+        "maxOutputTokens",
+        "vision",
+        "reasoning",
+        "toolCalling",
+        "structuredOutput",
+        "interleavedThinking",
+        "inputModalities",
+        "reasoningLevels",
+        "defaultReasoningLevel",
+    ] {
+        if matches!(key, "reasoningLevels" | "defaultReasoningLevel")
+            && result["reasoning"] == false
+        {
+            continue;
+        }
+        let official_key = match key {
+            "reasoningLevels" => "levels",
+            "defaultReasoningLevel" => "defaultLevel",
+            _ => key,
+        };
+        if let Some(value) = service
+            .get(key)
+            .or_else(|| known.and_then(|entry| entry["capability"].get(official_key)))
+        {
+            result[key] = value.clone();
+        }
+    }
+}
+
 #[cfg(test)]
 mod subscription_metadata_tests {
     use super::*;
@@ -1261,5 +1293,23 @@ mod subscription_metadata_tests {
         assert_eq!(entry["providerCapabilities"]["levels"], json!(["high"]));
         assert_eq!(entry["id"], "exact-model");
         assert_eq!(entry["protocols"], json!(["openai-responses"]));
+    }
+
+    #[test]
+    fn official_level_aliases_fill_missing_service_facts() {
+        let mut entry = json!({});
+        merge_known_capability(
+            &mut entry,
+            &json!({"reasoning":true}),
+            Some(&json!({"capability":{
+                "levels":["none","low","high","max"],
+                "defaultLevel":"high"
+            }})),
+        );
+        assert_eq!(
+            entry["reasoningLevels"],
+            json!(["none", "low", "high", "max"])
+        );
+        assert_eq!(entry["defaultReasoningLevel"], "high");
     }
 }
