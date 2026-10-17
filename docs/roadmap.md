@@ -1,5 +1,8 @@
 # Roadmap
 
+> 本文保留早期设计与实现记录。
+> 当前架构见 [运行架构](architecture.md)，验证状态见 [公开版整合验收](public-sync-acceptance.md)。
+
 ## 0.1.x
 
 - 稳定独立 appId、数据目录、端口和构建流程；

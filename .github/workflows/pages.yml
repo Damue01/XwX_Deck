@@ -64,6 +64,12 @@ jobs:
       - name: Assemble website and documentation
         run: cp -R docs/.vitepress/dist test-results/site-preview/docs
 
+      - name: Verify documentation navigation and typography
+        env:
+          XWX_PLAYWRIGHT_MODULE: ${{ runner.temp }}/site-browser/node_modules/playwright/index.mjs
+          XWX_PLAYWRIGHT_CHANNEL: chromium
+        run: npm run test:docs
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

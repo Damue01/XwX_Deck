@@ -60,9 +60,9 @@ try {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(url, { waitUntil: 'networkidle' });
     assert.equal(page.url(), url + '/');
-    assert.equal(await page.title(), 'XwX Deck：让 AI 工具更顺手');
+    assert.equal(await page.title(), 'XwX Deck：好工具，更简单');
     await page.getByRole('heading', { level: 1 }).waitFor();
-    assert.match(await page.getByRole('heading', { level: 1 }).textContent(), /让 AI 工具\s*更顺手/);
+    assert.match(await page.getByRole('heading', { level: 1 }).textContent(), /好工具，\s*更简单/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     const windowsBox = await page.locator('[data-download="windows"]').boundingBox();
     const macBox = await page.locator('[data-download="mac"]').boundingBox();

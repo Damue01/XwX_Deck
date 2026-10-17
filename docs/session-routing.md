@@ -1,5 +1,8 @@
 # Trace session routing decisions
 
+> 本文保留早期设计与实现记录。
+> 当前架构见 [运行架构](architecture.md)，验证状态见 [公开版整合验收](public-sync-acceptance.md)。
+
 The current runtime uses Rust. Native conversation identity is handled in
 [conversation_identity.rs](https://github.com/Damue01/XwX_Deck/blob/main/src-native/src/conversation_identity.rs).
 Auxiliary request classification is handled in

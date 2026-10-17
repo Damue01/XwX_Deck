@@ -562,7 +562,7 @@
     {
       "id": "MO03",
       "priority": "P0",
-      "requirement": "声明的协议与实际 URL 一致。转换行为与“需 Trace”提示一致。；并行工具参数双向保留，默认输出预算遵循已知上限",
+      "requirement": "声明的协议与实际 URL 一致。转换行为与“需 Trace”提示一致。并行工具参数双向保留，默认输出预算遵循已知上限。",
       "moduleId": "MO",
       "automation": {
         "scripts": [

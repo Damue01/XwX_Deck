@@ -1,39 +1,58 @@
----
-layout: home
+# 快速开始
 
-hero:
-  name: XwX Deck
-  text: 轻松配置模型，清楚掌握用量
-  tagline: 为 Claude 与 ChatGPT 配置第三方 API，查看请求、Token、费用估算与耗时。
-  image:
-    src: /icon.png
-    alt: XwX Deck
-  actions:
-    - theme: brand
-      text: 下载与安装
-      link: /download
-    - theme: alt
-      text: 快速开始
-      link: /getting-started
-    - theme: alt
-      text: GitHub
-      link: https://github.com/Damue01/XwX_Deck
+连接一个服务，选择模型，再按需开启请求追踪。
 
-features:
-  - title: 简单接入
-    details: 添加连接时预填 DeepSeek 官方地址，填入自己的密钥即可保存，也可修改为其他 API 服务。
-  - title: 用量可见
-    details: 按需开启追踪，查看请求模型、Token、费用估算与耗时。
-  - title: 问题可查
-    details: 查看实际请求和上游错误，配置操作有备份与恢复路径。
----
+XwX Deck 管理客户端的模型连接。
+请先安装 Claude 或 Codex，再完成以下操作。
 
-## 当前状态
+## 1. 安装与准备
 
-当前公开版本为 `1.1.1`，安装包见 [GitHub Releases](https://github.com/Damue01/XwX_Deck/releases/latest)。
-macOS 安装包已完成 Developer ID 签名与 Apple 公证。
-Windows 安装包当前未做 Authenticode 签名。
+从 [下载与安装](download.md) 获取对应系统的安装包。
+准备好模型服务的 API 密钥，或已有的官方授权账号。
+API 指程序调用接口，密钥用于验证调用身份。
 
-## 开源许可
+新安装的服务列表为空。
+首次引导可以检测客户端，并导入已有配置。
+也可以跳过，稍后在设置中添加。
 
-项目按 [Apache License 2.0](https://github.com/Damue01/XwX_Deck/blob/main/LICENSE) 发布。
+## 2. 添加模型服务
+
+1. 打开设置，点击“添加配置”。
+2. 选择 API 服务，填写名称、URL 和 Key。
+3. 保存配置，返回模型页。
+
+URL 是服务商提供的接口地址，Key 是 API 密钥。
+服务预设只填写表单，保存后才会创建连接。
+保存不会自动发送模型测试请求。
+
+已有本机配置时，可以选择“导入配置”。
+导入保留来源文件，也不会自动切换服务。
+详细步骤见 [服务与配置](connections.md)。
+
+## 3. 选择模型
+
+在模型页选择客户端，再选择服务和模型。
+Claude 和 Codex 可以使用不同的服务。
+模型列表来自当前连接的目录。
+
+标记“需 Trace”的模型依赖本机网关。
+网关（Gateway）负责转发请求和适配协议。
+按提示开启 Trace 后，再到客户端发起对话。
+具体说明见 [模型与客户端](models-and-clients.md)。
+
+## 4. 查看请求
+
+Trace 是请求追踪功能。
+开启后，在客户端新建一段测试对话。
+打开仪表盘，核对实际模型、上游服务和请求结果。
+
+仪表盘显示请求、响应、Token、费用和耗时。
+Token 是模型处理文本等内容时使用的计量单位。
+参考费用与服务商实际账单分别核对。
+数据含义见 [Trace 与用量](trace-and-usage.md)。
+
+## 接下来
+
+- 管理官方账号和自动切换，见 [账号与服务切换](accounts-and-switching.md)。
+- 请求失败或配置未生效，见 [常见问题](troubleshooting.md)。
+- 按功能查阅说明，见 [用户手册](user-manual.md)。

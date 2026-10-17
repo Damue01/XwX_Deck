@@ -53,8 +53,12 @@ for (const relative of docs) {
   }
 }
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-for (const phrase of ['XwX Deck',packageJson.version,'Apache License 2.0','app.xwxdeck.desktop','45233-45242','客户端配置同步','对话诊断','GitHub Releases']) {
+for (const phrase of ['XwX Deck','好工具，更简单','Apache License 2.0','https://xwxdeck.com/docs/','GitHub Releases']) {
   if (!readme.includes(phrase)) errors.push(`README.md: missing ${phrase}`);
+}
+const development = fs.readFileSync(path.join(root, 'docs/development.md'), 'utf8');
+for (const phrase of [packageJson.version,'app.xwxdeck.desktop','45233-45242','客户端配置同步','对话诊断']) {
+  if (!development.includes(phrase)) errors.push(`docs/development.md: missing ${phrase}`);
 }
 const manual = fs.readFileSync(path.join(root, 'docs/user-manual.md'), 'utf8');
 if (!manual.includes(`适用版本：XwX Deck ${packageJson.version}`)) errors.push('docs/user-manual.md: version line does not match package.json');

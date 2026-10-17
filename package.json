@@ -63,7 +63,8 @@
     "update:pricing": "node tools/dev/update-model-pricing.mjs",
     "supplement:pricing": "node tools/dev/supplement-model-pricing.mjs",
     "build:site": "node tools/site/build-app-preview.mjs",
-    "test:site": "node tools/site/site-browser-test.mjs"
+    "test:site": "node tools/site/site-browser-test.mjs",
+    "test:docs": "node tools/site/docs-browser-test.mjs"
   },
   "devDependencies": {
     "@base-ui/react": "^1.6.0",

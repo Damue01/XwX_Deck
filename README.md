@@ -1,143 +1,70 @@
-# XwX Deck
+<p align="center">
+  <img src="assets/icon.png" width="72" height="72" alt="XwX Deck 图标">
+</p>
 
-XwX Deck 是一个独立的本地 Claude / ChatGPT 请求追踪与模型网关管理客户端。
+<h1 align="center">XwX Deck</h1>
+<p align="center"><strong>好工具，更简单</strong></p>
+<p align="center">管理 Claude 与 Codex 的模型连接，看清每一次请求。</p>
 
-项目使用 [Apache License 2.0](LICENSE) 开源。
+<p align="center">
+  <a href="https://xwxdeck.com">官网</a>&nbsp;&nbsp;&nbsp;
+  <a href="https://xwxdeck.com/docs/">使用文档</a>&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/Damue01/XwX_Deck/releases/latest">下载</a>&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/Damue01/XwX_Deck/issues">问题反馈</a>
+</p>
 
-当前源码版本：`1.0.0`。
+[![Trace 请求与用量预览](assets/github/trace-preview.png)](https://xwxdeck.com/#experience)
 
-本仓库按能力吸收上游修复，维护独立 Git 历史、应用身份和发布渠道。具体范围见 [技术吸收记录](docs/upstream-port.md)。当前独立版包含：
+官网演示中的真实请求记录，已脱敏。点击图片体验。
 
-- Trace 请求追踪与本地仪表盘；
-- Claude / ChatGPT 客户端接入；
-- 模型服务配置、模型选择与协议适配；
-- 本地 Gateway、会话归并与上下文续接；
-- 用量与分档/时段计费估算、模型能力注册表；
-- 经当前 Gateway 实测的推理能力层与模型档位诊断工具；
-- 当前问题与最近失败诊断、手动 Trace 索引修复、安全重置和退出恢复；
-- 外观、中英文语言、数据目录、开机启动等基础设置。
+## 下载与安装
 
-独立版不包含：
+[下载 Windows x64 版](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64.exe)　
+[下载 macOS Apple Silicon 版](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-mac-arm64.dmg)
 
-- 工具页与 ChatGPT 对话诊断；
-- 客户端配置同步；
-- Excel / CSV 转 Markdown。
+Windows 下载后即可运行；macOS 打开 DMG，拖入“应用程序”。
+当前提供以上两个平台的安装包。
+安装与更新步骤见 [下载与安装](https://xwxdeck.com/docs/download)。
+所有已发布版本见 [GitHub Releases](https://github.com/Damue01/XwX_Deck/releases)。
 
-## 下载与开始使用
+## 让连接与请求更清楚
 
-从 [GitHub Releases](https://github.com/Damue01/XwX_Deck/releases) 下载对应系统的安装包，并核对 SHA-256。macOS Apple Silicon 使用 arm64 DMG，Windows 使用 EXE。完整说明见 [下载与安装](docs/download.md) 和 [快速开始](docs/getting-started.md)。
+- **选择模型服务。** 为 Claude 和 Codex 分别管理连接与模型，保留每个连接的选择。
+- **查看真实请求。** 通过 Trace 核对请求、响应、Token、参考费用和耗时。
+- **管理本地数据。** 设置、记录与日志保存在本机，存储容量和清理方式由你决定。
 
-| 系统 | 最新版下载 | 安装与后续更新 |
-| --- | --- | --- |
-| Windows x64 | [下载 EXE](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64.exe) | 放在可写目录后双击运行；支持应用内自动替换和重启。 |
-| Mac Apple Silicon（M 系列） | [下载 DMG](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-mac-arm64.dmg) | 拖入“应用程序”；应用内下载并校验更新后，手动拖拽替换。 |
+XwX Deck 配合已有 AI 客户端使用。
+模型请求发送至当前选择的服务。
+参考费用与服务商实际账单分别核对。
+支持范围见 [功能与范围](https://xwxdeck.com/docs/about)。
 
-当前没有 Intel Mac、Windows ARM64 或 Linux 安装包。新 Mac 候选包采用 Apple Developer ID 签名，并单独完成公证。[安装说明](docs/macos-first-run.md) 介绍拖拽安装流程。[版本记录与文件校验](https://github.com/Damue01/XwX_Deck/releases/latest) 集中在 Release 页面。
+## 开始使用
 
-新安装没有 API 连接。首次引导可检测并导入 Magpie、CC Switch 或客户端的已有配置；源文件保留，不自动切换连接。“设置 → 添加配置”提供 API 服务、订阅账号、我的配置和客户端管理四个标签。服务预设默认只显示名称、URL、Key，已有明确协议与模型设置继续保留。ChatGPT、Claude、GitHub Copilot、Grok、Cursor 订阅分别合并为一个模型服务，可管理多个账号和轮换策略；不支持的官方额度显示未知。
+1. 安装 XwX Deck，以及需要使用的 Claude 或 Codex 客户端。
+2. 在设置中添加自己的服务，或导入已有配置。
+3. 在模型页选择服务与模型，按需开启 Trace，再到客户端发起对话。
 
-在模型页为 ChatGPT 和 Claude 分别选择服务和模型。每个连接独立记住选择，目录离线不会撤销已保存的配置。需要协议转换的模型会显示「需 Trace」；运行中的客户端可能缓存旧连接，切换后未生效时需完整退出并重新打开客户端。
+新安装的服务列表为空。
+导入会保留来源文件，也不会自动切换服务。
+完整操作见 [快速开始](https://xwxdeck.com/docs/)。
 
-Trace 新配置默认上限为 1 GB，默认开启超出上限自动清理；已有用户保存的容量与清理选择保留。可在设置中调整容量或关闭自动清理。手动删除和索引修复由用户发起。Trace 可能包含提示词、工具结果和响应正文，共享前请检查内容。
+## 使用文档
 
-## 开发与预览
+- [服务与配置](https://xwxdeck.com/docs/connections)
+- [模型与客户端](https://xwxdeck.com/docs/models-and-clients)
+- [账号与服务切换](https://xwxdeck.com/docs/accounts-and-switching)
+- [Trace 与用量](https://xwxdeck.com/docs/trace-and-usage)
+- [设置与本地数据](https://xwxdeck.com/docs/settings-and-data)
+- [常见问题](https://xwxdeck.com/docs/troubleshooting)
 
-需要 Node.js 22.12+、npm 11 和 Rust stable；Mac 需要 Command Line Tools，Windows 需要 MSVC 与 WebView2：
+<details>
+<summary>开发与贡献</summary>
 
-```bash
-npm ci
-npm run compile
-npm test
-npm run docs:build
-npm run build:site
-```
+后端使用 Rust/Tauri，前端使用 React 和 TypeScript。
+构建环境、验证入口和运行边界见 [开发说明](docs/development.md)。
+提交改动前，请阅读 [贡献指南](CONTRIBUTING.md) 和 [开发约定](AGENTS.md)。
 
-Rust 原生开发模式（隔离配置）：
+</details>
 
-```bash
-npm run dev
-```
-
-`build:site` 生成官网及设置界面演示。
-演示用于检查布局与交互。
-真实配置和请求由原生回归验证。
-
-应用后端统一使用 Rust/Tauri。
-前端使用 React 和 TypeScript。
-旧 TypeScript 后端已移除。
-Node.js 仅用于开发、构建与测试。
-详见 [原生运行时](tools/native/README.md)。
-
-提交前的常规检查：
-
-```bash
-npm run check:quality
-npm run check:test-plan
-npm run check:workflows
-npm run docs:build
-```
-
-本次模型服务入口、切换路由、官方登录和 Trace 设置的实现与测试入口见 [本次改动源码导读](docs/provider-setup-and-routing.md)。维护约定见 [AGENTS.md](AGENTS.md)、[产品范围](PRODUCT.md) 和 [交互与设计约定](docs/ux-product-requirements.md)。
-
-## 独立运行边界
-
-- 应用 ID：`app.xwxdeck.desktop`
-- 数据目录命名空间：`xwx-deck`
-- Gateway 默认端口段：`45233-45242`
-- 当前版本：`1.0.0`
-- 自动更新：默认读取 GitHub Releases；可用 `XWX_DECK_UPDATE_SERVER_URL` 覆盖
-
-这些设置用于避免与内部 XwX Deck 安装共享配置、Trace 数据、单实例身份和 Gateway 端口。
-
-## 构建
-
-```bash
-npm run build:mac:arm64
-npm run build:win
-```
-
-Windows 制品必须在原生 Windows x64 主机验证；macOS 制品的签名、公证状态应按实际构建环境单独说明。
-
-打包后验证真实安装包中的界面、Trace 请求和后台 Gateway：
-
-```bash
-npm run build:rust:pilot
-npm run test:rust
-```
-
-可用 `XWX_DECK_RELEASE_DIR` 指向另外的制品目录。上述命令使用隔离数据，不替换已安装应用。
-
-## GitHub
-
-- Pull Request 和 `main` 推送运行 CI、测试、文档构建和公共边界检查。
-- `main` 文档通过 GitHub Pages 发布。
-- `v*.*.*` 标签触发 Windows x64 和 macOS arm64 原生构建。
-- Release workflow 只创建 **Draft Release**；人工核对制品后再发布。
-- GitHub Release 同时提供更新清单、SHA-256 和构建来源证明。
-
-## macOS 签名包
-
-使用 `npm run build:native:mac:signed` 构建签名候选。每个包单独完成 Apple 公证、票据装订和 Gatekeeper 验证。构建不发布线上版本。
-
-用户确认安装包来自本仓库并核对 SHA-256 后，可以按 [macOS 首次运行说明](docs/macos-first-run.md) 手动处理下载隔离属性。
-
-## 服务商兼容
-
-可添加多个服务连接，并为 Claude 与 ChatGPT 分别选择。新安装不预置 API 服务商。连接配置包括：
-
-- 名称；
-- URL；
-- Key；
-- 接口（自动识别、Responses、Chat Completions 或 Anthropic Messages）；
-- 可选模型 ID，用于没有模型目录的服务。
-
-服务端声明的逐模型协议优先；缺失声明时参考明确指定的接口、目录端点证据和已核验的能力元数据，未知情况保留连接默认值。不会仅凭服务名称猜测协议。明确指定接口时保留 API 路径前缀。每个连接分别保存模型和上下文窗口，官方模型目录读取本地客户端缓存。
-
-模型目录返回 404/405 时保持为空，可手工填写实际模型或 Endpoint ID；不会生成虚假的单模型目录。兼容边界见 [服务商兼容说明](docs/provider-compatibility.md)。
-
-更多说明见 [docs/README.md](docs/README.md)。
-
-当前源码采用单一 Rust/Tauri 后端。
-前端与共享资源不再依赖旧 TypeScript 后端。
-最新客户端、统计和诊断修复见 [共通修复验收](docs/public-client-configuration-acceptance.md)。
-整体功能与此前结果见 [公开版整合验收](docs/public-sync-acceptance.md)。
+项目采用 [Apache License 2.0](LICENSE)。
+安全问题请按 [安全说明](SECURITY.md) 反馈。

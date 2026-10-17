@@ -1,5 +1,8 @@
 # Codex 上下文压缩、Rollout 与跨上游可移植性
 
+> 本文保留早期设计与实现记录。
+> 当前架构见 [运行架构](architecture.md)，验证状态见 [公开版整合验收](public-sync-acceptance.md)。
+
 > 核对日期：2026-08-15
 >
 > 适用范围：XwX Deck 1.1.1 当前工作区
