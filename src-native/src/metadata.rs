@@ -6,7 +6,6 @@ use std::sync::atomic::AtomicBool;
 struct Endpoints {
     events: String,
     models: String,
-    lite: String,
     reconnect: Duration,
     fallback: Duration,
 }
@@ -57,14 +56,18 @@ impl Metadata {
             Some(Endpoints {
                 events: format!("{base}/events"),
                 models: format!("{base}/models-dev"),
-                lite: format!("{base}/litellm"),
                 reconnect: Duration::from_millis(150),
                 fallback: Duration::from_millis(2000),
             })
         } else if isolated && !live {
             None
         } else {
-            Some(Endpoints{events:String::new(),models:"https://models.dev/api.json".into(),lite:"https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json".into(),reconnect:Duration::from_secs(60),fallback:Duration::from_secs(6*60*60)})
+            Some(Endpoints {
+                events: String::new(),
+                models: "https://models.dev/api.json".into(),
+                reconnect: Duration::from_secs(60),
+                fallback: Duration::from_secs(6 * 60 * 60),
+            })
         };
         Ok(Self {
             root,
@@ -175,32 +178,30 @@ impl Metadata {
         let mut cache = serde_json::from_str::<Value>(&before)
             .ok()
             .filter(|v| v["version"] == 1)
-            .unwrap_or(json!({"version":1,"modelsDev":[],"litellm":[]}));
+            .unwrap_or(json!({"version":1,"modelsDev":[]}));
+        if let Some(cache) = cache.as_object_mut() {
+            // Protocol guesses from the retired LiteLLM source must not survive
+            // a refresh, even when the rest of the capability cache is reused.
+            cache.remove("litellm");
+        }
         let pricing_path = self.root.join("pricing-cache/models-dev-pricing.json");
         let pricing_before = read(&pricing_path)?.unwrap_or_default();
         let previous_price = serde_json::from_str::<Value>(&pricing_before)
             .ok()
             .filter(|v| v["version"] == 2 && v["referenceCatalogVersion"] == 1)
             .unwrap_or(Value::Null);
-        // Capability refresh must retry both sources even when a prior memory
-        // snapshot exists. A failed source retains only its own last good rows.
-        let (models, lite) = tokio::join!(
-            self.fetch(
+        // Capability refresh must retry the source even when a prior memory
+        // snapshot exists. A failed refresh retains the last good rows.
+        let models = self
+            .fetch(
                 &endpoints.models,
                 if prices && !capabilities {
                     previous_price["etag"].as_str()
                 } else {
                     None
-                }
-            ),
-            async {
-                if capabilities {
-                    self.fetch(&endpoints.lite, None).await
-                } else {
-                    Ok(None)
-                }
-            }
-        );
+                },
+            )
+            .await;
         let mut errors = vec![];
         let mut changed = false;
         match models {
@@ -223,19 +224,6 @@ impl Metadata {
                         fs::create_dir_all(pricing_path.parent().unwrap()).map_err(err)?;
                         write_checked(&pricing_path,&pricing_before,&json!({"version":2,"referenceCatalogVersion":1,"sourceUrl":endpoints.models,"fetchedAt":chrono::Utc::now().to_rfc3339(),"etag":etag,"rules":rules}).to_string())?;
                     }
-                }
-            }
-            Ok(None) => {}
-            Err(error) => errors.push(error),
-        }
-        match lite {
-            Ok(Some((value, _))) => {
-                let rows = model_metadata::parse_lite(&value);
-                if rows.is_empty() {
-                    errors.push("LiteLLM 未提供有效能力".into());
-                } else {
-                    cache["litellm"] = json!(rows);
-                    changed = true;
                 }
             }
             Ok(None) => {}
@@ -277,7 +265,7 @@ impl Metadata {
             store.prices = storage::load_prices(&self.root);
             store.refresh_legacy_costs();
         }
-        let result = json!({"status":if errors.is_empty(){"ready"}else{"partial"},"atMs":millis(),"revision":event["revision"],"reason":event["reason"],"topics":topics,"errors":errors,"refreshedModels":refreshed_models,"modelsDevCount":cache["modelsDev"].as_array().map(Vec::len).unwrap_or(0),"litellmCount":cache["litellm"].as_array().map(Vec::len).unwrap_or(0)});
+        let result = json!({"status":if errors.is_empty(){"ready"}else{"partial"},"atMs":millis(),"revision":event["revision"],"reason":event["reason"],"topics":topics,"errors":errors,"refreshedModels":refreshed_models,"modelsDevCount":cache["modelsDev"].as_array().map(Vec::len).unwrap_or(0)});
         write(
             &self.root.join("metadata-refresh-state.json"),
             &result.to_string(),
@@ -495,9 +483,6 @@ mod tests {
         let endpoints = metadata.endpoints.unwrap();
         assert!(endpoints.events.is_empty());
         assert_eq!(endpoints.models, "https://models.dev/api.json");
-        assert!(endpoints
-            .lite
-            .starts_with("https://raw.githubusercontent.com/"));
         assert_eq!(endpoints.fallback, Duration::from_secs(6 * 60 * 60));
     }
     #[test]

@@ -137,7 +137,7 @@ try {
   await rpc('switchClientProvider', {client: 'codex', providerId: codexId});
   await rpc('switchClientProvider', {client: 'claude', providerId: claudeId});
   await rpc('updateClaudeModels', {sonnet:'fixture-model', opus:'fixture-model', haiku:'fixture-model'});
-  await writeFile(join(root, 'model-capabilities-cache.json'), JSON.stringify({version: 1, modelsDev: ['fixture-model', 'compatible-model'].map(modelId => ({modelId, providerId: 'fixture', sourceId: 'fixture/' + modelId, canonicalModelId: 'fixture/' + modelId, aliases: [modelId], referencePriority: 0, capability: {vision: true, toolCalling: true, reasoning: false, contextWindow: 32768, maxOutputTokens: 4096, inputModalities: ['text', 'image']}})), litellm: []}));
+  await writeFile(join(root, 'model-capabilities-cache.json'), JSON.stringify({version: 1, modelsDev: ['fixture-model', 'compatible-model'].map(modelId => ({modelId, providerId: 'fixture', sourceId: 'fixture/' + modelId, canonicalModelId: 'fixture/' + modelId, aliases: [modelId], referencePriority: 0, capability: {vision: true, toolCalling: true, reasoning: false, contextWindow: 32768, maxOutputTokens: 4096, inputModalities: ['text', 'image']}}))}));
   await rpc('fetchProviderModels', {providerId: codexId, refresh: true});
   const directCodex = await runCli(codex, codexArgs);
   assert.ok(directCodex.stdout.includes(answer)); assert.equal(requests.at(-1).auth, 'Bearer ' + token);

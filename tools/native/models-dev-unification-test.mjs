@@ -8,12 +8,11 @@ import {startNativeRpc} from './rpc-test-session.mjs';
 const root=await mkdtemp(join(await realpath(tmpdir()),'xwx-model-unify-'));
 const model='deepseek-v4-1-flash-260910';
 let rate=2,release,entered,hold=true,offline=false;
-const requests=[],unexpected=[];let liteRequests=0;
+const requests=[],unexpected=[];
 const streams=new Set();
 const server=createServer(async(req,res)=>{
  if(req.url==='/events'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': connected\n\n');streams.add(res);res.on('close',()=>streams.delete(res));return;}
  if(req.url==='/models-dev'){res.writeHead(offline?503:200,{'content-type':'application/json'});res.end(JSON.stringify({deepseek:{models:{'deepseek-flash':{canonical_model_id:'deepseek/deepseek-v4.1-flash',cost:{input:rate,output:rate*5,cache_read:.1,cache_write:rate},limit:{context:1000000},tool_call:true}}},azure:{models:{'azure-flash':{canonical_model_id:'deepseek/deepseek-v4.1-flash',cost:{input:.01,output:.01}}}},relay:{models:{'custom-flash':{canonical_model_id:'deepseek/deepseek-v4.1-flash',cost:{input:.001,output:.001}}}}}));return;}
- if(req.url==='/litellm'){liteRequests++;res.writeHead(offline?503:200,{'content-type':'application/json'});res.end(JSON.stringify({[model]:{litellm_provider:'deepseek',mode:'responses',supports_function_calling:true,max_input_tokens:1000000,max_output_tokens:100000}}));return;}
  if(req.url==='/v1/models'){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:model,pricing:{input:99,output:999,currency:'USD',unit:'per_million_tokens'}}]}));return;}
  if(req.method!=='POST'||req.url!=='/v1/responses'){unexpected.push({method:req.method,path:req.url});res.writeHead(404);res.end('Unexpected isolated fixture route');return;}
  let body='';for await(const chunk of req)body+=chunk;requests.push(JSON.parse(body));assert.equal(requests.at(-1).model,model);
@@ -27,7 +26,7 @@ async function capture(){const url=await app.rpc('getDashboardUrl');for(let n=0;
 try {
  await app.rpc('getState');await app.rpc('refreshMetadata',{topics:['pricing']});
  const priceBeforeCapabilities=await readFile(join(root,'pricing-cache/models-dev-pricing.json'),'utf8');
- await app.rpc('refreshMetadata',{topics:['capabilities']});assert.ok(liteRequests>0,'capability refresh must exercise the bodyless LiteLLM GET endpoint');
+ await app.rpc('refreshMetadata',{topics:['capabilities']});
  assert.equal(await readFile(join(root,'pricing-cache/models-dev-pricing.json'),'utf8'),priceBeforeCapabilities,'capability-only refresh must preserve captured pricing');
  await app.rpc('saveProvider',{id:'standard-fixture',displayName:'Standard_fixture',adapter:'responses',baseUrl:origin+'/v1',bearerToken:'synthetic-only',codexModel:model});
  await app.rpc('fetchProviderModels',{providerId:'standard-fixture',refresh:true});

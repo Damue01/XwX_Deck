@@ -29,7 +29,6 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify(offline ? {} : catalog)); return;
   }
   if (req.url.endsWith('/models')) { res.setHeader('content-type','application/json'); res.end(JSON.stringify({data:fixtures.map(item=>({id:item.model}))})); return; }
-  if (req.url === '/litellm') {res.writeHead(503);res.end('{}');return;}
   let source = ''; for await (const chunk of req) source += chunk;
   const body = JSON.parse(source); requests++;
   assert.equal(req.url, '/v1/responses');

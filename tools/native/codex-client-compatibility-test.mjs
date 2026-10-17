@@ -25,7 +25,7 @@ try{
  await app.rpc('getState');
  const native={models:[{slug:'gpt-6.1-sol',context_window:500000,model_messages:{instructions_template:'synthetic current native instructions',permissions:{fixture:true}}},{slug:'codex-auto-review',context_window:272000,model_messages:{instructions_template:'synthetic review instructions'},visibility:'hide'},{slug:'legacy-template',base_instructions:'synthetic legacy instructions'},{slug:'unknown-template',visibility:'list'}]};
  await writeFile(join(home,'models_cache.json'),JSON.stringify(native));
- const cap={version:1,modelsDev:[{providerId:'openai',modelId:'gpt-6.1-sol',canonicalModelId:'openai/gpt-6.1-sol',capability:{contextWindow:1050000}}],litellm:[]};
+ const cap={version:1,modelsDev:[{providerId:'openai',modelId:'gpt-6.1-sol',canonicalModelId:'openai/gpt-6.1-sol',capability:{contextWindow:1050000}}]};
  await writeFile(join(root,'model-capabilities-cache.json'),JSON.stringify(cap));
  await app.rpc('saveProvider',{id:'relay',displayName:'Relay fixture',adapter:'responses',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,bearerToken:'synthetic-key',codexModel:'gpt-6.1-sol'});
  await app.rpc('switchClientProvider',{client:'codex',providerId:'relay'});

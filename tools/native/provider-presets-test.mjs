@@ -13,7 +13,7 @@ const bundled = await esbuild.build({ stdin: { contents: "export * from './src/s
 const { OFFICIAL_PROVIDERS, newProviderDraft, isCodingPlanConnection } = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
 const expectedPaths = {
   deepseek: '/responses', qwen: '/compatible-mode/v1/responses', ark: '/api/v3/responses',
-  zhipu: '/api/paas/v4/chat/completions', kimi: '/v1/chat/completions', minimax: '/v1/chat/completions', tencent: '/v1/chat/completions',
+  zhipu: '/api/paas/v4/chat/completions', kimi: '/v1/responses', minimax: '/v1/chat/completions', tencent: '/v1/chat/completions',
   'openai-api': '/v1/responses', anthropic: '/v1/messages', siliconflow: '/v1/chat/completions',
   groq: '/openai/v1/chat/completions', mistral: '/v1/chat/completions', xai: '/v1/responses',
   'qwen-coding': '/v1/chat/completions', 'zhipu-coding': '/api/v1/responses',

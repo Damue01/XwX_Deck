@@ -203,7 +203,6 @@ fn enrich(mut entry: Value, remote: &Value) -> Value {
         .cloned()
         .unwrap_or(Value::Null);
     let models = remote_capability(remote, "modelsDev", &id);
-    let lite = remote_capability(remote, "litellm", &id);
     let provider = entry["providerCapabilities"].clone();
     let mut sources = serde_json::Map::new();
     let mut missing = vec![];
@@ -218,8 +217,7 @@ fn enrich(mut entry: Value, remote: &Value) -> Value {
             cap.get(*key)
                 .or_else(|| {
                     if source == cached_source
-                        && !(source == "models.dev" && remote["modelsDev"].is_array()
-                            || source == "litellm" && remote["litellm"].is_array())
+                        && !(source == "models.dev" && remote["modelsDev"].is_array())
                         && ["models.dev"].contains(&cached_source.as_str())
                     {
                         cached_value.as_ref()
@@ -329,8 +327,6 @@ fn enrich(mut entry: Value, remote: &Value) -> Value {
         });
         if let Some(published) = published.filter(|p| !p.is_empty()) {
             entry["officialProtocols"] = json!(published);
-        } else if lite["openAiProtocols"].is_array() {
-            entry["officialProtocols"] = lite["openAiProtocols"].clone();
         }
     }
     entry["capabilitySources"] = Value::Object(sources);
@@ -872,7 +868,7 @@ mod client_contract_tests {
                 "catalogEndpoints":[],
                 "protocolsDeclared":false
             }),
-            &json!({"modelsDev":[],"litellm":[]}),
+            &json!({"modelsDev":[]}),
         );
         assert!(entry["officialProtocols"]
             .as_array()
@@ -919,7 +915,7 @@ mod client_contract_tests {
                 "catalogEndpoints":[],
                 "protocolsDeclared":false
             }),
-            &json!({"modelsDev":[],"litellm":[]}),
+            &json!({"modelsDev":[]}),
         );
         assert!(flash["officialProtocols"]
             .as_array()
@@ -962,6 +958,49 @@ mod client_contract_tests {
                 "anthropic-messages"
             ),
             "anthropic-messages"
+        );
+    }
+    #[test]
+    fn unknown_models_use_the_connection_default_instead_of_a_guess() {
+        let entry = enrich(
+            json!({
+                "id":"aggregator-unknown-model",
+                "catalogEndpoints":[],
+                "protocolsDeclared":false
+            }),
+            &json!({
+                "modelsDev":[],
+                "litellm":[{
+                    "modelId":"aggregator-unknown-model",
+                    "capability":{"openAiProtocols":["chat-completions"]}
+                }]
+            }),
+        );
+        assert!(
+            entry["officialProtocols"].is_null(),
+            "a legacy protocol cache must not supply a guessed protocol"
+        );
+        assert_eq!(
+            entry_wire(
+                &Provider {
+                    codex_api_format: "responses".into(),
+                    ..Provider::default()
+                },
+                Some(&entry),
+                "responses"
+            ),
+            "responses"
+        );
+        assert_eq!(
+            entry_wire(
+                &Provider {
+                    codex_api_format: "chat-completions".into(),
+                    ..Provider::default()
+                },
+                Some(&entry),
+                "responses"
+            ),
+            "chat-completions"
         );
     }
     fn efforts(levels: &[&str], reasoning: bool, base_url: &str, source: &str) -> Vec<String> {
@@ -1045,7 +1084,7 @@ mod client_contract_tests {
         };
         let explicit = enrich(
             json!({"id":"deepseek-v4-pro","providerCapabilities":{"reasoning":true,"levels":[]}}),
-            &json!({"modelsDev":[],"litellm":[]}),
+            &json!({"modelsDev":[]}),
         );
         assert_eq!(
             explicit["capabilitySources"]["reasoningLevels"],
@@ -1062,7 +1101,7 @@ mod client_contract_tests {
             "aliases":["deepseek/deepseek-v4-pro","deepseek-v4-pro"],
             "referencePriority":0,
             "capability":{"reasoning":true,"levels":["low","high","max"]}
-        }],"litellm":[]});
+        }]});
         let resolved = enrich(json!({"id":"deepseek-v4-pro"}), &remote);
         assert_eq!(
             resolved["capabilitySources"]["reasoningLevels"],

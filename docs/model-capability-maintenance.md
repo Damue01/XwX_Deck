@@ -79,9 +79,10 @@ XwX Deck 默认没有内部通知地址。
 其次为 Chat Completions，再次为 Messages。
 没有有效声明时，使用连接配置的协议。
 
-LiteLLM 仅保留受限的协议补充数据。
-它不替代 models.dev 的参数和参考价格。
-补充数据也不能覆盖服务的明确协议声明。
+协议没有可依赖的第三个聚合来源。
+models.dev 和 OpenRouter 的公开模型资料都不声明 Responses、Chat Completions 或 Messages 的线路协议。
+缺少服务声明和已核验官方记录时，使用连接配置的协议。
+不从相似型号或聚合目录推测协议。
 实际转发仍以当前连接和请求入口为准。
 
 推理开关与推理力度是不同能力。
@@ -140,7 +141,7 @@ HTTP 状态本身不能证明是否收费。
 | --- | --- |
 | `tools/native/catalog-contract-test.mjs` | 服务显式字段与来源优先级 |
 | `tools/native/catalog-contract-edges-test.mjs` | 缺失字段、冲突与目录边界 |
-| `tools/native/models-dev-unification-test.mjs` | 主来源与协议补充的分工 |
+| `tools/native/models-dev-unification-test.mjs` | 能力主来源与协议边界 |
 | `tools/native/price-catalog-test.mjs` | 价格单位、来源与匹配 |
 | `tools/native/trace-billing-test.mjs` | 每请求快照与计费完整性 |
 | `tools/native/trace-cache-usage-test.mjs` | 缓存用量与重复累计保护 |

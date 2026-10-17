@@ -9,7 +9,6 @@ const server=createServer(async(req,res)=>{
  res.setHeader('content-type','application/json');
  if(req.url==='/events'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': fixture\n\n');return;}
  if(req.url==='/models-dev'){res.end(JSON.stringify({openai:{models:{'gpt-audit':{reasoning:true,limit:{context:1050000}}}},deepseek:{models:{'audit-model':{limit:{context:stage?768000:1000000},modalities:{input:stage?['text']:['text','image']}}}}}));return;}
- if(req.url==='/litellm'){res.end('{}');return;}
  directoryCalls.push(req.url);if(heldDirectory){const gate=heldDirectory;heldDirectory=null;observeDirectory();await gate;}res.statusCode=failDirectory?503:200;res.end(JSON.stringify({data:[{id:'gpt-audit',...(controls===0?{supports_search_tool:true,support_verbosity:true,default_verbosity:'high',auto_compact_token_limit:410000,effective_context_window_percent:93}:controls===1?{supports_search_tool:false,support_verbosity:false}:controls===2?{native_endpoints:['chat-completions'],supports_search_tool:true,support_verbosity:true,context_window:128000,auto_compact_token_limit:200000}:controls===3?{supports_search_tool:'true',support_verbosity:'true',effective_context_window_percent:101}:{} )},{id:'audit-model'}]}));
 });server.listen(0,'127.0.0.1');await once(server,'listening');const base=`http://127.0.0.1:${server.address().port}`;
 const app=startNativeRpc(root,['--metadata-test-endpoint',base]);let passed=false;

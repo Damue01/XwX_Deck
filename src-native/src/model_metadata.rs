@@ -41,7 +41,13 @@ fn flag(out: &mut Value, key: &str, value: &Value) {
 pub(super) fn cached_capabilities(root: &Path) -> Result<Value> {
     let cached = read(&root.join("model-capabilities-cache.json"))?
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .filter(|v| v["version"] == 1 && v["modelsDev"].is_array() && v["litellm"].is_array());
+        .filter(|v| v["version"] == 1 && v["modelsDev"].is_array())
+        .map(|mut v| {
+            if let Some(cache) = v.as_object_mut() {
+                cache.remove("litellm");
+            }
+            v
+        });
     if let Some(value) = cached.as_ref().filter(|v| {
         v["modelsDev"]
             .as_array()
@@ -53,11 +59,7 @@ pub(super) fn cached_capabilities(root: &Path) -> Result<Value> {
         "../../test-results/native-assets/models-dev-capabilities.json"
     ))
     .map_err(err)?;
-    let protocols = cached
-        .as_ref()
-        .map(|v| v["litellm"].clone())
-        .unwrap_or_else(|| json!([]));
-    Ok(json!({"version":1,"modelsDev":parse_models(&bundled["catalog"]),"litellm":protocols}))
+    Ok(json!({"version":1,"modelsDev":parse_models(&bundled["catalog"])}))
 }
 
 pub(super) fn parse_models(value: &Value) -> Vec<Value> {
@@ -150,76 +152,7 @@ pub(super) fn parse_models(value: &Value) -> Vec<Value> {
     }
     rows
 }
-pub(super) fn parse_lite(value: &Value) -> Vec<Value> {
-    let mut rows = vec![];
-    for (id, raw) in value.as_object().into_iter().flatten() {
-        if id.is_empty() || id.len() > 512 || !raw.is_object() {
-            continue;
-        }
-        let mut cap = json!({});
-        for (key, field) in [
-            ("contextWindow", "max_input_tokens"),
-            ("maxOutputTokens", "max_output_tokens"),
-        ] {
-            if let Some(n) = positive(&raw[field]) {
-                cap[key] = json!(n);
-            }
-        }
-        if raw["supports_vision"] == true {
-            cap["vision"] = json!(true);
-            cap["inputModalities"] = json!(["text", "image"]);
-        }
-        for (key, field) in [
-            ("reasoning", "supports_reasoning"),
-            ("toolCalling", "supports_function_calling"),
-            ("structuredOutput", "supports_response_schema"),
-        ] {
-            flag(&mut cap, key, &raw[field]);
-        }
-        if raw["supports_reasoning"] == true {
-            cap["levels"] = if raw["supports_xhigh_reasoning_effort"] == true {
-                json!(["none", "low", "medium", "high", "xhigh"])
-            } else {
-                json!(["low", "medium", "high"])
-            };
-        }
-        let endpoints = strings(&raw["supported_endpoints"]);
-        let mut protocols = vec![];
-        for (suffix, p) in [
-            ("/responses", "openai-responses"),
-            ("/chat/completions", "chat-completions"),
-        ] {
-            if endpoints
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|s| s.trim_end_matches('/').ends_with(suffix))
-            {
-                protocols.push(json!(p));
-            }
-        }
-        if protocols.is_empty() {
-            match text(raw, "mode") {
-                "responses" => protocols.push(json!("openai-responses")),
-                "chat" => protocols.push(json!("chat-completions")),
-                _ => {}
-            }
-        }
-        if !protocols.is_empty() {
-            cap["openAiProtocols"] = json!(protocols);
-            if raw["litellm_provider"].is_string() {
-                cap["servingProvider"] = json!(text(raw, "litellm_provider").trim().to_lowercase());
-            }
-        }
-        if cap.as_object().is_some_and(|o| !o.is_empty()) {
-            rows.push(json!({"modelId":norm(id),"sourceId":id,"capability":cap}));
-        }
-        if rows.len() >= 50_000 {
-            break;
-        }
-    }
-    rows
-}
-fn owners(id: &str, lite: bool) -> Vec<&'static str> {
+fn owners(id: &str) -> Vec<&'static str> {
     let id = canonical(id);
     if id.starts_with("gpt")
         || id.starts_with("chatgpt")
@@ -229,28 +162,16 @@ fn owners(id: &str, lite: bool) -> Vec<&'static str> {
         return vec!["openai"];
     }
     if id.starts_with("qwen") || id.starts_with("qwq") {
-        return if lite {
-            vec!["dashscope"]
-        } else {
-            vec!["alibaba", "alibaba-cn"]
-        };
+        return vec!["alibaba", "alibaba-cn"];
     }
     if id.starts_with("deepseek") {
         return vec!["deepseek"];
     }
     if id.starts_with("kimi") || id.starts_with("moonshot") {
-        return if lite {
-            vec!["moonshot"]
-        } else {
-            vec!["moonshotai", "moonshotai-cn"]
-        };
+        return vec!["moonshotai", "moonshotai-cn"];
     }
     if id.starts_with("glm") || id.starts_with("chatglm") {
-        return if lite {
-            vec!["zai", "zhipuai"]
-        } else {
-            vec!["zhipuai", "zai"]
-        };
+        return vec!["zhipuai", "zai"];
     }
     if id.starts_with("minimax") {
         return vec!["minimax", "minimax-cn"];
@@ -265,7 +186,7 @@ fn owners(id: &str, lite: bool) -> Vec<&'static str> {
         return vec!["anthropic"];
     }
     if id.starts_with("gemini") {
-        return if lite { vec!["gemini"] } else { vec!["google"] };
+        return vec!["google"];
     }
     if id.starts_with("mimo") {
         return vec!["xiaomi"];
@@ -345,7 +266,7 @@ pub(super) fn resolve(remote: &Value, source: &str, id: &str) -> Value {
     for level in 0..3 {
         let rows = matches(&remote[source], &id, level);
         let mut capability = consensus(&rows);
-        for owner in owners(&id, false) {
+        for owner in owners(&id) {
             let preferred: Vec<_> = rows
                 .iter()
                 .copied()
@@ -361,48 +282,6 @@ pub(super) fn resolve(remote: &Value, source: &str, id: &str) -> Value {
         if capability.as_object().is_some_and(|o| !o.is_empty()) {
             out = capability;
             break;
-        }
-    }
-    if source == "litellm" {
-        let rows = &remote[source];
-        let mut published = vec![];
-        'levels: for level in 0..3 {
-            let rows = matches(rows, &id, level);
-            for owner in owners(&id, true) {
-                published = rows
-                    .iter()
-                    .copied()
-                    .filter(|r| {
-                        text(&r["capability"], "servingProvider") == owner
-                            && r["capability"]["openAiProtocols"]
-                                .as_array()
-                                .is_some_and(|a| !a.is_empty())
-                    })
-                    .collect();
-                if !published.is_empty() {
-                    break 'levels;
-                }
-            }
-        }
-        if published.is_empty() {
-            published = matches(rows, bare(&id), 0)
-                .into_iter()
-                .filter(|r| r["capability"]["openAiProtocols"].is_array())
-                .collect();
-        }
-        let protocols: Vec<_> = ["openai-responses", "chat-completions"]
-            .iter()
-            .filter(|p| {
-                published.iter().any(|r| {
-                    r["capability"]["openAiProtocols"]
-                        .as_array()
-                        .is_some_and(|a| a.iter().any(|v| v == *p))
-                })
-            })
-            .map(|p| json!(p))
-            .collect();
-        if !protocols.is_empty() {
-            out["openAiProtocols"] = json!(protocols);
         }
     }
     out
@@ -736,24 +615,23 @@ pub(super) fn merge_prices(previous: &[Value], fresh: Vec<Value>) -> Vec<Value> 
 mod tests {
     use super::*;
     #[test]
-    fn old_parameter_cache_keeps_separate_protocol_facts() {
+    fn legacy_protocol_cache_is_ignored() {
         let root = std::env::temp_dir().join(format!(
             "xwx-legacy-capabilities-{}-{}",
             std::process::id(),
             millis()
         ));
         fs::create_dir_all(&root).unwrap();
-        let cache = json!({"version":1,"modelsDev":[{"modelId":"old-fixture","capability":{"contextWindow":777}}],"litellm":[{"modelId":"minimax-m2.5","sourceId":"minimax/MiniMax-M2.5","capability":{"servingProvider":"minimax","openAiProtocols":["chat-completions"]}}]});
+        let cache = json!({"version":1,"modelsDev":[{"modelId":"old-fixture","canonicalModelId":"owner/old-fixture","capability":{"contextWindow":777}}],"litellm":[{"modelId":"minimax-m2.5","sourceId":"minimax/MiniMax-M2.5","capability":{"servingProvider":"minimax","openAiProtocols":["chat-completions"]}}]});
         let path = root.join("model-capabilities-cache.json");
         let before = cache.to_string();
         fs::write(&path, &before).unwrap();
         let loaded = cached_capabilities(&root).unwrap();
-        assert_eq!(loaded["litellm"], cache["litellm"]);
+        assert!(loaded["litellm"].is_null());
         assert_eq!(
-            resolve(&loaded, "litellm", "MiniMax-M2.5")["openAiProtocols"],
-            json!(["chat-completions"])
+            resolve(&loaded, "modelsDev", "old-fixture")["contextWindow"],
+            777
         );
-        assert!(resolve(&loaded, "modelsDev", "old-fixture")["contextWindow"].is_null());
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
         fs::remove_dir_all(root).unwrap();
     }
@@ -853,14 +731,11 @@ mod tests {
         }
     }
     #[test]
-    fn owner_consensus_and_native_protocols() {
+    fn owner_consensus_is_conservative() {
         let models = parse_models(
             &json!({"alibaba":{"models":{"qwen-future":{"limit":{"context":1000000},"modalities":{"input":["text","image"]}}}},"reseller":{"models":{"qwen-future":{"limit":{"context":128000},"modalities":{"input":["text"]}},"unknown":{"limit":{"context":128000},"tool_call":true}}},"another":{"models":{"unknown":{"limit":{"context":64000},"tool_call":false}}}}),
         );
-        let lite = parse_lite(
-            &json!({"dashscope/qwen-future":{"mode":"responses","litellm_provider":"dashscope","supports_vision":false},"reseller/qwen-future":{"mode":"chat","litellm_provider":"reseller"}}),
-        );
-        let remote = json!({"modelsDev":models,"litellm":lite});
+        let remote = json!({"modelsDev":models});
         assert_eq!(
             resolve(&remote, "modelsDev", "models/provider/Qwen_Future")["contextWindow"],
             1000000
@@ -871,11 +746,10 @@ mod tests {
             Value::Null
         );
         assert!(resolve(&remote, "modelsDev", "unknown")["toolCalling"].is_null());
-        assert_eq!(
-            resolve(&remote, "litellm", "qwen-future")["openAiProtocols"],
-            json!(["openai-responses"])
+        assert!(
+            resolve(&remote, "modelsDev", "unknown")["openAiProtocols"].is_null(),
+            "models.dev has no wire protocol; unknown models must not be guessed"
         );
-        assert!(resolve(&remote, "litellm", "qwen-future")["vision"].is_null());
     }
     #[test]
     fn refresh_replaces_active_prices_and_preserves_reported_cache_rates() {
