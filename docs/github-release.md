@@ -54,8 +54,8 @@ Mac 候选使用 ad-hoc 签名，未完成 Developer ID 签名和公证。
 4. 推送对应版本标签，例如：
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 Release workflow 在原生 Windows / macOS Runner 构建正式 EXE / DMG，并运行实际可执行文件的隔离后端和界面回归。Windows 更新进程必须完成等待旧进程退出、文件替换、SHA-256 校验和新版启动；启动失败时检查新文件与旧版备份保留，不能默默启动旧版。macOS 使用正式应用包中的 WebKit 验收。

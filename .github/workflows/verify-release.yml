@@ -5,7 +5,7 @@ on:
       tag:
         description: Published release tag to verify (must be latest)
         required: true
-        default: v1.1.0
+        default: v1.0.0
 permissions:
   contents: read
 jobs:

@@ -4,11 +4,13 @@
 
 ## 安装
 
-1. 在 [发布页](https://github.com/Damue01/XwX_Deck/releases/latest) 选择 Apple Silicon 安装包。
+1. 在 [发布页](https://github.com/Damue01/XwX_Deck/releases/latest) 按芯片选择 Apple Silicon 或 Intel 安装包。
 2. 打开 DMG，将 `XwX Deck.app` 拖入“应用程序”。
 3. 从“应用程序”启动，完成首次设置。
 
-未列出 Intel Mac 制品时，不要使用其他架构代替。
+在苹果菜单的“关于本机”中查看芯片。Apple M 系列选择 Apple Silicon，Intel 处理器选择 Intel。
+Apple Silicon 包已完成 Developer ID 签名和 Apple 公证。
+Intel 包使用 ad-hoc 签名，尚未完成 Apple 公证，首次打开可能需要在系统安全设置中允许。
 
 ## 更新
 

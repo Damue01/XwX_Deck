@@ -41,7 +41,7 @@ npm run test:site
 
 ## 下载与发布
 
-Windows x64 与 macOS Apple Silicon 默认使用 GitHub 最新 Release 制品链接。
+Windows x64、macOS Apple Silicon 与 Intel 默认使用 GitHub 最新 Release 制品链接。
 下载指向实际已发布制品，不以网页更新表示软件更新已发布。
 仅填写已发布并核实的制品地址。
 网页不宣称尚未发布的版本已经可用。
@@ -56,7 +56,7 @@ GitHub Pages 工作流先构建并验证官网。
 识别在本地进行，最多等待 600 毫秒，不新增网络请求。
 用户开始操作后，迟到的识别结果不再更改按钮。
 “其他版本”提供全部已发布安装包、Mac 芯片查看提示和历史版本入口。
-Intel Mac 候选已构建，正式发布前在列表标明“待发布”，不提供下载链接。
+两种 Mac 架构分别提供 DMG；可靠识别到 Intel 时直接选择对应安装包。
 未启用 JavaScript 时，仍可展开该列表下载。
 页尾提供 GitHub、QQ 群聊和 Discord 文字链接。
 官网采用已确认的 Urbanist 和 Noto Sans SC 字体参数。

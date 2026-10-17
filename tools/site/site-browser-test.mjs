@@ -41,7 +41,7 @@ const server = createServer(async (request, response) => {
     let body = await readFile(file);
     if (configured && relative === 'index.html') {
       const original = body.toString();
-      const replacement = original.replace(/const DOWNLOADS = \{[^}]+\};/, "const DOWNLOADS = { windows: '/fixture.exe', mac: '/fixture.exe' };");
+      const replacement = original.replace(/const DOWNLOADS = \{[^}]+\};/, "const DOWNLOADS = { windows: '/fixture.exe', mac: '/fixture.exe', macIntel: '/fixture.exe' };");
       assert.notEqual(replacement, original, 'configured-download fixture must replace the actual download map');
       body = Buffer.from(replacement);
     }
@@ -80,12 +80,12 @@ try {
     assert.ok(otherBox.x > primaryBox.x + primaryBox.width && otherBox.x + otherBox.width <= width, 'other versions stays to the right without overflowing');
     assert.equal(await page.locator('#download-caption').count(), 0);
     await page.locator('#download-options > summary').click();
-    for (const target of ['windows', 'mac']) assert.equal(await page.locator(`[data-download="${target}"]`).isVisible(), true);
+    for (const target of ['windows', 'mac', 'macIntel']) assert.equal(await page.locator(`[data-download="${target}"]`).isVisible(), true);
     assert.equal(await page.locator('.download-choices .download-choice').count(), 3);
-    const intel = page.locator('[data-unavailable-download="mac-x64"]');
-    assert.equal(await intel.getAttribute('aria-disabled'), 'true');
-    assert.equal(await intel.getAttribute('href'), null);
-    assert.match(await intel.innerText(), /Intel[\s\S]*待发布/);
+    const intel = page.locator('[data-download="macIntel"]');
+    assert.match(await intel.getAttribute('href'), /mac-x64\.dmg$/);
+    assert.match(await intel.innerText(), /Intel[\s\S]*DMG/);
+    assert.equal(await page.locator('[data-unavailable-download]').count(), 0);
     assert.equal(await page.locator('.recommend-badge').count(), 0);
     assert.doesNotMatch(await page.locator('.download-choices').innerText(), /推荐|↗/);
     const panelBox = await page.locator('.download-choices').boundingBox();
@@ -137,7 +137,7 @@ try {
     }
     checks.push(`WE01/WE03: title, visible content, overflow, tabs and real renderer at ${width}px`);
   }
-  for (const [platform, file] of [['windows', 'XwX-Deck-windows-x64.exe'], ['mac', 'XwX-Deck-mac-arm64.dmg']]) {
+  for (const [platform, file] of [['windows', 'XwX-Deck-windows-x64.exe'], ['mac', 'XwX-Deck-mac-arm64.dmg'], ['macIntel', 'XwX-Deck-mac-x64.dmg']]) {
     const hrefs = await page.locator(`[data-download="${platform}"]`).evaluateAll(nodes => nodes.map(node => node.href));
     assert.equal(hrefs.length, 1);
     assert.ok(hrefs.every(href => href === 'https://github.com/Damue01/XwX_Deck/releases/latest/download/' + file));
@@ -157,7 +157,7 @@ try {
   // Exercise browser-reported architectures and conservative fallbacks in real DOMs.
   const profiles = [
     { name: 'Apple Silicon', platform: 'macOS', arch: 'arm', direct: 'mac' },
-    { name: 'Intel Mac', platform: 'macOS', arch: 'x86', context: '当前暂无 Intel Mac 安装包。' },
+    { name: 'Intel Mac', platform: 'macOS', arch: 'x86', direct: 'macIntel' },
     { name: 'Windows x64', platform: 'Windows', arch: 'x86', direct: 'windows' },
     { name: 'Windows ARM64', platform: 'Windows', arch: 'arm', context: '当前提供 Windows x64 下载，尚无原生 ARM64 版。' },
     { name: 'Windows 32-bit', platform: 'Windows', arch: 'x86', bitness: '32' },
@@ -206,7 +206,7 @@ try {
       assert.match(await candidate.locator('.chip-help p').innerText(), /关于本机/);
       await candidate.locator('#download-options > summary').click();
     }
-    assert.equal(await candidate.locator('a[href*="mac-x64"]').count(), 0);
+    assert.equal(await candidate.locator('a.download-choice[href*="mac-x64"]').count(), 1);
     assert.equal(await candidate.locator('.download-history').getAttribute('href'), 'https://github.com/Damue01/XwX_Deck/releases');
     await context.close();
   }
@@ -234,6 +234,7 @@ try {
   await fallback.locator('#download-options > summary').click();
   assert.equal(await fallback.locator('[data-download="windows"]').isVisible(), true);
   assert.equal(await fallback.locator('[data-download="mac"]').isVisible(), true);
+  assert.equal(await fallback.locator('[data-download="macIntel"]').isVisible(), true);
   await noScript.close();
   checks.push('WE02: 11 OS/architecture profiles, mobile and iPad, missing/denied hints, pointer/keyboard choice preservation, timeout, Escape/outside dismissal and no-JavaScript downloads');
   for (const width of [390, 1440]) {
