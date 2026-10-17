@@ -106,3 +106,30 @@ body:not([data-footer-layout='original']) .community-link:hover { background: tr
   --control-tracking: 0em;
   --control-leading: 1.4;
 }
+
+/* Start with the document paint, independently of fonts and demo readiness. */
+@keyframes site-enter {
+  from { opacity: .12; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes field-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes preview-breathe {
+  0%, 100% { opacity: .5; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  header .wrap { animation: site-enter .65s var(--ease) both; }
+  .hero h1 { animation: site-enter .9s var(--ease) both; }
+  .hero-details { animation: site-enter .9s var(--ease) .12s both; }
+  .hero-field .field { animation: field-enter 1.2s var(--ease) both; }
+  .window:not(.ready) .cover span { animation: preview-breathe 1.8s ease-in-out infinite; }
+}
+.window iframe { opacity: 0; transition: opacity .4s var(--ease); }
+.window.ready iframe { opacity: 1; }
+.window.ready .cover { transition: opacity .4s var(--ease), visibility 0s .4s; }
+@media (prefers-reduced-motion: reduce) {
+  .window iframe, .window.ready .cover { transition: none; }
+}

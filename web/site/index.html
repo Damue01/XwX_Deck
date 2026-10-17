@@ -6,7 +6,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<link rel="stylesheet" href="./fonts.css">
+<link rel="stylesheet" href="./fonts.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="./fonts.css"></noscript>
 <title>XwX Deck：好工具，更简单</title>
 <meta name="description" content="为 Claude、ChatGPT 等客户端管理模型服务，在本机查看请求、响应与用量。">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Crect x='24' y='24' width='976' height='976' rx='176'/%3E%3Cg fill='none' stroke='%23fff' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M178 420 L372 610 M372 420 L178 610M654 420 L850 610 M850 420 L654 610' stroke-width='30'/%3E%3Cpath d='M439 548 L472 607 L512 554 L552 607 L585 548' stroke-width='27'/%3E%3C/g%3E%3C/svg%3E">
@@ -175,7 +176,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; }
       <div class="window" id="demo-panel" data-src="app.html?trace-live=1#models" role="tabpanel" aria-labelledby="tab-models">
         <iframe id="app-demo" title="XwX Deck 功能演示" loading="lazy"></iframe>
         <iframe id="dashboard-demo" title="XwX Deck 仪表盘真实对话" hidden></iframe>
-        <div class="cover">正在加载交互预览</div>
+        <div class="cover"><span role="status">正在加载交互预览</span></div>
       </div>
     </div>
   </section>
@@ -310,6 +311,6 @@ document.querySelectorAll('[data-download]').forEach(a => {
   a.addEventListener('click', e => { e.preventDefault(); msg.textContent = '当前未配置下载地址，请查看已发布版本。';  });
 });
 </script>
-<script src="./hero-field.js"></script>
+<script src="./hero-field.js" defer></script>
 </body>
 </html>
