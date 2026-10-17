@@ -1,0 +1,100 @@
+{
+  "status": "completed-with-noted-observation",
+  "date": "2026-10-17",
+  "sourceCommit": "b208dc4d9134840790e588a111ce97b87fd2538d",
+  "sourceFingerprint": "d1f8184634e6e58f6f122dfcaf6bb59b6aae6eaecf9828cdb032198c04c9e95a",
+  "exeSha256": "bc6a0a101ad1ce2dcf74828525c93ffe8fa29cd16cb6456a4f560f9070ee20f5",
+  "sourceClean": true,
+  "sameFrozenExe": true,
+  "rebuilt": false,
+  "desktopUnlocked": true,
+  "nativeWebView2": {
+    "traceModelsSettingsViewerPassed": true,
+    "mouseKeyboardPassed": true,
+    "maximizeRestorePassed": true,
+    "minimizeRestorePassed": true,
+    "minimumWindowPassed": true,
+    "activeCloseHidesMainAndKeepsGateway": true,
+    "humanTrayReopenedMain": true,
+    "explorerSelectedMatchingSessionJsonl": true
+  },
+  "longHistory": {
+    "syntheticMessages": 435,
+    "sourceSequence": "History 0..434",
+    "initialLoaded": 16,
+    "realNativeMouseScrollToEnd": true,
+    "visibleTerminal": "History 434 / 第435条消息",
+    "returnToFirstPassed": true,
+    "logRawAndReadSwitchRetainedTerminal": true,
+    "terminalVerifiedByScreenshot": true,
+    "accessibilityTextTruncatedAfter216": true
+  },
+  "pilotTrayExit": {
+    "humanSelectedTrayQuit": true,
+    "agentClickedNativeConfirmation": true,
+    "exitSucceeded": true,
+    "releasedPorts": [
+      63719,
+      63144
+    ],
+    "directConfigurationRestored": true,
+    "forcedTermination": false
+  },
+  "normal45233": {
+    "disposableHomeAppDataAndWebviewProfile": true,
+    "pilotRoot": false,
+    "localSyntheticRequestPassed": true,
+    "uiTokens": 1,
+    "humanSelectedTrayQuit": true,
+    "agentClickedNativeConfirmation": true,
+    "exitCode": 0,
+    "portReleased": true,
+    "directConfigurationRestored": true,
+    "sameAddressReopened": "http://127.0.0.1:45233",
+    "newProcessOwnedPort": true,
+    "realUiStopReleasedPort": true,
+    "finalWindowCloseExitCode": 0
+  },
+  "authorization": {
+    "exactBytesPreserved": true,
+    "bytes": 43
+  },
+  "onboarding": {
+    "reappearedOnceAfterInterposedAcceptanceRpc": true,
+    "sameDisposableHomeAndRoot": true,
+    "twoDirectRestartsRetainedCompletion": true,
+    "explicitFixturePreferenceRewriteFound": false,
+    "causeAssigned": false,
+    "confirmedProductDefect": false,
+    "originalObservationRetained": true
+  },
+  "cleanup": {
+    "candidateProcesses": 0,
+    "port45233Listeners": 0,
+    "forcedTerminationUsed": false
+  },
+  "evidence": {
+    "base": "final-b208dc4",
+    "full": "visual/visual-evidence.json",
+    "compact": "visual/visual-evidence-compact.json",
+    "manifest": "visual/screenshot-catalog.json",
+    "screenshots": 60,
+    "originalEvidenceAndLockedDesktopHistoryPreserved": true
+  },
+  "boundaries": {
+    "companyApplicationAndSettingsChanged": false,
+    "normalUserDataModified": false,
+    "installed": false,
+    "published": false,
+    "pushed": false,
+    "realCredentialsUsed": false,
+    "paidRequests": false,
+    "fullBackendRerun": false
+  },
+  "remaining": [
+    "Physical multi-display and alternate system scaling",
+    "Normal installed-client experience and real authorization/OS credential store",
+    "Paid upstream and billing statements",
+    "Actual installed update and distribution signing"
+  ]
+}
