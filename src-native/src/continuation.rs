@@ -224,7 +224,21 @@ pub(super) fn expand(
         if let Some(stored) = cached {
             // Native state is valid in its original service/account/model. A
             // portable cache is needed only when crossing that state boundary.
-            let native = !required && stored["owner"] == origin && stored["model"] == body["model"];
+            // DeepSeek's Responses endpoint accepts previous_response_id but
+            // does not retain server-side conversation state, so replay the
+            // cached input for it even when the provider identity matches.
+            let keeps_state = {
+                let identity = format!(
+                    "{} {}",
+                    provider.base_url.to_lowercase(),
+                    text(&body, "model").to_lowercase()
+                );
+                !identity.contains("deepseek")
+            };
+            let native = !required
+                && stored["owner"] == origin
+                && stored["model"] == body["model"]
+                && keeps_state;
             if !native {
                 let mut input = materialize(&stored, codex_home, session)?.ok_or(
                     "缺少可恢复的压缩上下文，请回到原服务生成明文摘要或重新发送完整上下文",

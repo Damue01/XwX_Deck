@@ -82,6 +82,7 @@ const suites = [
   "codex-models-renderer-test.mjs",
   "trace-index-repair-test.mjs",
   "portability-test.mjs",
+  "continuation-deepseek-test.mjs",
   "routing-consumption-test.mjs",
   "preferences-test.mjs",
   "application-repair-test.mjs",
