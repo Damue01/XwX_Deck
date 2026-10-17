@@ -50,7 +50,9 @@
       "artifactName": "XwX Deck.exe",
       "installMode": "automatic",
       "publishedArtifactName": "XwX-Deck-windows-x64.exe",
-      "updateMetadata": "release.json"
+      "updateMetadata": "release.json",
+      "platform": "windows",
+      "arch": "x64"
     },
     "macosArm64": {
       "buildScript": "build:mac:arm64",
@@ -60,7 +62,23 @@
       "notarized": true,
       "installMode": "manual-dmg",
       "updateMetadata": "release.json",
-      "automaticInstall": false
+      "automaticInstall": false,
+      "platform": "darwin",
+      "arch": "arm64",
+      "publishedArtifactName": "XwX-Deck-mac-arm64.dmg"
+    },
+    "macosX64": {
+      "buildScript": "build:mac:x64",
+      "artifactName": "XwX-Deck-mac-x64.dmg",
+      "distribution": "unsigned-manual-dmg",
+      "developerId": false,
+      "notarized": false,
+      "installMode": "manual-dmg",
+      "updateMetadata": "release.json",
+      "automaticInstall": false,
+      "platform": "darwin",
+      "arch": "x64",
+      "publishedArtifactName": "XwX-Deck-mac-x64.dmg"
     }
   },
   "openSource": {

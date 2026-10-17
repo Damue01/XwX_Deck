@@ -109,6 +109,7 @@ await rm(app,{recursive:true,force:true});
 await mkdir(resolve(app, 'Contents/MacOS'), { recursive: true });
 await mkdir(resolve(app, 'Contents/Resources'), { recursive: true });
 await cp(resolve(env.CARGO_TARGET_DIR, 'release/xwx-deck-native'), resolve(app, 'Contents/MacOS/xwx-deck-native'));
+run('/usr/bin/lipo', ['-verify_arch', process.arch === 'arm64' ? 'arm64' : 'x86_64', resolve(app, 'Contents/MacOS/xwx-deck-native')]);
 await cp(resolve(root, 'assets/icon.icns'), resolve(app, 'Contents/Resources/icon.icns'));
 await writeFile(resolve(app, 'Contents/Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -143,7 +144,7 @@ if (signed) {
   notarization = { app: await notarizeApp(app, apple, resolve(output, 'app-notarization.json')) };
 } else run('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', app]);
 run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
-const dmg = resolve(output, isolated ? 'XwX-Deck-Rust-Pilot-arm64.dmg' : `XwX-Deck-mac-${process.arch}.dmg`);
+const dmg = resolve(output, isolated ? `XwX-Deck-Rust-Pilot-${process.arch}.dmg` : `XwX-Deck-mac-${process.arch}.dmg`);
 const { compression, layout: dmgLayout } = await buildMacDmg({ root, app, dmg, productName, isolated, acceptance, signed, config: packageJson.nativePackaging.dmg });
 if (signed) {
   await signMac(dmg, apple);

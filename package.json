@@ -25,7 +25,7 @@
     "regenerate:icons:win": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/icons/generate-icon-assets.ps1 && node tools/icons/windows-icon-assets.mjs --write",
     "generate:icons:mac": "node tools/icons/generate-macos-app-icon.mjs",
     "test": "npm run check:quality",
-    "test:built": "npm run test:public-history && npm run test:theme && npm run test:history-confirm && npm run test:trace-notices && npm run test:shared-core",
+    "test:built": "npm run test:public-history && npm run test:theme && npm run test:history-confirm && npm run test:trace-notices && npm run test:shared-core && npm run test:release-manifest",
     "test:public-history": "node tools/tests/public-history-test.mjs",
     "test:shared-core": "node tools/shared-core/trace-cache-rate-test.mjs && node tools/shared-core/models-dev-unification-test.mjs",
     "test:trace-notices": "node tools/tests/run-trace-notice-regressions.mjs && node tools/tests/run-bridge-order-regressions.mjs",
@@ -65,7 +65,8 @@
     "build:site": "node tools/site/build-app-preview.mjs",
     "test:site": "node tools/site/site-browser-test.mjs",
     "test:docs": "node tools/site/docs-browser-test.mjs",
-    "check:repository": "node tools/checks/check-repository-boundary.mjs"
+    "check:repository": "node tools/checks/check-repository-boundary.mjs",
+    "test:release-manifest": "node tools/tests/release-manifest-test.mjs"
   },
   "devDependencies": {
     "@base-ui/react": "^1.6.0",

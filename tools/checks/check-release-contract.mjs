@@ -23,7 +23,20 @@ check(contract.features.repairCenter&&contract.features.safeExitRecovery&&!contr
 for(const[label,text]of Object.entries({app,rail,bridge,main,core}))check(!/ToolsPage|diagnoseCodexConversations|queryCodexConversations|SyncPage|convert-excel/.test(text),`${label}: removed feature still exposed`);
 check(JSON.stringify(contract.providerFramework.userFields)===JSON.stringify(['displayName','baseUrl','key','adapter','codexModel'])&&contract.providerFramework.defaultConnections.length===0,'provider fields and no defaults');
 check(updates.includes(contract.updates.defaultServer)&&updates.includes('XWX_DECK_UPDATE_SERVER_URL')&&updates.includes('declined-update.json')&&/latest\s*!=\s*selected/.test(updates)&&updates.includes('SHA-256'),'native updates validate immutable release, persist cancellation and verify package');
-check(contract.platforms.macosArm64.installMode==='manual-dmg'&&!contract.platforms.macosArm64.automaticInstall&&main.includes('open_path'),'unsigned Mac manual DMG');
+check(contract.platforms.macosArm64.installMode==='manual-dmg'&&!contract.platforms.macosArm64.automaticInstall&&main.includes('open_path'),'Mac manual DMG');
+const identities = new Set();
+for (const [key, platform, arch, artifact] of [
+  ['windows', 'windows', 'x64', 'XwX-Deck-windows-x64.exe'],
+  ['macosArm64', 'darwin', 'arm64', 'XwX-Deck-mac-arm64.dmg'],
+  ['macosX64', 'darwin', 'x64', 'XwX-Deck-mac-x64.dmg']
+]) {
+  const target = contract.platforms[key];
+  check(target?.platform === platform && target.arch === arch && target.publishedArtifactName === artifact, `${key}: release artifact identity`);
+  check(pkg.scripts[target?.buildScript]?.includes(`--require-arch=${arch}`), `${key}: native architecture guard`);
+  check(!identities.has(`${platform}/${arch}`), `${key}: duplicate architecture`);
+  identities.add(`${platform}/${arch}`);
+  if (platform === 'darwin') check(target.installMode === 'manual-dmg' && target.automaticInstall === false, `${key}: manual DMG installation`);
+}
 check(contract.platforms.windows.installMode==='automatic'&&main.includes('portable_update::spawn'),'Windows native portable replacement');
 check(workflows.includes('npm run docs:build')&&workflows.includes('write-release-manifest.mjs')&&workflows.includes('--draft')&&workflows.includes('npm run check:test-plan'),'documentation, regression and draft release gates');
 check(workflows.includes('npm run test:rust:backend')&&workflows.includes('Set up Rust'),'CI must compile and regress native backend');

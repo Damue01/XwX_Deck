@@ -23,7 +23,7 @@ assert.equal(metadata.version, tag.slice(1)); assert.equal(metadata.tag, tag); a
 const platform = process.platform === 'win32' ? 'windows' : 'darwin';
 const artifact = metadata.files.find(file => file.platform === platform && file.arch === process.arch);
 assert.ok(artifact, 'Missing matching native artifact');
-const requiredName = platform === 'windows' ? 'XwX-Deck-windows-x64.exe' : 'XwX-Deck-mac-arm64.dmg';
+const requiredName = platform === 'windows' ? 'XwX-Deck-windows-x64.exe' : `XwX-Deck-mac-${process.arch}.dmg`;
 assert.equal(artifact.name, requiredName); assert.equal(artifact.url, `${base}/${requiredName}`);
 assert.match(artifact.sha256, /^[a-f0-9]{64}$/); assert.ok(artifact.size > 0 && artifact.size <= 512 * 1024 ** 2);
 const data = await get(artifact.url); assert.equal(data.length, artifact.size);
@@ -47,7 +47,7 @@ if (platform === 'windows') {
     const app = join(root, 'XwX Deck.app'); await cp(join(mount, 'XwX Deck.app'), app, { recursive: true });
     binary = join(app, 'Contents/MacOS/xwx-deck-native');
     command('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
-    command('/usr/bin/lipo', [binary, '-verify_arch', 'arm64']);
+    command('/usr/bin/lipo', [binary, '-verify_arch', process.arch === 'arm64' ? 'arm64' : 'x86_64']);
     assert.ok((await readFile(join(app, 'Contents/Info.plist'), 'utf8')).includes('app.xwxdeck.desktop'));
   } finally { command('/usr/bin/hdiutil', ['detach', mount]); }
 }
