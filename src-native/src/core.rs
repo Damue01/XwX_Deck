@@ -608,6 +608,40 @@ fn doc(source: &str) -> Result<DocumentMut> {
         .parse()
         .map_err(|_| "Codex TOML 无法解析，原文件已保留；请在设置中修复配置".into())
 }
+fn codex_external_change(
+    current: &DocumentMut,
+    expected: &DocumentMut,
+    id: &str,
+    owns_resume_alias: bool,
+) -> bool {
+    // Older builds wrote requires_openai_auth=true for third-party providers.
+    // Accept the app's own true→false migration instead of treating the
+    // current file as an external edit; otherwise every later model switch is
+    // blocked until an explicit takeover.
+    let migrated_auth = |provider: &str| {
+        provider_field(current, provider, "experimental_bearer_token")
+            .and_then(Item::as_str)
+            .is_some_and(|token| !token.trim().is_empty())
+            && provider_field(current, provider, "requires_openai_auth").and_then(Item::as_bool)
+                == Some(false)
+            && provider_field(expected, provider, "requires_openai_auth").and_then(Item::as_bool)
+                == Some(true)
+    };
+    ["model", "model_provider", "model_context_window"]
+        .iter()
+        .any(|key| semantic(current.get(key)) != semantic(expected.get(key)))
+        || CODEX_PROVIDER_FIELDS.iter().any(|key| {
+            !(*key == "requires_openai_auth" && migrated_auth(id))
+                && semantic(provider_field(current, id, key))
+                    != semantic(provider_field(expected, id, key))
+        })
+        || (owns_resume_alias
+            && CODEX_PROVIDER_FIELDS.iter().any(|key| {
+                !(*key == "requires_openai_auth" && migrated_auth("xwx_deck"))
+                    && semantic(provider_field(current, "xwx_deck", key))
+                        != semantic(provider_field(expected, "xwx_deck", key))
+            }))
+}
 
 impl Pilot {
     pub fn updates_context(&self) -> updates::Updates {
@@ -1197,18 +1231,7 @@ impl Pilot {
             let id = text(ledger, "providerId").trim();
             if !takeover
                 && !accepted_subscription
-                && (["model", "model_provider", "model_context_window"]
-                    .iter()
-                    .any(|key| semantic(d.get(key)) != semantic(expected.get(key)))
-                    || CODEX_PROVIDER_FIELDS.iter().any(|key| {
-                        semantic(provider_field(&d, id, key))
-                            != semantic(provider_field(&expected, id, key))
-                    })
-                    || (owns_resume_alias
-                        && CODEX_PROVIDER_FIELDS.iter().any(|key| {
-                            semantic(provider_field(&d, "xwx_deck", key))
-                                != semantic(provider_field(&expected, "xwx_deck", key))
-                        })))
+                && codex_external_change(&d, &expected, id, owns_resume_alias)
             {
                 return Err("外部 Codex 配置变化已保留，请明确接管后重试".into());
             }
@@ -2354,7 +2377,17 @@ impl Pilot {
             "isChatGptRunning"=>{
                 if self.isolated{return Ok(json!(false));}
                 #[cfg(unix)]{let output=std::process::Command::new("/bin/ps").args(["-A","-o","comm="]).output().map_err(err)?;let running=String::from_utf8_lossy(&output.stdout).lines().any(|line|line.ends_with("/Codex")||line.ends_with("/ChatGPT"));Ok(json!(running))}
-                #[cfg(not(unix))]{let output=std::process::Command::new("tasklist.exe").args(["/FO","CSV","/NH"]).output().map_err(err)?;Ok(json!(String::from_utf8_lossy(&output.stdout).lines().any(|line|line.to_lowercase().starts_with("\"codex.exe\"")||line.to_lowercase().starts_with("\"chatgpt.exe\""))))}
+                #[cfg(not(unix))]{
+                    let mut command=std::process::Command::new("tasklist.exe");
+                    command.args(["/FO","CSV","/NH"]);
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        command.creation_flags(0x08000000);
+                    }
+                    let output=command.output().map_err(err)?;
+                    Ok(json!(String::from_utf8_lossy(&output.stdout).lines().any(|line|line.to_lowercase().starts_with("\"codex.exe\"")||line.to_lowercase().starts_with("\"chatgpt.exe\""))))
+                }
             },
             "setStartupEnabled"=>{let enabled=input.as_bool().ok_or("无效启动设置")?;if self.isolated{return Err("隔离验证不注册系统登录项".into());}self.settings.startup_enabled=enabled;self.persist()?;Ok(self.state())},
             "updateTraceDirectories" => self.update_directories(&input),
@@ -2591,6 +2624,15 @@ impl Pilot {
                     self.refresh_desktop_selection()?;
                 }
                 let mut snapshot = self.providers().await;
+                if snapshot["warning"].is_null()
+                    && self
+                        .selected()
+                        .is_some_and(|p| self.needs_gateway(p, "codex"))
+                    && !self.active()
+                {
+                    snapshot["warning"] =
+                        json!("选择已保存，需要开启 Trace 后用于客户端请求。");
+                }
                 if let Some(old) = old_alias {
                     let current_config = self.config()?;
                     if provider_field(&current_config, "xwx_deck", "base_url").and_then(Item::as_str) != Some(old.as_str()) {
@@ -3987,6 +4029,35 @@ mod config_merge_tests {
         let managed="model_provider = \"xwx_deck\"\n[model_providers.xwx_deck]\nbase_url = \"http://127.0.0.1:45233/v1\"\n";
         let external = managed.replace("45233", "59999");
         assert!(restore_codex_fields(&external, before, managed, false).is_err());
+    }
+    #[test]
+    fn older_auth_flag_migration_is_not_external_drift() {
+        let managed = "model = \"deepseek-v4-pro\"\nmodel_provider = \"DeepSeek\"\n[model_providers.DeepSeek]\nbase_url = \"https://api.deepseek.com\"\nexperimental_bearer_token = \"synthetic\"\nrequires_openai_auth = true\n[model_providers.xwx_deck]\nbase_url = \"https://api.deepseek.com\"\nexperimental_bearer_token = \"synthetic\"\nrequires_openai_auth = true\n";
+        let migrated = managed.replace(
+            "requires_openai_auth = true",
+            "requires_openai_auth = false",
+        );
+        assert!(!codex_external_change(
+            &doc(&migrated).unwrap(),
+            &doc(managed).unwrap(),
+            "DeepSeek",
+            true
+        ));
+        // A user who explicitly re-enables the login is still external drift.
+        assert!(codex_external_change(
+            &doc(managed).unwrap(),
+            &doc(&migrated).unwrap(),
+            "DeepSeek",
+            true
+        ));
+        // Other owned fields remain protected.
+        let changed_model = migrated.replace("\"deepseek-v4-pro\"", "\"other\"");
+        assert!(codex_external_change(
+            &doc(&changed_model).unwrap(),
+            &doc(managed).unwrap(),
+            "DeepSeek",
+            true
+        ));
     }
 }
 

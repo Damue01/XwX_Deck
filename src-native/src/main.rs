@@ -524,10 +524,14 @@ async fn pilot_rpc(
                     "/usr/bin/pbcopy"
                 } else {
                     "clip.exe"
-                })
-                .stdin(Stdio::piped())
-                .spawn()
-                .map_err(|e| e.to_string())?;
+                });
+                command.stdin(Stdio::piped());
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    command.creation_flags(0x08000000);
+                }
+                let mut child = command.spawn().map_err(|e| e.to_string())?;
                 let value = args.first().and_then(Value::as_str).unwrap_or("");
                 #[cfg(target_os = "windows")]
                 let encoded: Vec<u8> = [0xfeffu16]
@@ -539,13 +543,13 @@ async fn pilot_rpc(
                 let bytes = encoded.as_slice();
                 #[cfg(target_os = "macos")]
                 let bytes = value.as_bytes();
-                command
+                child
                     .stdin
                     .take()
                     .ok_or("无法写入剪贴板")?
                     .write_all(bytes)
                     .map_err(|e| e.to_string())?;
-                if !command.wait().map_err(|e| e.to_string())?.success() {
+                if !child.wait().map_err(|e| e.to_string())?.success() {
                     return Err("复制失败".into());
                 }
                 Ok(Value::Null)

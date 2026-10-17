@@ -44,78 +44,91 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
     let enabled = !["none", "off", "disabled"].contains(&effort);
     let id = normalized(text(body, "model"));
     let base = provider.base_url.to_lowercase();
+    let haystack = format!("{base} {id}");
     out.as_object_mut().unwrap().remove("reasoning_effort");
+    // OpenAI-compatible Chat services accept reasoning_effort by default.
+    // Provider-specific branches below either replace that field, add the
+    // service's thinking toggle, or map the requested tier.
     let mut toggle = "none";
-    let mut field = "none";
+    let mut field = "reasoning_effort";
     let mut mapping = "passthrough";
     let mut on = "enabled";
-    if provider.provider_preset == "compatible" {
-        if family(&id, "gpt-5")
-            || id.as_bytes().first() == Some(&b'o')
-                && id.as_bytes().get(1).is_some_and(|c| c.is_ascii_digit())
-            || family(&id, "glm-5-3")
-            || family(&id, "grok-4-3")
-            || family(&id, "grok-4-5")
-            || family(&id, "grok-4-6")
-        {
+    // A relay's OpenAI-compatible route is not evidence that it understands a
+    // vendor-only thinking parameter. Known aggregators therefore use the
+    // generic reasoning_effort field even when the model id looks like GLM/Qwen.
+    let generic_effort_provider = [
+        "gemini",
+        "googleapis",
+        "mistral",
+        "tencent",
+        "groq",
+        "cerebras",
+        "nvidia",
+        "together",
+        "fireworks",
+        "perplexity",
+        "huggingface",
+        "api.openai.com",
+        "api.x.ai",
+    ]
+    .iter()
+    .any(|name| haystack.contains(name));
+    if haystack.contains("openrouter") {
+        field = "reasoning.effort";
+        mapping = "openrouter";
+    } else if haystack.contains("siliconflow") {
+        if family(&id, "glm-5-3") || family(&id, "glm-5-2") {
             field = "reasoning_effort";
-        } else if [
-            "glm-5",
-            "glm-5v",
-            "qwen3",
-            "deepseek-v4",
-            "kimi-k3",
-            "kimi-k2-5",
-            "kimi-k2-6",
-            "kimi-k2-7",
-            "doubao-seed",
-        ]
+        } else {
+            toggle = "enable_thinking";
+            field = "none";
+        }
+    } else if haystack.contains("deepseek") {
+        toggle = "thinking";
+        field = "reasoning_effort";
+        mapping = "deepseek";
+    } else if family(&id, "minimax-m3") {
+        toggle = "thinking";
+        field = "none";
+        on = "adaptive";
+    } else if id == "minimax-m2-5" {
+        field = "reasoning_effort";
+    } else if haystack.contains("minimax") {
+        toggle = "reasoning_split";
+        field = "none";
+    } else if haystack.contains("stepfun") || family(&id, "step-3-5-flash") {
+        if haystack.contains("2603") {
+            mapping = "low_high";
+        }
+    } else if generic_effort_provider {
+        // field stays reasoning_effort
+    } else if family(&id, "glm-5-3") || family(&id, "glm-5-2") {
+        // These GLM generations expose effort without a separate toggle.
+    } else if family(&id, "glm-5") || family(&id, "glm-5v") || family(&id, "glm-4") {
+        toggle = "thinking";
+        field = "none";
+    } else if family(&id, "kimi-k3") {
+        toggle = "thinking";
+        field = "reasoning_effort";
+    } else if ["kimi", "moonshot", "mimo"]
         .iter()
-        .any(|p| family(&id, p))
-            && !family(&id, "qwen3-coder-plus")
-        {
-            toggle = "thinking";
-            field = "reasoning_effort";
-        } else if id == "minimax-m2-5" {
-            field = "reasoning_effort";
-        } else if family(&id, "minimax-m3") {
-            toggle = "thinking";
-            on = "adaptive";
-        }
-    } else {
-        let haystack = format!("{base} {id}");
-        if haystack.contains("openrouter") {
-            field = "reasoning.effort";
-            mapping = "openrouter";
-        } else if haystack.contains("siliconflow") {
-            toggle = "enable_thinking";
-        } else if haystack.contains("deepseek") {
-            toggle = "thinking";
-            field = "reasoning_effort";
-            mapping = "deepseek";
-        } else if haystack.contains("stepfun") || haystack.contains("step-3-5-flash") {
-            if haystack.contains("2603") {
-                field = "reasoning_effort";
-                mapping = "low_high";
-            }
-        } else if ["kimi", "moonshot", "glm", "zhipu", "z.ai", "mimo"]
+        .any(|name| haystack.contains(name))
+    {
+        toggle = "thinking";
+        field = "none";
+    } else if family(&id, "qwen3-8") {
+        toggle = "enable_thinking";
+        field = "reasoning_effort";
+    } else if !family(&id, "qwen3-coder-plus")
+        && ["qwen", "dashscope", "bailian"]
             .iter()
-            .any(|s| haystack.contains(s))
-        {
-            toggle = "thinking";
-        } else if ["qwen", "dashscope", "bailian"]
-            .iter()
-            .any(|s| haystack.contains(s))
-        {
-            toggle = "enable_thinking";
-        } else if haystack.contains("minimax") {
-            toggle = "reasoning_split";
-        } else if family(&id, "gpt-5")
-            || id.starts_with('o') && id.as_bytes().get(1).is_some_and(|c| c.is_ascii_digit())
-            || family(&id, "grok-4-5")
-        {
-            field = "reasoning_effort";
-        }
+            .any(|name| haystack.contains(name))
+    {
+        toggle = "enable_thinking";
+        field = "none";
+    } else if family(&id, "doubao-seed") {
+        toggle = "thinking";
+        field = "reasoning_effort";
     }
     match toggle {
         "thinking" => out["thinking"] = json!({"type":if enabled{on}else{"disabled"}}),
@@ -126,6 +139,8 @@ pub(super) fn chat(out: &mut Value, body: &Value, provider: &Provider) {
     if !enabled {
         if field == "reasoning.effort" {
             out["reasoning"] = json!({"effort":"none"});
+        } else if field == "reasoning_effort" && toggle == "none" {
+            out["reasoning_effort"] = json!("none");
         } else if id == "minimax-m2-5" && field == "reasoning_effort" {
             out["reasoning_effort"] = json!(effort);
         }
@@ -181,9 +196,15 @@ pub(super) fn messages(out: &mut Value, body: &Value) {
         .any(|s| id.contains(s));
     let native = adaptive
         || id.contains("claude-mythos-5")
-        || ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-6"]
-            .iter()
-            .any(|s| id.contains(s));
+        || [
+            "claude-sonnet-4-6",
+            "claude-opus-4-6",
+            "claude-haiku-4-6",
+            "claude-opus-4-5",
+            "claude-opus-4-8",
+        ]
+        .iter()
+        .any(|s| id.contains(s));
     if native {
         out["output_config"] = json!({"effort":if effort=="minimal"{"low"}else{effort}});
         if adaptive {
@@ -205,6 +226,277 @@ pub(super) fn messages(out: &mut Value, body: &Value) {
         for key in ["temperature", "top_p"] {
             out.as_object_mut().unwrap().remove(key);
         }
+    }
+}
+
+#[cfg(test)]
+mod chat_tests {
+    use super::*;
+
+    fn mapped(base: &str, preset: &str, model: &str, effort: &str) -> Value {
+        let provider = Provider {
+            base_url: base.into(),
+            provider_preset: preset.into(),
+            ..Provider::default()
+        };
+        let mut out = json!({"model":model});
+        chat(
+            &mut out,
+            &json!({"model":model,"reasoning":{"effort":effort}}),
+            &provider,
+        );
+        out
+    }
+    fn effort(out: &Value) -> Option<&str> {
+        out["reasoning_effort"].as_str()
+    }
+
+    #[test]
+    fn chat_uses_the_effort_parameter_each_service_actually_accepts() {
+        let cases = [
+            (
+                "https://open.bigmodel.cn/api/paas/v4",
+                "glm-5.3",
+                "high",
+                Some("high"),
+                None,
+            ),
+            (
+                "https://api.z.ai/api/paas/v4",
+                "glm-5.2",
+                "max",
+                Some("max"),
+                None,
+            ),
+            (
+                "https://api.moonshot.cn/v1",
+                "kimi-k3",
+                "high",
+                Some("high"),
+                Some("enabled"),
+            ),
+            (
+                "https://api.moonshot.cn/v1",
+                "kimi-k2.6",
+                "high",
+                None,
+                Some("enabled"),
+            ),
+            (
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "gemini-3.5-flash",
+                "medium",
+                Some("medium"),
+                None,
+            ),
+            (
+                "https://api.mistral.ai/v1",
+                "mistral-small-latest",
+                "high",
+                Some("high"),
+                None,
+            ),
+            (
+                "https://api.stepfun.com/v1",
+                "step-5-preview",
+                "medium",
+                Some("medium"),
+                None,
+            ),
+            (
+                "https://coding.dashscope.aliyuncs.com/v1",
+                "qwen3.8-max",
+                "xhigh",
+                Some("xhigh"),
+                None,
+            ),
+            (
+                "https://coding.dashscope.aliyuncs.com/v1",
+                "qwen3.5-plus",
+                "high",
+                None,
+                None,
+            ),
+            (
+                "https://tokenhub.tencentmaas.com/v1",
+                "hy3",
+                "high",
+                Some("high"),
+                None,
+            ),
+            (
+                "https://api.groq.com/openai/v1",
+                "qwen/qwen3.8-27b",
+                "high",
+                Some("high"),
+                None,
+            ),
+            (
+                "https://api.deepseek.com",
+                "deepseek-v4-pro",
+                "low",
+                Some("low"),
+                Some("enabled"),
+            ),
+            (
+                "https://api.minimax.cn/v1",
+                "MiniMax-M3",
+                "high",
+                None,
+                Some("adaptive"),
+            ),
+            (
+                "https://api.minimax.cn/v1",
+                "MiniMax-M2.5",
+                "high",
+                Some("high"),
+                None,
+            ),
+            (
+                "https://api.openai.com/v1",
+                "gpt-5.4",
+                "high",
+                Some("high"),
+                None,
+            ),
+            (
+                "https://api.x.ai/v1",
+                "grok-4.5",
+                "high",
+                Some("high"),
+                None,
+            ),
+            (
+                "https://compatible.example/v1",
+                "future-model",
+                "high",
+                Some("high"),
+                None,
+            ),
+        ];
+        for (base, model, effort_value, expected_effort, expected_toggle) in cases {
+            let out = mapped(base, "custom", model, effort_value);
+            assert_eq!(
+                effort(&out),
+                expected_effort,
+                "{model} effort at {base}: {out}"
+            );
+            if base.contains("dashscope") {
+                assert_eq!(
+                    out["enable_thinking"], true,
+                    "{model} enable_thinking at {base}: {out}"
+                );
+            } else {
+                assert_eq!(
+                    out["thinking"]["type"].as_str(),
+                    expected_toggle,
+                    "{model} thinking at {base}: {out}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn chat_maps_special_effort_ladders_and_disables_thinking_cleanly() {
+        let step = mapped(
+            "https://api.stepfun.com/v1",
+            "custom",
+            "step-3.5-flash-2603",
+            "minimal",
+        );
+        assert_eq!(effort(&step), Some("low"));
+        let silicon = mapped(
+            "https://api.siliconflow.cn/v1",
+            "custom",
+            "deepseek-ai/DeepSeek-V4-Pro",
+            "high",
+        );
+        assert_eq!(effort(&silicon), None);
+        assert_eq!(silicon["enable_thinking"], true);
+        let silicon_glm = mapped(
+            "https://api.siliconflow.cn/v1",
+            "custom",
+            "zai-org/GLM-5.3",
+            "high",
+        );
+        assert_eq!(effort(&silicon_glm), Some("high"));
+        assert!(silicon_glm["thinking"].is_null());
+        let openrouter = mapped(
+            "https://openrouter.ai/api/v1",
+            "custom",
+            "deepseek/deepseek-v4-pro",
+            "max",
+        );
+        assert_eq!(openrouter["reasoning"]["effort"], "xhigh");
+        assert!(openrouter["reasoning_effort"].is_null());
+        let deepseek_off = mapped(
+            "https://api.deepseek.com",
+            "custom",
+            "deepseek-v4-pro",
+            "none",
+        );
+        assert_eq!(deepseek_off["thinking"]["type"], "disabled");
+        assert!(deepseek_off["reasoning_effort"].is_null());
+        let kimi_off = mapped("https://api.moonshot.cn/v1", "custom", "kimi-k3", "none");
+        assert_eq!(kimi_off["thinking"]["type"], "disabled");
+        assert!(kimi_off["reasoning_effort"].is_null());
+        let qwen_off = mapped(
+            "https://coding.dashscope.aliyuncs.com/v1",
+            "custom",
+            "qwen3.8-max",
+            "none",
+        );
+        assert_eq!(qwen_off["enable_thinking"], false);
+        assert!(qwen_off["reasoning_effort"].is_null());
+        let generic_off = mapped(
+            "https://compatible.example/v1",
+            "custom",
+            "future-model",
+            "none",
+        );
+        assert_eq!(effort(&generic_off), Some("none"));
+    }
+}
+
+#[cfg(test)]
+mod messages_tests {
+    use super::*;
+
+    fn converted(model: &str, effort: &str) -> Value {
+        let mut out = json!({"max_tokens":8192});
+        messages(
+            &mut out,
+            &json!({"model":model,"reasoning":{"effort":effort}}),
+        );
+        out
+    }
+
+    #[test]
+    fn native_claude_effort_models_use_output_config() {
+        for model in [
+            "claude-opus-4-8",
+            "claude-opus-4-5",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-mythos-5",
+        ] {
+            let out = converted(model, "xhigh");
+            assert_eq!(out["output_config"]["effort"], "xhigh", "{model}");
+            assert!(out["thinking"].is_null(), "{model}");
+        }
+        let adaptive = converted("claude-opus-4-7", "high");
+        assert_eq!(adaptive["output_config"]["effort"], "high");
+        assert_eq!(adaptive["thinking"]["type"], "adaptive");
+    }
+
+    #[test]
+    fn budget_only_claude_models_keep_a_bounded_thinking_budget() {
+        let out = converted("claude-sonnet-4-5", "high");
+        assert_eq!(out["thinking"]["type"], "enabled");
+        assert_eq!(out["thinking"]["budget_tokens"], 4096);
+        let disabled = converted("claude-opus-4-8", "none");
+        assert!(disabled["output_config"].is_null());
+        assert!(disabled["thinking"].is_null());
     }
 }
 

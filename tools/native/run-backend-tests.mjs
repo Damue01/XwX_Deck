@@ -98,6 +98,7 @@ const suites = [
   "desktop-lifecycle-test.mjs",
   "desktop-model-routing-test.mjs",
   "reasoning-test.mjs",
+  "reasoning-chat-providers-test.mjs",
   "client-management-test.mjs",
   "configuration-removal-test.mjs",
   "client-trace-defaults-test.mjs",

@@ -250,5 +250,6 @@
 | 脚本 | 执行入口 |
 | --- | --- |
 | [public-binary-boundary-test.mjs](../tools/native/public-binary-boundary-test.mjs) | 后端默认入口 |
+| [reasoning-chat-providers-test.mjs](../tools/native/reasoning-chat-providers-test.mjs) | 后端默认入口 |
 | [trace-compaction-test.mjs](../tools/native/trace-compaction-test.mjs) | 后端默认入口 |
 | [public-history-test.mjs](../tools/tests/public-history-test.mjs) | test:built 入口 |

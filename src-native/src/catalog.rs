@@ -45,6 +45,54 @@ fn ensure_codex_instructions(row: &mut Value) {
     }
     row["base_instructions"] = json!("You are a coding agent. Follow the user instructions, use the provided tools carefully, and report the completed result clearly.");
 }
+const REASONING_LEVELS: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+// DeepSeek's Responses contract exposes none/low/high/max. models.dev records
+// the effort tiers but models the thinking toggle separately, so Codex needs
+// the documented levels completed. Only the official service gets this
+// treatment: resellers that serve DeepSeek models publish their own tier sets.
+const DEEPSEEK_REASONING_LEVELS: &[&str] = &["none", "low", "high", "max"];
+fn official_deepseek(provider: &Provider) -> bool {
+    reqwest::Url::parse(provider.base_url.trim())
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .is_some_and(|host| host.eq_ignore_ascii_case("api.deepseek.com"))
+}
+fn codex_reasoning_levels(row: &Value, provider: &Provider) -> Vec<Value> {
+    let mut levels: Vec<String> = row["reasoningLevels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    // An explicit service declaration, including an empty list, stays authoritative.
+    let declared_by_service =
+        row["capabilitySources"]["reasoningLevels"].as_str() == Some("provider");
+    if official_deepseek(provider) && row["reasoning"] == true && !declared_by_service {
+        for tier in DEEPSEEK_REASONING_LEVELS {
+            if !levels.iter().any(|level| level.as_str() == *tier) {
+                levels.push((*tier).to_owned());
+            }
+        }
+        levels.sort_by_key(|level| {
+            REASONING_LEVELS
+                .iter()
+                .position(|known| *known == level.as_str())
+                .unwrap_or(usize::MAX)
+        });
+        levels.dedup();
+    }
+    levels
+        .into_iter()
+        .filter(|level| REASONING_LEVELS.contains(&level.as_str()))
+        .map(|level| {
+            json!({
+                "effort": level,
+                "description": format!("{level} reasoning effort")
+            })
+        })
+        .collect()
+}
 pub(super) fn with_service_metadata(mut entry: Value, raw: &Value) -> Value {
     metadata::attach(&mut entry, raw);
     entry
@@ -251,14 +299,15 @@ fn enrich(mut entry: Value, remote: &Value) -> Value {
         ("levels", "reasoningLevels"),
         ("defaultLevel", "defaultReasoningLevel"),
     ] {
-        if let Some(v) = (entry["reasoning"] == true)
-            .then_some([&provider, &models])
+        if entry["reasoning"] != true {
+            continue;
+        }
+        if let Some((source, value)) = [("provider", &provider), ("models.dev", &models)]
             .into_iter()
-            .flatten()
-            .into_iter()
-            .find_map(|c| c.get(key))
+            .find_map(|(source, capability)| capability.get(key).map(|value| (source, value)))
         {
-            entry[field] = v.clone();
+            entry[field] = value.clone();
+            sources.insert(field.into(), json!(source));
         }
     }
     entry.as_object_mut().unwrap().remove("officialProtocols");
@@ -519,23 +568,9 @@ impl Catalog {
             let mut row=exact.cloned().unwrap_or_else(||json!({"shell_type":"shell_command","base_instructions":"You are a coding agent. Follow the user instructions, use the provided tools carefully, and report the completed result clearly.","apply_patch_tool_type":"freeform","default_verbosity":"medium","truncation_policy":{"mode":"tokens","limit":10000},"experimental_supported_tools":[]}));
             row["slug"]=r["id"].clone();row["display_name"]=r["id"].clone();row["description"]=r["vendor"].clone();row["visibility"]=json!("list");row["supported_in_api"]=json!(true);row["priority"]=json!(i);
             row["context_window"]=json!(context);row["max_context_window"]=json!(r["contextWindow"].as_u64().unwrap_or(context).max(context));row.as_object_mut().unwrap().remove("auto_compact_token_limit");for (key,value) in compatibility::resolve(r,exact,&entry_wire(p,Some(r),"responses"))["values"].as_object().unwrap() {row[key]=value.clone();}
-            row["input_modalities"]=if vision{json!(["text","image"])}else{json!(["text"])};row["supports_image_detail_original"]=json!(vision);row.as_object_mut().unwrap().remove("supports_parallel_tool_calls");
+            row["input_modalities"]=if vision{json!(["text","image"])}else{json!(["text"])};row["supports_image_detail_original"]=json!(vision);
             if exact.is_none() || r["reasoningLevels"].is_array() || (r["reasoning"] == false && r["capabilitySources"]["reasoning"] != "fallback") {
-                let mut levels: Vec<String> = r["reasoningLevels"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|s| s.to_string()).collect();
-                // DeepSeek thinking uses none/low/high/max. models.dev can
-                // under-report this set; keep the picker aligned with the
-                // request mapping in reasoning::chat instead of dropping tiers.
-                let deepseek = p.base_url.to_lowercase().contains("deepseek")
-                    || r["id"].as_str().is_some_and(|id| id.to_lowercase().contains("deepseek"));
-                if deepseek {
-                    for tier in ["none", "low", "high", "max"] {
-                        if !levels.iter().any(|s| s.as_str() == tier) {
-                            levels.push(tier.to_string());
-                        }
-                    }
-                }
-                row["supported_reasoning_levels"]=json!(levels.into_iter().filter(|s|["none","minimal","low","medium","high","xhigh","max"].contains(&s.as_str())).map(|s|{let description=format!("{s} reasoning effort");json!({"effort":s,"description":description})}).collect::<Vec<_>>());
-
+                row["supported_reasoning_levels"] = json!(codex_reasoning_levels(r, p));
             }
             let default = r["defaultReasoningLevel"].as_str().or_else(|| exact.and_then(|native| native["default_reasoning_level"].as_str()));
             row.as_object_mut().unwrap().remove("default_reasoning_level");
@@ -545,7 +580,17 @@ impl Catalog {
             if exact.is_none() || r["capabilitySources"]["reasoning"] != "fallback" {
                 row["supports_reasoning_summary_parameter"]=json!(r["reasoning"]==true);row["default_reasoning_summary"]=json!(if r["reasoning"]==true{"auto"}else{"none"});
             }
-            for key in ["comp_hash","max_output_tokens","supports_websockets","supports_reasoning_summaries","availability_nux","multi_agent_version","tool_mode","upgrade","use_responses_lite"] {row.as_object_mut().unwrap().remove(key);}
+            for key in ["comp_hash","max_output_tokens","supports_websockets","availability_nux","multi_agent_version","tool_mode","upgrade","use_responses_lite"] {row.as_object_mut().unwrap().remove(key);}
+            // Older Codex builds (for example the 0.144 custom harness on
+            // Windows) reject a catalog row without this key even when the
+            // service does not summarize reasoning. Preserve a native value
+            // and otherwise publish an explicit false rather than omitting it.
+            if row.get("supports_reasoning_summaries").is_none() {
+                row["supports_reasoning_summaries"] = json!(false);
+            }
+            if row.get("supports_parallel_tool_calls").is_none() {
+                row["supports_parallel_tool_calls"] = json!(false);
+            }
             ensure_codex_instructions(&mut row);
             row
         }).collect::<Vec<_>>();
@@ -799,6 +844,116 @@ mod client_contract_tests {
         let mut absent = json!({"slug":"codex-auto-review"});
         ensure_codex_instructions(&mut absent);
         assert!(absent["base_instructions"].is_string());
+    }
+    fn efforts(levels: &[&str], reasoning: bool, base_url: &str, source: &str) -> Vec<String> {
+        let mut row = json!({"reasoning":reasoning,"reasoningLevels":levels});
+        if !source.is_empty() {
+            row["capabilitySources"] = json!({"reasoningLevels":source});
+        }
+        codex_reasoning_levels(
+            &row,
+            &Provider {
+                base_url: base_url.into(),
+                ..Provider::default()
+            },
+        )
+        .into_iter()
+        .filter_map(|level| level["effort"].as_str().map(str::to_owned))
+        .collect()
+    }
+    #[test]
+    fn deepseek_contract_levels_stay_scoped_to_the_official_service() {
+        assert_eq!(
+            efforts(
+                &["low", "high", "max"],
+                true,
+                "https://api.deepseek.com",
+                "models.dev"
+            ),
+            ["none", "low", "high", "max"]
+        );
+        assert_eq!(
+            efforts(&[], true, "https://api.deepseek.com/v1", ""),
+            ["none", "low", "high", "max"]
+        );
+        // A reseller's DeepSeek model keeps its own declared ladder. Ark, for
+        // example, does not publish max or none, and adding them would show
+        // effort tiers the service never promised.
+        assert_eq!(
+            efforts(
+                &["minimal", "low", "medium", "high"],
+                true,
+                "https://ark.cn-beijing.volces.com/api/v3",
+                "models.dev"
+            ),
+            ["minimal", "low", "medium", "high"]
+        );
+        assert_eq!(
+            efforts(&[], true, "https://openrouter.ai/api/v1", "models.dev"),
+            Vec::<String>::new()
+        );
+        // Unknown services preserve their exact declared order.
+        assert_eq!(
+            efforts(
+                &["high", "low"],
+                true,
+                "https://compatible.example/v1",
+                "provider"
+            ),
+            ["high", "low"]
+        );
+        // Explicit service declarations, including empty lists and a reduced
+        // ladder, stay authoritative even on the official endpoint.
+        assert_eq!(
+            efforts(&[], true, "https://api.deepseek.com", "provider"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            efforts(&["high"], true, "https://api.deepseek.com", "provider"),
+            ["high"]
+        );
+        // A non-reasoning model never receives invented effort tiers.
+        assert_eq!(
+            efforts(&[], false, "https://api.deepseek.com", "provider"),
+            Vec::<String>::new()
+        );
+    }
+    #[test]
+    fn reasoning_level_sources_survive_enrichment() {
+        let provider = Provider {
+            base_url: "https://api.deepseek.com".into(),
+            ..Provider::default()
+        };
+        let explicit = enrich(
+            json!({"id":"deepseek-v4-pro","providerCapabilities":{"reasoning":true,"levels":[]}}),
+            &json!({"modelsDev":[],"litellm":[]}),
+        );
+        assert_eq!(
+            explicit["capabilitySources"]["reasoningLevels"],
+            json!("provider")
+        );
+        assert_eq!(
+            codex_reasoning_levels(&explicit, &provider),
+            Vec::<Value>::new()
+        );
+        let remote = json!({"modelsDev":[{
+            "modelId":"deepseek-v4-pro",
+            "providerId":"deepseek",
+            "canonicalModelId":"deepseek/deepseek-v4-pro",
+            "aliases":["deepseek/deepseek-v4-pro","deepseek-v4-pro"],
+            "referencePriority":0,
+            "capability":{"reasoning":true,"levels":["low","high","max"]}
+        }],"litellm":[]});
+        let resolved = enrich(json!({"id":"deepseek-v4-pro"}), &remote);
+        assert_eq!(
+            resolved["capabilitySources"]["reasoningLevels"],
+            json!("models.dev")
+        );
+        let efforts: Vec<_> = codex_reasoning_levels(&resolved, &provider)
+            .into_iter()
+            .filter_map(|level| level["effort"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(efforts, ["none", "low", "high", "max"]);
     }
     #[test]
     fn output_limit_is_scoped_to_the_connection_and_requires_provenance() {

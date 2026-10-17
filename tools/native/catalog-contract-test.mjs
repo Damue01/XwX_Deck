@@ -46,7 +46,7 @@ try{
  assert.equal(find('contract-model').providerPrice.input,2);assert.equal(find('contract-model').providerPrice.cacheRead,0);
  assert.equal(find('partial-price').providerPrice.input,0);assert.equal(find('invalid-price').providerPrice,undefined);
  pass('native endpoints take priority; supported paths/targets and object effort normalize without inventing unknown declarations, prices retain zero and reject unknown currency');
- let native=await menu();assert.deepEqual(native.models.find(r=>r.slug==='alias-native').supported_reasoning_levels.map(r=>r.effort),['high','low']);
+ let native=await menu();assert.deepEqual(native.models.find(r=>r.slug==='alias-native').supported_reasoning_levels.map(r=>r.effort),['high','low']);for(const row of native.models){assert.equal(typeof row.supports_reasoning_summaries,'boolean',row.slug);assert.equal(typeof row.supports_parallel_tool_calls,'boolean',row.slug);}
  code=404;await app.rpc('validateProvider',{providerId:'one',model:'contract-model'});models=await fetchModels();assert.equal(find('contract-model').runtimeRetired,true);assert.ok(!(await menu()).models.some(r=>r.slug==='contract-model'));
  assert.equal((await app.rpc('getProviders')).connections.find(p=>p.id==='one').codexModel,'contract-model');
  pass('definite retired validation remains hidden after successful refresh without replacing the saved model');
