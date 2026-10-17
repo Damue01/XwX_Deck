@@ -1,8 +1,17 @@
 # 整合验收
 
+## 当前发布
+
+当前对外版本为 `1.0.0`，提供 Windows x64、Apple Silicon 和 Intel Mac 安装包。
+制品、签名、公开下载、平台检查及边界见 [1.0.0 发布验收](release-1-0-0-publication.md)。
+
+## 发布前记录
+
+以下保留此前验收过程，当前发布状态以上述记录为准。
+
 Intel Mac 首轮候选已完成原生构建与隔离验收。
 制品哈希、运行结果与边界见 [GitHub 发布流程](../github-release.md#intel-mac-首轮验收)。
-本轮未发布新版本，下载入口保持现状。
+该次候选验收未发布新版本，下载入口保持现状。
 
 最新平台结果见 [1.0.0 平台整合验收](platform-integration-acceptance.md)。
 Windows 最终候选已包含固定端口和 API 接管清理。
@@ -34,8 +43,8 @@ Windows 最终候选已包含固定端口和 API 接管清理。
 当前源码版本为 `1.0.0`。
 
 本次修改与候选证据见 [Trace 与安装包修复](trace-installation-acceptance.md)。
-本轮只更新源码、测试与文档。
-应用安装、版本标签与 Release 保持原状。
+该次早期验收只更新源码、测试与文档。
+当时的应用安装、版本标签与 Release 保持原状。
 
 ## 改动范围
 
