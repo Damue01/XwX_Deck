@@ -16,7 +16,7 @@ const installations=join(root,'installations');
 await mkdir(join(installations,'.local/bin'),{recursive:true});
 for(const name of ['claude','codex'])await writeFile(join(installations,'.local/bin',process.platform === 'win32' ? name + '.cmd' : name),'isolated installed-client fixture',{mode:0o755});
 const fixtureEnv={...process.env,XWX_CLIENT_INSTALLATIONS_TEST_HOME:installations};
-let child;
+let child, passed = false;
 try {
   // An isolated, uncontacted loopback provider permits Trace lifecycle checks.
   for (const [method, args] of [
@@ -56,9 +56,11 @@ try {
   assert.deepEqual(JSON.parse(restarted.stdout.trim()).result, ['codex']);
   result.checks.push('removed Claude remains absent after native process restart');
   if (process.env.XWX_WINDOW_TEST_REPORT) await writeFile(process.env.XWX_WINDOW_TEST_REPORT, JSON.stringify(result, null, 2) + '\n');
+  passed = true;
   console.log(JSON.stringify(result, null, 2));
 } finally {
   if (child && child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await once(child, 'exit'); }
-  await rm(root, { recursive: true, force: true });
+  if (passed) await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+  else console.error('Failed window fixture retained at ' + root);
 
 }

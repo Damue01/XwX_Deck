@@ -6,7 +6,8 @@
   try {
     await wait(() => document.querySelector('.tour-skip'), 'fresh onboarding');
     document.querySelector('.tour-skip').click();
-    await wait(() => !document.querySelector('.tour-root'), 'skip onboarding');
+    await wait(() => !document.querySelector('.tour-root, #onboarding-setup'), 'skip onboarding');
+    await wait(() => !document.querySelector('#page-signal')?.closest('[inert]'), 'onboarding releases the application');
     document.querySelector('[data-page="signal"]').click();
     await wait(() => document.querySelector('#page-signal.current canvas[data-rendering="active"]'), 'Trace page and field are active');
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
