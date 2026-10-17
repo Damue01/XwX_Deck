@@ -3,7 +3,7 @@ import esbuild from 'esbuild';
 import { createServer } from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
-import { resolve, extname } from 'node:path';
+import { resolve, extname, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const module = process.env.XWX_PLAYWRIGHT_MODULE;
 const { chromium } = await import(module ? pathToFileURL(resolve(module)).href : 'playwright');
@@ -14,7 +14,7 @@ const server = createServer(async (req, res) => {
   const relative = new URL(req.url, 'http://localhost').pathname;
   if(relative==='/test-fixture.js'){res.setHeader('content-type','application/javascript');res.end(fixture.outputFiles[0].text);return;}
   const path = resolve(root, '.' + (relative === '/' ? '/index.html' : relative));
-  if (!path.startsWith(root + '/')) { res.writeHead(403); res.end(); return; }
+  if (!path.startsWith(root + sep)) { res.writeHead(403); res.end(); return; }
   try {
     res.setHeader('content-type', { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png' }[extname(path)] ?? 'application/octet-stream');
     const content=await readFile(path);
