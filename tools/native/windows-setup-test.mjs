@@ -80,6 +80,7 @@ try {
  artifacts={old:await buildWindowsSetup({root:repo,binary:oldBinary,output:join(work,'old-setup.exe'),version:oldVersion}),new:next};
  const failed=await buildWindowsSetup({root:repo,binary:newBinary,output:join(work,'failure-setup.exe'),version:newVersion,failureFixture:true});
  const lateFailure=await buildWindowsSetup({root:repo,binary:newBinary,output:join(work,'late-failure-setup.exe'),version:newVersion,failureFixture:'registered'});
+ const uninstallFailure=await buildWindowsSetup({root:repo,binary:newBinary,output:join(work,'uninstall-failure-setup.exe'),version:newVersion,failureFixture:'uninstall'});
  for(const name of ['.xwx-deck-new.exe','.xwx-deck-old.exe','.xwx-deck-old-uninstall.exe']){
   const target=join(work,'暂存 冲突 '+name),marker=join(target,name);await mkdir(target);await writeFile(marker,'unrelated existing bytes');
   assert.equal(setup(artifacts.new.path,['/D='+target],'stage-collision-'+name),3);
@@ -149,6 +150,13 @@ try {
  pass('actual local Setup download upgrades the installed app and renders the new executable at the same data root');
  await rpcSession(executable,async rpc=>{assert.deepEqual(await rpc('getProviders'),providersBefore);const s=await rpc('toggleTracing',true);const response=await fetch(s.localBaseUrl+'/responses',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'fixture-model',input:'Synthetic post-upgrade request'})});assert.equal(response.status,200);await response.json();await rpc('toggleTracing',false);});
  pass('retained provider performs an actual authenticated local request after update');
+ assert.equal(setup(uninstallFailure.path,[],'prepare-uninstall-recovery'),0);
+ const beforeUninstallFailure=registration(),recoveryUninstaller=hash(await readFile(join(install,'uninstall.exe'))),recoveryShortcut=hash(await readFile(shortcut));
+ assert.equal(await uninstall('failure-after-metadata-removal'),3);
+ assert.deepEqual(registration(),beforeUninstallFailure);assert.equal(hash(await readFile(executable)),hash(await readFile(newBinary)));assert.equal(hash(await readFile(join(install,'uninstall.exe'))),recoveryUninstaller);assert.equal(hash(await readFile(shortcut)),recoveryShortcut);
+ await rpcSession(executable,async rpc=>{assert.equal((await rpc('getUpdateState')).portable,false);});
+ assert.equal(setup(artifacts.new.path,[],'repair-uninstall-recovery'),0);
+ pass('uninstall failure after registration deletion restores the app, exact uninstall entry, shortcut and working registered recovery');
  const retained=join(install,'keep.txt');await writeFile(retained,'user-owned fixture');
  assert.equal(await uninstall('uninstall-new'),0);assert.equal(registration(),null);await assert.rejects(access(executable));if(previousShortcut)assert.deepEqual(await readFile(shortcut),previousShortcut);else await assert.rejects(access(shortcut));assert.equal(await readFile(retained,'utf8'),'user-owned fixture');
  assert.equal(hash(await readFile(join(data,'settings.json'))),settingsBefore);assert.equal(hash(await readFile(traceFile)),traceBefore);
@@ -159,7 +167,7 @@ try {
 }catch(error){await writeFile(join(work,'summary.json'),JSON.stringify({passed:false,checks,work,error:String(error)},null,2)+'\n');throw error;}
 finally {
  if(ui?.exitCode===null){const ended=once(ui,'exit');ui.kill();await ended;}
- const current=registration();if(current&&[install,cInstall].includes(current.Path)){const code=await uninstall('cleanup-owned-installation');assert.equal(code,0,'Owned Setup cleanup failed');}
+ const current=registration();if(current&&[install,cInstall].includes(current.Path)){assert.equal(setup(artifacts.new.path,[],'cleanup-repair'),0,'Owned Setup recovery failed');const code=await uninstall('cleanup-owned-installation');assert.equal(code,0,'Owned Setup cleanup failed');}
  if(!previousShortcut&&!registration()&&(await readFile(shortcut).catch(()=>null))?.equals(foreignShortcutMarker))await unlink(shortcut);
  server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
 }

@@ -69,6 +69,8 @@ Var OwnStaging
 Var OwnNewApp
 Var OwnNewUninstaller
 Var RollbackFailed
+Var UninstallMetadataTouched
+Var PreviousStartup
 
 !macro Log Message
   DetailPrint "${Message}"
@@ -440,6 +442,10 @@ Function un.onInit
     SetErrorLevel 2
     Quit
   ${EndIf}
+  ReadRegStr $PreviousVersion HKCU "${KEY}" "Version"
+  ReadRegStr $PreviousHash HKCU "${KEY}" "BinarySha256"
+  ReadRegDWORD $PreviousSize HKCU "${ARP}" "EstimatedSize"
+  ReadRegStr $PreviousStartup HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "XwX Deck"
   SetOutPath "$PLUGINSDIR"
   File /oname=guard.exe "@@BINARY@@"
   File /oname=XwXSetupSkin.dll "@@SKIN@@"
@@ -508,12 +514,43 @@ Function un.Progress
   System::Call /NOUNLOAD '$PLUGINSDIR\XwXSetupSkin.dll::Skin(p $HWNDPARENT, p $Dialog, w "@@VERSION@@", i 2)'
 FunctionEnd
 
+Function un.RestoreRegistration
+  ClearErrors
+  WriteRegStr HKCU "${KEY}" "AppId" "app.xwxdeck.desktop"
+  WriteRegStr HKCU "${KEY}" "InstallerType" "nsis-v1"
+  WriteRegStr HKCU "${KEY}" "Path" "$PreviousPath"
+  WriteRegStr HKCU "${KEY}" "Version" "$PreviousVersion"
+  WriteRegStr HKCU "${KEY}" "BinarySha256" "$PreviousHash"
+  WriteRegStr HKCU "${ARP}" "DisplayName" "XwX Deck"
+  WriteRegStr HKCU "${ARP}" "DisplayVersion" "$PreviousVersion"
+  WriteRegStr HKCU "${ARP}" "Publisher" "XwX Deck"
+  WriteRegStr HKCU "${ARP}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${ARP}" "DisplayIcon" '$\"$INSTDIR\XwX Deck.exe$\",0'
+  WriteRegStr HKCU "${ARP}" "UninstallString" '$\"$INSTDIR\uninstall.exe$\"'
+  WriteRegStr HKCU "${ARP}" "QuietUninstallString" '$\"$INSTDIR\uninstall.exe$\" /S'
+  WriteRegDWORD HKCU "${ARP}" "NoModify" 1
+  WriteRegDWORD HKCU "${ARP}" "NoRepair" 1
+  WriteRegDWORD HKCU "${ARP}" "EstimatedSize" $PreviousSize
+  IfErrors 0 +2
+    StrCpy $RollbackFailed 1
+FunctionEnd
+
 Section "Uninstall"
   StrCpy $Stage 0
+  StrCpy $RollbackFailed 0
+  StrCpy $UninstallMetadataTouched 0
   Call un.ConfirmLeave
   ClearErrors
   CopyFiles /SILENT "$INSTDIR\uninstall.exe" "$PLUGINSDIR\recovery-uninstall.exe"
   IfErrors uninstall_failed
+  StrCpy $HadShortcut 0
+  ExecWait '"$PLUGINSDIR\guard.exe" --check-setup-shortcut "$INSTDIR\XwX Deck.exe"' $0
+  ${If} $0 == 0
+    IfFileExists "$SMPROGRAMS\XwX Deck.lnk" 0 +4
+      CopyFiles /SILENT "$SMPROGRAMS\XwX Deck.lnk" "$PLUGINSDIR\recovery-shortcut.lnk"
+      IfErrors uninstall_failed
+      StrCpy $HadShortcut 1
+  ${EndIf}
   IfFileExists "$INSTDIR\.xwx-deck-remove.exe" uninstall_failed
   Rename "$INSTDIR\XwX Deck.exe" "$INSTDIR\.xwx-deck-remove.exe"
   IfErrors uninstall_failed
@@ -523,25 +560,69 @@ Section "Uninstall"
   ${OrIf} $0 != 0
     Goto uninstall_failed
   ${EndIf}
+  ; Keep the application backup and uninstall entry until metadata deletion succeeds.
+  StrCpy $UninstallMetadataTouched 1
+  ClearErrors
+  DeleteRegKey HKCU "${ARP}"
+  IfErrors uninstall_failed
+  DeleteRegKey HKCU "${KEY}"
+  IfErrors uninstall_failed
+  !if @@FAILURE_FIXTURE@@ == 3
+    Goto uninstall_failed
+  !endif
   Delete "$INSTDIR\uninstall.exe"
   IfErrors uninstall_failed
   Delete "$INSTDIR\.xwx-deck-remove.exe"
   IfErrors uninstall_failed
-  DeleteRegKey HKCU "${ARP}"
-  DeleteRegKey HKCU "${KEY}"
+  StrCpy $Stage 9
   RMDir "$INSTDIR"
   SetErrorLevel 0
   Goto uninstall_done
 uninstall_failed:
   ${If} $Stage == 1
     ClearErrors
-    IfFileExists "$INSTDIR\.xwx-deck-remove.exe" 0 +3
+    ${If} ${FileExists} "$INSTDIR\.xwx-deck-remove.exe"
       Rename "$INSTDIR\.xwx-deck-remove.exe" "$INSTDIR\XwX Deck.exe"
-      Goto +2
-    CopyFiles /SILENT "$PLUGINSDIR\guard.exe" "$INSTDIR\XwX Deck.exe"
+    ${Else}
+      CopyFiles /SILENT "$PLUGINSDIR\guard.exe" "$INSTDIR\XwX Deck.exe"
+    ${EndIf}
+    IfErrors 0 +2
+      StrCpy $RollbackFailed 1
+    ClearErrors
     CopyFiles /SILENT "$PLUGINSDIR\recovery-uninstall.exe" "$INSTDIR\uninstall.exe"
+    IfErrors 0 +2
+      StrCpy $RollbackFailed 1
+    ${If} $UninstallMetadataTouched == 1
+      Call un.RestoreRegistration
+    ${EndIf}
+    ; Do not overwrite a shortcut or startup choice changed externally during uninstall.
+    ${If} $HadShortcut == 1
+      ExecWait '"$PLUGINSDIR\guard.exe" --check-setup-shortcut "$INSTDIR\XwX Deck.exe"' $0
+      ${If} $0 == 0
+        ClearErrors
+        CopyFiles /SILENT "$PLUGINSDIR\recovery-shortcut.lnk" "$SMPROGRAMS\XwX Deck.lnk"
+        IfErrors 0 +2
+          StrCpy $RollbackFailed 1
+      ${EndIf}
+    ${EndIf}
+    StrCpy $0 '$\"$INSTDIR\XwX Deck.exe$\"'
+    StrLen $1 $0
+    StrCpy $2 $PreviousStartup $1
+    ${If} $2 == $0
+      ReadRegStr $3 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "XwX Deck"
+      ${If} $3 == ""
+        ClearErrors
+        WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "XwX Deck" "$PreviousStartup"
+        IfErrors 0 +2
+          StrCpy $RollbackFailed 1
+      ${EndIf}
+    ${EndIf}
   ${EndIf}
   SetErrorLevel 3
-  Abort "卸载未完成。配置和数据保留，请保留安装目录，使用卸载入口或安装包重试。"
+  ${If} $RollbackFailed == 1
+    Abort "卸载失败，恢复未完成。请保留安装目录和恢复文件，使用安装包修复。配置和数据保留。"
+  ${Else}
+    Abort "卸载未完成。配置和数据保留，可使用原卸载入口重试。"
+  ${EndIf}
 uninstall_done:
 SectionEnd

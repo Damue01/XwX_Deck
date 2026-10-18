@@ -62,7 +62,7 @@ export async function buildWindowsSetup({ root, binary, output, version, failure
   await assertPublicBinary(skin, root);
   let template = await readFile(join(root, 'tools/native/windows-setup.nsi'), 'utf8');
   const binarySha256 = createHash('sha256').update(await readFile(binary)).digest('hex');
-  for (const [key, value] of Object.entries({ OUTPUT: output, BINARY: binary, SKIN: skin, ICON: join(root, 'assets/icon.ico'), VERSION: version, BINARY_SHA256: binarySha256, FAILURE_FIXTURE: failureFixture === 'registered' ? '2' : failureFixture ? '1' : '0' })) template = template.replaceAll(`@@${key}@@`, quote(value));
+  for (const [key, value] of Object.entries({ OUTPUT: output, BINARY: binary, SKIN: skin, ICON: join(root, 'assets/icon.ico'), VERSION: version, BINARY_SHA256: binarySha256, FAILURE_FIXTURE: failureFixture === 'uninstall' ? '3' : failureFixture === 'registered' ? '2' : failureFixture ? '1' : '0' })) template = template.replaceAll(`@@${key}@@`, quote(value));
   const source = join(work, 'installer.nsi'); await writeFile(source, template);
   const result = spawnSync(join(home, 'makensis.exe'), ['/INPUTCHARSET', 'UTF8', '/V3', source], { windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
   await writeFile(join(work, 'build.log'), (result.stdout || '') + (result.stderr || ''));
