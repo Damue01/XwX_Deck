@@ -5,13 +5,71 @@
 当前对外版本为 `1.0.0`，提供 Windows x64、Apple Silicon 和 Intel Mac 安装包。
 制品、签名、公开下载、平台检查及边界见 [1.0.0 发布验收](release-1-0-0-publication.md)。
 
-## Windows 客户端检测与手动安装位置候选
+## Windows 目录打开与 Trace 来源修复候选
 
-2026-10-18 的当前候选来自干净快照 `df8e1f0`。
+2026-10-18 的当前候选来自干净快照 `c2cfc5c`。
+文件为 `release/XwXDeck-acceptance-c2cfc5c.exe`。
+SHA-256 为 `1034cb8802381abe40024884639e8b07cae2f362db96e0f98595932af5e6e330`。
+`XwXDeck-acceptance.exe` 与 `XwX Deck.exe` 已同步更新。
+三个文件的 SHA-256 相同。
+
+用户亲自操作旧包，确认正常启动时能打开会话目录。
+同用户的自动测试进程调用旧 Shell 接口时返回 `0x80070005`。
+目标目录可读，未发现目标目录缺少访问权限。
+另一种 Shell 调用虽返回成功，却未产生目录窗口。
+该结果未计为通过。
+本轮未确定造成旧接口差异的具体系统策略。
+
+日志、数据、会话与重置备份目录现共用 Windows 文件夹启动接口。
+界面进程在 Tauri 主线程发起异步启动。
+等待完成时不阻塞界面线程，也不持有 Trace 存储锁。
+无界面的隔离请求使用独立 STA 线程。
+失败、系统返回否定和超时均保留错误。
+中文、空格、`#`、`&` 路径实际打开。
+UNC 路径前缀另有单测，未实连网络共享。
+未调用命令 Shell、提权或修改系统权限。
+接口要求见 [Windows 文件夹启动文档](https://learn.microsoft.com/en-us/uwp/api/windows.system.launcher.launchfolderpathasync)。
+
+Harness 的原始记录和会话索引一直保留 `deepseek-harness`。
+旧 Viewer 把未列出的来源统一显示为 Copilot，导致误标。
+Viewer 现复用客户端目录名称，列表与详情使用同一映射。
+筛选器按实际记录的来源生成，包含保留的用量记录。
+缺失来源显示 Unknown，未登记的新来源保留原标识。
+不修改既有 Trace 原始证据。
+
+同包主界面 263 项、Viewer 34 项通过。
+主界面完成 3 个实际本地 HTTP 请求，无界面脚本错误。
+日志、数据和会话目录窗口已核对隔离路径。
+在途提醒 13 项、托盘 25 项、生命周期 24 项通过。
+启动恢复 5 项、重置 16 项、主题 9 项、引导重启 13 项通过。
+Rust 单测 188 项及严格静态检查通过。
+编译、构建测试、运行时边界、公共边界与工作流检查通过。
+同包完整后端为 102/102，含 1 项平台跳过。
+
+实装 Harness `0.2.1-rc.2` 完成两个本地 Responses 请求。
+浏览器实际核对回答完成、列表来源、筛选与详情来源。
+会话目录按钮打开了对应的隔离目录。
+请求记录和索引都保留 Harness 来源，未出现 Copilot 兜底。
+两页无浏览器控制台错误。
+停止后恢复配置，删除本地占位凭据，代理与页面监听关闭。
+证据前缀为 `test-results/folder-source-final-`。
+
+MSI 可改善安装位置、快捷方式与卸载登记。
+它不能代替运行时目录打开逻辑，也不必让程序持续以管理员运行。
+后续若增加 MSI，优先按用户安装，保留应用身份与数据目录。
+安装和更新流程需一并验收。
+依据见 [Windows 安装上下文](https://learn.microsoft.com/en-us/windows/win32/msi/installation-context) 与 [运行权限说明](https://learn.microsoft.com/en-us/windows/win32/secbp/running-with-administrator-privileges)。
+本轮未创建或安装 MSI，未签名、推送或发布。
+网站工作区修改未进入构建。
+所有客户端实装、真实厂商额度、macOS 与物理多屏未在本轮重测。
+
+## 上一轮 Windows 客户端检测与手动安装位置候选
+
+2026-10-18 的上一轮候选来自干净快照 `df8e1f0`。
 文件为 `release/XwXDeck-acceptance-df8e1f0.exe`。
 SHA-256 为 `cfdc888cb65e45aba3ade225306443f77e744c55531d0dc384fccb9b62abb7a5`。
-日志文件夹权限问题仍未通过。
-两个通用入口继续保留上一轮通过包。
+该候选的日志文件夹检查当时未通过。
+当时的两个通用入口继续保留更早的通过包。
 
 Windows 检测读取卸载登记、App Paths 和当前用户的 Store 注册信息。
 同时检查 PATH、包管理器与常见目录。
