@@ -125,6 +125,18 @@ try{
  await wait(()=>bridge.providers.active.codex==='official-configured','explicit configured official account selected');
  assert.equal(bridge.providers.connections.find(p=>p.id==='official-configured').subscriptionAccountId,'official-chatgpt-fixture');
  pass('official menu channel exists only because this fixture explicitly configured an account');
+ bridge.runtime={tracingEnabled:false};
+ const nativeOfficial=bridge.providers.connections.find(p=>p.id==='official-configured');nativeOfficial.codexNativeOfficial=true;
+ const originalUpdate=bridge.api.updateCodexConfig;
+ bridge.api.updateCodexConfig=async input=>{const result=await originalUpdate(input);saved={...result,warning:undefined};return structuredClone(saved);};
+ await render(false);await render(true);const nativeNoticeStart=notices.length;
+ await choose('gpt-6-luna');await wait(()=>!button().disabled,'native official model save');
+ assert.ok(!document.querySelector('#client-panel-codex .model-note-badge'));
+ assert.ok(!notices.slice(nativeNoticeStart).some(n=>JSON.stringify(n).includes('需要开启 Trace')));
+ assert.ok(notices.slice(nativeNoticeStart).some(n=>n[0]==='toast'&&n[1]==='gpt-6-luna'&&n[4]?.description==='模型选择已保存'));
+ await choose('gpt-6.1-sol');await wait(()=>!button().disabled,'restore fixture model');
+ bridge.api.updateCodexConfig=originalUpdate;
+ pass('backend-verified native official login saves without a Trace toast or model requirement badge');
  await render(false);await act(async()=>[...document.querySelectorAll('.official-chatgpt-account button')].find(e=>e.textContent==='使用此账号').click());
  await wait(()=>bridge.providers.active.codex===null,'explicit direct restoration');await render(true);
  saved={...saved,mode:'official',officialModel:'gpt-6.1-sol'};

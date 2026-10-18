@@ -187,11 +187,46 @@ pub(super) async fn subscription_catalog(
 }
 
 impl Pilot {
+    /// A bound import of the client's current login uses the client's native
+    /// authentication. Other accounts still need Deck to supply credentials.
+    pub(super) fn codex_native_official(&self, provider: &Provider) -> bool {
+        let id = provider.subscription_account_id.as_str();
+        if !official_accounts::is_official(id) {
+            return false;
+        }
+        let Some(auth) = read(&self.codex_home().join("auth.json"))
+            .ok()
+            .flatten()
+            .and_then(|source| serde_json::from_str::<Value>(&source).ok())
+            .filter(|auth| {
+                auth["tokens"]["access_token"]
+                    .as_str()
+                    .is_some_and(|token| !token.is_empty())
+            })
+        else {
+            return false;
+        };
+        if id == "official-chatgpt" {
+            return true;
+        }
+        self.settings
+            .other
+            .get(imported_subscriptions::KEY)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|registration| {
+                registration["id"] == id
+                    && registration["kind"] == "official"
+                    && registration["identity"] == official_accounts::account_key(&auth)
+            })
+    }
+
     /// Keep the selected connection as intent, while only publishing a direct
     /// endpoint that the receiving client can actually consume.
     pub(super) fn needs_gateway(&self, provider: &Provider, client: &str) -> bool {
         if !provider.subscription_account_id.is_empty() {
-            return true;
+            return client != "codex" || !self.codex_native_official(provider);
         }
         if client == "codex" {
             !["responses", "openai-responses"].contains(

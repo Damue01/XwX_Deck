@@ -553,7 +553,7 @@ async fn pilot_rpc(
                 }
             }
             Ok(
-                json!({"upstream":base,"physical":std::env::args().any(|arg|arg=="--smoke-physical")}),
+                json!({"upstream":base,"physical":std::env::args().any(|arg|arg=="--smoke-physical"),"nativeOfficial":std::env::args().any(|arg|arg=="--smoke-native-official")}),
             )
         }
         "smokeExternalClientConflict" if std::env::args().any(|arg| arg == "--smoke") => {

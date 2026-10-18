@@ -22,14 +22,17 @@ if (process.platform === 'darwin' && binary.includes('.app/Contents/MacOS/')) {
   binary = staged + binary.slice(bundle.length);
 }
 const requests = [];
+const nativeOfficialFixture=process.env.XWX_NATIVE_TEST_OFFICIAL_DIRECT==='1';
 const currentVersion=JSON.parse(await readFile(new URL('../../package.json',import.meta.url),'utf8')).version;
 const updateParts=currentVersion.split('.').map(Number);
 const fixtureUpdateVersion=`${updateParts[0]}.${updateParts[1]}.${updateParts[2]+1}`;
 const updatePayload=Buffer.from('isolated update download fixture');let updateDownloads=0;
 const upstream = createServer(async (req, res) => {
+  if(nativeOfficialFixture&&req.url.startsWith('/backend-api/codex/models')){res.setHeader('content-type','application/json');res.end(JSON.stringify({models:['gpt-6.1-sol','gpt-6-luna'].map(slug=>({slug,visibility:'list',display_name:slug}))}));return;}
   if(req.url==='/release.json'){res.setHeader('content-type','application/json');res.end(JSON.stringify({schemaVersion:1,channel:'release',releaseSeries:'native-v1',version:fixtureUpdateVersion,tag:'v'+fixtureUpdateVersion,changelog:'Isolated update notification',files:[{platform:process.platform==='darwin'?'darwin':'windows',arch:process.arch,name:process.platform==='darwin'?'fixture.dmg':'fixture.exe',url:base.replace('/v1','')+'/update-fixture',size:updatePayload.length,sha256:createHash('sha256').update(updatePayload).digest('hex')}]}));return;}
   if(req.url==='/update-fixture'){updateDownloads++;res.end(updatePayload);return;}
-  if (req.url === '/v1/models') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'pilot-model' }] })); return; }
+  if (req.url === '/v1/models') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'pilot-model' }], ...(nativeOfficialFixture?{models:['gpt-6.1-sol','gpt-6-luna'].map(slug=>({slug,visibility:'list',display_name:slug}))}:{}) })); return; }
+  if(req.method==='GET'){res.writeHead(404,{'content-type':'application/json'});res.end('{}');return;}
   let body = ''; for await (const part of req) body += part;
   requests.push({ path: req.url, authorization: req.headers.authorization, body: JSON.parse(body) });
   res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -40,12 +43,17 @@ upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
 const base = `http://127.0.0.1:${upstream.address().port}/v1`;
 const keepOpen = process.argv.includes('--keep-open');
 await writeFile(join(root, '.xwx-rust-pilot'), 'isolated-rust-pilot-v1\n');
+if(nativeOfficialFixture){
+  await mkdir(join(root,'codex'),{recursive:true});
+  const claims={sub:'native-official-fixture',email:'native-official@example.test'};
+  await writeFile(join(root,'codex/auth.json'),JSON.stringify({auth_mode:'chatgpt',tokens:{access_token:'isolated-native-official-access',refresh_token:'isolated-native-official-refresh',account_id:'native-official-workspace',id_token:'e30.'+Buffer.from(JSON.stringify(claims)).toString('base64url')+'.fixture'}}));
+}
 for (const name of ['claude', 'codex']) {
   const path = join(installations, '.local/bin', process.platform === 'win32' ? name + '.cmd' : name);
   await mkdir(resolve(path, '..'), {recursive:true});
   await writeFile(path, 'isolated installed-client fixture', {mode:0o755});
 }
-const child = spawn(binary, ['--pilot-root', root, '--smoke', '--smoke-upstream', base, ...(!keepOpen ? ['--smoke-exit'] : [])], { env: {...process.env, XWX_DECK_UPDATE_SERVER_URL:base.replace('/v1',''), XWX_SYSTEM_LANGUAGE_TEST:'zh-CN', XWX_CLIENT_INSTALLATIONS_TEST_HOME:installations}, stdio: ['ignore', 'inherit', 'inherit'] });
+const child = spawn(binary, ['--pilot-root', root, '--smoke', '--smoke-upstream', base, ...(nativeOfficialFixture?['--smoke-native-official','--subscription-test-endpoint',base.replace('/v1','')]:[]), ...(!keepOpen ? ['--smoke-exit'] : [])], { env: {...process.env, XWX_DECK_UPDATE_SERVER_URL:base.replace('/v1',''), XWX_SYSTEM_LANGUAGE_TEST:'zh-CN', XWX_CLIENT_INSTALLATIONS_TEST_HOME:installations}, stdio: ['ignore', 'inherit', 'inherit'] });
 try {
   // The fresh isolated root is validated before installing test-only discovery fixtures.
   for(let i=0;i<100;i++){try{await readFile(join(root,'.xwx-rust-pilot'));break;}catch{await new Promise(resolve=>setTimeout(resolve,50));}}
@@ -72,6 +80,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   if(!report) { const progress=await readFile(join(root,'native-smoke-progress.json'),'utf8').then(JSON.parse).catch(()=>({checks:[]})); report={...progress,passed:false,error:'Native smoke timed out'}; }
+  if(nativeOfficialFixture&&!report.checks?.includes('native official selection stays direct with Trace and Gateway off')){report.passed=false;report.error??='Native official acceptance did not execute';}
   await mkdir(resolve('test-results'),{recursive:true});
   await writeFile(resolve('test-results/native-webview-summary.json'),JSON.stringify({...report,binarySha256,nativeHttpRequests:requests.length,controlledActivation:process.env.XWX_NATIVE_TEST_ACTIVATE==='1',syntheticUpstream:true},null,2)+'\n');
   const viewer=await readFile(join(root,'traces/native-viewer-smoke.json'),'utf8').then(JSON.parse,()=>({passed:false,error:'Viewer did not report for this candidate'}));
@@ -86,7 +95,9 @@ try {
   for (const request of requests) {
     assert.equal(request.authorization, 'Bearer isolated-test-key'); assert.equal(request.path, '/v1/responses'); assert.equal(request.body.model, 'pilot-model');
   }
-  assert.ok((await readFile(join(root, 'codex/config.toml'), 'utf8')).includes(base));
+  const directConfig=await readFile(join(root,'codex/config.toml'),'utf8');
+  if(nativeOfficialFixture){assert.match(directConfig,/model\s*=\s*"gpt-6-luna"/);assert.ok(!/model_provider\s*=\s*"Native_Second"/.test(directConfig));const auth=JSON.parse(await readFile(join(root,'codex/auth.json'),'utf8'));assert.equal(auth.tokens.refresh_token,'isolated-native-official-refresh');}
+  else assert.ok(directConfig.includes(base));
   console.log(JSON.stringify({ ...report, sandbox: root, nativeHttpRequests: requests.length }, null, 2));
   if (keepOpen) {
     console.log('Native screenshot session ready. The test service can close; Gateway has already stopped.');

@@ -717,6 +717,36 @@
     check('new release notification includes manual download with automatic updates disabled', (await window.xwxDeck.getState()).automaticUpdates===false);
     document.querySelector('#automaticUpdatesToggle').click();await wait(()=>!document.querySelector('#automaticUpdatesToggle').disabled, 'update preference restored');
     document.querySelector('.rail [data-page="signal"]').click();await delay(100);
+    if(context.nativeOfficial){
+      await window.xwxDeck.switchClientProvider({client:'claude',providerId:null});
+      const nativeConfig=await window.xwxDeck.getCodexConfig();
+      const preview=await window.xwxDeck.previewConfigurationImport({sources:[{source:'auto',path:nativeConfig.authPath}]});
+      const item=preview.sources.flatMap(source=>source.items).find(item=>item.accountKind==='official'&&item.status==='new');
+      check('native official fixture is offered only through explicit import',!!item);
+      const imported=await window.xwxDeck.importConfigurations({sources:preview.sources.map(({source,path})=>({source,path})),targetDigest:preview.targetDigest,fingerprints:[item.fingerprint]});
+      const accountId=(await window.xwxDeck.getSubscriptionAccounts()).accounts.find(account=>account.importedLogin&&account.email==='native-official@example.test').id;
+      await window.xwxDeck.connectSubscriptionAccount(accountId);
+      const provider=(await window.xwxDeck.getProviders()).connections.find(row=>row.subscriptionAccountId===accountId);
+      check('Rust verifies the imported official identity matches the native client login',provider.codexNativeOfficial===true);
+      await window.xwxDeck.updateProviderClientModel({providerId:provider.id,client:'codex',model:'gpt-6.1-sol'});
+      window.dispatchEvent(new Event('xwxdeck:metadata-changed'));
+      document.querySelector('.rail [data-page="models"]').click();await delay(250);
+      document.querySelector('[data-client-tab="codex"]').click();await dismissToasts();
+      document.querySelector('button[aria-label="ChatGPT 使用的模型服务"]').click();
+      await wait(()=>[...document.querySelectorAll('[role=option]')].some(option=>option.textContent==='ChatGPT 官方登录'),'native official service option');
+      [...document.querySelectorAll('[role=option]')].find(option=>option.textContent==='ChatGPT 官方登录').click();
+      await wait(async()=>(await window.xwxDeck.getProviders()).active.codex===provider.id&&document.querySelector('[data-codex-model]')?.dataset.value==='gpt-6.1-sol'&&!document.querySelector('[data-codex-model] button')?.disabled,'native official service committed');
+      check('native official service switch shows no request to enable Trace',![...document.querySelectorAll('[data-position]:not([aria-hidden=true])')].some(notice=>notice.textContent.includes('需要开启 Trace')));
+      await dismissToasts();document.querySelector('[data-codex-model] button').click();
+      await wait(()=>[...document.querySelectorAll('.model-choice-positioner [role=option]')].some(option=>option.textContent.includes('gpt-6-luna')),'native official model list');
+      check('native official models have no needs-Trace badge',![...document.querySelectorAll('.model-choice-positioner .model-note-badge')].some(badge=>badge.textContent==='需 Trace'));
+      [...document.querySelectorAll('.model-choice-positioner [role=option]')].find(option=>option.textContent.includes('gpt-6-luna')).click();
+      await wait(async()=>(await window.xwxDeck.getCodexConfig()).compatible.model==='gpt-6-luna'&&!document.querySelector('[data-codex-model] button')?.disabled,'native official model saved');
+      await wait(()=>[...document.querySelectorAll('[data-position]:not([aria-hidden=true])')].some(notice=>notice.textContent.includes('模型选择已保存')),'native official plain saved toast');
+      const nativeState=await window.xwxDeck.getState(),savedNative=await window.xwxDeck.getCodexConfig();
+      check('official model save uses a plain application Toast without requiring Trace',![...document.querySelectorAll('[data-position]:not([aria-hidden=true])')].some(notice=>notice.textContent.includes('需要开启 Trace')||notice.textContent.includes('协议由 XwX Deck')));
+      check('native official selection stays direct with Trace and Gateway off',!nativeState.tracingEnabled&&!nativeState.backgroundGatewayActive&&!nativeState.connectionNotice&&savedNative.officialModel==='gpt-6-luna'&&!savedNative.warning&&await window.xwxDeck.disableBreaksCodex()===false);
+    }
     check('no framework overlay', !document.querySelector('vite-error-overlay, nextjs-portal'));
     check('console health', window.__pilotErrors.length === 0);
     const report = { passed: environmentBlocks.length===0, environmentBlocks, checks, layerEvidence, hotSwitchNotices, title: document.title, url: location.href, viewport: { width: innerWidth, height: innerHeight }, runtime: document.body.dataset.runtime, errors: window.__pilotErrors, userAgent: navigator.userAgent };

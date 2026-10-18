@@ -718,7 +718,11 @@ export function ModelsPage({ active }: Props): React.ReactElement {
           timeout: 12_000
         });
       } else {
-        showToast(t("已选择 {0}；协议由 XwX Deck 自动适配。", choice.label), 'success');
+        const nativeOfficial = !codexProviderId || bridge.providers?.connections.some(
+          provider => provider.id === codexProviderId && provider.codexNativeOfficial === true
+        );
+        if (nativeOfficial) showToast(choice.label, 'success', undefined, { description: t('模型选择已保存') });
+        else showToast(t("已选择 {0}；协议由 XwX Deck 自动适配。", choice.label), 'success');
       }
     } catch (error) {
       if (generation === providerSwitchGeneration.current.codex) showErrorToast(t('ChatGPT 模型未完全写入，选择已保留'), error, undefined, {

@@ -1039,7 +1039,11 @@ impl Pilot {
             {
                 continue;
             }
-            connections.push(provider);
+            let mut connection = json!(provider);
+            if official_accounts::is_official(id) {
+                connection["codexNativeOfficial"] = json!(self.codex_native_official(provider));
+            }
+            connections.push(connection);
         }
         json!({"version":1,"identityVersion":2,"connections":connections,"selected":self.settings.selected,"active":self.settings.selected,"warning":self.settings_problem})
     }
@@ -1204,7 +1208,10 @@ impl Pilot {
         )
     }
     fn write_direct(&self, takeover: bool) -> Result<()> {
-        let direct_provider = self.selected().filter(|p| !self.needs_gateway(p, "codex"));
+        let native_official = self.selected().filter(|p| self.codex_native_official(p));
+        let direct_provider = self
+            .selected()
+            .filter(|p| p.subscription_account_id.is_empty() && !self.needs_gateway(p, "codex"));
         let mut d = self.config()?;
         let accepted_subscription = self.subscription_route_accepted("codex", &d.to_string())?;
         let journal = self.root.join("codex-direct.json");
@@ -1305,6 +1312,7 @@ impl Pilot {
         if self
             .selected()
             .is_some_and(|p| !p.subscription_account_id.is_empty())
+            && native_official.is_none()
             && !(takeover
                 && (foreign_local_alias
                     || ["openai_base_url", "chatgpt_base_url"]
@@ -1377,17 +1385,21 @@ impl Pilot {
             );
         } else {
             set_codex_field(&mut d, "model_provider", value("openai"));
-            if let Some(model) = self.settings.codex_models["official"]
-                .as_str()
+            if let Some(model) = native_official
+                .map(|p| p.codex_model.as_str())
+                .or_else(|| self.settings.codex_models["official"].as_str())
                 .filter(|s| !s.is_empty())
             {
                 set_codex_field(&mut d, "model", value(model));
             }
-            if let Some(window) = self.settings.codex_models["officialContextWindow"]
-                .as_u64()
-                .filter(|n| *n > 0)
-            {
-                set_codex_field(&mut d, "model_context_window", value(window as i64));
+            let context_window = native_official
+                .map(|p| p.codex_context_window)
+                .or_else(|| self.settings.codex_models["officialContextWindow"].as_u64())
+                .unwrap_or(0);
+            if context_window > 0 {
+                set_codex_field(&mut d, "model_context_window", value(context_window as i64));
+            } else if native_official.is_some() {
+                d.remove("model_context_window");
             }
             if d.get("model_catalog_json")
                 .and_then(Item::as_str)
@@ -2510,7 +2522,7 @@ impl Pilot {
                 }
                 Ok(self.state())
             }
-            "disableBreaksCodex" => Ok(json!(self.client_enabled("codex") && self.selected().is_some_and(|p|!p.subscription_account_id.is_empty() || resolve_wire(&self.root,p,Some(&p.codex_model),"responses")!="responses"))),
+            "disableBreaksCodex" => Ok(json!(self.client_enabled("codex") && self.selected().is_some_and(|p|self.needs_gateway(p,"codex")))),
             "saveProvider" => {
                 if self.active() {
                     return Err("修改连接前请先停止 Trace".into());
@@ -2626,8 +2638,8 @@ impl Pilot {
                 let mut snapshot = self.providers().await;
                 if snapshot["warning"].is_null()
                     && self
-                        .selected()
-                        .is_some_and(|p| self.needs_gateway(p, "codex"))
+                        .selected_for(client)
+                        .is_some_and(|p| self.needs_gateway(p, client))
                     && !self.active()
                 {
                     snapshot["warning"] =
