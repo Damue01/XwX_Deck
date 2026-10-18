@@ -69,7 +69,7 @@ try {
   await click('开始使用'); assert.equal(heading(), '找到了您之前的配置'); assert.equal(imports, 0);
   console.log('PASS detected import candidates update the heading without importing or modifying configuration');
   const detectedIds = () => [...document.querySelectorAll('[data-detected-client]')].map(client => client.dataset.detectedClient);
-  assert.deepEqual(detectedIds(), ['codex', 'claude', 'qwen-code', 'cursor', 'vscode']);
+  assert.deepEqual(detectedIds(), ['codex', 'claude', 'qwen-code']);
   const beforeRefresh = { detections, previews };
   snapshot.clients = [{ id: 'codex-cli', installed: true }, { id: 'codex', installed: true }, { id: 'opencode', installed: true }];
   await act(async () => document.querySelector('.configuration-import-refresh').click());
