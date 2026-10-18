@@ -119,7 +119,7 @@
     check('installed but unmanaged OpenCode stays muted while saved ChatGPT enrollment is normal', document.querySelector('[data-client-download="opencode"]').dataset.unconfigured==='true'&&!document.querySelector('[data-client-download="codex"]').dataset.unconfigured);
     check('unmanaged client icons are grayscale and saved clients retain their brand color',getComputedStyle(document.querySelector('[data-client-download="opencode"] .provider-brand-icon')).filter==='grayscale(1)'&&getComputedStyle(document.querySelector('[data-client-download="codex"] .provider-brand-icon')).filter==='none');
     document.querySelector('[data-client-download="trae"]').click(); await delay(100);
-    check('download-only product retains its links without an add-to-model action',!!document.querySelector('#configuration-clients .setup-card-downloads')&&!document.querySelector('#configuration-clients .configuration-client-actions'));
+    check('download-only product retains its links without an add-to-model action',document.querySelector('#configuration-clients .setup-card-link')?.href==='https://www.trae.cn/download'&&!document.querySelector('#configuration-clients .configuration-client-actions'));
     document.querySelector('#configuration-clients [data-client-download="opencode"]').click();
     await wait(() => document.querySelector('.configuration-client-actions .btn.primary')?.disabled === false, 'isolated installed client');
     check('client details offer the explicit add action', document.querySelector('.configuration-client-actions .btn.primary').textContent === '添加到模型页');
