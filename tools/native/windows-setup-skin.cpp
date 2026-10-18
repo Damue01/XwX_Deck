@@ -19,8 +19,9 @@ static HFONT regular, titleFont, mono, versionFont;
 static HBITMAP field;
 static ULONG_PTR graphicsToken;
 static LRESULT CALLBACK editProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
-  if(msg==WM_GETDLGCODE&&lp&&((MSG*)lp)->wParam==VK_RETURN)return DLGC_WANTMESSAGE;
+  if(msg==WM_GETDLGCODE&&lp&&(((MSG*)lp)->wParam==VK_RETURN||((MSG*)lp)->wParam==VK_ESCAPE))return DLGC_WANTMESSAGE;
   if(msg==WM_KEYDOWN&&wp==VK_RETURN){if(IsWindowEnabled(GetDlgItem(mainWindow,IDOK)))PostMessage(mainWindow,WM_COMMAND,IDOK,0);return 0;}
+  if(msg==WM_KEYDOWN&&wp==VK_ESCAPE){if(IsWindowEnabled(GetDlgItem(mainWindow,IDCANCEL)))PostMessage(mainWindow,WM_COMMAND,IDCANCEL,0);return 0;}
   return DefSubclassProc(window,msg,wp,lp);
 }
 static LRESULT CALLBACK buttonProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
@@ -28,8 +29,9 @@ static LRESULT CALLBACK buttonProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT
   if(msg==WM_STYLECHANGING&&wp==(WPARAM)GWL_STYLE){auto style=(STYLESTRUCT*)lp;style->styleNew=(style->styleNew&~BS_TYPEMASK)|BS_OWNERDRAW;}
   if(msg==WM_MOUSEMOVE&&!GetProp(window,L"hover")){SetProp(window,L"hover",(HANDLE)1);TRACKMOUSEEVENT event={sizeof(event),TME_LEAVE,window,0};TrackMouseEvent(&event);InvalidateRect(window,nullptr,TRUE);}
   if(msg==WM_MOUSELEAVE){RemoveProp(window,L"hover");InvalidateRect(window,nullptr,TRUE);}
-  if(msg==WM_GETDLGCODE)return DLGC_BUTTON|((lp&&((MSG*)lp)->wParam==VK_RETURN)?DLGC_WANTMESSAGE:0)|(GetDlgCtrlID(window)==IDOK?DLGC_DEFPUSHBUTTON:DLGC_UNDEFPUSHBUTTON);
+  if(msg==WM_GETDLGCODE)return DLGC_BUTTON|((lp&&(((MSG*)lp)->wParam==VK_RETURN||((MSG*)lp)->wParam==VK_ESCAPE))?DLGC_WANTMESSAGE:0)|(GetDlgCtrlID(window)==IDOK?DLGC_DEFPUSHBUTTON:DLGC_UNDEFPUSHBUTTON);
   if(msg==WM_KEYDOWN&&wp==VK_RETURN){SendMessage(window,BM_CLICK,0,0);return 0;}
+  if(msg==WM_KEYDOWN&&wp==VK_ESCAPE){if(IsWindowEnabled(GetDlgItem(mainWindow,IDCANCEL)))PostMessage(mainWindow,WM_COMMAND,IDCANCEL,0);return 0;}
   return DefSubclassProc(window,msg,wp,lp);
 }
 static int px(int n) { return MulDiv(n, dpi, 96); }
