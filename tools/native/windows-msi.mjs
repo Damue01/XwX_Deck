@@ -27,14 +27,16 @@ export async function buildWindowsMsi({ root, binary, output, version }) {
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
  <Product Id="*" Name="XwX Deck" Language="2052" Codepage="936" Version="${xml(version)}" Manufacturer="XwX Deck" UpgradeCode="${MSI_UPGRADE_CODE}">
   <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" InstallPrivileges="limited" Platform="x64" />
-  <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer XwX Deck is already installed." />
+  <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" DowngradeErrorMessage="已安装更新版本的 XwX Deck。请使用已安装的版本。" />
   <MediaTemplate EmbedCab="yes" />
   <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
   <!-- Per-user files and HKCU only: retain MSI rollback, skip a machine restore checkpoint. -->
   <Property Id="MSIFASTINSTALL" Value="1" />
   <Property Id="MsiLogging" Value="voicewarmup" />
   <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
-  <Property Id="INSTALLDIR"><RegistrySearch Id="PreviousInstallLocation" Root="HKCU" Key="Software\\XwX Deck\\Installation" Name="Path" Type="raw" /></Property>
+  <Property Id="PREVIOUSINSTALLDIR"><RegistrySearch Id="PreviousInstallLocation" Root="HKCU" Key="Software\\XwX Deck\\Installation" Name="Path" Type="raw" /></Property>
+  <!-- A major upgrade replaces files in place; moving a shared component is not an upgrade. -->
+  <SetProperty Id="INSTALLDIR" Value="[PREVIOUSINSTALLDIR]" After="AppSearch">PREVIOUSINSTALLDIR AND (Installed OR WIX_UPGRADE_DETECTED)</SetProperty>
   <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLDIR]" After="CostFinalize" />
   <Icon Id="DeckIcon" SourceFile="${xml(join(root, 'assets/icon.ico'))}" />
   <Property Id="ARPPRODUCTICON" Value="DeckIcon" />

@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
-import { mkdtemp, mkdir, readFile, writeFile, access, copyFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, access, copyFile, unlink } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
 import { buildWindowsMsi } from './windows-msi.mjs';
 import { standardWindowsArtifact } from './windows-execution-level.mjs';
@@ -21,7 +21,8 @@ await standardWindowsArtifact(work);
 await writeFile(join(work,'.xwx-msi-test'),'isolated-msi-test\n');
 const oldBinary=join(work,'old.exe'),newBinary=join(work,'new.exe');
 await copyFile(oldInput,oldBinary);await copyFile(newInput,newBinary);
-const data=join(work,'existing-data'),install=join(work,'用户 程序');
+const data=join(work,'existing-data'),install=process.argv.includes('--system-drive')
+ ?join(process.env.LOCALAPPDATA,'Programs','Deck 回归 '+work.split(/[\\/]/).at(-1)):join(work,'用户 程序');
 await mkdir(data);await writeFile(join(data,'.xwx-rust-pilot'),'isolated-rust-pilot-v1\n');
 const msiexec=join(process.env.WINDIR,'System32/msiexec.exe');
 function registration(){
@@ -34,7 +35,8 @@ const previousShortcut=await readFile(shortcut).catch(error=>{if(error.code==='E
 async function msi(args,name,fullUi=false){
   console.log('Windows Installer: '+name);
   const command=[...args,...(fullUi?[]:['/qn']),'/norestart','REBOOT=ReallySuppress','/L*v',join(work,name+'.log')].map(arg=>arg.startsWith('INSTALLDIR=')?'INSTALLDIR="'+arg.slice(11)+'"':/\s/.test(arg)?'"'+arg+'"':arg);
-  const result=spawnSync(msiexec,command,{windowsVerbatimArguments:true,windowsHide:!fullUi,timeout:90000,encoding:'utf8'});
+  // No inherited output pipes: a detached service must not keep this driver waiting after a timeout.
+  const result=spawnSync(msiexec,command,{windowsVerbatimArguments:true,windowsHide:!fullUi,timeout:90000,stdio:'ignore'});
   if(result.error)throw result.error;
   return result.status;
 }
@@ -108,6 +110,36 @@ try{
  pass('per-user installation succeeds in a Unicode path and preserves existing configuration and trace');
  await rpcSession(executable,async(rpc)=>{const state=await rpc('getUpdateState');assert.equal(state.currentVersion,oldVersion);assert.equal(state.portable,false);assert.deepEqual(await rpc('getProviders'),providersBefore);});
  pass('installed old application recognizes MSI ownership and restores the existing provider');
+ const rollbackFixture=join(work,'rollback.ui-test.msi');
+ const rollbackRequest=Buffer.from(JSON.stringify({source:artifacts.new.path,target:rollbackFixture,mode:'rollback'})).toString('base64');
+ const rollbackPrepared=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',join(repo,'tools/native/windows-msi-ui-fixture.ps1'),'-Request',rollbackRequest],{encoding:'utf8',windowsHide:true});
+ assert.equal(rollbackPrepared.status,0,rollbackPrepared.stderr);
+ const beforeRollback=registration();
+ assert.equal(await msi(['/i',rollbackFixture],'rollback-upgrade'),1603);
+ assert.deepEqual(registration(),beforeRollback);
+ assert.equal(hash(await readFile(executable)),hash(await readFile(oldBinary)));
+ await access(shortcut);
+ assert.equal(hash(await readFile(join(data,'settings.json'))),settingsBefore);
+ assert.equal(hash(await readFile(traceFile)),traceBefore);
+ pass('a failure after replacing files and removing the old product rolls back the program, registration and shortcut while retaining data');
+ const unwantedMove=join(work,'must-not-relocate');
+ assert.equal(await msi(['/i',uiFixture,'INSTALLDIR='+unwantedMove],'full-ui-upgrade',true),0);
+ const upgradeLog=await readFile(join(work,'full-ui-upgrade.log'),'utf16le');
+ assert.ok(!/Setting File Security failed|Error 28\d\d:/.test(upgradeLog),'Full UI upgrade must not pass with file-security or dialog errors');
+ assert.equal(registration().Path.replace(/[\\/]$/,''),install);
+ assert.equal(registration().Version,newVersion);
+ await assert.rejects(access(join(unwantedMove,'XwX Deck.exe')));
+ assert.equal(hash(await readFile(executable)),hash(await readFile(newBinary)));
+ pass('full UI major upgrade retains the registered installation path even when a different path is supplied');
+ await unlink(executable);
+ assert.equal(await msi(['/famus',registration().ProductCode],'repair-missing-file'),0);
+ assert.equal(hash(await readFile(executable)),hash(await readFile(newBinary)));
+ await access(shortcut);
+ assert.equal(hash(await readFile(join(data,'settings.json'))),settingsBefore);
+ assert.equal(hash(await readFile(traceFile)),traceBefore);
+ pass('repair restores a missing installed executable and the start-menu entry without changing retained data');
+ assert.equal(await msi(['/x',registration().ProductCode],'uninstall-before-update-fixture'),0);installed=false;
+ assert.equal(await msi(['/i',artifacts.old.path,'INSTALLDIR='+install],'restore-old-update-fixture'),0);installed=true;
  await rpcSession(executable,async(rpc)=>{await rpc('getState');assert.notEqual(await msi(['/x',registration().ProductCode],'busy-uninstall'),0);assert.ok(registration());await access(executable);});
  pass('uninstall refuses a running installed application without terminating it or removing files');
  let installerPath,finishedPid;
