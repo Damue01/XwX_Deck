@@ -92,7 +92,7 @@ MSI 按用户安装，默认使用用户程序目录。
 安装、卸载不删除配置、账号、日志和 Trace。
 MSI 版本使用 Windows Installer 更新。
 便携版继续使用 EXE 更新。
-实现与操作见 [Windows 安装说明](../windows-msi.md)。
+当前实现与操作见 [Windows 安装说明](../windows-setup.md)。
 
 交付的 MSI 通过完整 ICE 数据库校验。
 同一文件完成 9 项安装验收。

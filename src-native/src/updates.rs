@@ -41,14 +41,14 @@ fn validate_url(value: &str) -> Result<reqwest::Url> {
 impl Updates {
     pub fn new(root: PathBuf) -> Self {
         #[cfg(target_os = "windows")]
-        let portable = crate::windows_msi::installation().is_none();
+        let portable = !crate::windows_setup::is_registered();
         #[cfg(not(target_os = "windows"))]
         let portable = false;
         let state = json!({"status":"idle","currentVersion":env!("CARGO_PKG_VERSION"),"channel":"release","portable":portable,"installMode":if cfg!(target_os="macos"){"manual-dmg"}else{"automatic"},"supported":cfg!(any(target_os="macos",target_os="windows")),"updateAvailable":false});
         #[cfg(target_os = "windows")]
         let state = {
             let mut state = state;
-            if let Some(error) = crate::windows_msi::previous_error(&root) {
+            if let Some(error) = crate::windows_setup::previous_error(&root) {
                 state["status"] = json!("error");
                 state["error"] = json!(error);
             }
@@ -175,8 +175,9 @@ impl Updates {
                             || text(f, "name").ends_with(if inner.state["portable"] == true {
                                 ".exe"
                             } else {
-                                ".msi"
+                                "-setup.exe"
                             }))
+                        && (platform != "windows" || inner.state["portable"] != true || !text(f, "name").ends_with("-setup.exe"))
                 })
             })
             .cloned()
@@ -197,7 +198,7 @@ impl Updates {
                     if inner.state["portable"] == true {
                         ".exe"
                     } else {
-                        ".msi"
+                        "-setup.exe"
                     }
                 })
                 || text(&artifact, "name").contains(['/', '\\']))
@@ -335,8 +336,8 @@ impl Updates {
                     if cfg!(target_os = "macos") {
                         ".dmg"
                     } else {
-                        if text(&artifact, "name").ends_with(".msi") {
-                            ".msi"
+                        if text(&artifact, "name").ends_with("-setup.exe") {
+                            "-setup.exe"
                         } else {
                             ".exe"
                         }
@@ -404,8 +405,8 @@ impl Updates {
             return Err("安装包已被修改，未打开".into());
         }
         #[cfg(target_os = "windows")]
-        if path.extension().and_then(|s| s.to_str()) == Some("msi") {
-            crate::windows_msi::validate(&path, text(&selected, "version"))?;
+        if self.state()["portable"] != true {
+            crate::windows_setup::validate(&path, text(&selected, "version"))?;
         }
         Ok(path)
     }

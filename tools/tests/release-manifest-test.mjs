@@ -10,7 +10,7 @@ const root = resolve(import.meta.dirname, '../..');
 const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 // Synthetic byte payloads validate manifest generation, not executable validity.
 const targets = [
-  ['XwX-Deck-windows-x64.msi', 'windows', 'x64'],
+  ['XwX-Deck-windows-x64-setup.exe', 'windows', 'x64'],
   ['XwX-Deck-windows-x64.exe', 'windows', 'x64'],
   ['XwX-Deck-mac-arm64.dmg', 'darwin', 'arm64'],
   ['XwX-Deck-mac-x64.dmg', 'darwin', 'x64']
@@ -42,7 +42,8 @@ try {
     const data = payloads.get(name);
     const sha256 = createHash('sha256').update(data).digest('hex');
     const file = manifest.files.find(item => item.name === name);
-    assert.deepEqual(file, { platform, arch, name, url: `https://github.com/example/deck/releases/download/v${version}/${name}`, size: data.length, sha256 });
+    const kind = platform === 'windows' ? (name.endsWith('-setup.exe') ? 'installer' : 'portable') : 'disk-image';
+    assert.deepEqual(file, { platform, arch, kind, name, url: `https://github.com/example/deck/releases/download/v${version}/${name}`, size: data.length, sha256 });
     const checksum = `${sha256}  ${name}\n`;
     assert.equal(await readFile(join(temporary, `${name}.sha256`), 'utf8'), checksum);
     checksums.push(checksum);
@@ -65,5 +66,5 @@ try {
     assert.ok(failure.stderr.includes(`Missing release artifact: ${missing}`));
     for (const name of ['release.json', 'latest.yml', 'checksums.txt']) await assert.rejects(access(join(directory, name)));
   }
-  console.log('PASS release manifest: three architectures, MSI/portable separation, immutable URLs, hashes, notes, unrelated cwd and missing-artifact rejection (synthetic payloads)');
+  console.log('PASS release manifest: three architectures, Setup/portable separation, immutable URLs, hashes, notes, unrelated cwd and missing-artifact rejection (synthetic payloads)');
 } finally { await rm(temporary, { recursive: true, force: true }); }

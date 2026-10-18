@@ -1,5 +1,6 @@
 //! Account routing metadata contains no credentials. Leases live through the response stream.
 use super::*;
+use super::routing_errors::quota_error;
 use std::collections::{HashMap, HashSet};
 pub(super) fn group(id: &str) -> &'static str {
     if id.starts_with("official-chatgpt") {
@@ -463,14 +464,10 @@ impl Pool {
         headers: &axum::http::HeaderMap,
         body: &[u8],
     ) -> bool {
-        let message = String::from_utf8_lossy(body).to_lowercase();
         let reason = match status {
             401 => "需重新登录",
             429 => {
-                if ["quota", "usage_limit", "exhaust", "额度", "limit_reached"]
-                    .iter()
-                    .any(|word| message.contains(word))
-                {
+                if quota_error(status, body) {
                     "额度已用完"
                 } else {
                     "暂时限流"
@@ -560,18 +557,8 @@ impl Pool {
         }) {
             self.bind_response(account, id);
         }
-        let code = value["response"]["error"]["code"]
-            .as_str()
-            .or_else(|| value["error"]["code"].as_str())
-            .unwrap_or("");
-        if [
-            "usage_limit_reached",
-            "quota_exceeded",
-            "insufficient_quota",
-        ]
-        .contains(&code)
-        {
-            self.reject(account, 429, &axum::http::HeaderMap::new(), b"quota");
+        if quota_error(429, bytes) {
+            self.reject(account, 429, &axum::http::HeaderMap::new(), bytes);
         }
     }
     pub fn recovered(&self, id: &str) {
@@ -619,6 +606,44 @@ mod tests {
     fn accounts() -> Value {
         json!({"accounts":[{"id":"a","platform":"chatgpt","status":"connected"},{"id":"b","platform":"chatgpt","status":"connected"},{"id":"cursor-other","platform":"cursor","status":"connected"}]})
     }
+    #[test]
+    fn temporary_quota_wording_does_not_exhaust_the_account_pool() {
+        let pool = pool();
+        let headers = axum::http::HeaderMap::new();
+        for account in ["a", "b"] {
+            assert!(pool.reject(
+                account,
+                429,
+                &headers,
+                br#"{"error":{"code":"rate_limit_exceeded","message":"Temporary token quota reset; retry later"}}"#,
+            ));
+        }
+        assert!(!pool.quota_exhausted("a", &accounts()));
+        let runtime = pool.runtime.lock().unwrap();
+        assert!(runtime.blocked.values().all(|(_, reason)| reason == "暂时限流"));
+    }
+
+    #[test]
+    fn stream_errors_share_quota_classification_without_losing_response_affinity() {
+        let pool = pool();
+        pool.observe(
+            "a",
+            br#"{"type":"response.failed","response":{"id":"failed-response","error":{"type":"credits_exhausted"}}}"#,
+        );
+        {
+            let runtime = pool.runtime.lock().unwrap();
+            assert_eq!(runtime.blocked["a"].1, "额度已用完");
+            assert_eq!(runtime.affinity["chatgpt:response:failed-response"].0, "a");
+        }
+        pool.observe(
+            "b",
+            br#"{"response":{"id":"completed-response","output_text":"quota exhausted"},"quota":{"remaining":90}}"#,
+        );
+        let runtime = pool.runtime.lock().unwrap();
+        assert!(!runtime.blocked.contains_key("b"));
+        assert_eq!(runtime.affinity["chatgpt:response:completed-response"].0, "b");
+    }
+
     #[test]
     fn quota_strategies_keep_conversation_affinity_and_ignore_stale_values() {
         let pool = pool();
@@ -725,7 +750,12 @@ mod tests {
     fn response_affinity_and_known_model_capabilities() {
         let pool = pool();
         pool.catalog("b", &json!([{"id":"other-model"}]));
-        pool.reject("a", 429, &axum::http::HeaderMap::new(), b"quota");
+        pool.reject(
+            "a",
+            429,
+            &axum::http::HeaderMap::new(),
+            br#"{"error":{"code":"insufficient_quota"}}"#,
+        );
         assert!(pool
             .choose("a", &accounts(), "", "model", &HashSet::new())
             .is_err());

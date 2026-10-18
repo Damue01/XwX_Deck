@@ -82,8 +82,15 @@ try{
   await act(async()=>root.render(React.createElement(ManualHarness)));await flush();
   await click('[data-client-download="deepseek-harness"]');
   const primary=()=>document.querySelector('.configuration-client-actions .btn.primary');
+  const choosePath=async()=>{
+    if(document.querySelector('.configuration-client-location'))return click('.configuration-client-location');
+    await click('#configuration-clients .provider-menu-trigger');await flush();
+    const item=[...document.querySelectorAll('[role="menuitem"]')].find(item=>item.textContent==='更换安装路径');assert.ok(item);await act(async()=>item.click());await flush();
+  };
   assert.equal(primary().disabled,true);
   await click('.configuration-client-location');assert.equal(primary().disabled,false);
+  assert.equal(document.querySelector('.configuration-client-location'),null,'selected path leaves no manual action in the body');
+  assert.ok(!document.querySelector('#configuration-clients .configuration-detail').textContent.includes(pickerResult),'installation path stays out of the card body');
   assert.equal(muted('[data-client-download="deepseek-harness"]'),true,'read-only inspection cannot enroll or color the card');assert.equal(additions.length,0);
   await act(async()=>dialogState.setOpen(false));await flush();await act(async()=>dialogState.setOpen(true));await flush();
   await click('[data-client-download="deepseek-harness"]');assert.equal(primary().disabled,true,'cancel discards pending installation');
@@ -92,11 +99,11 @@ try{
   inspectionFailure=false;await click('.configuration-client-location');await click('.configuration-client-actions .btn.primary');await flush();
   assert.deepEqual(additions,[['deepseek-harness','E:/isolated/custom Harness']]);
   await act(async()=>dialogState.setOpen(true));await flush();await click('[data-client-download="deepseek-harness"]');assert.equal(muted('[data-client-download="deepseek-harness"]'),false);
-  await click('.configuration-client-location');assert.equal(primary().textContent,'保存安装位置');await click('.configuration-client-actions .btn.primary');await flush();assert.equal(additions.length,2);
+  await choosePath();assert.equal(primary().textContent,'保存安装位置');await click('.configuration-client-actions .btn.primary');await flush();assert.equal(additions.length,2);
   await act(async()=>dialogState.setOpen(true));await flush();await click('[data-client-download="trae"]');assert.equal(document.querySelector('.configuration-client-location'),null,'download-only has no manual enrollment escape');assert.equal(primary(),null);
   await click('[data-client-download="deepseek-harness"]');
   let finishInspection;pendingInspection=new Promise(resolve=>{finishInspection=resolve;});
-  await act(async()=>document.querySelector('.configuration-client-location').click());await flush();
+  await choosePath();await flush();
   await act(async()=>dialogState.setOpen(false));await flush();await act(async()=>dialogState.setOpen(true));await flush();
   await act(async()=>finishInspection({location:'E:/stale',installed:true,modelManagement:true}));await flush();pendingInspection=null;
   await click('[data-client-download="deepseek-harness"]');assert.equal(primary().textContent,'打开模型页','old native picker result cannot enter a reopened dialog');

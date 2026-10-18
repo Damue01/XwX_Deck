@@ -410,7 +410,7 @@ chooseConfigurationImportFile?(): Promise<string | null>;
 detectClientInstallations?(): Promise<import('../../shared/clientDownloads').ClientInstallationSnapshot>;
 inspectClientInstallation?(input: { client: import('../../shared/clientDownloads').DownloadClientId; location: string }): Promise<{ location: string; installed: boolean; modelManagement: boolean }>;
 getModelClients?(): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
-addModelClient?(id: import('../../shared/clientDownloads').DownloadClientId, installationLocation?: string): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
+addModelClient?(id: import('../../shared/clientDownloads').DownloadClientId, installationLocation?: string | null): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
 removeModelClient?(id: import('../../shared/clientDownloads').DownloadClientId): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
 setSubscriptionRouting?(input: { platform: import('../../shared/subscriptionAccounts').SubscriptionRoutingGroup; policy: import('../../shared/subscriptionAccounts').SubscriptionRoutingPolicy }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
 getOfficialChatgptAccount?(input?: { refresh?: boolean }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccount>;

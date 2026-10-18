@@ -158,6 +158,11 @@ try {
   await rm(manualCommand);
   assert.equal((await rpc('detectClientInstallations')).clients.find(row=>row.id==='deepseek-harness').installed,false);
   assert.ok(JSON.parse(await readFile(settingsPath,'utf8')).clientInstallationLocations['deepseek-harness']);
+  await rpc('addModelClient','deepseek-harness',null);
+  assert.equal(JSON.parse(await readFile(settingsPath,'utf8')).clientInstallationLocations['deepseek-harness'],undefined);
+  assert.equal((await rpc('detectClientInstallations')).clients.find(row=>row.id==='deepseek-harness').installed,true,'explicit restore uses available automatic detection');
+  await stop();start();
+  assert.equal((await rpc('detectClientInstallations')).clients.find(row=>row.id==='deepseek-harness').installationLocation,null);
   await stop();
   console.log('PASS manual inspection is read-only; confirmation persists one location shared by detection, import and restart without fallback on disappearance');
   console.log(JSON.stringify({ passed: true, root }));

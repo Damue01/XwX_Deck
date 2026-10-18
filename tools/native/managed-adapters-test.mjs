@@ -68,7 +68,7 @@ try{
    await writeFile(join(portable,'Code.exe'),'isolated portable fixture');await writeFile(join(portable,'resources/app/package.json'),'{"version":"1.126.0"}');await writeFile(join(portable,'resources/app/product.json'),'{"applicationName":"code","nameShort":"Code"}');
    const original='{"editor.fontSize":18,"chat.defaultModel":"portable-original"}';await writeFile(join(portableUser,'settings.json'),original);
    const inspected=await rpc('inspectClientInstallation',{client:'vscode',location:portable});
-   await rpc('toggleTracing',true);const settingsBefore=await readFile(join(root,'settings.json'),'utf8');check('active client installation cannot be rebound before restore',!(await raw('addModelClient','vscode',inspected.location)).ok&&(await readFile(join(root,'settings.json'),'utf8'))===settingsBefore);await rpc('toggleTracing',false);
+   await rpc('toggleTracing',true);const settingsBefore=await readFile(join(root,'settings.json'),'utf8');check('active client installation cannot be rebound before restore',!(await raw('addModelClient','vscode',inspected.location)).ok&&(await readFile(join(root,'settings.json'),'utf8'))===settingsBefore);check('active client cannot restore automatic detection before route recovery',!(await raw('addModelClient','vscode',null)).ok&&(await readFile(join(root,'settings.json'),'utf8'))===settingsBefore);await rpc('toggleTracing',false);
    await rpc('addModelClient','vscode',inspected.location);
    await select('vscode','model-a');await rpc('toggleTracing',true);
    const portableGroups=JSON.parse(await readFile(join(portableUser,'chatLanguageModels.json'),'utf8')),model=portableGroups.find(g=>g.name==='XwX Deck').models[0];

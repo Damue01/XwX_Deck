@@ -85,7 +85,7 @@ export const MODEL_CLIENT_CATALOG = CLIENT_DOWNLOADS.filter(client => !['codex-c
 
 export interface ClientInstallationSnapshot {
   readonly available: boolean;
-  readonly clients: readonly { id: DownloadClientId; installed: boolean; modelManagement?: boolean }[];
+  readonly clients: readonly { id: DownloadClientId; installed: boolean; modelManagement?: boolean; installationLocation?: string | null }[];
 }
 
 export function normalizeModelClients(ids: readonly DownloadClientId[]): DownloadClientId[] {

@@ -1,0 +1,9 @@
+[
+  { "name": "responses-only", "protocols": ["openai-responses"], "codex": "responses", "claude": "responses" },
+  { "name": "messages-only", "protocols": ["anthropic-messages"], "codex": "anthropic-messages", "claude": "anthropic-messages" },
+  { "name": "chat-only", "protocols": ["chat-completions"], "codex": "chat-completions", "claude": "chat-completions" },
+  { "name": "responses-and-chat", "protocols": ["chat-completions", "openai-responses"], "codex": "responses", "claude": "responses" },
+  { "name": "messages-and-chat", "protocols": ["chat-completions", "anthropic-messages"], "codex": "anthropic-messages", "claude": "anthropic-messages" },
+  { "name": "responses-and-messages", "protocols": ["openai-responses", "anthropic-messages"], "codex": "responses", "claude": "anthropic-messages" },
+  { "name": "all-protocols", "protocols": ["chat-completions", "anthropic-messages", "openai-responses"], "codex": "responses", "claude": "anthropic-messages" }
+]

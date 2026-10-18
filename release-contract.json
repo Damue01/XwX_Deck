@@ -47,15 +47,15 @@
   "platforms": {
     "windows": {
       "buildScript": "build:win",
-      "artifactName": "XwX Deck.msi",
+      "artifactName": "XwX Deck Setup.exe",
       "installMode": "automatic",
-      "publishedArtifactName": "XwX-Deck-windows-x64.msi",
+      "publishedArtifactName": "XwX-Deck-windows-x64-setup.exe",
       "updateMetadata": "release.json",
       "platform": "windows",
       "arch": "x64",
-      "upgradeCode": "49CC1A0B-78EE-42ED-9EBF-13AE25279AC0",
       "installScope": "per-user",
-      "portableArtifactName": "XwX-Deck-windows-x64.exe"
+      "portableArtifactName": "XwX-Deck-windows-x64.exe",
+      "installerType": "nsis-v1"
     },
     "macosArm64": {
       "buildScript": "build:mac:arm64",

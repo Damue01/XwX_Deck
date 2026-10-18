@@ -50,7 +50,7 @@ const CLI_DOWNLOADS: Partial<Record<DownloadClientId, { name: string; site: Setu
   cursor: { name: 'Cursor CLI', site: 'download-cursor-cli' }
 };
 
-export function ClientDownloads({ client, officialOnly = false }: { client: DownloadClientId; officialOnly?: boolean }): React.ReactElement {
+export function ClientDownloads({ client, officialOnly = false, acquisitionAction }: { client: DownloadClientId; officialOnly?: boolean; acquisitionAction?: React.ReactNode }): React.ReactElement {
   useLanguage();
   const { api } = useBridge();
   const product = canonicalModelClient(client);
@@ -64,7 +64,7 @@ export function ClientDownloads({ client, officialOnly = false }: { client: Down
   }}>{label}<ArrowUpRight aria-hidden="true" /></a>;
   return <div className="setup-card-download-versions">
     <section className="setup-card-download-groups" aria-label={clientDownloadLabel(info)}>
-      <div className="setup-card-download-version-heading">{(cli || 'downloadLabel' in info) && <h4>{clientDownloadLabel(info)}</h4>}{websiteLink(product === 'codex' || product === 'claude' ? product : `download-${product}`, officialLabel, `${clientDownloadLabel(info)} ${officialLabel}`)}</div>
+      <div className="setup-card-download-version-heading">{(cli || 'downloadLabel' in info) && <h4>{clientDownloadLabel(info)}</h4>}{websiteLink(product === 'codex' || product === 'claude' ? product : `download-${product}`, acquisitionAction ? t('下载安装') : officialLabel, `${clientDownloadLabel(info)} ${officialLabel}`)}{acquisitionAction}</div>
     {!officialOnly && groups.map(group => <details key={group.name} className="setup-card-downloads">
       <summary>{group.name} {t(group.official ? '官方下载' : '镜像')}<ChevronDown aria-hidden="true" /></summary>
       <div className="setup-card-download-links">{group.rows.map(row => <React.Fragment key={row.name}>

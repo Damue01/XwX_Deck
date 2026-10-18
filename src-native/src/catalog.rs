@@ -911,18 +911,35 @@ pub(super) fn wire(root: &Path, p: &Provider, model: Option<&str>, incoming: &st
     entry_wire(p, entry.as_ref(), incoming)
 }
 
+/// Shared by ordinary API and subscription routes. Endpoint order from the
+/// service is not a preference: keep the client's native wire when available,
+/// then prefer Responses and Messages over a Chat bridge.
+pub(super) fn preferred_wire(protocols: &Value, incoming: &str) -> Option<&'static str> {
+    let supported = |protocol: &str| {
+        protocols
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value == protocol))
+    };
+    if incoming == "anthropic-messages" && supported("anthropic-messages") {
+        Some("anthropic-messages")
+    } else if supported("openai-responses") {
+        Some("responses")
+    } else if supported("anthropic-messages") {
+        Some("anthropic-messages")
+    } else if supported("chat-completions") {
+        Some("chat-completions")
+    } else {
+        None
+    }
+}
+
 fn entry_wire(p: &Provider, entry: Option<&Value>, incoming: &str) -> String {
     let default = if p.codex_api_format.is_empty() {
         "responses"
     } else {
         p.codex_api_format.as_str()
     };
-    let supported = |v: &Value, protocol: &str| {
-        v.as_array()
-            .is_some_and(|a| a.iter().any(|p| p == protocol))
-    };
     if let Some(e) = entry {
-        let ps = &e["protocols"];
         if e["protocolsDeclared"] != true {
             if e["catalogEndpoints"].as_array().is_some_and(|a| {
                 !a.is_empty()
@@ -931,33 +948,13 @@ fn entry_wire(p: &Provider, entry: Option<&Value>, incoming: &str) -> String {
             }) {
                 return "anthropic-messages".into();
             }
-            let official = &e["officialProtocols"];
-            if incoming == "anthropic-messages" && supported(official, "anthropic-messages") {
-                return "anthropic-messages".into();
-            }
-            if supported(official, "openai-responses") {
-                return "responses".into();
-            }
-            if supported(official, "anthropic-messages") {
-                return "anthropic-messages".into();
-            }
-            if supported(official, "chat-completions") {
-                return "chat-completions".into();
-            }
-            return default.into();
+            return preferred_wire(&e["officialProtocols"], incoming)
+                .unwrap_or(default)
+                .into();
         }
-        if incoming == "anthropic-messages" && supported(ps, "anthropic-messages") {
-            return incoming.into();
-        }
-        if supported(ps, "openai-responses") {
-            return "responses".into();
-        }
-        if supported(ps, "anthropic-messages") {
-            return "anthropic-messages".into();
-        }
-        if supported(ps, "chat-completions") {
-            return "chat-completions".into();
-        }
+        return preferred_wire(&e["protocols"], incoming)
+            .unwrap_or(default)
+            .into();
     }
     default.into()
 }
@@ -965,6 +962,33 @@ fn entry_wire(p: &Provider, entry: Option<&Value>, incoming: &str) -> String {
 #[cfg(test)]
 mod client_contract_tests {
     use super::*;
+    #[test]
+    fn protocol_order_matches_both_client_contracts() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../src/shared/protocol-routing-cases.json"
+        ))
+        .unwrap();
+        for case in cases.as_array().unwrap() {
+            let mut protocols = case["protocols"].as_array().unwrap().clone();
+            for _ in 0..2 {
+                let entry = json!({"protocolsDeclared":true,"protocols":protocols});
+                for (client, incoming) in [
+                    ("codex", "responses"),
+                    ("claude", "anthropic-messages"),
+                ] {
+                    assert_eq!(
+                        entry_wire(&Provider::default(), Some(&entry), incoming),
+                        case[client].as_str().unwrap(),
+                        "{} {client}",
+                        case["name"]
+                    );
+                }
+                protocols.reverse();
+            }
+        }
+        assert_eq!(preferred_wire(&json!([]), "responses"), None);
+        assert_eq!(preferred_wire(&json!(["unknown"]), "responses"), None);
+    }
     #[test]
     fn instruction_templates_survive_client_publication() {
         let mut template = json!({"model_messages":{"instructions_template":"current native instructions","permissions":{"fixture":true}}});

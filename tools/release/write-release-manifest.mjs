@@ -11,11 +11,11 @@ if (tag !== `v${version}`) throw new Error(`Release tag ${tag} does not match ve
 
 const contract = JSON.parse(await readFile(new URL('../../release-contract.json', import.meta.url), 'utf8'));
 const artifactDefinitions = Object.values(contract.platforms).flatMap(({ publishedArtifactName: name, portableArtifactName, platform, arch }) => [
-  {name,platform,arch},...(portableArtifactName?[{name:portableArtifactName,platform,arch}]:[])
+  {name,platform,arch,kind:platform==='windows'?'installer':'disk-image'},...(portableArtifactName?[{name:portableArtifactName,platform,arch,kind:'portable'}]:[])
 ]);
 if (artifactDefinitions.some(file => !file.name || !file.platform || !file.arch)
   || new Set(artifactDefinitions.map(file => file.name)).size !== artifactDefinitions.length
-  || new Set(artifactDefinitions.map(file => `${file.platform}/${file.arch}/${path.extname(file.name)}`)).size !== artifactDefinitions.length) {
+  || new Set(artifactDefinitions.map(file => `${file.platform}/${file.arch}/${file.kind}`)).size !== artifactDefinitions.length) {
   throw Error('Release contract has missing or duplicate artifact identities.');
 }
 
@@ -34,6 +34,7 @@ for (const definition of artifactDefinitions) {
   files.push({
     platform: definition.platform,
     arch: definition.arch,
+    kind: definition.kind,
     name: definition.name,
     url,
     size: details.size,
@@ -41,7 +42,7 @@ for (const definition of artifactDefinitions) {
   });
   checksumLines.push(`${sha256}  ${definition.name}`);
   await writeFile(path.join(directory, `${definition.name}.sha256`), `${sha256}  ${definition.name}\n`, 'utf8');
-  if (definition.platform === 'windows' && definition.name.endsWith('.msi')) {
+  if (definition.platform === 'windows' && definition.kind === 'installer') {
     await writeFile(path.join(directory, 'latest.yml'), [
       `version: ${version}`,
       'files:',
@@ -83,7 +84,7 @@ await writeFile(path.join(directory, 'release-notes.md'), [
   '',
   '## 下载与更新',
   '',
-  '- Windows：下载 `XwX-Deck-windows-x64.msi`，安装到当前用户。后续更新会校验 MSI，通过 Windows Installer 升级并重新启动；卸载保留配置与数据。',
+  '- Windows：下载 `XwX-Deck-windows-x64-setup.exe`，选择位置并安装到当前用户。后续更新会校验 Setup、升级并重新启动；卸载保留配置与数据。',
   '- Windows 便携版：下载 `XwX-Deck-windows-x64.exe`，放在可写目录运行。后续更新继续校验并替换原路径 EXE。',
   '- Apple Silicon Mac：下载 `XwX-Deck-mac-arm64.dmg`，将应用拖入“应用程序”。后续在应用内下载并校验新版 DMG，再手动拖拽替换。',
   '- Intel Mac：下载 `XwX-Deck-mac-x64.dmg`，安装与更新方式同 Apple Silicon Mac。',

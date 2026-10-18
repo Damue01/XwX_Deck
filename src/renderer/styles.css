@@ -1065,6 +1065,7 @@ svg.ic { width: 20px; height: 20px; display: block; fill: none; stroke: currentC
 /* ---- Models page ---- */
 .configuration-client-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 24px; }
 .configuration-client-error { color: var(--danger); font-size: 12px; margin-top: 12px; }
+.configuration-client-location { margin-left: 12px; color: var(--quiet); }
 .configuration-header-actions { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
 .models-switch [data-slot="tabs-list"] { min-width: 0; max-width: 100%; flex-shrink: 1; justify-content: flex-start; overflow-x: auto; scrollbar-width: thin; }
 .models-switch [data-slot="tab-indicator"] { display: none; }

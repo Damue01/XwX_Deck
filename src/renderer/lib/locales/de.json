@@ -766,5 +766,8 @@
   "暂不支持模型配置": "Modellkonfiguration nicht unterstützt",
   "确认并继续": "Bestätigen und fortfahren",
   "已添加 {0} 个客户端": "{0} Clients hinzugefügt",
-  "已导入 {0} 个配置与账号，已添加 {1} 个客户端": "{0} Konfigurationen und Konten importiert, {1} Clients hinzugefügt"
+  "已导入 {0} 个配置与账号，已添加 {1} 个客户端": "{0} Konfigurationen und Konten importiert, {1} Clients hinzugefügt",
+  "手动选择安装路径": "Installationspfad manuell wählen",
+  "更换安装路径": "Installationspfad ändern",
+  "恢复自动检测": "Automatische Erkennung wiederherstellen"
 }

@@ -1,4 +1,5 @@
 //! Explicit, per-client quota failover. Never replays accepted/partial responses.
+use super::routing_errors::quota_error;
 use super::*;
 use std::collections::{BTreeMap, HashSet};
 
@@ -134,45 +135,6 @@ pub(super) struct Routing {
 }
 fn now() -> u64 {
     (millis() / 1000) as u64
-}
-pub(super) fn quota_error(status: u16, bytes: &[u8]) -> bool {
-    if ![400, 402, 403, 429].contains(&status) {
-        return false;
-    }
-    let Ok(v) = serde_json::from_slice::<Value>(bytes) else {
-        return false;
-    };
-    let e = if v["error"].is_object() {
-        &v["error"]
-    } else {
-        &v["response"]["error"]
-    };
-    let code = text(e, "code");
-    let kind = text(e, "type");
-    let codes = [
-        "insufficient_quota",
-        "quota_exceeded",
-        "usage_limit_reached",
-        "credits_exhausted",
-        "billing_hard_limit_reached",
-        "credit_balance_too_low",
-    ];
-    if codes.contains(&code) || codes.contains(&kind) {
-        return true;
-    }
-    let message = text(e, "message").to_lowercase();
-    [
-        "quota exhausted",
-        "quota exceeded",
-        "insufficient quota",
-        "usage limit reached",
-        "credit balance is too low",
-        "额度已用完",
-        "额度已用尽",
-        "余额不足",
-    ]
-    .iter()
-    .any(|needle| message.contains(needle))
 }
 impl Routing {
     pub fn new(root: &Path, settings: &Settings) -> Self {
@@ -562,26 +524,6 @@ pub(super) async fn forward(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn only_definite_quota_rejection() {
-        assert!(quota_error(
-            429,
-            br#"{"error":{"code":"insufficient_quota"}}"#
-        ));
-        assert!(!quota_error(
-            429,
-            br#"{"error":{"code":"rate_limit_exceeded"}}"#
-        ));
-        assert!(!quota_error(
-            500,
-            br#"{"error":{"code":"insufficient_quota"}}"#
-        ));
-        assert!(!quota_error(
-            200,
-            br#"{"error":{"code":"insufficient_quota"}}"#
-        ));
-        assert!(!quota_error(429, br#"{"output_text":"quota exceeded"}"#));
-    }
     #[test]
     fn claude_keeps_role_mapping() {
         let base = Provider {

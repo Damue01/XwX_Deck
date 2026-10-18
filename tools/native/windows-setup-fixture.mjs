@@ -7,7 +7,7 @@ import { rustToolchain } from './toolchain.mjs';
 
 if(process.platform!=='win32')throw Error('Windows fixture requires Windows.');
 const root=resolve(import.meta.dirname,'../..'),version='0.9.9';
-const fixture=await mkdtemp(join(root,'test-results/msi-version-fixture-'));
+const fixture=await mkdtemp(join(root,'test-results/setup-version-fixture-'));
 for(const directory of ['src-native','src/shared','tools/native','assets','test-results/native-assets','test-results/native-frontend'])await cp(join(root,directory),join(fixture,directory),{recursive:true});
 await copyFile(join(root,'release-contract.json'),join(fixture,'release-contract.json'));
 for(const file of ['Cargo.toml','Cargo.lock','tauri.conf.json']){

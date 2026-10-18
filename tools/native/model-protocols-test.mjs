@@ -1,9 +1,22 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { build } from 'esbuild';
 import { canonicalOfficialModelId, expandProtocolTable, normalizeProtocolTable, mergeOfficialModels } from '../build/official-models.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
+const routingCases = JSON.parse(await readFile(resolve(root, 'src/shared/protocol-routing-cases.json'), 'utf8'));
+const routingBundle = await build({ entryPoints: [resolve(root, 'src/shared/codex-protocol-policy.ts')], bundle: true, platform: 'node', format: 'esm', write: false, logLevel: 'silent' });
+const { resolveCatalogCodexProtocol, resolveClaudeModelProtocol } = await import('data:text/javascript;base64,' + Buffer.from(routingBundle.outputFiles[0].text).toString('base64'));
+for (const item of routingCases) {
+  // Catalog order is not a routing preference. Both clients must agree with Rust.
+  for (const protocols of [item.protocols, [...item.protocols].reverse()]) {
+    const entry = { id: item.name, vendor: 'fixture', protocols, protocolsDeclared: true, clients: ['codex', 'claude'] };
+    assert.equal(resolveCatalogCodexProtocol(entry), item.codex, item.name);
+    assert.equal(resolveClaudeModelProtocol({ adapter: 'auto' }, entry), item.claude, item.name);
+  }
+}
+console.log(`PASS ${routingCases.length} shared protocol combinations: client-native priority, Responses before Chat, directory-order independence`);
 const table = JSON.parse(await readFile(resolve(root, 'assets/model-protocols.json'), 'utf8'));
 const modelsDev = JSON.parse(await readFile(resolve(root, 'assets/models-dev-capabilities.json'), 'utf8'));
 const normalized = normalizeProtocolTable(table);

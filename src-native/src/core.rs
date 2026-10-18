@@ -93,6 +93,8 @@ mod request_encoding;
 mod retired_models;
 #[path = "service_switching.rs"]
 mod service_switching;
+#[path = "routing_errors.rs"]
+mod routing_errors;
 #[path = "storage.rs"]
 mod storage;
 #[path = "subscription_routing.rs"]
@@ -2346,7 +2348,7 @@ impl Pilot {
             "detectClientInstallations" => {
                 let discovery = self.client_discovery();
                 let catalog: Value = serde_json::from_str(include_str!("../../test-results/native-assets/clients.json")).map_err(err)?;
-                Ok(json!({"available":true,"clients":catalog.as_array().into_iter().flatten().map(|client|json!({"id":client["id"],"installed":discovery.installed(text(client,"id")),"modelManagement":client["modelManagement"]==true && discovery.management_supported(text(client,"id"))})).collect::<Vec<_>>()}))
+                Ok(json!({"available":true,"clients":catalog.as_array().into_iter().flatten().map(|client|json!({"id":client["id"],"installed":discovery.installed(text(client,"id")),"modelManagement":client["modelManagement"]==true && discovery.management_supported(text(client,"id")),"installationLocation":self.settings.other.get("clientInstallationLocations").and_then(|locations|locations.get(client_installations::canonical_id(text(client,"id"))))})).collect::<Vec<_>>()}))
             }
             "getModelClients" => Ok(json!(self.model_clients())),
             "inspectClientInstallation" => {
@@ -2359,13 +2361,15 @@ impl Pilot {
                 let catalog: Value = serde_json::from_str(include_str!("../../test-results/native-assets/clients.json")).map_err(err)?;
                 if !catalog.as_array().is_some_and(|rows|rows.iter().any(|row|row["id"]==id)) { return Err("未知客户端".into()); }
                 let id = client_installations::canonical_id(id);
+                // Explicit null restores automatic discovery; omitted retains the saved choice.
+                let restore_detection = method == "addModelClient" && args.get(1).is_some_and(Value::is_null);
                 let location = if method == "addModelClient" {
                     args.get(1).and_then(Value::as_str).map(|path| self.inspect_client_installation(id,path)).transpose()?
                 } else { None };
                 let active_installation = self.root.join(format!("client-wiring-{id}.json")).exists()
                     || (self.gateway.is_some() && ((self.client_enabled(id) && self.client_configured(id))
                         || self.settings.other.get("clientRoutes").and_then(|routes|routes.get(id)).is_some_and(|route|route["enabled"]!=false && !text(route,"providerId").is_empty())));
-                if location.is_some() && active_installation {
+                if (location.is_some() || restore_detection) && active_installation {
                     return Err("请先停止此客户端的追踪，再更改安装位置".into());
                 }
                 let mut clients = self.model_clients();
@@ -2383,7 +2387,7 @@ impl Pilot {
                 let before = self.settings.other.insert("modelClients".into(), value.clone());
                 let version_before = self.settings.other.insert("modelClientsVersion".into(),json!(2));
                 let locations_before = self.settings.other.get("clientInstallationLocations").cloned();
-                if let Some(location) = location {
+                if location.is_some() || restore_detection {
                     let mut locations = locations_before.clone().unwrap_or(json!({}));
                     if !locations.is_object() {
                         // Preserve unreadable externally supplied state instead of discarding it.
@@ -2391,7 +2395,8 @@ impl Pilot {
                         if let Some(old)=version_before {self.settings.other.insert("modelClientsVersion".into(),old);} else {self.settings.other.remove("modelClientsVersion");}
                         return Err("客户端安装位置记录已变化，请检查设置后重试".into());
                     }
-                    locations[id] = json!(location);
+                    if let Some(location) = location { locations[id] = json!(location); }
+                    else { locations.as_object_mut().unwrap().remove(id); }
                     self.settings.other.insert("clientInstallationLocations".into(),locations);
                 }
                 if let Err(error)=self.persist() {
@@ -4077,31 +4082,10 @@ fn resolve_wire(root: &Path, provider: &Provider, model: Option<&str>, incoming:
             .as_array()
             .and_then(|a| a.iter().find(|e| e["modelId"].as_str() == model));
         let protocols = catalog.or(official).map(|v| &v["protocols"]);
-        if protocols.is_some_and(|p| {
-            p.as_array().is_some_and(|a| {
-                a.iter().any(|v| {
-                    v == if incoming == "anthropic-messages" {
-                        "anthropic-messages"
-                    } else {
-                        "openai-responses"
-                    }
-                })
-            })
-        }) {
-            incoming.into()
-        } else if protocols.is_some_and(|p| {
-            p.as_array()
-                .is_some_and(|a| a.iter().any(|v| v == "chat-completions"))
-        }) {
-            "chat-completions".into()
-        } else if protocols.is_some_and(|p| {
-            p.as_array()
-                .is_some_and(|a| a.iter().any(|v| v == "anthropic-messages"))
-        }) {
-            "anthropic-messages".into()
-        } else {
-            incoming.into()
-        }
+        protocols
+            .and_then(|protocols| catalog::preferred_wire(protocols, incoming))
+            .unwrap_or(incoming)
+            .into()
     } else {
         provider.adapter.clone()
     }

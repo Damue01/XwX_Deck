@@ -116,7 +116,7 @@ jobs:
             test-results/native-target
           key: ${{ runner.os }}-${{ runner.arch }}-native-rust-${{ hashFiles('src-native/Cargo.lock') }}
 
-      - name: Build Windows per-user MSI and portable package
+      - name: Build Windows per-user Setup and portable package
         run: npm run build:win
 
       - name: Verify Windows Rust unit tests
@@ -138,12 +138,12 @@ jobs:
       - name: Verify isolated native UI
         run: node tools/native/native-test.mjs
 
-      - name: Verify per-user MSI installation, upgrade and uninstall
+      - name: Verify per-user Setup installation, upgrade and uninstall
         shell: pwsh
         run: |
-          node tools/native/windows-msi-fixture.mjs --output=test-results/msi-old-debug.exe
+          node tools/native/windows-setup-fixture.mjs --output=test-results/setup-old-debug.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tools/native/windows-msi-test.mjs --old-binary=test-results/msi-old-debug.exe --new-binary="release/XwX Deck.exe" --new-msi="release/XwX Deck.msi"
+          node tools/native/windows-setup-test.mjs --old-binary=test-results/setup-old-debug.exe --new-binary="release/XwX Deck.exe" --new-setup="release/XwX Deck Setup.exe"
 
       - name: Upload Windows verification evidence
         if: always()
@@ -153,8 +153,8 @@ jobs:
           path: |
             test-results/*.json
             test-results/*.log
-            test-results/windows-msi-acceptance-*/summary.json
-            test-results/windows-msi-acceptance-*/*.log
+            test-results/windows-setup-acceptance-*/summary.json
+            test-results/windows-setup-acceptance-*/*.log
             release/native-build-report.json
           if-no-files-found: warn
 
@@ -163,7 +163,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release-upload | Out-Null
           Copy-Item "release/XwX Deck.exe" "release-upload/XwX-Deck-windows-x64.exe"
-          Copy-Item "release/XwX Deck.msi" "release-upload/XwX-Deck-windows-x64.msi"
+          Copy-Item "release/XwX Deck Setup.exe" "release-upload/XwX-Deck-windows-x64-setup.exe"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

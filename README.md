@@ -41,7 +41,7 @@ XwX Deck 配合已有 AI 客户端使用。配置模型连接，按需开启 Tra
 
 [安装与更新说明](https://xwxdeck.com/docs/download)　[GitHub Releases 与更新记录](https://github.com/Damue01/XwX_Deck/releases)
 
-Windows 按用户 MSI 的构建、数据保留和升级验收见 [MSI 说明](docs/windows-msi.md)。
+Windows 按用户 Setup 的构建、数据保留和升级验收见 [Windows 安装说明](docs/windows-setup.md)。
 
 ## 三步开始
 

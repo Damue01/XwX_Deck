@@ -766,5 +766,8 @@
   "暂不支持模型配置": "Configuration des modèles indisponible",
   "确认并继续": "Confirmer et continuer",
   "已添加 {0} 个客户端": "{0} clients ajoutés",
-  "已导入 {0} 个配置与账号，已添加 {1} 个客户端": "{0} configurations et comptes importés, {1} clients ajoutés"
+  "已导入 {0} 个配置与账号，已添加 {1} 个客户端": "{0} configurations et comptes importés, {1} clients ajoutés",
+  "手动选择安装路径": "Choisir le chemin manuellement",
+  "更换安装路径": "Modifier le chemin d’installation",
+  "恢复自动检测": "Rétablir la détection automatique"
 }

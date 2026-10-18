@@ -219,7 +219,7 @@
 | [public-boundary-test.mjs](../tools/native/public-boundary-test.mjs) | 后端默认入口 | RE01 |
 | [source-fingerprint-test.mjs](../tools/native/source-fingerprint-test.mjs) | 后端默认入口 | RE01、RE02、RE03、RE04 |
 | [update-test.mjs](../tools/native/update-test.mjs) | 后端默认入口 | RE02、RE03、RE04、RE05 |
-| [windows-msi-test.mjs](../tools/native/windows-msi-test.mjs) | 独立专题入口 | RE02、RE03、RE05 |
+| [windows-setup-test.mjs](../tools/native/windows-setup-test.mjs) | 独立专题入口 | RE02、RE03、RE05 |
 | [release-manifest-test.mjs](../tools/tests/release-manifest-test.mjs) | test:built 入口 | RE02 |
 
 ## SW 额度耗尽自动服务切换

@@ -1,5 +1,8 @@
 /** Product copy only. User-entered values and model IDs are never translated. */
 export const english: Readonly<Record<string, string>> = {
+  "手动选择安装路径": "Choose installation path manually",
+  "更换安装路径": "Change installation path",
+  "恢复自动检测": "Restore automatic detection",
   "选择安装位置": "Choose installation location",
   "保存安装位置": "Save installation location",
   "无法识别客户端安装位置": "Cannot identify the client installation",

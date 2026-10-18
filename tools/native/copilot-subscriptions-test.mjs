@@ -7,21 +7,72 @@ const server=createServer(async(req,res)=>{let raw='';for await(const chunk of r
  if(req.url==='/login/oauth/access_token'){assert.equal(form.get('grant_type'),'urn:ietf:params:oauth:grant-type:device_code');res.end(JSON.stringify(pollError?{error:pollError}:{access_token:'github-'+devices.get(form.get('device_code'))}));return;}
  if(req.url==='/user'){const login=req.headers.authorization.split('github-')[1];res.end(JSON.stringify({id:login,login}));return;}
  if(req.url==='/copilot_internal/v2/token'){assert.match(req.headers.authorization,/^token github-/);assert.equal(req.headers['copilot-integration-id'],'vscode-chat');sessions++;res.end(JSON.stringify({token:'copilot-access-'+req.headers.authorization.slice(13),expires_at:Math.floor(Date.now()/1000)+300,endpoints:{api:invalidEndpoint?'https://untrusted.invalid/v1':origin+'/v1'}}));return;}
- if(req.url==='/v1/models'){assert.equal(req.headers['x-github-api-version'],'2026-01-09');res.end(JSON.stringify({data:[{id:'copilot-chat',name:'Fixture Chat',supported_endpoints:['/chat/completions']},{id:'hidden',model_picker_enabled:false},{id:'category-chat',model_picker_enabled:false,model_picker_category:'versatile',policy:{state:'enabled'},capabilities:{type:'chat'}},{id:'embedding',model_picker_enabled:true,capabilities:{type:'embeddings'}},{id:'disabled',model_picker_enabled:true,policy:{state:'disabled'}},{id:'experimental',model_picker_enabled:true,vendor:'Experimental'},{id:'copilot-responses',supported_endpoints:['/responses']}]}));return;}
- if(req.url==='/v1/chat/completions'){const body=JSON.parse(raw);requests.push({headers:req.headers,body});assert.equal(body.model,'copilot-chat');assert.match(req.headers.authorization,/^Bearer copilot-access-/);assert.equal(req.headers.cookie,undefined);assert.equal(req.headers['x-api-key'],undefined);assert.equal(req.headers['editor-version'],'vscode/1.140.0');assert.equal(req.headers['copilot-integration-id'],'vscode-chat');res.end(JSON.stringify({id:'fixture-chat',object:'chat.completion',model:body.model,choices:[{index:0,message:{role:'assistant',content:'copilot local fixture'},finish_reason:'stop'}],usage:{prompt_tokens:2,completion_tokens:3,total_tokens:5}}));return;}
+ if(req.url==='/v1/models'){assert.equal(req.headers['x-github-api-version'],'2026-01-09');res.end(JSON.stringify({data:[{id:'copilot-chat',name:'Fixture Chat',supported_endpoints:['/chat/completions']},{id:'hidden',model_picker_enabled:false},{id:'category-chat',model_picker_enabled:false,model_picker_category:'versatile',policy:{state:'enabled'},capabilities:{type:'chat'}},{id:'embedding',model_picker_enabled:true,capabilities:{type:'embeddings'}},{id:'disabled',model_picker_enabled:true,policy:{state:'disabled'}},{id:'experimental',model_picker_enabled:true,vendor:'Experimental'},{id:'copilot-responses',supported_endpoints:['/responses']},{id:'copilot-dual',supported_endpoints:['/chat/completions','/messages']},{id:'copilot-multi',supported_endpoints:['/chat/completions','/responses','/messages']}]}));return;}
+ if(req.url==='/v1/responses'||req.url==='/v1/messages') {
+   const body=JSON.parse(raw); requests.push({headers:req.headers,body,path:req.url});
+   assert.match(req.headers.authorization,/^Bearer copilot-access-/);
+   assert.equal(req.headers.cookie,undefined); assert.equal(req.headers['x-api-key'],undefined);
+   const content='native protocol fixture';
+   if(body.stream) {
+     res.setHeader('content-type','text/event-stream');
+     const event=(name,value)=>`event: ${name}\ndata: ${JSON.stringify(value)}\n\n`;
+     if(req.url==='/v1/responses') {
+       const response={id:'native-response-'+requests.length,object:'response',status:'completed',model:body.model,output:[{id:'native-output-'+requests.length,type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:content}]}],usage:{input_tokens:2,output_tokens:3}};
+       res.end(event('response.output_text.delta',{type:'response.output_text.delta',output_index:0,content_index:0,delta:content})+event('response.completed',{type:'response.completed',response}));
+     } else {
+       res.end(event('message_start',{type:'message_start',message:{id:'native-message-'+requests.length,type:'message',role:'assistant',model:body.model,content:[],usage:{input_tokens:2,output_tokens:0}}})+
+         event('content_block_start',{type:'content_block_start',index:0,content_block:{type:'text',text:''}})+
+         event('content_block_delta',{type:'content_block_delta',index:0,delta:{type:'text_delta',text:content}})+
+         event('content_block_stop',{type:'content_block_stop',index:0})+
+         event('message_delta',{type:'message_delta',delta:{stop_reason:'end_turn'},usage:{output_tokens:3}})+
+         event('message_stop',{type:'message_stop'}));
+     }
+     return;
+   }
+   res.end(JSON.stringify(req.url==='/v1/responses'
+     ? {id:'native-response-'+requests.length,object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:content}]}]}
+     : {id:'native-message-'+requests.length,type:'message',role:'assistant',model:body.model,content:[{type:'text',text:content}],stop_reason:'end_turn',usage:{input_tokens:2,output_tokens:3}}));
+   return;
+ }
+ if(req.url==='/v1/chat/completions'){const body=JSON.parse(raw);requests.push({headers:req.headers,body});assert.ok(['copilot-chat','copilot-dual','copilot-multi'].includes(body.model));assert.match(req.headers.authorization,/^Bearer copilot-access-/);assert.equal(req.headers.cookie,undefined);assert.equal(req.headers['x-api-key'],undefined);assert.equal(req.headers['editor-version'],'vscode/1.140.0');assert.equal(req.headers['copilot-integration-id'],'vscode-chat');res.end(JSON.stringify({id:'fixture-chat',object:'chat.completion',model:body.model,choices:[{index:0,message:{role:'assistant',content:'copilot local fixture'},finish_reason:'stop'}],usage:{prompt_tokens:2,completion_tokens:3,total_tokens:5}}));return;}
  res.statusCode=404;res.end('{}');});server.listen(0,'127.0.0.1');await once(server,'listening');origin=`http://127.0.0.1:${server.address().port}`;
 let child,queue=[];function start(){child=spawn(nativeTestBinary,['--rpc','--pilot-root',root,'--subscription-test-endpoint',origin]);createInterface({input:child.stdout}).on('line',line=>queue.shift()?.(JSON.parse(line)));child.stderr.on('data',data=>process.stderr.write(data));}
 function call(method,...args){return new Promise((res,rej)=>{const timer=setTimeout(()=>rej(Error('timeout '+method)),20000);queue.push(v=>{clearTimeout(timer);res(v)});child.stdin.write(JSON.stringify({method,args})+'\n');});}async function rpc(method,...args){const result=await call(method,...args);assert.equal(result.ok,true,result.error);return result.result;}async function stop(){const exit=once(child,'exit');child.stdin.end();assert.equal((await exit)[0],0);}const delay=ms=>new Promise(r=>setTimeout(r,ms));async function finish(){for(let n=0;n<100;n++){const snapshot=await rpc('getSubscriptionAccounts');if(['complete','failed','cancelled'].includes(snapshot.flow?.status))return snapshot;await delay(100);}throw Error('login timeout');}const pass=s=>console.log('PASS '+s);
 start();try{
  const fresh=await rpc('getSubscriptionAccounts');assert.deepEqual(fresh.accounts,[]);assert.deepEqual(await rpc('getModelClients'),[]);
  const flow=await rpc('beginSubscriptionSignIn',{platform:'copilot'});assert.match(flow.flow.userCode,/CODE-/);assert.ok(!JSON.stringify(flow).includes('device-'));assert.equal(await rpc('subscriptionTestAuthorizationUrl'),origin+'/authorize');const first=await finish();assert.equal(first.flow.status,'complete');const a=first.accounts[0];assert.equal(a.platform,'copilot');await rpc('connectSubscriptionAccount',a.id);subject='beta';await rpc('beginSubscriptionSignIn',{platform:'copilot'});const second=await finish();assert.equal(second.accounts.length,2);const b=second.accounts.find(v=>v.id!==a.id);await rpc('connectSubscriptionAccount',b.id);pass('device authorization registers separate accounts without exposing credentials or device secrets');
- let providers=await rpc('getProviders');assert.equal(providers.selected.codex,null);const pa=providers.connections.find(p=>p.subscriptionAccountId===a.id),pb=providers.connections.find(p=>p.subscriptionAccountId===b.id);assert.equal(pa.bearerToken,'');const catalog=await rpc('fetchProviderModels',{providerId:pa.id});assert.equal(catalog.length,3);assert.ok(catalog.some(m=>m.id==='category-chat'));assert.deepEqual(catalog.find(m=>m.id==='copilot-chat').protocols,['chat-completions']);assert.deepEqual(catalog.find(m=>m.id==='copilot-responses').protocols,['openai-responses']);pass('Copilot model protocols come from supported endpoints and hidden models stay hidden');
+ let providers=await rpc('getProviders');assert.equal(providers.selected.codex,null);const pa=providers.connections.find(p=>p.subscriptionAccountId===a.id),pb=providers.connections.find(p=>p.subscriptionAccountId===b.id);assert.equal(pa.bearerToken,'');const catalog=await rpc('fetchProviderModels',{providerId:pa.id});assert.equal(catalog.length,5);assert.ok(catalog.some(m=>m.id==='category-chat'));assert.deepEqual(catalog.find(m=>m.id==='copilot-chat').protocols,['chat-completions']);assert.deepEqual(catalog.find(m=>m.id==='copilot-responses').protocols,['openai-responses']);pass('Copilot model protocols come from supported endpoints and hidden models stay hidden');
  await rpc('switchClientProvider',{client:'codex',providerId:pa.id});await rpc('switchClientProvider',{client:'claude',providerId:pb.id});await rpc('updateCodexConfig',{expectedProviderId:pa.id,compatibleModel:'copilot-chat'});await rpc('updateClaudeModels',{sonnet:'copilot-chat'});const renamed=await rpc('renameSubscriptionAccount',{accountId:a.id,label:'工作账号'});assert.equal(renamed.selected.codex,pa.id);assert.equal((await rpc('getSubscriptionAccounts')).accounts.find(v=>v.id===a.id).label,'工作账号');
  subject='wrong';await rpc('beginSubscriptionSignIn',{platform:'copilot',accountId:a.id});assert.equal((await finish()).flow.status,'failed');assert.equal((await rpc('getSubscriptionAccounts')).accounts.find(v=>v.id===a.id).status,'connected');pass('rename and wrong-account login retain registration, model and client selections');
  pollError='authorization_pending';await rpc('beginSubscriptionSignIn',{platform:'copilot'});assert.equal((await rpc('cancelSubscriptionSignIn')).flow.status,'cancelled');await delay(1200);assert.equal((await rpc('getSubscriptionAccounts')).accounts.length,2);pollError='';subject='alpha';invalidEndpoint=true;await rpc('beginSubscriptionSignIn',{platform:'copilot'});assert.equal((await finish()).flow.status,'failed');invalidEndpoint=false;assert.equal((await rpc('getSubscriptionAccounts')).accounts.length,2);pass('cancellation and untrusted inference endpoints cannot commit credentials');
  await mkdir(join(root,'codex'),{recursive:true});await mkdir(join(root,'claude'),{recursive:true});await writeFile(join(root,'codex/config.toml'),'model = \"original-fixture\"\n');await writeFile(join(root,'claude/settings.json'),'{\"env\":{\"ORIGINAL\":\"preserve\"}}');
  const beforeCodex=await readFile(join(root,'codex/config.toml'),'utf8'),beforeClaude=await readFile(join(root,'claude/settings.json'),'utf8');const running=await rpc('toggleTracing',true);const send=(path,body)=>fetch(running.localBaseUrl+path,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer never-forward',cookie:'never-forward','x-api-key':'never-forward','editor-version':'never-forward','copilot-integration-id':'never-forward'},body:JSON.stringify(body)});
  const response=await send('/v1/responses',{model:'copilot-chat',input:'local fixture',stream:false});assert.equal(response.status,200,await response.clone().text());const data=await response.json();assert.equal(data.output[0].content[0].text,'copilot local fixture');const claude=await send('/v1/messages',{model:'sonnet',max_tokens:32,messages:[{role:'user',content:'local fixture'}]});assert.equal(claude.status,200,await claude.clone().text());assert.equal((await claude.json()).content[0].text,'copilot local fixture');assert.notEqual(requests[0].headers.authorization,requests[1].headers.authorization);pass('ChatGPT and Claude make real HTTP requests using their own Copilot accounts with protocol conversion');
+ await rpc('fetchProviderModels',{providerId:pb.id});
+ // Each account has its own service declaration; do not borrow another cache.
+ const nativeCases=[
+   {client:'codex',model:'copilot-responses',path:'/v1/responses'},
+   {client:'claude',model:'copilot-responses',path:'/v1/responses'},
+   {client:'codex',model:'copilot-dual',path:'/v1/messages'},
+   {client:'claude',model:'copilot-dual',path:'/v1/messages'},
+   {client:'codex',model:'copilot-multi',path:'/v1/responses'},
+   {client:'claude',model:'copilot-multi',path:'/v1/messages'}
+ ];
+ for(const item of nativeCases) {
+   const body=item.client==='codex'
+     ? {model:item.model,input:'native protocol fixture',stream:false}
+     : {model:item.model,messages:[{role:'user',content:'native protocol fixture'}],max_tokens:32,stream:false};
+   const reply=await send(item.client==='codex'?'/v1/responses':'/v1/messages',body);
+   assert.equal(reply.status,200,await reply.clone().text());
+   const value=await reply.json(), last=requests.at(-1);
+   assert.equal(last.path,item.path,item.client+' '+item.model+' actual endpoint');
+   assert.equal(last.body.model,item.model);
+   assert.equal(item.client==='codex'?value.output[0].content[0].text:value.content[0].text,'native protocol fixture');
+   assert.equal(last.headers.authorization,item.client==='codex'?requests[0].headers.authorization:requests[1].headers.authorization);
+   if(item.path==='/v1/responses') assert.equal(last.body.messages,undefined);
+   else assert.equal(last.body.input,undefined);
+ }
+ pass('both clients consume declared Responses-only, Messages/Chat and all-protocol subscription routes with bound account credentials');
  const genericPreview=await rpc('getClientRoute','cherry-studio');await rpc('setClientRoute',{client:'cherry-studio',providerId:pa.id,model:'copilot-chat',configDigest:genericPreview.configDigest});
  const generic=await send('/clients/cherry-studio/v1/chat/completions',{model:'copilot-chat',messages:[{role:'user',content:'generic Copilot fixture'}]});assert.equal(generic.status,200,await generic.clone().text());assert.equal((await generic.json()).choices[0].message.content,'copilot local fixture');assert.ok(requests.at(-1).headers.authorization.startsWith('Bearer copilot-access-'));pass('independent generic Chat client uses the saved Copilot subscription and native Chat protocol');
  await rpc('toggleTracing',false);assert.equal(await readFile(join(root,'codex/config.toml'),'utf8'),beforeCodex);assert.deepEqual(JSON.parse(await readFile(join(root,'claude/settings.json'),'utf8')),JSON.parse(beforeClaude));await assert.rejects(fetch(running.localBaseUrl+'/v1/models'));

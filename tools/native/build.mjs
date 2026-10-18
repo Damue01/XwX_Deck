@@ -9,7 +9,7 @@ import { rustToolchain } from './toolchain.mjs';
 import { buildMacDmg } from './macos-dmg.mjs';
 import { appleReleaseConfig, appleTool, signMac, notarizeMac, notarizeApp } from './macos-signing.mjs';
 import { assertPublicBinary } from './public-binary-boundary.mjs';
-import { buildWindowsMsi } from './windows-msi.mjs';
+import { buildWindowsSetup } from './windows-nsis.mjs';
 import { standardWindowsArtifact } from './windows-execution-level.mjs';
 
 const pilot = import.meta.dirname;
@@ -53,7 +53,7 @@ run(process.execPath, [resolve(pilot, 'prepare.mjs')]);
 run(process.execPath, [resolve(pilot, 'shared-fonts-test.mjs')]);
 const metadataRun=spawnSync(cargo,['metadata','--locked','--format-version','1','--filter-platform',process.platform==='win32'?'x86_64-pc-windows-msvc':process.arch==='arm64'?'aarch64-apple-darwin':'x86_64-apple-darwin','--manifest-path',resolve(root,'src-native/Cargo.toml')],{cwd:root,env,encoding:'utf8',maxBuffer:32*1024*1024});
 if(metadataRun.status) throw new Error(metadataRun.stderr);
-const metadata=JSON.parse(metadataRun.stdout);const resolved=new Set(metadata.resolve.nodes.map(n=>n.id));const licenseTexts=await Promise.all(['LICENSE','NOTICE','docs/licenses/third-party-notices.md','docs/licenses/magpie-MIT.txt','docs/licenses/magpie-community-MIT.txt'].map(name=>readFile(resolve(root,name),'utf8')));
+const metadata=JSON.parse(metadataRun.stdout);const resolved=new Set(metadata.resolve.nodes.map(n=>n.id));const licenseTexts=await Promise.all(['LICENSE','NOTICE','docs/licenses/third-party-notices.md','docs/licenses/magpie-MIT.txt','docs/licenses/magpie-community-MIT.txt','docs/licenses/nsis.txt'].map(name=>readFile(resolve(root,name),'utf8')));
 const notices=[];
 notices.push('Urbanist and Noto Sans SC — SIL Open Font License 1.1');
 for (const name of ['urbanist-OFL.txt', 'notosanssc-OFL.txt']) licenseTexts.push('\n===== ' + name + ' =====\n' + await readFile(resolve(root, 'assets/fonts', name), 'utf8'));
@@ -78,7 +78,7 @@ if (process.platform !== 'darwin') {
     await mkdir(resolve(destination, '..'), { recursive:true });
     await cp(resolve(env.CARGO_TARGET_DIR, 'release/xwx-deck-native.exe'), destination);
     await standardWindowsArtifact(destination);
-    const installer = isolated ? null : await buildWindowsMsi({ root, binary: destination, output: resolve(root,'release/XwX Deck.msi'), version });
+    const installer = isolated ? null : await buildWindowsSetup({ root, binary: destination, output: resolve(root,'release/XwX Deck Setup.exe'), version });
     const finalSource = await sourceFingerprint(root);
     const commit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
     if (commit.status !== 0 || initialSource.sha256 !== finalSource.sha256 || initialGit.stdout.trim() !== commit.stdout.trim()) {
