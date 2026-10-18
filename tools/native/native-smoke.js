@@ -8,6 +8,7 @@
   };
   const check = (label, value) => { if (!value) throw new Error(label); checks.push(label); void window.__TAURI__.core.invoke('pilot_smoke_progress', {checks: [...checks]}).catch(() => {}); };
   const layerEvidence = [], hotSwitchNotices = [], environmentBlocks = [];
+  let keyMetrics;
   const toastByTitle = text => [...document.querySelectorAll('[data-slot=toast-title]')].filter(title => !title.closest('[aria-hidden=true]')).find(title => title.textContent === text)?.closest('[data-position]');
   const dismissToasts = async () => { for(let i=0; i<30; i++) { const titles=[...document.querySelectorAll('[data-slot=toast-title]')].filter(title=>!title.closest('[aria-hidden=true]')); if(!titles.length) return; for(const title of titles) title.closest('[data-position]')?.querySelector('[data-slot=toast-close]')?.click(); await delay(300); } };
   const publishNotice = notice => window.__TAURI__.core.invoke('pilot_rpc', {method:'smokeNotice',args:[notice]});
@@ -440,7 +441,11 @@
       keyCanvas.font=`${keyStyle.fontWeight} ${keyStyle.fontSize} ${keyStyle.fontFamily}`;
       const maskMetrics=keyCanvas.measureText('\u2022'), digitMetrics=keyCanvas.measureText('0');
       const maskHeight=maskMetrics.actualBoundingBoxAscent+maskMetrics.actualBoundingBoxDescent;
-      check('bundled Key mask paints a readable glyph with the same advance as the revealed digit',keyStyle.fontFamily.includes('Deck Secret Mask')&&maskHeight>=3.5&&maskHeight<=4.5&&Math.abs(maskMetrics.width-digitMetrics.width)<.1);
+      const nominalMaskHeight=parseFloat(keyStyle.fontSize)*.3;
+      keyMetrics={fontSize:keyStyle.fontSize,fontFamily:keyStyle.fontFamily,nominalMaskHeight,maskHeight,maskAdvance:maskMetrics.width,digitAdvance:digitMetrics.width,devicePixelRatio};
+      // Windows can round ascent and descent independently to ink pixels.
+      // Retain bounds that reject both the former tiny and oversized glyphs.
+      check('bundled Key mask paints a readable glyph with the same advance as the revealed digit',keyStyle.fontFamily.includes('Deck Secret Mask')&&maskHeight>=Math.floor(nominalMaskHeight)&&maskHeight<=Math.ceil(nominalMaskHeight)+1&&Math.abs(maskMetrics.width-digitMetrics.width)<.1);
       check('hidden Key retains its exact synthetic character count', maskedKey.value === 'isolated-draft-key' && maskedKey.value.length === 18);
       document.querySelector('.secret-input-visibility').click(); await delay(100);
       check('revealing Key keeps character count, input size and typography unchanged', maskedKey.value.length === 18 && getComputedStyle(maskedKey).fontSize === maskedKeySize);
@@ -764,7 +769,7 @@
     }
     check('no framework overlay', !document.querySelector('vite-error-overlay, nextjs-portal'));
     check('console health', window.__pilotErrors.length === 0);
-    const report = { passed: environmentBlocks.length===0, environmentBlocks, checks, layerEvidence, hotSwitchNotices, title: document.title, url: location.href, viewport: { width: innerWidth, height: innerHeight }, runtime: document.body.dataset.runtime, errors: window.__pilotErrors, userAgent: navigator.userAgent };
+    const report = { passed: environmentBlocks.length===0, environmentBlocks, checks, layerEvidence, keyMetrics, hotSwitchNotices, title: document.title, url: location.href, viewport: { width: innerWidth, height: innerHeight }, runtime: document.body.dataset.runtime, errors: window.__pilotErrors, userAgent: navigator.userAgent };
     await window.__TAURI__.core.invoke('pilot_smoke_report', { report });
   } catch (error) {
     await window.__TAURI__.core.invoke('pilot_smoke_report', { report: { passed: false, checks, layerEvidence, hotSwitchNotices, error: String(error), modelUi: { notices:[...document.querySelectorAll('[data-position]:not([aria-hidden=true])')].map(notice=>({title:notice.querySelector('[data-slot=toast-title]')?.textContent,description:notice.querySelector('[data-slot=toast-description]')?.textContent})), selectedService:document.querySelector('button[aria-label="ChatGPT 使用的模型服务"]')?.textContent, nativeProviders:await window.xwxDeck.getProviders().then(value=>({selected:value.selected,active:value.active,warning:value.warning})).catch(String), nativeModel:await window.xwxDeck.getCodexConfig().then(value=>({mode:value.mode,model:value.compatible?.model,warning:value.warning,activeBaseUrl:value.activeBaseUrl})).catch(String), nativeTrace:await window.xwxDeck.getState().then(value=>({tracingEnabled:value.tracingEnabled,backgroundGatewayActive:value.backgroundGatewayActive,localBaseUrl:value.localBaseUrl,lastError:value.lastError})).catch(String), selection:document.querySelector('[data-codex-model]')?.dataset.value, trigger:[...document.querySelectorAll('[data-codex-model] button')].map(button=>({text:button.textContent,disabled:button.disabled,expanded:button.getAttribute('aria-expanded'),rect:button.getBoundingClientRect().toJSON()})), menus:[...document.querySelectorAll('.model-choice-positioner')].map(menu=>({hidden:menu.hidden,opacity:getComputedStyle(menu).opacity,rect:menu.getBoundingClientRect().toJSON(),items:[...menu.querySelectorAll('[role=option]')].map(item=>item.textContent)})) }, errors: window.__pilotErrors } });
