@@ -28,6 +28,28 @@ const trace = body => ({ request: { method: 'POST', path: '/v1/responses', body 
 const messages = body => dom.window.getMessages(trace(body));
 const text = list => list.map(m => m.content.map(b => b.text ?? '').join('')).join('\n');
 try {
+  const sourceCases = [['deepseek-harness','DeepSeek Harness'],['cline','Cline'],['vscode','VS Code'],['copilot-cli','GitHub Copilot CLI'],['copilot','Copilot'],['future-client','future-client'],['unknown','Unknown']];
+  const sourceSessions = sourceCases.map(([source],i) => ({id:'source-'+i,source,firstPrompt:'Synthetic source '+i,traceCount:1,startedAt:'2026-10-18T00:00:00Z'}));
+  sourceSessions.push({id:'missing-source',firstPrompt:'Synthetic missing source',traceCount:1,startedAt:'2026-10-18T00:00:00Z'});
+  dom.window.applyState({sessions:sourceSessions,traces:[],theme:'day'});
+  dom.window.renderDashboard();
+  for(const [i,[source,label]] of sourceCases.entries()) {
+    assert.equal(dom.window.document.querySelector(`[data-sid="source-${i}"] .src-tag`).textContent,label);
+    assert.equal(dom.window.document.querySelector(`[data-sfilter="${source}"]`).textContent,label);
+    assert.equal(dom.window.sourceLabel(source),label);
+  }
+  assert.equal(dom.window.document.querySelector('[data-sid="missing-source"] .src-tag').textContent,'Unknown');
+  dom.window.document.querySelector('[data-sfilter="deepseek-harness"]').click();
+  assert.deepEqual(Array.from(dom.window.document.querySelectorAll('.dash-table tbody tr'),row=>row.dataset.sid),['source-0']);
+  dom.window.eval("state.dashSourceFilter='all'");
+  const harnessTrace={id:'source-detail',sessionId:'source-0',source:'deepseek-harness',turn:1,startedAt:'2026-10-18T00:00:00Z',request:{method:'POST',path:'/clients/deepseek-harness/v1/responses',model:'fixture',body:{input:'Synthetic request'}},response:{statusCode:200}};
+  dom.window.applyState({sessions:[sourceSessions[0]],sessionTraces:{'source-0':[harnessTrace]},traces:[harnessTrace],theme:'day'});
+  dom.window.gotoSession('source-0');
+  assert.equal(dom.window.document.querySelector('#detail .src-tag').textContent,'DeepSeek Harness');
+  assert.ok(!dom.window.document.querySelector('#detail').textContent.includes('Copilot'));
+  dom.window.gotoDashboard();
+  dom.window.applyState({sessions:[],traces:[],theme:'day'});
+  pass('source labels and filters include Harness and other catalog clients; unknown or missing identities never become Copilot');
   const message = (role, text) => ({role,content:[{type:'input_text',text}]});
   const diffOld = trace({input:[message('user','First question'),message('assistant','Stable answer'),message('user','Final question')],instructions:'Old system',temperature:0,tools:[{type:'function',name:'lookup',description:'old',parameters:{type:'object'}}]});
   const diffNew = trace({input:[message('user','First question'),message('assistant','Inserted intermediate result'),message('assistant','Stable answer'),message('user','Final question updated')],instructions:'New system',temperature:1,tools:[{type:'function',name:'lookup',description:'new',parameters:{type:'object',required:['query']}}]});

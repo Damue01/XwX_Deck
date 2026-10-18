@@ -1,3 +1,5 @@
+import type { DownloadClientId } from './clientDownloads';
+
 export type TapApiType = 'messages' | 'chat-completions' | 'responses' | 'unknown';
 
 /**
@@ -11,7 +13,7 @@ export type TapApiType = 'messages' | 'chat-completions' | 'responses' | 'unknow
  *   2026-06-13 拆分，避免同台机器并行的 CLI/IDE 实例首句一字不差时被同根归并）
  * - `unknown`：无路由匹配，兜底
  */
-export type TapTraceSource = 'copilot' | 'claude-cli' | 'claude-vscode' | 'codex-cli' | 'codex-vscode' | 'unknown';
+export type TapTraceSource = DownloadClientId | 'copilot' | 'claude-cli' | 'claude-vscode' | 'codex-vscode' | 'api-client' | 'unknown';
 
 export type TapProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses' | 'unknown';
 export type TapCaptureMode = 'custom-endpoint' | 'reverse-proxy' | 'forward-proxy' | 'transcript' | 'unknown';
@@ -300,7 +302,7 @@ export interface TapTraceRecord {
   readonly client?: string;
   readonly clientIdentity?: TapClientIdentity;
   readonly clientConversationKey?: string;
-  /** 哪个客户端发起的请求（dashboard 用）。老 jsonl 没这个字段，viewer 端会回退到 'copilot'。 */
+  /** 哪个客户端发起的请求。缺失来源时显示 Unknown，不推测客户端。 */
   readonly source?: TapTraceSource;
   /** Wire protocol inferred from endpoint shape; this is not client identity. */
   readonly protocol?: TapProtocol;

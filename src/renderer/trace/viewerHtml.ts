@@ -1,4 +1,5 @@
 import { TapTraceRecord, TapSessionSummary } from '../../shared/trace-types';
+import { CLIENT_DOWNLOADS } from '../../shared/clientDownloads';
 import { getPriceRules } from '../../shared/trace-pricing';
 import {
   LOCAL_COMMAND_CAVEAT_TAG,
@@ -44,6 +45,11 @@ export function renderTapViewerHtml(input: {
 }): string {
   const liveMode = input.mode === 'live';
   const bootstrap = JSON.stringify(input.state).replace(/</g, '\\u003c');
+  const sourceLabels = JSON.stringify(Object.fromEntries([
+    ...CLIENT_DOWNLOADS.map(client => [client.id, client.label]),
+    ['copilot', 'Copilot'], ['claude-cli', 'Claude'], ['claude-vscode', 'Claude'],
+    ['codex-cli', 'ChatGPT'], ['codex-vscode', 'ChatGPT'], ['api-client', 'API'], ['unknown', 'Unknown']
+  ])).replace(/</g, '\\u003c');
   const priceRules = JSON.stringify(getPriceRules()).replace(/</g, '\\u003c');
   const promptNoiseTags = JSON.stringify(NOISE_TAGS).replace(/</g, '\\u003c');
   const localCommandCaveatTag = JSON.stringify(LOCAL_COMMAND_CAVEAT_TAG);
@@ -695,6 +701,7 @@ summary.diff-section-header::-webkit-details-marker{display:none}
 <script>
 const LIVE_MODE = ${liveMode ? 'true' : 'false'};
 const PRICE_RULES = ${priceRules};
+const SOURCE_LABELS = ${sourceLabels};
 let state = ${bootstrap};
 const systemTheme = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 function applyViewerTheme(preference){
@@ -2532,11 +2539,10 @@ function renderDashboard(){
   const cacheRatio = cacheStats.rate;
   const cacheRate = cacheRatio === null ? '—' : (cacheRatio * 100).toFixed(1) + '%';
   const cacheHint = L('缓存读取 Token ÷ 输入 Token（含缓存读取和写入）','Cache read tokens / input tokens (including cache reads and writes)');
-  const filters = [
-    { id:'all', label:L('全部','All') },
-    { id:'claude-cli', label:'Claude' },
-    { id:'codex-cli', label:'ChatGPT' }
-  ].map(f => '<button class="dash-filter'+(f.id===activeSource?' active':'')+'" data-sfilter="'+esc(f.id)+'">'+esc(f.label)+'</button>').join('');
+  const sources = [...new Set(allSessions.concat(state.usageSummaries || []).map(s => sourceFamily(sessionSource(s))))];
+  if(activeSource !== 'all' && !sources.includes(activeSource)) sources.push(activeSource);
+  const filters = [{ id:'all', label:L('全部','All') }, ...sources.map(id => ({id, label:sourceLabel(id)}))]
+    .map(f => '<button class="dash-filter'+(f.id===activeSource?' active':'')+'" data-sfilter="'+esc(f.id)+'">'+esc(f.label)+'</button>').join('');
   const hero = common.tokenCostPresentation({
     showCost: tokenMatrixOpen,
     tokens: totalTok,
@@ -2627,7 +2633,7 @@ function sessionSource(sess){
   for(const t of list){
     if(t && t.source) return t.source;
   }
-  return 'copilot';
+  return 'unknown';
 }
 
 /** session.firstModel 兜底：仅旧 index.json 没字段时回到内存中已加载的 trace 列表里翻。 */
@@ -2638,12 +2644,7 @@ function sessionFirstModelFromCache(sess){
 }
 
 function sourceLabel(src){
-  if(src === 'claude-cli') return 'Claude';
-  if(src === 'claude-vscode') return 'Claude';
-  if(src === 'codex-cli') return 'ChatGPT';
-  if(src === 'codex-vscode') return 'ChatGPT';
-  if(src === 'unknown') return 'Unknown';
-  return 'Copilot';
+  return Object.prototype.hasOwnProperty.call(SOURCE_LABELS, src) ? SOURCE_LABELS[src] : (src || 'Unknown');
 }
 function sourceFamily(src){
   if(src === 'claude-vscode') return 'claude-cli';
@@ -3711,7 +3712,7 @@ function rawTraceValue(t){
 // head 请求摘要行只显示客户端来源、方法与最终上游端点。
 // 本地代理入口是实现细节；原始 URL 仍逐字保留在日志中。
 function renderHead(t, usage){
-  const src = (t.request && t.request) ? (t.source || 'copilot') : (t.source || 'copilot');
+  const src = t.source || 'unknown';
   const method = (t.request && t.request.method) || 'POST';
   const requestPath = requestEndpoint(t);
   const upstreamPath = forwardedEndpoint(t);

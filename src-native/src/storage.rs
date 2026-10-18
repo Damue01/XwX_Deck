@@ -8,8 +8,7 @@ mod trace_classification;
 #[path = "trace_pricing.rs"]
 mod trace_pricing;
 #[cfg(target_os = "windows")]
-#[path = "windows_reveal.rs"]
-mod windows_reveal;
+use crate::windows_reveal;
 #[cfg(test)]
 use trace_pricing::{model_cost, model_cost_parts};
 use trace_pricing::{needs_ark_cost_repair, repaired_cost_point, usage_cost_point};

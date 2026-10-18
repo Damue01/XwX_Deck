@@ -198,6 +198,12 @@
     document.querySelector('.rail-btn[data-page="settings"]').click();
     await wait(() => document.querySelector('#page-settings.current'),'settings after theme restore');
     check('theme restored', document.documentElement.dataset.theme === 'day');
+    if(navigator.platform.startsWith('Win')){
+      await window.xwxDeck.openDataFolder();
+      check('Windows data folder launcher completes without elevation or a command shell',true);
+      await window.xwxDeck.openLogFolder();
+      check('Windows log folder launcher completes without elevation or a command shell',true);
+    }
     check('Trace settings no longer expose index repair', !document.querySelector('#trace-settings-content #inspectTraceIndex'));
     document.querySelector('#repairCenterTrigger').click();
     await wait(() => document.querySelector('#repairCenterSheet #inspectTraceIndex'), 'unified repair sheet');

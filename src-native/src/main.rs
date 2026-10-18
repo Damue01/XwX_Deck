@@ -16,6 +16,8 @@ mod windows_menus;
 #[cfg(target_os = "windows")]
 mod windows_recovery;
 #[cfg(target_os = "windows")]
+mod windows_reveal;
+#[cfg(target_os = "windows")]
 mod windows_tray;
 use core::{Pilot, Shared};
 use serde_json::{json, Value};
@@ -630,6 +632,10 @@ async fn pilot_rpc(
             } else {
                 p.log_root()
             };
+            drop(p);
+            #[cfg(target_os = "windows")]
+            windows_reveal::open_folder(&path)?;
+            #[cfg(not(target_os = "windows"))]
             app.opener()
                 .open_path(path.to_string_lossy(), None::<&str>)
                 .map_err(|e| e.to_string())?;
@@ -912,6 +918,9 @@ async fn pilot_rpc(
                     .map(PathBuf::from)
                     .filter(|p| p.is_absolute() && p.is_dir())
                     .ok_or("备份目录不可用")?;
+                #[cfg(target_os = "windows")]
+                windows_reveal::open_folder(&backup)?;
+                #[cfg(not(target_os = "windows"))]
                 app.opener()
                     .open_path(backup.to_string_lossy().into_owned(), None::<&str>)
                     .map_err(|e| e.to_string())?;
@@ -1528,6 +1537,8 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::Builder::new().app_name("XwX Deck").args(["--launch-hidden"]).build())
         .setup(move |app| {
+            #[cfg(target_os="windows")]
+            windows_reveal::initialize(app.handle());
             let preference=tauri::async_runtime::block_on(async { app.state::<Shared>().inner().lock().await.state()["theme"].as_str().unwrap_or("day").to_owned() });
             sync_window_theme(app.handle(), &preference).map_err(std::io::Error::other)?;
             if let Some(root) = &persistent_root {
