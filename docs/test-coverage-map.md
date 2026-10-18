@@ -142,6 +142,7 @@
 | [cursor-subscriptions-test.mjs](../tools/native/cursor-subscriptions-test.mjs) | 后端默认入口 | AC02 |
 | [grok-secure-store-test.mjs](../tools/native/grok-secure-store-test.mjs) | 后端默认入口 | AC01 |
 | [grok-subscriptions-test.mjs](../tools/native/grok-subscriptions-test.mjs) | 后端默认入口 | AC02 |
+| [native-auth-test.mjs](../tools/native/native-auth-test.mjs) | 后端默认入口 | AC02 |
 | [official-accounts-test.mjs](../tools/native/official-accounts-test.mjs) | 后端默认入口 | AC02、AC06 |
 | [official-chatgpt-renderer-test.mjs](../tools/native/official-chatgpt-renderer-test.mjs) | 后端默认入口 | AC02 |
 | [official-chatgpt-test.mjs](../tools/native/official-chatgpt-test.mjs) | 后端默认入口 | AC02 |

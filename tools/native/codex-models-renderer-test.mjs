@@ -137,6 +137,16 @@ try{
  await choose('gpt-6.1-sol');await wait(()=>!button().disabled,'restore fixture model');
  bridge.api.updateCodexConfig=originalUpdate;
  pass('backend-verified native official login saves without a Trace toast or model requirement badge');
+ nativeOfficial.codexNativeOfficial=false;nativeOfficial.codexNativeAuth=true;
+ bridge.api.updateCodexConfig=async input=>{const result=await originalUpdate(input);saved={...result,warning:undefined};return structuredClone(saved);};
+ await render(false);await render(true);const helperNoticeStart=notices.length;
+ await choose('gpt-6.1-sol');await wait(()=>!button().disabled,'native credential command model save');
+ assert.ok(!notices.slice(helperNoticeStart).some(n=>JSON.stringify(n).includes('需要开启 Trace')));
+ assert.ok(notices.slice(helperNoticeStart).some(n=>n[0]==='toast'&&n[4]?.description==='模型选择已保存'));
+ assert.ok(!document.querySelector('[data-codex-model]')?.textContent.includes('需 Trace'));
+ bridge.api.updateCodexConfig=originalUpdate;
+ nativeOfficial.codexNativeAuth=false;nativeOfficial.codexNativeOfficial=true;
+ pass('a native Responses subscription with backend-verified credential command saves without requiring Trace');
  await render(false);await act(async()=>[...document.querySelectorAll('.official-chatgpt-account button')].find(e=>e.textContent==='使用此账号').click());
  await wait(()=>bridge.providers.active.codex===null,'explicit direct restoration');await render(true);
  saved={...saved,mode:'official',officialModel:'gpt-6.1-sol'};

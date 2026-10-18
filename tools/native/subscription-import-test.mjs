@@ -89,8 +89,8 @@ try{
  await writeFile(authFile,local);assert.equal((await rpc('getProviders')).connections.find(p=>p.id===nativeProvider.id).codexNativeOfficial,true);
  const otherProvider=(await rpc('getProviders')).connections.find(p=>p.subscriptionAccountId===officialId);
  assert.equal(otherProvider.codexNativeOfficial,false);
- assert.match((await rpc('switchClientProvider',{client:'codex',providerId:otherProvider.id})).warning,/需要开启 Trace/);
+ const otherSelection=await rpc('switchClientProvider',{client:'codex',providerId:otherProvider.id});assert.ok(!otherSelection.warning?.includes('需要开启 Trace'));assert.equal(await rpc('disableBreaksCodex'),false);assert.ok((await readFile(join(root,'codex/config.toml'),'utf8')).includes('--native-auth-token'));
  assert.equal(await readFile(authFile,'utf8'),local);
- pass('a changed native identity, another official account and Claude conversion still require Trace; selecting them never overwrites the client login');
+ pass('changed native identity and Claude conversion still require intervention; another official account uses native command authentication without overwriting the client login');
  await stop();console.log(JSON.stringify({passed:true,checks,scope:'synthetic accounts, real native import and local Gateway requests; no real account imported'}));
 }finally{if(child?.exitCode===null)child.kill();server.closeAllConnections();server.close();await rm(root,{recursive:true,force:true});await rm(fixtureRoot,{recursive:true,force:true});}

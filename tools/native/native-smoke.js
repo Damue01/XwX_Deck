@@ -439,7 +439,8 @@
       const keyCanvas=document.createElement('canvas').getContext('2d');
       keyCanvas.font=`${keyStyle.fontWeight} ${keyStyle.fontSize} ${keyStyle.fontFamily}`;
       const maskMetrics=keyCanvas.measureText('\u2022'), digitMetrics=keyCanvas.measureText('0');
-      check('bundled Key mask paints a readable glyph with the same advance as the revealed digit',keyStyle.fontFamily.includes('Deck Secret Mask')&&maskMetrics.actualBoundingBoxAscent+maskMetrics.actualBoundingBoxDescent>=6&&Math.abs(maskMetrics.width-digitMetrics.width)<.1);
+      const maskHeight=maskMetrics.actualBoundingBoxAscent+maskMetrics.actualBoundingBoxDescent;
+      check('bundled Key mask paints a readable glyph with the same advance as the revealed digit',keyStyle.fontFamily.includes('Deck Secret Mask')&&maskHeight>=3.5&&maskHeight<=4.5&&Math.abs(maskMetrics.width-digitMetrics.width)<.1);
       check('hidden Key retains its exact synthetic character count', maskedKey.value === 'isolated-draft-key' && maskedKey.value.length === 18);
       document.querySelector('.secret-input-visibility').click(); await delay(100);
       check('revealing Key keeps character count, input size and typography unchanged', maskedKey.value.length === 18 && getComputedStyle(maskedKey).fontSize === maskedKeySize);

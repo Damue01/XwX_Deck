@@ -8,6 +8,7 @@ export interface ProviderConnection {
   readonly subscriptionAccountId?: string;
   /** Backend verified that Codex already owns this official login identity. */
   readonly codexNativeOfficial?: boolean;
+  readonly codexNativeAuth?: boolean;
   readonly accountLabel?: string;
   readonly codexProviderId?: string;
   readonly displayName: string;

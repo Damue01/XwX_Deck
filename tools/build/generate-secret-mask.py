@@ -1,7 +1,7 @@
 """Regenerate the original password mask glyph (requires fonttools and brotli).
 
 Run manually with Python from the repository root. No downloaded font outlines
-are used. A 500-unit disc fits the 600-unit advance of Geist Mono digits, rather
+are used. A 300-unit disc fits the 600-unit advance of Geist Mono digits, rather
 than Urbanist's 107-unit bullet at 1000 units/em. Both states stay at 13 CSS px.
 """
 from pathlib import Path
@@ -14,14 +14,14 @@ font.setupGlyphOrder([".notdef", "mask"])
 font.setupCharacterMap({0x2022: "mask", 0x25CF: "mask"})
 empty = TTGlyphPen(None).glyph()
 pen = TTGlyphPen(None)
-pen.moveTo((300, 100))
-pen.qCurveTo((50, 100), (50, 350))
-pen.qCurveTo((50, 600), (300, 600))
-pen.qCurveTo((550, 600), (550, 350))
-pen.qCurveTo((550, 100), (300, 100))
+pen.moveTo((300, 200))
+pen.qCurveTo((150, 200), (150, 350))
+pen.qCurveTo((150, 500), (300, 500))
+pen.qCurveTo((450, 500), (450, 350))
+pen.qCurveTo((450, 200), (300, 200))
 pen.closePath()
 font.setupGlyf({".notdef": empty, "mask": pen.glyph()})
-font.setupHorizontalMetrics({".notdef": (600, 0), "mask": (600, 50)})
+font.setupHorizontalMetrics({".notdef": (600, 0), "mask": (600, 150)})
 font.setupHorizontalHeader(ascent=1000, descent=-300)
 font.setupOS2(sTypoAscender=1000, sTypoDescender=-300, usWinAscent=1000,
               usWinDescent=300, sxHeight=520, sCapHeight=700, usWeightClass=500)

@@ -719,7 +719,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
         });
       } else {
         const nativeOfficial = !codexProviderId || bridge.providers?.connections.some(
-          provider => provider.id === codexProviderId && provider.codexNativeOfficial === true
+          provider => provider.id === codexProviderId && !providerRequiresTrace(provider, modelId, activeCodexCatalog)
         );
         if (nativeOfficial) showToast(choice.label, 'success', undefined, { description: t('模型选择已保存') });
         else showToast(t("已选择 {0}；协议由 XwX Deck 自动适配。", choice.label), 'success');
@@ -736,7 +736,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
         setBusyCodex(false);
       }
     }
-  }, [bridge.api, bridge.patch, bridge.providers, codexConfig, codexProviderId, codexChoiceByLabel]);
+  }, [bridge.api, bridge.patch, bridge.providers, codexConfig, codexProviderId, codexChoiceByLabel, activeCodexCatalog]);
 
   const handleEnhancementsUpdate = React.useCallback(async (patch: Record<string, unknown>): Promise<CodexEnhancementsSnapshot> => {
     const updated = await bridge.api.updateCodexEnhancements(patch);
@@ -775,7 +775,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       };
     }
     if (!providerRequiresTrace(selectedCodexProvider ?? bridge.compatibleServiceConfig ?? undefined, modelId, activeCodexCatalog)) return undefined;
-    if (selectedCodexProvider?.subscriptionAccountId) return { label: t('需 Trace'), hint: traceEnabled ? t('此连接由 Deck 提供认证，授权凭证保留在本机。') : t('选择已保存；此连接需要 Deck 提供认证，请开启 Trace。') };
+    if (selectedCodexProvider?.subscriptionAccountId && !selectedCodexProvider.codexNativeAuth) return { label: t('需 Trace'), hint: traceEnabled ? t('此连接由 Deck 提供认证，授权凭证保留在本机。') : t('选择已保存；此连接需要 Deck 提供认证，请开启 Trace。') };
     return traceEnabled
       ? { label: t('需 Trace'), hint: t("{0} 需要协议转换。Trace 已开启，可直接使用。", modelId) }
       : {

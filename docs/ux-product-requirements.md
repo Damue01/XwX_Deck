@@ -79,7 +79,7 @@
 - Desktop 别名转发按实际路由显示“需 Trace”。
 - 标签、保存提示和实际路由共用判定。
 - 客户端原生支持的登录不因订阅身份而要求 Trace。Codex 当前官方登录及身份一致的导入登录可直接使用，模型和上下文写入客户端。Claude Code 原有官方登录同样保留直连。
-- 连接判定同时检查协议、认证和续期。当前由 Deck 管理的其他账号仍通过 Gateway 提供认证；原生协议直接转发，不等于必须转换。调研依据见 [订阅与原生连接](maintenance/subscription-native-compatibility.md)。
+- 连接判定同时检查协议、认证和续期。Codex 的原生 Responses 订阅使用命令取令牌，认证与 Trace 独立。命令绑定账号、地址和请求头；切换账号不改变旧客户端的绑定。Deck 关闭后可单次续期，不启动 Gateway。其他客户端按已验证的认证能力处理。调研依据见 [订阅与原生连接](maintenance/subscription-native-compatibility.md)。
 - 刷新失败保留成功缓存和选择，并提供重试。
 - 迟到目录不覆盖新连接、模型或输入。
 - 目录、地址、Key 和型号属于同一连接。

@@ -1046,6 +1046,7 @@
           "tools/native/credential-private-files-test.mjs",
           "tools/native/official-accounts-test.mjs",
           "tools/native/subscriptions-test.mjs",
+          "tools/native/native-auth-test.mjs",
           "tools/native/subscription-routing-test.mjs",
           "tools/native/subscription-usage-test.mjs",
           "tools/native/claude-subscriptions-test.mjs",

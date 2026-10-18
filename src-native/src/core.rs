@@ -71,6 +71,8 @@ mod live;
 mod metadata;
 #[path = "model_metadata.rs"]
 mod model_metadata;
+#[path = "native_auth.rs"]
+pub(crate) mod native_auth;
 #[path = "official_accounts.rs"]
 mod official_accounts;
 #[path = "official_chatgpt.rs"]
@@ -487,6 +489,9 @@ const CODEX_PROVIDER_FIELDS: &[&str] = &[
     "env_key_instructions",
     "requires_openai_auth",
     "supports_websockets",
+    "auth",
+    "http_headers",
+    "env_http_headers",
 ];
 fn restore_codex_fields(
     source: &str,
@@ -772,7 +777,9 @@ impl Pilot {
             }
         }
         let lock_path = root.join("pilot.lock");
-        read(&lock_path)?;
+        if lock_path.exists() && !same_physical_path(&lock_path)? {
+            return Err("目录锁不能经过符号链接".into());
+        }
         let mut lock = fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -780,12 +787,27 @@ impl Pilot {
             .truncate(false)
             .open(lock_path)
             .map_err(err)?;
-        lock.try_lock()
-            .map_err(|_| "试验目录已被另一个运行中的进程占用".to_string())?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(40);
+        let settling = std::time::Instant::now() + Duration::from_millis(100);
+        loop {
+            if lock.try_lock().is_ok() {
+                break;
+            }
+            if std::time::Instant::now() >= deadline
+                || (std::time::Instant::now() >= settling
+                    && read(&root.join(native_auth::LEASE))?.is_none())
+            {
+                return Err("试验目录已被另一个运行中的进程占用".into());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
         lock.set_len(0).map_err(err)?;
         use std::io::Write;
         lock.write_all(std::process::id().to_string().as_bytes())
             .map_err(err)?;
+        if root.join(native_auth::LEASE).exists() {
+            fs::remove_file(root.join(native_auth::LEASE)).map_err(err)?;
+        }
         legacy_helper::preflight(&root, false)?;
         credentials::register(&root, isolated)?;
         legacy_helper::preflight(&root, true)?;
@@ -1043,6 +1065,9 @@ impl Pilot {
             if official_accounts::is_official(id) {
                 connection["codexNativeOfficial"] = json!(self.codex_native_official(provider));
             }
+            if !id.is_empty() {
+                connection["codexNativeAuth"] = json!(native_auth::available(provider));
+            }
             connections.push(connection);
         }
         json!({"version":1,"identityVersion":2,"connections":connections,"selected":self.settings.selected,"active":self.settings.selected,"warning":self.settings_problem})
@@ -1211,7 +1236,7 @@ impl Pilot {
         let native_official = self.selected().filter(|p| self.codex_native_official(p));
         let direct_provider = self
             .selected()
-            .filter(|p| p.subscription_account_id.is_empty() && !self.needs_gateway(p, "codex"));
+            .filter(|p| !self.codex_native_official(p) && !self.needs_gateway(p, "codex"));
         let mut d = self.config()?;
         let accepted_subscription = self.subscription_route_accepted("codex", &d.to_string())?;
         let journal = self.root.join("codex-direct.json");
@@ -1313,6 +1338,7 @@ impl Pilot {
             .selected()
             .is_some_and(|p| !p.subscription_account_id.is_empty())
             && native_official.is_none()
+            && direct_provider.is_none()
             && !(takeover
                 && (foreign_local_alias
                     || ["openai_base_url", "chatgpt_base_url"]
@@ -1371,6 +1397,40 @@ impl Pilot {
             // A compatible-service provider authenticates with its own bearer
             // token. Never send the ChatGPT login to a third-party endpoint.
             set_codex_provider_field(&mut d, direct_id, "requires_openai_auth", value(false));
+            if p.subscription_account_id.is_empty() {
+                let owned_auth = native_auth::owns_auth(&d, direct_id);
+                if provider_field(&d, direct_id, "auth").is_some() && !owned_auth && !takeover {
+                    return Err("外部认证命令已保留，请明确接管后重试".into());
+                }
+                if let Some(table) = d
+                    .get_mut("model_providers")
+                    .and_then(|p| p.get_mut(direct_id))
+                    .and_then(Item::as_table_like_mut)
+                {
+                    // Release only the helper fields published by Deck.
+                    if owned_auth || takeover {
+                        for key in ["auth", "http_headers", "env_http_headers"] {
+                            table.remove(key);
+                        }
+                    }
+                }
+            } else {
+                if provider_field(&d, direct_id, "auth").is_some()
+                    && !native_auth::owns_auth(&d, direct_id)
+                    && !takeover
+                {
+                    return Err("外部认证命令已保留，请明确接管后重试".into());
+                }
+                if !native_auth::owns_auth(&d, direct_id)
+                    && !takeover
+                    && ["http_headers", "env_http_headers"]
+                        .iter()
+                        .any(|key| provider_field(&d, direct_id, key).is_some())
+                {
+                    return Err("外部认证请求头已保留，请明确接管后重试".into());
+                }
+                native_auth::configure(&mut d, direct_id, &self.root, self.isolated, p)?;
+            }
             let catalog_path = self.codex_home().join("xwx-deck-model-catalog.json");
             let pointer = d.get("model_catalog_json").and_then(Item::as_str);
             if pointer.is_some_and(|path| Path::new(path) != catalog_path) && !takeover {
@@ -1446,6 +1506,9 @@ impl Pilot {
                         "experimental_bearer_token",
                         "env_key",
                         "env_key_instructions",
+                        "auth",
+                        "http_headers",
+                        "env_http_headers",
                     ] {
                         table.remove(key);
                     }
@@ -1755,6 +1818,17 @@ impl Pilot {
                     "base_url",
                     value(format!("http://127.0.0.1:{port}/v1")),
                 );
+                if native_auth::owns_auth(&managed, "xwx_deck") {
+                    if let Some(table) = managed
+                        .get_mut("model_providers")
+                        .and_then(|p| p.get_mut("xwx_deck"))
+                        .and_then(Item::as_table_like_mut)
+                    {
+                        for key in ["auth", "http_headers", "env_http_headers"] {
+                            table.remove(key);
+                        }
+                    }
+                }
             }
         }
         let managed = managed.to_string();
@@ -2216,7 +2290,8 @@ impl Pilot {
                     let snapshot = self.subscriptions.snapshot().await;
                     if snapshot["flow"]["status"] != "complete" || snapshot["flow"]["accountId"] != id { return Err("此账号已从 Deck 移除，请重新添加或导入".into()); }
                 }
-                let provider = self.subscriptions.provider(input.as_str().ok_or("无效订阅账号")?).await?;
+                let mut provider = self.subscriptions.provider(input.as_str().ok_or("无效订阅账号")?).await?;
+                if !self.codex_native_official(&provider) {native_auth::prepare(&self.subscriptions,&mut provider).await?;}
                 self.subscriptions.pool.recovered(&provider.subscription_account_id);
                 let before = self.settings.clone();
                 if let Some(rows) = self.settings.other.get_mut("removedSubscriptionAccounts").and_then(Value::as_array_mut) { rows.retain(|row| row["id"] != id); }
@@ -2625,6 +2700,7 @@ impl Pilot {
                 self.settings.other.insert(format!("{client}PreferredMode"),json!(if selected.is_null(){"official"}else{"compatible"}));
                 self.settings.selected[client] = selected;
                 self.persist()?;
+                if client=="codex" {self.prepare_native_auth().await?;}
                 let takeover = input["takeOverExternalConfig"].as_bool().unwrap_or(false);
                 let old_alias = if client == "codex" {
                     provider_field(&self.config()?, "xwx_deck", "base_url").and_then(Item::as_str).map(str::to_string)
@@ -2676,6 +2752,7 @@ impl Pilot {
                         p.codex_context_window = if window.is_null() { 0 } else { window.as_u64().ok_or("无效上下文长度")? };
                     }
                     self.persist()?;
+                    self.prepare_native_auth().await?;
                     self.write_direct(false)?;
                 } else {
                     let source = read(&self.config_path())?.unwrap_or_default();

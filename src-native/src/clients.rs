@@ -226,7 +226,15 @@ impl Pilot {
     /// endpoint that the receiving client can actually consume.
     pub(super) fn needs_gateway(&self, provider: &Provider, client: &str) -> bool {
         if !provider.subscription_account_id.is_empty() {
-            return client != "codex" || !self.codex_native_official(provider);
+            if client != "codex" {
+                return true;
+            }
+            if self.codex_native_official(provider) {
+                return false;
+            }
+            if !native_auth::available(provider) {
+                return true;
+            }
         }
         if client == "codex" {
             !["responses", "openai-responses"].contains(
@@ -257,6 +265,26 @@ impl Pilot {
                 })
             }
         }
+    }
+
+    pub(super) async fn prepare_native_auth(&mut self) -> Result<()> {
+        let Some(id) = self.settings.selected["codex"].as_str().map(str::to_owned) else {
+            return Ok(());
+        };
+        let Some(index) = self.settings.connections.iter().position(|p| p.id == id) else {
+            return Ok(());
+        };
+        let mut provider = self.settings.connections[index].clone();
+        if self.codex_native_official(&provider) {
+            native_auth::clear(&mut provider);
+        } else {
+            native_auth::prepare(&self.subscriptions, &mut provider).await?;
+        }
+        if provider.other != self.settings.connections[index].other {
+            self.settings.connections[index] = provider;
+            self.persist()?;
+        }
+        Ok(())
     }
     pub(super) fn official_catalog_context(&self, refresh: bool) -> Result<OfficialCatalog> {
         let provider = if refresh {

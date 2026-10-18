@@ -1311,6 +1311,18 @@ fn main() {
                 .join("xwx-deck")
             }
         });
+    if let Some(binding) = argument("--native-auth-token") {
+        let result = tauri::async_runtime::block_on(core::native_auth::print_token(
+            root,
+            &binding,
+            argument("--pilot-root").is_some(),
+        ));
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     #[cfg(target_os = "windows")]
     if argument("--pilot-root").is_some() && std::env::args().any(|arg| arg == "--smoke-recovery") {
         windows_recovery::show("隔离启动失败验收：<script>window.recoveryInjected=true</script>\n原配置保留，请检查恢复记录。");
@@ -1343,6 +1355,14 @@ fn main() {
             if !rpc_mode {
                 show_startup_recovery(&e);
             }
+            std::process::exit(2);
+        }
+    };
+    let _native_auth = match tauri::async_runtime::block_on(core::native_auth::start(pilot.clone()))
+    {
+        Ok(service) => service,
+        Err(error) => {
+            eprintln!("原生认证入口启动失败：{error}");
             std::process::exit(2);
         }
     };

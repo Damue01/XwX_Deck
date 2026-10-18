@@ -43,13 +43,13 @@ try{
  start();const providers=await rpc('connectSubscriptionAccount','test-account');const provider=providers.connections.find(p=>p.subscriptionAccountId==='test-account');assert.ok(provider);
  let snapshot=await rpc('refreshSubscriptionUsage',{platform:'chatgpt'});let account=snapshot.accounts[0];assert.equal(account.quota.remainingPercent,30);assert.equal(account.quota.resetsAt,now+604800);assert.equal(account.quotaDetails.windows.length,3);assert.equal(account.quotaDetails.windows[0].windowSeconds,18000);assert.equal(account.quotaDetails.httpStatus,200);assert.ok(!JSON.stringify(snapshot).includes('never-copy'));
  pass('ChatGPT reads actual WHAM endpoint with account header and preserves every window/reset without applying model-specific quota to all models');
- const switched=await rpc('switchClientProvider',{client:'codex',providerId:provider.id});assert.match(switched.warning,/需要开启 Trace/,'a stopped subscription switch must disclose that Trace is required');mode='denied';let failure=await call('refreshSubscriptionUsage',{platform:'chatgpt'});assert.equal(failure.ok,false);assert.match(failure.error,/HTTP 403/);assert.ok(!JSON.stringify(failure).includes('never-expose'));
+ const switched=await rpc('switchClientProvider',{client:'codex',providerId:provider.id});assert.ok(!switched.warning?.includes('需要开启 Trace'));assert.equal((await rpc('getState')).backgroundGatewayActive,false);mode='denied';let failure=await call('refreshSubscriptionUsage',{platform:'chatgpt'});assert.equal(failure.ok,false);assert.match(failure.error,/HTTP 403/);assert.ok(!JSON.stringify(failure).includes('never-expose'));
  snapshot=await rpc('getSubscriptionAccounts');account=snapshot.accounts[0];assert.equal(account.quota,undefined);assert.equal(account.quotaDetails.httpStatus,403);assert.match(account.quotaError,/HTTP 403/);
- let config=await rpc('getCodexConfig');assert.equal(config.mode,'official','stopped subscription retains the actual official disk route');
+ let config=await rpc('getCodexConfig');assert.equal(config.mode,'compatible','native subscription publishes a direct authenticated route while Trace is stopped');
  const stoppedSource=await readFile(join(root,'codex/config.toml'),'utf8');
  config=await rpc('updateCodexConfig',{expectedProviderId:provider.id,mode:'compatible',officialModel:config.officialModel,compatibleModel:'latest-model',modelContextWindow:64000});
- assert.equal(config.compatible.model,'latest-model');assert.equal(config.modelContextWindow,64000);assert.match(config.warning,/需要开启 Trace/);
- assert.equal(await readFile(join(root,'codex/config.toml'),'utf8'),stoppedSource,'stopped subscription save must not put credentials or a dead Gateway route in the client');
+ assert.equal(config.compatible.model,'latest-model');assert.equal(config.modelContextWindow,64000);assert.equal(config.warning,undefined);
+ const updatedSource=await readFile(join(root,'codex/config.toml'),'utf8');assert.notEqual(updatedSource,stoppedSource);assert.ok(updatedSource.includes('--native-auth-token'));assert.ok(!/fixture-access|fixture-refresh/.test(updatedSource));
  config=await rpc('updateCodexConfig',{expectedProviderId:provider.id,compatibleModel:'latest-model',modelContextWindow:null});assert.equal(config.modelContextWindow,null);
  assert.equal((await rpc('getProviders')).selected.codex,provider.id);assert.equal((await rpc('getCodexConfig')).compatible.model,'latest-model');
  assert.deepEqual((await rpc('fetchModels',{expectedProviderId:provider.id,refresh:true})).map(m=>m.id),['first-model','latest-model']);

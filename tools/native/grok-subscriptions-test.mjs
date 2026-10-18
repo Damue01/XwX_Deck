@@ -69,7 +69,8 @@ try {
  const choices=(await rpc('getProviders')).selected;await rpc('renameSubscriptionAccount',{accountId:a.id,label:'Grok 工作'});assert.deepEqual((await rpc('getProviders')).selected,choices);
  assert.equal((await rpc('fetchProviderModels',{providerId:pa.id}))[0].id,'grok-fixture');
  pass('model discovery and rename keep both clients on their explicit account');
- const codex=join(root,'codex/config.toml'),claude=join(root,'claude/settings.json');await writeFile(codex,'model = "original-model"\n');await writeFile(claude,'{"env":{"ORIGINAL":"kept"}}');const beforeCodex=await readFile(codex,'utf8'),beforeClaude=await readFile(claude,'utf8');
+ await rpc('updateCodexConfig',{expectedProviderId:pa.id,compatibleModel:'grok-fixture'});
+ const codex=join(root,'codex/config.toml'),claude=join(root,'claude/settings.json');await writeFile(claude,'{"env":{"ORIGINAL":"kept"}}');const beforeCodex=await readFile(codex,'utf8'),beforeClaude=await readFile(claude,'utf8');
  const running=await rpc('toggleTracing',true);
  const headers={'content-type':'application/json',authorization:'Bearer downstream-key',cookie:'private', 'x-grok-client-version':'999.0.0','x-grok-model-override':'wrong-model'};
  const responses=await fetch(running.localBaseUrl+'/v1/responses',{method:'POST',headers,body:JSON.stringify({model:'grok-fixture',input:'fixture',stream:false})});assert.equal(responses.status,200,await responses.clone().text());assert.equal((await responses.json()).output[0].content[0].text,'grok account fixture');

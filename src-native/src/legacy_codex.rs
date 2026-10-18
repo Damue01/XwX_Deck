@@ -88,6 +88,9 @@ const DIRECT_ROOT_FIELDS: &[&str] = &[
 ];
 const DIRECT_FEATURE_FIELDS: &[&str] = &["js_repl", "image_gen", "image_generation", "imagegenext"];
 const DIRECT_PROVIDER_FIELDS: &[&str] = &[
+    "auth",
+    "http_headers",
+    "env_http_headers",
     "name",
     "base_url",
     "wire_api",

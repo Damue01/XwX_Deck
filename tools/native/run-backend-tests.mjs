@@ -51,6 +51,7 @@ const suites = [
   "client-installations-renderer-test.mjs",
   "enhancements-choices-renderer-test.mjs",
   "subscriptions-test.mjs",
+  "native-auth-test.mjs",
   "subscription-routing-test.mjs",
   "service-switching-test.mjs",
   "service-switching-pool-test.mjs",
