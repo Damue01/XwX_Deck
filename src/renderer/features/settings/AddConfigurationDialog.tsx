@@ -15,7 +15,7 @@ import { ImportConfigurations } from './ImportConfigurations';
 import { ClientDownloads } from './ProviderSetupShortcuts';
 import { useClientInstallations } from '../models/useClientInstallations';
 import { ConfigurationDeleteAction } from '@/components/ui/configuration-delete-action';
-import { CLIENT_DOWNLOADS, MODEL_CLIENT_CATALOG, clientCatalogLabel, MODEL_CLIENT_ADDED_EVENT, canonicalModelClient, supportsModelManagement, type DownloadClientId } from '../../../shared/clientDownloads';
+import { CLIENT_DOWNLOADS, MODEL_CLIENT_CATALOG, clientCatalogLabel, MODEL_CLIENT_ADDED_EVENT, canonicalModelClient, normalizeModelClients, supportsModelManagement, type DownloadClientId } from '../../../shared/clientDownloads';
 
 type Service = OfficialProviderId | 'custom';
 const TABS = ['services', 'accounts', 'saved', 'clients'] as const;
@@ -72,7 +72,8 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
   const setTab = (next: ConfigurationTab) => { if (onTabChange) onTabChange(next); else setCatalogTab(next); };
   const [client, setClient] = React.useState<DownloadClientId | null>(null);
   const installation = useClientInstallations(open && (clientsOnly || tab === 'clients' || importOpen));
-  const clientAdded = client !== null && modelClients.includes(canonicalModelClient(client));
+  const managedClients = normalizeModelClients(modelClients);
+  const clientAdded = client !== null && managedClients.includes(canonicalModelClient(client));
   const clientInstalled = installation.snapshot?.clients.some(item => item.id === (client && (canonicalModelClient(client))) && item.installed) === true;
   const wasOpen = React.useRef(false);
   const initialTabButton = React.useRef<HTMLButtonElement | null>(null);
@@ -122,11 +123,11 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
     {api.previewConfigurationImport && <button ref={importEntry} type="button" className="configuration-choice configuration-import-entry" disabled={busy} onClick={() => setImportOpen(true)}><FileUp className="provider-brand-icon" aria-hidden="true" /><span>{t('导入配置')}</span></button>}
   </>;
   const clientInfo = CLIENT_DOWNLOADS.find(item => item.id === client);
-  const manageable = (id: DownloadClientId) => supportsModelManagement(id) || modelClients.includes(canonicalModelClient(id));
-  const clients = MODEL_CLIENT_CATALOG.map(item => {
-    const uninstalled = manageClients && installation.snapshot?.available === true
-      && installation.snapshot.clients.some(entry => entry.id === (canonicalModelClient(item.id)) && !entry.installed);
-    return <button key={item.id} type="button" className="configuration-choice" data-client-download={item.id} data-unconfigured={uninstalled || undefined} aria-pressed={client === item.id} disabled={addingClient} onClick={() => setClient(item.id)}>
+  const manageable = (id: DownloadClientId) => supportsModelManagement(id) || managedClients.includes(canonicalModelClient(id));
+  const catalogClients = CLIENT_DOWNLOADS.filter(item => MODEL_CLIENT_CATALOG.some(entry => entry.id === item.id) || managedClients.includes(item.id));
+  const clients = catalogClients.map(item => {
+    const managed = managedClients.includes(canonicalModelClient(item.id));
+    return <button key={item.id} type="button" className="configuration-choice" data-client-download={item.id} data-unconfigured={!managed || undefined} aria-pressed={client === item.id} disabled={addingClient} onClick={() => setClient(item.id)}>
       <ProviderIcon kind={item.icon} /><span>{clientCatalogLabel(item)}</span>
     </button>;
   });
@@ -211,17 +212,18 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
             {client !== null && <div className="configuration-detail">
               <div className="configuration-detail-heading"><h3><ProviderIcon kind={clientInfo?.icon} />{clientInfo && clientCatalogLabel(clientInfo)}</h3></div>
               <ClientDownloads key={client} client={client} />
+              {!supportsModelManagement(client) && <p className="configuration-import-status" role="status">{t('暂不支持模型配置')}</p>}
               {manageable(client) && <div className="configuration-client-actions prov-save-bar">
                 {manageClients && clientAdded && <ConfigurationDeleteAction label={t('移除客户端')} busyLabel={t('移除中…')} disabled={addingClient || !api.removeModelClient}
                   confirmation={{ title: t('移除客户端「{0}」？', clientInfo && clientCatalogLabel(clientInfo)), body: t('从模型页和 Trace 客户端列表中移除，并停止此客户端的追踪。保留客户端安装和已保存的模型配置。'), confirmText: t('移除') }} onDelete={() => changeClient(true)} />}
-                <button type="button" className="btn primary" disabled={addingClient || (!clientAdded && (!api.addModelClient || !clientInstalled || installation.checking))} onClick={() => {
+                {supportsModelManagement(client) && <button type="button" className="btn primary" disabled={addingClient || (!clientAdded && (!api.addModelClient || !clientInstalled || installation.checking))} onClick={() => {
                   if (clientOperation.current) return;
                   if (clientAdded) {
                     onOpenClient?.(canonicalModelClient(client));
                     onOpenChange(false);
                     window.dispatchEvent(new CustomEvent(MODEL_CLIENT_ADDED_EVENT, { detail: client }));
                   } else void changeClient(false);
-                }}>{clientAdded ? t('打开模型页') : t('添加到模型页')}</button>
+                }}>{clientAdded ? t('打开模型页') : t('添加到模型页')}</button>}
                 {!manageClients && !clientAdded && <button type="button" className="txt-action" disabled={installation.checking || addingClient} onClick={() => void refreshClients()}>{installation.checking ? t('正在检测…') : t('重新检测')}</button>}
               </div>}
               {installation.error && <p className="configuration-client-error" role="status">{installation.error}</p>}

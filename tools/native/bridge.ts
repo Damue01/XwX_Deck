@@ -24,6 +24,7 @@ const rpc = async (method: string, args: any[] = []) => {
 const methods = [
   'previewConfigurationImport', 'importConfigurations', 'chooseConfigurationImportFile',
   'getModelClients', 'addModelClient', 'removeModelClient', 'detectClientInstallations',
+  'getClientRoute', 'setClientRoute',
   'getOfficialChatgptAccount', 'getOfficialChatgptResetCredits', 'consumeOfficialChatgptResetCredit', 'setSubscriptionRouting', 'refreshSubscriptionUsage', 'getSubscriptionAccounts', 'beginSubscriptionSignIn', 'cancelSubscriptionSignIn', 'connectSubscriptionAccount', 'renameSubscriptionAccount', 'signOutSubscriptionAccount', 'openSubscriptionUsage',
   'getState', 'getTraceStats', 'getUpdateState', 'getClaudeModels', 'getClaudeDesktopSync',
   'getCodexConfig', 'getCodexEnhancements', 'getCompatibleServiceConfig', 'getModelServices',

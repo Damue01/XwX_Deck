@@ -118,7 +118,6 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
       <section className="configuration-import-clients" aria-label={t('本机客户端')} aria-busy={detection.checking}>
         <h2>{t('本机客户端')}</h2>
         {!!installedClients.length && <>
-          <p className="configuration-import-client-hint">{t('点击选择要纳入管理的客户端，确认后显示在模型页。')}</p>
           <ul>{installedClients.map(client => {
             const managed = managedClients.includes(client.id);
             const supported = supportsModelManagement(client.id);

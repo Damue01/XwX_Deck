@@ -338,6 +338,36 @@ impl Discovery {
         }
     }
 
+    /// Locate the native account interface shipped with the desktop app or CLI.
+    /// Never launch ChatGPT.exe/Codex.exe from the GUI root as an account helper.
+    pub fn codex_executable(&self) -> Option<PathBuf> {
+        let mut candidates = vec![];
+        for (name, root) in &self.packages {
+            if package_client(name) == Some("codex") {
+                for base in [root.clone(), root.join("app")] {
+                    candidates.push(base.join("resources/codex.exe"));
+                    candidates.push(base.join("resources/codex-cli/bin/codex.exe"));
+                }
+            }
+        }
+        for root in &self.apps {
+            for app in ["Codex", "ChatGPT"] {
+                let bundle = root.join(format!("{app}.app"));
+                if codex_bundle_identity(&bundle.join("Contents/Info.plist")) {
+                    candidates.push(bundle.join("Contents/Resources/codex-cli/bin/codex"));
+                    candidates.push(bundle.join("Contents/Resources/codex"));
+                }
+                for folder in [root.join(app), root.join("OpenAI").join(app)] {
+                    candidates.push(folder.join("resources/codex.exe"));
+                    candidates.push(folder.join("resources/codex-cli/bin/codex.exe"));
+                }
+            }
+        }
+        let name = if cfg!(windows) { "codex.exe" } else { "codex" };
+        candidates.extend(self.bins.iter().map(|root| root.join(name)));
+        candidates.into_iter().find(|path| executable(path))
+    }
+
     pub fn installed(&self, id: &str) -> bool {
         let (apps, commands): (&[&str], &[&str]) = match canonical_id(id) {
             "codex" => (&["ChatGPT", "Codex"], &["codex"]),
@@ -586,6 +616,25 @@ mod tests {
     }
 
     #[test]
+    fn account_helper_uses_registered_desktop_resources_and_never_the_gui() {
+        let f = Fixture::new();
+        let mut discovery = Discovery::in_home(&f.0);
+        discovery
+            .packages
+            .push(("OpenAI.Codex".into(), f.0.join("msix/codex")));
+        f.file("msix/codex/app/Codex.exe", true);
+        assert!(discovery.installed("codex"));
+        assert_eq!(discovery.codex_executable(), None);
+        f.file("msix/codex/app/resources/codex.exe", true);
+        assert_eq!(
+            discovery.codex_executable(),
+            Some(f.0.join("msix/codex/app/resources/codex.exe"))
+        );
+        discovery.packages[0].0 = "Unrelated.Codex".into();
+        assert_eq!(discovery.codex_executable(), None);
+    }
+
+    #[test]
     #[cfg(windows)]
     fn finds_windows_user_installs_and_bundled_cli_without_path() {
         let f = Fixture::new();
@@ -597,6 +646,10 @@ mod tests {
         let discovery = Discovery::in_home(&f.0);
         assert!(discovery.installed("claude"));
         assert!(discovery.installed("codex"));
+        assert_eq!(
+            discovery.codex_executable(),
+            Some(f.0.join("AppData/Local/OpenAI/Codex/bin/fixture-version/codex.exe"))
+        );
     }
 
     #[test]
@@ -615,6 +668,12 @@ mod tests {
             discovery.installed(&expected),
             "registered package executable must be detected without PATH or client settings"
         );
+        if expected == "codex" {
+            assert!(
+                discovery.codex_executable().is_some(),
+                "registered desktop must provide its native account helper without PATH"
+            );
+        }
     }
 
     #[test]

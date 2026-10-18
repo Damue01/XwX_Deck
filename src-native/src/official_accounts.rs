@@ -146,7 +146,7 @@ impl Server {
             loop {
                 let value=self.next().await?;
                 if value["id"]==id {
-                    if !value["error"].is_null(){return Err(format!("官方账号操作未完成（{}），请更新 Codex CLI 后重试",value["error"]["code"].as_i64().unwrap_or(-1)));}
+                    if !value["error"].is_null(){return Err(format!("官方账号操作未完成（{}），请重试；若持续失败，请更新官方客户端",value["error"]["code"].as_i64().unwrap_or(-1)));}
                     return Ok(value["result"].clone());
                 }
                 if value.get("id").is_some() && value.get("method").is_some() {
@@ -222,23 +222,12 @@ impl OfficialAccounts {
                 return Some(PathBuf::from(path));
             }
         }
-        let name = if cfg!(windows) { "codex.exe" } else { "codex" };
-        let mut paths = vec![
-            PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"),
-            PathBuf::from("/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex"),
-            Pilot::home().join(".local/bin").join(name),
-            PathBuf::from("/opt/homebrew/bin").join(name),
-            PathBuf::from("/usr/local/bin").join(name),
-        ];
-        for app in ["Codex", "ChatGPT"] {
-            paths.push(PathBuf::from(format!(
-                "/Applications/{app}.app/Contents/Resources/codex"
-            )));
-        }
-        if let Some(path) = std::env::var_os("PATH") {
-            paths.extend(std::env::split_paths(&path).map(|p| p.join(name)));
-        }
-        paths.into_iter().find(|p| p.is_file())
+        let discovery = if self.isolated {
+            client_installations::Discovery::for_home(&self.root.join("installations"))
+        } else {
+            client_installations::Discovery::system()
+        };
+        discovery.codex_executable()
     }
     fn local(&self) -> Result<Value> {
         read(&self.home.join("auth.json"))?
@@ -345,9 +334,9 @@ impl OfficialAccounts {
             if expires > (millis() / 1000) as u64 + 120 {
                 return Ok(text(&auth["tokens"], "access_token").into());
             }
-            let executable = self
-                .executable()
-                .ok_or("请安装 Codex CLI 后重试官方账号登录")?;
+            let executable = self.executable().ok_or(
+                "未找到官方客户端的账号接口，请更新 ChatGPT / Codex 桌面版或 Codex CLI 后重试",
+            )?;
             let mut server = Server::start(&self.root, &executable, Some(&auth)).await?;
             let result = server
                 .call("account/read", json!({"refreshToken":true}))
@@ -400,7 +389,9 @@ impl OfficialAccounts {
         if target == "official-chatgpt" {
             return Err("请在 ChatGPT 或 Codex 中管理现有登录；添加账号会保留此登录".into());
         }
-        let executable = self.executable().ok_or("请安装 Codex CLI 后添加官方账号")?;
+        let executable = self.executable().ok_or(
+            "未找到官方客户端的账号接口，请更新 ChatGPT / Codex 桌面版或 Codex CLI 后添加账号",
+        )?;
         let mut server = Server::start(&self.root, &executable, None).await?;
         let result = server
             .call(
@@ -577,7 +568,9 @@ impl OfficialAccounts {
             }
             params.as_object_mut().unwrap().remove("__deckAccountKey");
         }
-        let executable = self.executable().ok_or("请安装或更新 Codex CLI 后重试")?;
+        let executable = self.executable().ok_or(
+            "未找到官方客户端的账号接口，请更新 ChatGPT / Codex 桌面版或 Codex CLI 后重试",
+        )?;
         // Only access credentials are materialized for the existing login. Its
         // refresh token stays exclusively with the official client.
         let mut scoped_auth = auth.clone();

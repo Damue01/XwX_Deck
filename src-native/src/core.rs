@@ -2308,7 +2308,7 @@ impl Pilot {
             "detectClientInstallations" => {
                 let discovery = self.client_discovery();
                 let catalog: Value = serde_json::from_str(include_str!("../../test-results/native-assets/clients.json")).map_err(err)?;
-                Ok(json!({"available":true,"clients":catalog.as_array().into_iter().flatten().map(|client|json!({"id":client["id"],"installed":discovery.installed(text(client,"id"))})).collect::<Vec<_>>()}))
+                Ok(json!({"available":true,"clients":catalog.as_array().into_iter().flatten().map(|client|json!({"id":client["id"],"installed":discovery.installed(text(client,"id")),"modelManagement":client["modelManagement"]==true})).collect::<Vec<_>>()}))
             }
             "getModelClients" => Ok(json!(self.model_clients())),
             "addModelClient" | "removeModelClient" => {
@@ -2322,6 +2322,7 @@ impl Pilot {
                     clients.retain(|client|client!=id);
                 }
                 else if !clients.iter().any(|client|client==id) {
+                    if !catalog.as_array().is_some_and(|rows|rows.iter().any(|row|row["id"]==id && row["modelManagement"]==true)) { return Err("暂不支持此客户端的模型配置".into()); }
                     if !self.client_discovery().installed(id) { return Err("未检测到客户端安装，请先安装并重新检测".into()); }
                     clients.push(id.to_owned());
                 }

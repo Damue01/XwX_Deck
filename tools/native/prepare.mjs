@@ -37,7 +37,7 @@ await mkdir(assets, { recursive: true });
 await cp(resolve(root,'assets/models-dev-capabilities.json'),resolve(assets,'models-dev-capabilities.json'));
 try {
   await esbuild.build({ entryPoints: [resolve(root, 'tools/build/native-assets.ts')], outfile: moduleFile, bundle: true, platform: 'node', format: 'esm', plugins: [createRawTextPlugin({ sharedFonts: true })] });
-  const { normalizeCache, setCatalogPriceRules, renderTapViewerHtml, getPriceRules, OFFICIAL_MODEL_REGISTRY, setupWebsitesFor, CLIENT_DOWNLOADS } = await import(pathToFileURL(moduleFile).href);
+  const { normalizeCache, setCatalogPriceRules, renderTapViewerHtml, getPriceRules, OFFICIAL_MODEL_REGISTRY, setupWebsitesFor, CLIENT_DOWNLOADS, supportsModelManagement } = await import(pathToFileURL(moduleFile).href);
   // Never read normal user data during a build. Embed the checked repository
   // catalog so native offline pricing is the same as the retained backend.
   const priceCache = normalizeCache(JSON.parse(await readFile(resolve(root, 'assets/models-dev-pricing.json'), 'utf8')));
@@ -47,7 +47,7 @@ try {
   const blocks=[...viewer.matchAll(/<(script|style)\b([^>]*)>([\s\S]*?)<\/\1>/gi)].reverse();
   for(const block of blocks){if(block[1]==='script'&&/application\/json/.test(block[2]))continue;const transformed=await esbuild.transform(block[3],{loader:block[1]==='script'?'js':'css',minify:true,legalComments:'inline',target:['safari15','chrome120']});viewer=viewer.slice(0,block.index)+`<${block[1]}${block[2]}>${transformed.code}</${block[1]}>`+viewer.slice(block.index+block[0].length);}
   await writeFile(resolve(assets, 'viewer.html'), viewer);
-  await writeFile(resolve(assets, 'clients.json'), JSON.stringify(CLIENT_DOWNLOADS));
+  await writeFile(resolve(assets, 'clients.json'), JSON.stringify(CLIENT_DOWNLOADS.map(client => ({ ...client, modelManagement: supportsModelManagement(client.id) }))));
   await writeFile(resolve(assets, 'prices.json'), JSON.stringify(getPriceRules()));
   // Retired capability tables must not remain in the embedded resource set.
   for (const retired of ['builtin-models.json', 'probed-models.json']) await rm(resolve(assets, retired), { force: true });

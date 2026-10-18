@@ -1,5 +1,3 @@
-import { CLIENT_GATEWAY_HELP } from './clientGatewaySetup';
-
 /** Download / installation pages only; this catalog does not imply Trace support. */
 export const CLIENT_DOWNLOADS = [
   { id: 'codex', label: 'ChatGPT', downloadLabel: 'ChatGPT Desktop', icon: 'chatgpt', url: 'https://learn.chatgpt.com/docs/app' },
@@ -26,7 +24,7 @@ export const CLIENT_DOWNLOADS = [
   { id: 'crush', label: 'Crush', downloadLabel: 'Crush CLI', icon: 'crush', url: 'https://github.com/charmbracelet/crush#installation' },
   { id: 'qoder', label: 'Qoder', downloadLabel: 'Qoder CLI', icon: 'qoder', url: 'https://docs.qoder.com/cli/installation' },
   { id: 'droid', label: 'Droid', downloadLabel: 'Droid CLI', icon: 'factory', url: 'https://docs.factory.com/droid-cli/quickstart' },
-  { id: 'copilot-cli', label: 'GitHub Copilot', downloadLabel: 'GitHub Copilot CLI', icon: 'copilot', url: 'https://docs.github.com/en/copilot/get-started/cli-quickstart' },
+  { id: 'copilot-cli', label: 'GitHub Copilot CLI', downloadLabel: 'GitHub Copilot CLI', icon: 'copilot', url: 'https://docs.github.com/en/copilot/get-started/cli-quickstart' },
   { id: 'cursor-cli', label: 'Cursor CLI', icon: 'cursor', url: 'https://cursor.com/docs/cli/installation' },
   { id: 'mimo-code', label: 'MiMo Code', downloadLabel: 'MiMo Code CLI', icon: 'mimocode', url: 'https://mimo.mi.com/docs/en-US/tokenplan/integration/mimo-code' },
   { id: 'workbuddy', label: 'WorkBuddy', downloadLabel: 'WorkBuddy Desktop', icon: 'workbuddy', url: 'https://www.workbuddy.cn/' },
@@ -62,23 +60,24 @@ export function canonicalModelClient(id: DownloadClientId): DownloadClientId {
   return modelClientRoute(id) ?? (id === 'cursor-cli' ? 'cursor' : id);
 }
 
-export const MODEL_CLIENT_CATALOG = CLIENT_DOWNLOADS.filter(client => !['codex-cli', 'claude-code', 'cursor-cli'].includes(client.id));
-
 /** Clients with reversible configuration adapters, rather than download-only entries. */
 const MANAGED_MODEL_CLIENTS: readonly DownloadClientId[] = ['claude', 'codex', 'opencode', 'gemini-cli', 'qwen-code', 'pi', 'mimo-code', 'crush', 'droid', 'codebuddy-code', 'workbuddy'];
 export function supportsManagedModels(client: DownloadClientId): boolean {
   return MANAGED_MODEL_CLIENTS.includes(canonicalModelClient(client));
 }
 
-/** Manual Gateway connections also belong in the model panel, without claiming automatic setup. */
+/** Reviewed standalone clients with documented manual Gateway configuration. */
+const MANUAL_MODEL_CLIENTS: readonly DownloadClientId[] = ['copilot-cli', 'oh-my-pi', 'hermes-agent', 'qoder', 'zed', 'goose'];
 export function supportsModelManagement(client: DownloadClientId): boolean {
   const product = canonicalModelClient(client);
-  return supportsManagedModels(product) || `gateway-help-${product}` in CLIENT_GATEWAY_HELP;
+  return supportsManagedModels(product) || MANUAL_MODEL_CLIENTS.includes(product);
 }
+
+export const MODEL_CLIENT_CATALOG = CLIENT_DOWNLOADS.filter(client => !['codex-cli', 'claude-code', 'cursor-cli'].includes(client.id) && supportsModelManagement(client.id));
 
 export interface ClientInstallationSnapshot {
   readonly available: boolean;
-  readonly clients: readonly { id: DownloadClientId; installed: boolean }[];
+  readonly clients: readonly { id: DownloadClientId; installed: boolean; modelManagement?: boolean }[];
 }
 
 export function normalizeModelClients(ids: readonly DownloadClientId[]): DownloadClientId[] {

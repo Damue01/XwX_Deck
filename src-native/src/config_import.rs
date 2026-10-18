@@ -1513,6 +1513,12 @@ impl Pilot {
             if model_clients.iter().any(|old| old == id) {
                 continue;
             }
+            if !catalog.as_array().is_some_and(|rows| {
+                rows.iter()
+                    .any(|row| row["id"] == id && row["modelManagement"] == true)
+            }) {
+                return Err("暂不支持此客户端的模型配置，未写入任何配置".into());
+            }
             if !discovery.installed(id) {
                 return Err("客户端安装状态已变化，请重新检测；未写入任何配置".into());
             }

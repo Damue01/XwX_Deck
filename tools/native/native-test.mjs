@@ -89,7 +89,7 @@ try {
   await writeFile(resolve('test-results/native-viewer-summary.json'),JSON.stringify({...viewer,binarySha256},null,2)+'\n');
   assert.ok(report, `Native smoke timed out; sandbox ${root}`);
   assert.equal(report.passed, true, JSON.stringify({ ...report, sandbox: root }));
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 3);
   assert.equal(viewer.passed,true,JSON.stringify(viewer));
   assert.equal(updateDownloads,0,'notification checks must not automatically download an installer');
   for (const request of requests) {

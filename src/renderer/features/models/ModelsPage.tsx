@@ -5,7 +5,7 @@ import { OfficialChatgptAccount } from './OfficialChatgptAccount';
 import { SlidersHorizontal } from 'lucide-react';
 import { ProviderIcon } from '../settings/ProviderIcon';
 import { ClientDownloads } from '../settings/ProviderSetupShortcuts';
-import { CLIENT_DOWNLOADS, MODEL_CLIENT_ADDED_EVENT, canonicalModelClient, modelClientRoute, normalizeModelClients, type DownloadClientId } from '../../../shared/clientDownloads';
+import { CLIENT_DOWNLOADS, MODEL_CLIENT_ADDED_EVENT, canonicalModelClient, modelClientRoute, normalizeModelClients, supportsModelManagement, type DownloadClientId } from '../../../shared/clientDownloads';
 import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
 import * as React from 'react';
 import type {
@@ -64,7 +64,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   const confirm = useConfirm();
   const [selectedClient, setSelectedClient] = React.useState<DownloadClientId>('claude');
   const clientTabsList = React.useRef<HTMLDivElement | null>(null);
-  const shownClients = normalizeModelClients(bridge.modelClients);
+  const shownClients = normalizeModelClients(bridge.modelClients).filter(supportsModelManagement);
   const singleClient = shownClients.length === 1;
   const singleClientPanelProps = singleClient
     ? { role: 'region' as const, 'aria-labelledby': 'models-single-client', tabIndex: -1 }

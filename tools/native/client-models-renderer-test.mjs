@@ -41,6 +41,7 @@ async function wait(test,label){for(let n=0;n<100;n++){await act(async()=>{await
 async function choose(button,label){await act(async()=>button.click());await wait(()=>[...document.querySelectorAll('[role="option"]')].some(e=>e.textContent===label),'open '+label);await act(async()=>{const option=[...document.querySelectorAll('[role="option"]')].find(e=>e.textContent===label);const down=new MouseEvent('pointerdown',{bubbles:true,button:0,buttons:1});Object.defineProperty(down,'pointerType',{value:'mouse'});option.dispatchEvent(down);option.click();});}
 try{
  for(const id of ['pi','oh-my-pi','crush','gemini-cli','copilot-cli','goose','zed','hermes-agent'])assert.equal(supportsModelManagement(id),true,id);
+ for(const id of ['vscode','trae','cline','antigravity-cli','openchamber','t3-code'])assert.equal(supportsModelManagement(id),false,id);
  assert.equal(supportsManagedModels('oh-my-pi'),false);assert.notEqual(canonicalModelClient('pi'),canonicalModelClient('oh-my-pi'));
  assert.equal(canonicalModelClient('codex-cli'),'codex');assert.equal(canonicalModelClient('claude-code'),'claude');assert.equal(supportsModelManagement('deepseek-harness'),false);
  assert.equal(CLIENT_DOWNLOADS.find(c=>c.id==='minimax-code').label,'MiniMax Agent');assert.equal(CLIENT_DOWNLOADS.find(c=>c.id==='minimax-code').downloadLabel,'MiniMax Desktop');assert.equal(supportsModelManagement('minimax-code'),false);assert.equal(canonicalModelClient('minimax-code'),'minimax-code');

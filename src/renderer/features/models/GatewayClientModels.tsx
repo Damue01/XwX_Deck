@@ -120,7 +120,7 @@ export function GatewayClientModels({ client, active }: { client: DownloadClient
       });
     }
   };
-  if (!bridge.api.getClientRoute) return <ClientDownloads client={client} />;
+  if (!bridge.api.getClientRoute || !bridge.api.setClientRoute) return <p className="provider-field-error" role="status">{t('客户端配置读取失败')}</p>;
   const gatewayBase = bridge.runtime?.localBaseUrl ? `${bridge.runtime.localBaseUrl}/clients/${client}` : null;
   const base = gatewayBase ? `${gatewayBase}${['gemini-cli', 'antigravity-cli'].includes(client) ? '' : '/v1'}` : null;
   const helpKey = `gateway-help-${client}` as keyof typeof CLIENT_GATEWAY_HELP;

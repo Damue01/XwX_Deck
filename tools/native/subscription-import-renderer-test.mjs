@@ -52,7 +52,7 @@ try{
  const primary=()=>document.querySelector('.configuration-import-actions .primary');
  assert.equal(document.querySelectorAll('[data-detected-client="codex"]').length,1);
  assert.equal(client('codex').getAttribute('aria-pressed'),'false');assert.equal(client('qwen-code').getAttribute('aria-pressed'),'true');assert.equal(client('qwen-code').disabled,true);assert.ok(client('qwen-code').textContent.includes('已管理'));
- assert.equal(client('cursor').disabled,true);assert.ok(client('cursor').textContent.includes('暂不支持模型配置'));assert.equal(primary().disabled,true);
+ assert.equal(client('cursor'),null);assert.equal(primary().disabled,true);assert.ok(!document.body.textContent.includes('点击选择要纳入管理的客户端'));
  const writesBefore=writes.length;
  await act(async()=>client('codex').click());assert.equal(client('codex').getAttribute('aria-pressed'),'true');assert.equal(writes.length,writesBefore);assert.equal(primary().textContent,'确认');
  await act(async()=>document.querySelector('.configuration-import-refresh').click());assert.equal(client('codex').getAttribute('aria-pressed'),'true');

@@ -1,7 +1,6 @@
 /** Product copy only. User-entered values and model IDs are never translated. */
 export const english: Readonly<Record<string, string>> = {
   "本机客户端": "Clients on this computer",
-  "点击选择要纳入管理的客户端，确认后显示在模型页。": "Select clients to manage. They will appear on the Models page after confirmation.",
   "已管理": "Managed",
   "暂不支持模型配置": "Model setup unavailable",
   "确认并继续": "Confirm and continue",
