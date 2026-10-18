@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { mkdtemp, mkdir, readFile, writeFile, access, copyFile } from 'node:fs/promises';
-import { join, resolve, dirname, relative } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
 import { buildWindowsMsi } from './windows-msi.mjs';
 import { standardWindowsArtifact } from './windows-execution-level.mjs';
 
@@ -54,7 +54,7 @@ const server=createServer(async(req,res)=>{
  if(req.url==='/installer'){res.end(await readFile(artifacts.new.path));return;}
  if(req.url==='/portable'){res.end('exe');return;}
  if(req.url==='/v1/models'){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'fixture-model'}]}));return;}
- if(req.url==='/v1/responses'){for await(const _ of req){}modelRequests++;res.setHeader('content-type','application/json');res.end(JSON.stringify({id:'msi-fixture',object:'response',status:'completed',output:[],usage:{input_tokens:2,output_tokens:1,total_tokens:3}}));return;}
+ if(req.url==='/v1/responses'){for await(const _ of req){}if(req.headers.authorization!=='Bearer synthetic-msi-key'){res.writeHead(401);res.end('Synthetic credential was not preserved');return;}modelRequests++;res.setHeader('content-type','application/json');res.end(JSON.stringify({id:'msi-fixture',object:'response',status:'completed',output:[],usage:{input_tokens:2,output_tokens:1,total_tokens:3}}));return;}
  res.writeHead(404);res.end();
 });server.listen(0,'127.0.0.1');await once(server,'listening');const base='http://127.0.0.1:'+server.address().port;
 const executable=join(install,'XwX Deck.exe');let installed=false,ui;
@@ -112,7 +112,7 @@ try{
  await wait(()=>{const r=spawnSync('tasklist.exe',['/FI','PID eq '+failure.recoveryPid,'/FO','CSV','/NH'],{encoding:'utf8',windowsHide:true});return !r.stdout.includes('"'+failure.recoveryPid+'"');},'Recovery test app did not exit');
  assert.equal(registration().Version,oldVersion);assert.equal(hash(await readFile(traceFile)),traceBefore);
  pass('detached worker rejects tampering, reports failure and renders the unchanged old application again');
- ui=spawn(executable,['--pilot-root',relative(process.cwd(),data),'--smoke','--smoke-msi-update','--smoke-msi-restart'],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:['ignore','ignore','ignore']});
+ ui=spawn(executable,['--pilot-root',data,'--smoke','--smoke-msi-update','--smoke-msi-restart'],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:['ignore','ignore','ignore']});
  await wait(async()=>{try{const report=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));if(!report.passed)throw Error(report.error);return report.stage==='downloaded';}catch(error){if(error.code==='ENOENT')return false;throw error;}},'MSI update did not download');
  await wait(()=>ui.exitCode!==null,'Old app did not exit for MSI update');assert.equal(ui.exitCode,0);
  await wait(async()=>{try{const report=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));if(!report.passed)throw Error(report.error);return report.stage==='restarted' && report.version===newVersion;}catch(error){if(error.code==='ENOENT')return false;throw error;}},'New app did not render after MSI upgrade');
