@@ -616,7 +616,14 @@ impl Discovery {
             }
         }
         let name = if cfg!(windows) { "codex.exe" } else { "codex" };
-        candidates.extend(self.bins.iter().map(|root| root.join(name)));
+        candidates.extend(
+            self.bins
+                .iter()
+                // A registered or manually selected Electron desktop folder
+                // can also contain Codex.exe, which is not the CLI interface.
+                .filter(|root| !(cfg!(windows) && root.join("resources").is_dir()))
+                .map(|root| root.join(name)),
+        );
         candidates.into_iter().find(|path| executable(path))
     }
 
@@ -830,6 +837,8 @@ mod tests {
             discovery.codex_executable(),
             Some(f.0.join("custom/resources/codex.exe"))
         );
+        fs::remove_file(f.0.join("custom/resources/codex.exe")).unwrap();
+        assert_eq!(discovery.codex_executable(), None);
     }
     #[test]
     fn does_not_mistake_configuration_or_empty_bundle_for_installation() {
