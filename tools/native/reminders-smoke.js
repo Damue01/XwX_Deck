@@ -19,7 +19,7 @@
   document.querySelector('#stopCaptureBtn').click();await wait(()=>dialog()?.textContent.includes('强制停止'),'busy stop reopened');action('强制停止').click();
   await wait(async()=>!(await window.xwxDeck.getState()).tracingEnabled,'force stop complete');await held;
   check('explicit force stop restores direct routing',(await window.xwxDeck.getCodexConfig()).activeBaseUrl===(await rpc('smokeContext')).upstream);
-  await wait(()=>document.querySelector('#captureBtn')&&!document.querySelector('#captureBtn').disabled,'Trace can restart');document.querySelector('#captureBtn').click();await wait(async()=>(await window.xwxDeck.getState()).tracingEnabled,'Trace restarted');
+  await wait(()=>{const button=document.querySelector('#captureBtn');if(!button||button.closest('[inert]')||document.body.dataset.traceSwitching)return false;const rect=button.getBoundingClientRect();return rect.height>0&&button.contains(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2));},'Trace can restart');document.querySelector('#captureBtn').click();await wait(async()=>(await window.xwxDeck.getState()).tracingEnabled,'Trace restarted');
   void rpc('smokeRequest').catch(()=>null);await wait(running,'second ongoing stream');
   await rpc('smokeRequestExit');await wait(()=>dialog()?.textContent.includes('恢复直连并退出'),'active exit confirmation');await delay(200);
   check('exit during an ongoing conversation uses the application dialog',styled()&&!!action('继续运行')&&!!action('恢复直连并退出'));
