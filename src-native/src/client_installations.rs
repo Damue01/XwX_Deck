@@ -344,19 +344,28 @@ impl Discovery {
             return true;
         }
         self.apps.iter().any(|root| {
-            [
-                root.join("resources/app/package.json"),
-                root.join("Microsoft VS Code/resources/app/package.json"),
-                root.join("Visual Studio Code.app/Contents/Resources/app/package.json"),
-            ]
-            .iter()
-            .any(|path| {
+            let mut bases = vec![root.clone(), root.join("Microsoft VS Code")];
+            for base in bases.clone() {
+                bases.extend(directories(&base, 64).into_iter().filter(|dir| {
+                    dir.file_name().is_some_and(|name| {
+                        let name = name.to_string_lossy();
+                        name.len() >= 8 && name.chars().all(|c| c.is_ascii_hexdigit())
+                    })
+                }));
+            }
+            let mut packages: Vec<_> = bases
+                .into_iter()
+                .map(|base| base.join("resources/app/package.json"))
+                .collect();
+            packages.push(root.join("Visual Studio Code.app/Contents/Resources/app/package.json"));
+            packages.iter().any(|path| {
                 let identity = path
                     .parent()
                     .and_then(|dir| fs::read_to_string(dir.join("product.json")).ok())
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
                 if !identity.is_some_and(|v| {
-                    v["applicationName"] == "code" && v["nameShort"] == "Visual Studio Code"
+                    v["applicationName"] == "code"
+                        && (v["nameShort"] == "Code" || v["nameShort"] == "Visual Studio Code")
                 }) {
                     return false;
                 }
@@ -708,6 +717,35 @@ mod tests {
         assert!(!discovery.installed("cursor"));
         f.file("Applications/Cursor.app/Contents/MacOS/Cursor", true);
         assert!(discovery.installed("cursor"));
+    }
+    #[test]
+    fn vscode_versioned_installation_checks_product_identity_and_supported_version() {
+        let f = Fixture::new();
+        let base = f.0.join("custom-code");
+        let app = base.join("7e7950df89/resources/app");
+        fs::create_dir_all(&app).unwrap();
+        fs::write(app.join("package.json"), r#"{"version":"1.126.0"}"#).unwrap();
+        fs::write(
+            app.join("product.json"),
+            r#"{"applicationName":"code","nameShort":"Code"}"#,
+        )
+        .unwrap();
+        let mut discovery = Discovery::in_home(&f.0);
+        discovery.apps.push(base);
+        assert!(discovery.management_supported("vscode"));
+        fs::write(
+            app.join("product.json"),
+            r#"{"applicationName":"cursor","nameShort":"Cursor"}"#,
+        )
+        .unwrap();
+        assert!(!discovery.management_supported("vscode"));
+        fs::write(
+            app.join("product.json"),
+            r#"{"applicationName":"code","nameShort":"Code"}"#,
+        )
+        .unwrap();
+        fs::write(app.join("package.json"), r#"{"version":"1.100.0"}"#).unwrap();
+        assert!(!discovery.management_supported("vscode"));
     }
     #[test]
     fn finds_cli_without_gui_path_and_merges_cli_aliases() {
