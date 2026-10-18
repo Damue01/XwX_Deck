@@ -31,6 +31,7 @@ Desktop 与 CLI 仅在消费相同配置时归并。
 VS Code Chat 需识别到支持 Custom Endpoint 的正式版本。
 Cline 支持当前 CLI 与扩展 4.x 的配置格式。
 较旧或未知的扩展格式保留下载入口。
+扩展在启动时读取配置，已有进程需要重新加载。
 DeepSeek Harness 按当前 profile 格式处理桌面版与 CLI。
 旧版单文件格式不自动改写，提示更新客户端。
 手动接入不宣称已经改好客户端配置。
@@ -54,7 +55,7 @@ Magpie 源码核对至 `d783df46cbac9021e26a6bd71ca0b55544552eb2`。
 | Cursor 普通桌面版 | 本次核对的适配未证明可由外部可靠切换其服务与模型。保留下载入口，暂不添加模型页 |
 | TRAE 桌面版 | 本次在 CC Switch 功能表和 Magpie 内置适配中未找到对应模型配置切换。账号导入或服务代理不等于管理 TRAE 客户端；保留下载入口，暂不添加模型页 |
 | DeepSeek Harness | Windows 读取安装登记，支持自定义安装目录。合并各 profile 的模型服务与默认模型，保留原插件配置。桌面凭据按当前版本的本地存储读取方式写入 |
-| Antigravity、OpenChamber、T3 Code、Kimi Code、ZCode、MiniMax Agent 等 | 按具体适配继续判断。已有参考实现需核对消费方式，不能以通用地址或下载入口代替实际配置能力 |
+| Antigravity、OpenChamber、T3 Code、ZCode、MiniMax Agent 等 | 按具体适配继续判断。已有参考实现需核对消费方式，不能以通用地址或下载入口代替实际配置能力 |
 
 [Cline 实现](https://github.com/yetone/magpie/blob/d783df46cbac9021e26a6bd71ca0b55544552eb2/internal/agent/cline.go)分别处理扩展状态与 CLI 配置。
 [VS Code 实现](https://github.com/yetone/magpie/blob/d783df46cbac9021e26a6bd71ca0b55544552eb2/internal/agent/vscode.go)包含默认模型和 profile 处理。
