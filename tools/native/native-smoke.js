@@ -264,8 +264,9 @@
         const invalidKey=document.querySelector('#provider-key'),beforeInvalid=JSON.stringify(await window.xwxDeck.getProviders()),invalidEvents=[];
         const observeInvalid=event=>{if(event.target===invalidKey)invalidEvents.push(event.defaultPrevented);};document.addEventListener('invalid',observeInvalid,true);
         document.querySelector('#provider-editor').requestSubmit();
-        await wait(()=>toastByTitle(invalidKey.validationMessage),'designed form validation notice');document.removeEventListener('invalid',observeInvalid,true);
-        check('Windows form validation uses application Toast instead of a native bubble',invalidEvents.length===1&&invalidEvents[0]&&!!toastByTitle(invalidKey.validationMessage));
+        const validationTitle=invalidKey.validationMessage.replace(/[。.]\s*$/u,'');
+        await wait(()=>toastByTitle(validationTitle),'designed form validation notice');document.removeEventListener('invalid',observeInvalid,true);
+        check('Windows form validation uses application Toast instead of a native bubble',invalidEvents.length===1&&invalidEvents[0]&&!!toastByTitle(validationTitle));
         check('invalid form keeps its draft and focuses the field without saving',document.activeElement===invalidKey&&JSON.stringify(await window.xwxDeck.getProviders())===beforeInvalid&&!!document.querySelector('#provider-editor'));
         await dismissToasts();
       }
