@@ -13,6 +13,7 @@ import { SettingsPage } from '@/features/settings/SettingsPage';
 import { OnboardingTour } from '@/features/onboarding/OnboardingTour';
 import { UpdateNotification } from '@/features/shell/UpdateNotification';
 import { TraceRecoveryActions } from '@/features/shell/TraceRecoveryActions';
+import { NativeLifecycleActions } from '@/features/shell/NativeLifecycleActions';
 import { restoreLanguage, useLanguage, t } from '@/lib/i18n';
 import { applyTheme } from '@/lib/theme';
 import { userErrorMessage } from '@/lib/errors';
@@ -251,6 +252,7 @@ function Shell(): React.ReactElement {
         <Rail activePage={activePage} onNavigate={setActivePage} updateState={bridge.updateState} />
         <div className="content-column">
           <TraceRecoveryActions />
+          <NativeLifecycleActions />
           <div className="stage">
           <SignalPage active={activePage === 'signal'} />
           <ModelsPage active={activePage === 'models'} />

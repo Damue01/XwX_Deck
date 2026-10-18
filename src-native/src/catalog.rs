@@ -2,6 +2,7 @@
 //! capabilities retain their own provenance across cache and client publication.
 use super::*;
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 #[path = "catalog_compatibility.rs"]
 mod compatibility;
 #[path = "catalog_metadata.rs"]
@@ -20,21 +21,25 @@ const FIELDS: &[&str] = &[
 // The model's service capacity and Codex's current operational default are
 // different facts. Never hard-code the client's default for future models.
 fn codex_window(entry: &Value, native: Option<&Value>) -> u64 {
-    let capacity = entry["contextWindow"].as_u64().filter(|n| *n > 0);
-    if entry["capabilitySources"]["contextWindow"] == "provider" {
-        return capacity.unwrap_or(262144);
+    let capacity = entry["contextWindow"]
+        .as_u64()
+        .filter(|n| *n > 0 && entry["capabilitySources"]["contextWindow"] != "fallback");
+    let recommended = entry["providerCapabilities"]["recommendedContextWindow"]
+        .as_u64()
+        .filter(|n| *n > 0);
+    let live = entry["nativeCodexContextWindow"]
+        .as_u64()
+        .filter(|n| *n > 0);
+    if let Some(window) = recommended.or(live).or_else(|| {
+        native
+            .and_then(|row| row["context_window"].as_u64())
+            .filter(|n| *n > 0)
+    }) {
+        return capacity.map_or(window, |limit| window.min(limit));
     }
-    if let Some(window) = native
-        .and_then(|row| row["context_window"].as_u64())
-        .filter(|n| *n > 0)
-    {
-        return if entry["capabilitySources"]["contextWindow"] == "fallback" {
-            window
-        } else {
-            capacity.map_or(window, |limit| window.min(limit))
-        };
-    }
-    capacity.unwrap_or(262144)
+    let id = normalize_id(text(entry, "id"));
+    let gpt = id.rsplit('/').next().unwrap_or(&id).starts_with("gpt-");
+    capacity.map_or(262144, |limit| if gpt { limit.min(262144) } else { limit })
 }
 
 fn ensure_codex_instructions(row: &mut Value) {
@@ -215,11 +220,78 @@ fn protocols(row: &Value) -> Vec<Value> {
     out
 }
 
-fn official_protocol_registry() -> Value {
-    serde_json::from_str(include_str!(
-        "../../test-results/native-assets/official-models.json"
-    ))
-    .unwrap_or(Value::Null)
+pub(super) fn official_protocol_registry() -> &'static Value {
+    static REGISTRY: OnceLock<Value> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../test-results/native-assets/official-models.json"
+        ))
+        .unwrap_or(Value::Null)
+    })
+}
+// Rules are evaluated for the live service directory, not only the bundled
+// models.dev snapshot. New IDs inherit their family contract immediately.
+pub(super) fn published_protocols(id: &str) -> Option<Value> {
+    let registry = official_protocol_registry().as_array()?;
+    let normalized = normalize_id(id);
+    if let Some(row) = registry
+        .iter()
+        .find(|r| normalize_id(text(r, "modelId")) == normalized)
+        .or_else(|| {
+            registry.iter().find(|r| {
+                !text(r, "modelId").contains('/')
+                    && official_model_key(text(r, "modelId")) == official_model_key(id)
+            })
+        })
+    {
+        return Some(row["protocols"].clone());
+    }
+    static RULES: OnceLock<Value> = OnceLock::new();
+    let table = RULES.get_or_init(|| {
+        serde_json::from_str(include_str!("../../assets/model-protocols.json"))
+            .unwrap_or(Value::Null)
+    });
+    let bare = normalized.rsplit('/').next().unwrap_or(&normalized);
+    let owner = [
+        ("gpt-", "openai"),
+        ("chatgpt-", "openai"),
+        ("codex-", "openai"),
+        ("claude-", "anthropic"),
+        ("kimi-", "moonshotai"),
+        ("moonshot-", "moonshotai"),
+        ("qwen", "alibaba"),
+        ("glm-", "zhipuai"),
+        ("deepseek-", "deepseek"),
+        ("minimax-", "minimax"),
+        ("grok-", "xai"),
+    ]
+    .into_iter()
+    .find_map(|(prefix, owner)| bare.starts_with(prefix).then_some(owner))?;
+    let matcher = |rule: &&Value| {
+        rule["providers"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|p| p == owner))
+            && ["exact", "prefix", "contains"].into_iter().any(|kind| {
+                rule[kind].as_array().is_some_and(|a| {
+                    a.iter().filter_map(Value::as_str).any(|value| match kind {
+                        "exact" => bare == value,
+                        "prefix" => bare.starts_with(value),
+                        _ => bare.contains(value),
+                    })
+                })
+            })
+    };
+    table["modelRules"]
+        .as_array()
+        .and_then(|a| a.iter().find(matcher))
+        .map(|r| r["protocols"].clone())
+        .or_else(|| {
+            table["providerDefaults"]
+                .as_array()?
+                .iter()
+                .find(|r| r["providerId"] == owner)
+                .map(|r| r["protocols"].clone())
+        })
 }
 fn remote_capability(remote: &Value, source: &str, id: &str) -> Value {
     model_metadata::resolve(remote, source, id)
@@ -231,7 +303,11 @@ fn enrich(mut entry: Value, remote: &Value) -> Value {
         .as_array()
         .and_then(|a| {
             a.iter()
-                .find(|r| official_model_key(text(r, "modelId")) == official_model_key(&id))
+                .find(|r| normalize_id(text(r, "modelId")) == normalize_id(&id))
+                .or_else(|| {
+                    a.iter()
+                        .find(|r| official_model_key(text(r, "modelId")) == official_model_key(&id))
+                })
         })
         .cloned()
         .unwrap_or(Value::Null);
@@ -347,7 +423,9 @@ fn enrich(mut entry: Value, remote: &Value) -> Value {
             .as_array()
             .is_some_and(|a| a.is_empty() || a.iter().any(|v| v == "openai"))
     {
-        let published = official["protocols"].as_array().map(|protocols| {
+        let published_protocols =
+            published_protocols(&id).unwrap_or_else(|| official["protocols"].clone());
+        let published = published_protocols.as_array().map(|protocols| {
             protocols
                 .iter()
                 .filter(|p| {
@@ -454,19 +532,21 @@ impl Catalog {
             entry["codexContextWindow"] = json!(codex_window(entry, exact));
             entry["codexCompatibility"] =
                 compatibility::resolve(entry, exact, &entry_wire(p, Some(entry), "responses"));
-            entry["codexContextWindowSource"] = json!(
-                if entry["capabilitySources"]["contextWindow"] == "provider" {
-                    "provider"
-                } else if exact
-                    .is_some_and(|row| row["context_window"].as_u64().is_some_and(|n| n > 0))
-                {
-                    "codex"
-                } else {
-                    entry["capabilitySources"]["contextWindow"]
-                        .as_str()
-                        .unwrap_or("fallback")
-                }
-            );
+            entry["codexContextWindowSource"] = json!(if entry["providerCapabilities"]
+                ["recommendedContextWindow"]
+                .as_u64()
+                .is_some_and(|n| n > 0)
+            {
+                "provider"
+            } else if entry["nativeCodexContextWindow"]
+                .as_u64()
+                .is_some_and(|n| n > 0)
+                || exact.is_some_and(|row| row["context_window"].as_u64().is_some_and(|n| n > 0))
+            {
+                "codex"
+            } else {
+                "fallback"
+            });
         }
         entries
     }
@@ -844,19 +924,24 @@ fn entry_wire(p: &Provider, entry: Option<&Value>, incoming: &str) -> String {
     if let Some(e) = entry {
         let ps = &e["protocols"];
         if e["protocolsDeclared"] != true {
+            if e["catalogEndpoints"].as_array().is_some_and(|a| {
+                !a.is_empty()
+                    && !a.iter().any(|v| v == "openai")
+                    && a.iter().any(|v| v == "anthropic")
+            }) {
+                return "anthropic-messages".into();
+            }
             let official = &e["officialProtocols"];
             if incoming == "anthropic-messages" && supported(official, "anthropic-messages") {
                 return "anthropic-messages".into();
             }
-            let chat = supported(official, "chat-completions");
-            let responses = supported(official, "openai-responses");
-            if default == "chat-completions" && chat {
-                return "chat-completions".into();
-            }
-            if responses {
+            if supported(official, "openai-responses") {
                 return "responses".into();
             }
-            if chat {
+            if supported(official, "anthropic-messages") {
+                return "anthropic-messages".into();
+            }
+            if supported(official, "chat-completions") {
                 return "chat-completions".into();
             }
             return default.into();
@@ -867,11 +952,11 @@ fn entry_wire(p: &Provider, entry: Option<&Value>, incoming: &str) -> String {
         if supported(ps, "openai-responses") {
             return "responses".into();
         }
-        if supported(ps, "chat-completions") {
-            return "chat-completions".into();
-        }
         if supported(ps, "anthropic-messages") {
             return "anthropic-messages".into();
+        }
+        if supported(ps, "chat-completions") {
+            return "chat-completions".into();
         }
     }
     default.into()
@@ -940,7 +1025,7 @@ mod client_contract_tests {
                 Some(&entry),
                 "responses"
             ),
-            "chat-completions"
+            "responses"
         );
         let flash = enrich(
             json!({
@@ -979,7 +1064,7 @@ mod client_contract_tests {
                 Some(&k27),
                 "responses"
             ),
-            "chat-completions"
+            "anthropic-messages"
         );
         assert_eq!(
             entry_wire(
@@ -1029,6 +1114,13 @@ mod client_contract_tests {
         assert!(!protocols("kimi-k2.7-code")
             .iter()
             .any(|p| p == "openai-responses"));
+        assert!(protocols("gpt-4o").iter().any(|p| p == "openai-responses"));
+        assert_eq!(protocols("gpt-3.5-turbo"), vec!["chat-completions"]);
+        assert_eq!(protocols("claude-opus-4-7"), vec!["anthropic-messages"]);
+        assert_eq!(protocols("mistral-large-4"), vec!["chat-completions"]);
+        assert!(protocols("anthropic/claude-opus-4.7")
+            .iter()
+            .any(|p| p == "anthropic-messages"));
         for id in [
             "qwen3.8-max-0902",
             "qwen3.7-max-2026-05-20",
@@ -1046,6 +1138,49 @@ mod client_contract_tests {
                 "{id} must resolve the base official record"
             );
         }
+    }
+    #[test]
+    fn live_new_models_inherit_rules_and_service_declarations_win() {
+        for id in [
+            "gpt-7-future",
+            "openai/gpt-7-future",
+            "kimi-k3-future",
+            "qwen3.8-max-future",
+        ] {
+            let entry = enrich(
+                json!({"id":id,"catalogEndpoints":["openai"],"protocolsDeclared":false}),
+                &json!({"modelsDev":[]}),
+            );
+            assert_eq!(
+                entry_wire(
+                    &Provider {
+                        codex_api_format: "chat-completions".into(),
+                        ..Provider::default()
+                    },
+                    Some(&entry),
+                    "responses"
+                ),
+                "responses",
+                "{id}"
+            );
+        }
+        let declared = enrich(
+            json!({"id":"gpt-7-future","catalogEndpoints":["openai"],"protocolsDeclared":true,"protocols":["chat-completions"]}),
+            &json!({"modelsDev":[]}),
+        );
+        assert!(declared["officialProtocols"].is_null());
+        assert_eq!(
+            entry_wire(&Provider::default(), Some(&declared), "responses"),
+            "chat-completions"
+        );
+        let messages = enrich(
+            json!({"id":"gpt-7-future","catalogEndpoints":["anthropic"],"protocolsDeclared":false,"protocols":["anthropic-messages"]}),
+            &json!({"modelsDev":[]}),
+        );
+        assert_eq!(
+            entry_wire(&Provider::default(), Some(&messages), "responses"),
+            "anthropic-messages"
+        );
     }
     #[test]
     fn unknown_models_use_the_connection_default_instead_of_a_guess() {
@@ -1249,7 +1384,18 @@ mod client_contract_tests {
             500000
         );
         assert_eq!(entry["contextWindow"], 1050000);
+        let gpt = json!({"id":"gpt-6.1-sol","contextWindow":1050000,"capabilitySources":{"contextWindow":"provider"}});
+        assert_eq!(codex_window(&gpt, None), 262144);
+        assert_eq!(
+            codex_window(&gpt, Some(&json!({"context_window":500000}))),
+            500000
+        );
         assert_eq!(codex_window(&entry, None), 1050000);
+        let recommended = json!({"id":"gpt-6.1-sol","contextWindow":1050000,"capabilitySources":{"contextWindow":"provider"},"providerCapabilities":{"recommendedContextWindow":600000}});
+        assert_eq!(
+            codex_window(&recommended, Some(&json!({"context_window":500000}))),
+            600000
+        );
         let provider =
             json!({"contextWindow":128000,"capabilitySources":{"contextWindow":"provider"}});
         assert_eq!(

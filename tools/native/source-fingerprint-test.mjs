@@ -32,7 +32,11 @@ try {
   await assert.rejects(verifyCandidate({ root, report, binary }), /可执行文件与构建清单不一致/);
   await assert.rejects(verifyCandidate({ root, report: { ...report, sourceFingerprint: undefined }, binary }), /缺少源码指纹/);
   await assert.rejects(verifyCandidate({ root, report: { ...report, candidate: { bundleId: 'app.xwxdeck.desktop' } }, binary }), /不会启动或替换正式应用/);
-  await symlink(binary, join(root, 'src-native/linked.rs'));
+  if (process.platform === 'win32') {
+    // Junctions need no Developer Mode or administrator privilege. Git can
+    // traverse them, so this also exercises ancestor-link rejection.
+    await symlink(join(root, 'test-results'), join(root, 'src-native/linked'), 'junction');
+  } else await symlink(binary, join(root, 'src-native/linked.rs'));
   await assert.rejects(sourceFingerprint(root), /不是普通文件/);
   console.log(JSON.stringify({ passed: true, checks: 10, scope: 'isolated temporary Git repository, synthetic artifact bytes; no app launch or installed files touched' }));
 } finally { await rm(root, { recursive: true, force: true }); }

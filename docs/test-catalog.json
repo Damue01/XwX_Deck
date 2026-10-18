@@ -1215,6 +1215,7 @@
       "automation": {
         "scripts": [
           "tools/native/onboarding-renderer-test.mjs",
+          "tools/native/onboarding-restart-test.mjs",
           "tools/native/subscription-import-renderer-test.mjs"
         ],
         "mappingStatus": "entry-points-only",

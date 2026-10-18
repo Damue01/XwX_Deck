@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -14,7 +14,15 @@ export function rustToolchain(root, overrides = {}) {
   }
   const configuredCargo = env.CARGO_HOME && resolve(env.CARGO_HOME, 'bin', executable);
   const cargo = configuredCargo && existsSync(configuredCargo) ? configuredCargo : executable;
+  const configuredRustc = env.CARGO_HOME && resolve(env.CARGO_HOME, 'bin', process.platform === 'win32' ? 'rustc.exe' : 'rustc');
+  const rustc = configuredRustc && existsSync(configuredRustc) ? configuredRustc : 'rustc';
   env.CARGO_TARGET_DIR ||= resolve(root, 'test-results/native-target');
+  if (process.platform === 'win32') {
+    // MSVC also creates temporary link files. Keep them in the build tree so
+    // a restricted or occupied user TEMP does not break native verification.
+    env.TEMP = env.TMP = resolve(env.CARGO_TARGET_DIR, 'tmp');
+    mkdirSync(env.TEMP, { recursive: true });
+  }
   const flags = env.CARGO_ENCODED_RUSTFLAGS !== undefined
     ? env.CARGO_ENCODED_RUSTFLAGS.split('\u001f').filter(Boolean)
     : (env.RUSTFLAGS ?? '').split(/\s+/u).filter(Boolean);
@@ -24,5 +32,5 @@ export function rustToolchain(root, overrides = {}) {
     flags.push(`--remap-path-prefix=${from}=${to}`);
   }
   env.CARGO_ENCODED_RUSTFLAGS = flags.join('\u001f');
-  return { cargo, env };
+  return { cargo, rustc, env };
 }

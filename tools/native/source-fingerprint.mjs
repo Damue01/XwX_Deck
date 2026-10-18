@@ -8,7 +8,18 @@ const prefixes = ['src/', 'src-native/', 'assets/', 'tools/', 'web/site/', 'docs
 export async function sourceFingerprint(root) {
   const paths = [...new Set(execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\0').filter(path => path && (files.has(path) || prefixes.some(prefix => path.startsWith(prefix)))))].sort();
   const entries = [];
+  const checkedDirectories = new Set();
   for (const path of paths) {
+    // Git may enumerate files through a Windows junction as ordinary paths.
+    // Check ancestors as well as the leaf so such inputs cannot escape root.
+    const segments = path.split('/');
+    for (let depth = 1; depth < segments.length; depth++) {
+      const directory = segments.slice(0, depth).join('/');
+      if (checkedDirectories.has(directory)) continue;
+      const meta = await lstat(join(root, directory)).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      if (meta?.isSymbolicLink()) throw Error('原生构建输入不是普通文件：' + path);
+      checkedDirectories.add(directory);
+    }
     const absolute = join(root, path);
     let meta;
     try { meta = await lstat(absolute); } catch (error) { if (error.code === 'ENOENT') { entries.push({ path, deleted: true }); continue; } throw error; }

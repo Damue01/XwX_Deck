@@ -74,17 +74,18 @@ XwX Deck 默认没有内部通知地址。
 
 服务声明是路由的依据。
 模型出现在普通目录中，不等于支持全部协议。
-不能仅根据厂商名称或模型名称选择协议。
+目录缺少协议字段时，使用已维护的厂商和型号规则。
+规则属于兼容策略，不能证明聚合服务实际开放了对应端点。
 
 当前路由优先保留明确支持的原生 Messages 请求。
 其他请求优先使用服务声明的 Responses。
-其次为 Chat Completions，再次为 Messages。
+缺少 Responses 时，优先 Messages，再选 Chat Completions。
 没有有效声明时，使用连接配置的协议。
 
 协议没有可依赖的第三个聚合来源。
 models.dev 和 OpenRouter 的公开模型资料都不声明 Responses、Chat Completions 或 Messages 的线路协议。
-缺少服务声明和已核验官方记录时，使用连接配置的协议。
-不从相似型号或聚合目录推测协议。
+缺少服务声明时，先查精确记录，再查型号规则。
+未知厂商或用途使用连接配置的协议。
 实际转发仍以当前连接和请求入口为准。
 
 当前协议表位于 `assets/model-protocols.json`。
@@ -92,6 +93,15 @@ models.dev 和 OpenRouter 的公开模型资料都不声明 Responses、Chat Com
 构建时由 `tools/build/official-models.mjs` 合并到 `official-models.json`，已有静态能力字段优先，不会被协议表覆盖。
 表中的来源域名受白名单限制，协议值只允许 Responses、Chat Completions 和 Messages。
 未知协议、重复 canonical 型号或非官方来源会使构建失败，而不是静默写入。
+
+协议表另有 `providerDefaults` 和 `modelRules`。
+构建时读取 `assets/models-dev-capabilities.json` 的当前目录，按厂商默认值和型号关键字展开为精确行。
+显式 `models` 行始终优先，展开结果只补没有精确记录的型号。
+运行时也对服务目录中的新型号应用规则。
+新增型号无需等待 models.dev 收录或重新构建应用。
+协议不同的型号通过精确记录覆盖规则。
+聚合服务按型号关键字处理：`claude` 使用 Messages + Chat，`gpt` / `codex` 使用 Responses + Chat，其他模型使用厂商默认的 Chat。
+Codex 请求优先原生 Responses，Claude 请求优先原生 Messages；两者都不可用时才回退到连接默认协议。
 
 推理开关与推理力度是不同能力。
 目录只发布有明确来源的控制选项。
@@ -167,7 +177,13 @@ HTTP 状态本身不能证明是否收费。
 服务明确声明的有效容量优先。
 普通能力缺失时继续读取 models.dev。
 客户端的精确型号缓存提供当前默认窗口。
+官方账号目录中的当前默认窗口也可直接使用。
+服务明确声明的推荐窗口优先于客户端默认值。
 已核验的服务容量限制运行窗口。
+最大容量不能作为推荐窗口来源。
+没有推荐资料时，GPT 运行窗口采用保守兜底。
+菜单不显示未经确认的默认窗口数值。
+默认窗口达到 1M 后，不再追加更小的 1M 选项。
 
 默认选择不写入固定窗口覆盖。
 客户端资料更新后，默认值随之更新。

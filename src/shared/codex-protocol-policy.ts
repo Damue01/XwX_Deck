@@ -30,7 +30,7 @@ export function resolveProviderCodexProtocol(
     if (entry.catalogEndpoints.length > 0 && !entry.catalogEndpoints.includes('openai')) {
       return entry.catalogEndpoints.includes('anthropic') ? 'anthropic-messages' : fallback;
     }
-    return officialOpenAiProtocol(entry, fallback) ?? fallback;
+    return officialOpenAiProtocol(entry) ?? fallback;
   }
   return fallback;
 }
@@ -42,8 +42,8 @@ export function resolveProviderCodexProtocol(
 export function resolveCatalogCodexProtocol(entry: ModelCatalogEntry, fallback: CodexProtocol = 'responses'): CodexProtocol {
   const protocols = new Set(entry.protocols);
   if (protocols.has('openai-responses')) return 'responses';
-  if (protocols.has('chat-completions')) return 'chat-completions';
   if (protocols.has('anthropic-messages')) return 'anthropic-messages';
+  if (protocols.has('chat-completions')) return 'chat-completions';
   return fallback;
 }
 
@@ -75,7 +75,7 @@ export function resolveClaudeModelProtocol(
   // the connection default (Responses unless set to Chat); never the name.
   if (entry.catalogEndpoints && (entry.catalogEndpoints.length === 0 || entry.catalogEndpoints.includes('openai'))) {
     const preferred = provider?.codexApiFormat === 'chat-completions' ? 'chat-completions' : 'responses';
-    return officialOpenAiProtocol(entry, preferred) ?? preferred;
+    return officialOpenAiProtocol(entry) ?? preferred;
   }
   return undefined;
 }
@@ -85,14 +85,13 @@ export function resolveClaudeModelProtocol(
  * connection's choice when both are available. Undefined when unknown.
  */
 function officialOpenAiProtocol(
-  entry: ModelCatalogEntry,
-  preferred: CodexProtocol
-): 'responses' | 'chat-completions' | undefined {
+  entry: ModelCatalogEntry
+): CodexProtocol | undefined {
   const official = new Set(entry.officialProtocols ?? []);
   const responses = official.has('openai-responses');
   const chat = official.has('chat-completions');
-  if (preferred === 'chat-completions' && chat) return 'chat-completions';
   if (responses) return 'responses';
+  if (official.has('anthropic-messages')) return 'anthropic-messages';
   return chat ? 'chat-completions' : undefined;
 }
 

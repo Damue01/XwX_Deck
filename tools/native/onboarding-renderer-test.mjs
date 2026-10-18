@@ -83,7 +83,14 @@ try {
   console.log('PASS Qwen Code opens its official site without redundant Mac architecture downloads');
   snapshot={available:true,clients:[{id:'codex',installed:true},{id:'claude',installed:true}]};
   await act(async () => root.render(React.createElement(OnboardingTour)));
-  await click('开始使用'); await click('继续');
+  await click('开始使用');
+  assert.equal(current(),2);
+  await act(async()=>root.render(null));
+  await act(async()=>root.render(React.createElement(OnboardingTour)));
+  assert.equal(current(),2);
+  assert.equal(imports,0);
+  console.log('PASS interrupted setup restores the import step and only repeats read-only detection');
+  await click('继续');
   const deadline=Date.now()+3000;
   while(!document.querySelector('.tour-root')&&Date.now()<deadline) await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10));});
   const expected=['添加配置','切换模型','按需开启 Trace','在仪表盘查看详情'];
@@ -94,6 +101,15 @@ try {
     assert.equal(document.querySelector('.tour-root').dataset.tourIndex,String(index));
     if(index===2) assert.ok(document.querySelector('.tour-points').textContent.includes('需 Trace'));
     if(index===1){
+      await act(async()=>root.render(null));
+      await act(async()=>root.render(React.createElement(OnboardingTour)));
+      assert.equal(document.querySelector('.tour-root').dataset.tourIndex,'1');
+      await act(async()=>window.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape'})));
+      assert.equal(document.querySelector('.tour-root'),null);
+      assert.equal(localStorage.getItem('xwx-deck.onboardingSeen'),null);
+      await act(async()=>root.render(null));
+      await act(async()=>root.render(React.createElement(OnboardingTour)));
+      assert.equal(document.querySelector('.tour-root').dataset.tourIndex,'1');
       await act(async()=>document.querySelector('.tour-back').click());
       assert.equal(document.querySelector('.tour-title').textContent,expected[0]);
       await act(async()=>document.querySelector('.tour-next').click());
@@ -103,6 +119,20 @@ try {
   }
   assert.equal(document.querySelector('.tour-root'),null);
   assert.equal(localStorage.getItem('xwx-deck.onboardingSeen'),'true');
+  assert.equal(localStorage.getItem('xwx-deck.onboardingProgress.v1'),null);
+  await act(async()=>root.render(null));
+  await act(async()=>root.render(React.createElement(OnboardingTour)));
+  assert.equal(document.querySelector('[role=dialog]'),null);
+  localStorage.removeItem('xwx-deck.onboardingSeen');
+  localStorage.setItem('xwx-deck.onboardingProgress.v1','{"preparing":false,"setupStep":2,"index":900}');
+  await act(async()=>root.render(null));
+  await act(async()=>root.render(React.createElement(OnboardingTour)));
+  assert.equal(current(),0);
+  await click('跳过');
+  await act(async()=>new Promise(resolve=>setTimeout(resolve,450)));
+  assert.equal(localStorage.getItem('xwx-deck.onboardingSeen'),'true');
+  assert.equal(localStorage.getItem('xwx-deck.onboardingProgress.v1'),null);
   assert.equal(imports,0);
   console.log('PASS four-step real component walkthrough supports back and finish without configuration writes or Trace activation');
+  console.log('PASS restart and Escape resume the same tour step; explicit finish/skip clear progress; invalid progress starts safely');
 } finally { await act(async () => root.unmount()); dom.window.close(); }

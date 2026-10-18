@@ -51,7 +51,7 @@ try {
   await absent(join(root, 'not-created')); assert.deepEqual(await readFile(settings), before);
   assert.equal((await rpc('getState')).traceRoot, initial.traceRoot);
   pass('all input paths validate before creating directories or changing persisted/runtime selection');
-  const linked = join(root, 'linked'), destination = join(root, 'destination'); await mkdir(destination); await symlink(destination, linked);
+  const linked = join(root, 'linked'), destination = join(root, 'destination'); await mkdir(destination); await symlink(destination, linked, process.platform === 'win32' ? 'junction' : 'dir');
   await assert.rejects(rpc('updateTraceDirectories', { traceRoot: join(linked, 'never-created') }), /符号链接/);
   await absent(join(destination, 'never-created')); assert.deepEqual(await readFile(settings), before);
   pass('a missing leaf below a symlink is rejected before creating anything in its destination');

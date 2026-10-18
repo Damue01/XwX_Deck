@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { canonicalOfficialModelId, normalizeProtocolTable, mergeOfficialModels } from '../build/official-models.mjs';
+import { canonicalOfficialModelId, expandProtocolTable, normalizeProtocolTable, mergeOfficialModels } from '../build/official-models.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
 const table = JSON.parse(await readFile(resolve(root, 'assets/model-protocols.json'), 'utf8'));
+const modelsDev = JSON.parse(await readFile(resolve(root, 'assets/models-dev-capabilities.json'), 'utf8'));
 const normalized = normalizeProtocolTable(table);
-assert.equal(normalized.models.length, 40);
+assert.equal(normalized.models.length, 48);
+assert.ok(normalized.providerDefaults.length >= 30);
+assert.ok(normalized.modelRules.length >= 15);
 const protocols = id => normalized.models.find(row => row.modelId === id)?.protocols ?? [];
 assert.deepEqual(protocols('qwen3.8-max'), ['openai-responses', 'chat-completions', 'anthropic-messages']);
 assert.deepEqual(protocols('qwen3-coder-plus'), ['chat-completions']);
@@ -15,6 +18,16 @@ assert.deepEqual(protocols('kimi-k2.7-code'), ['chat-completions', 'anthropic-me
 assert.deepEqual(protocols('MiniMax-M3'), ['openai-responses', 'chat-completions', 'anthropic-messages']);
 assert.equal(canonicalOfficialModelId('qwen3.7-max-2026-05-20'), canonicalOfficialModelId('qwen3.7-max'));
 assert.equal(canonicalOfficialModelId('deepseek-v4-pro-ga-260813'), canonicalOfficialModelId('deepseek-v4-pro'));
+
+const expanded = expandProtocolTable(table, modelsDev.catalog);
+assert.ok(expanded.models.length > 400, 'provider defaults must expand to the current catalog');
+const generated = id => expanded.models.find(row => row.modelId === id)?.protocols ?? [];
+assert.deepEqual(generated('gpt-4o'), ['openai-responses', 'chat-completions']);
+assert.deepEqual(generated('gpt-3.5-turbo'), ['chat-completions']);
+assert.deepEqual(generated('claude-opus-4-7'), ['anthropic-messages']);
+assert.deepEqual(generated('mistral-large-4'), ['chat-completions']);
+assert.deepEqual(generated('anthropic/claude-opus-4.7'), ['chat-completions', 'anthropic-messages']);
+assert.deepEqual(generated('openai/gpt-5.5'), ['openai-responses', 'chat-completions']);
 
 const existing = {
   modelId: 'deepseek-flash',
@@ -26,7 +39,7 @@ const existing = {
   claudeOneMillionRoles: [],
   codexRecommendedProtocol: 'chat-completions'
 };
-const merged = mergeOfficialModels([existing], table);
+const merged = mergeOfficialModels([existing], expanded);
 const flash = merged.find(row => row.modelId === 'deepseek-flash');
 assert.deepEqual(flash.protocols, ['openai-responses', 'chat-completions', 'anthropic-messages']);
 assert.equal(flash.capability.contextWindow, 999, 'existing curated capability must win');
@@ -56,4 +69,4 @@ assert.throws(() => normalizeProtocolTable({
   models: [table.models[0], { ...table.models[0], modelId: table.models[0].modelId.toUpperCase() }]
 }), /duplicate canonical model identity/);
 
-console.log('PASS model protocol table: 40 verified rows, explicit protocols, source allowlist, merge precedence and duplicate rejection');
+console.log('PASS model protocol table: 48 verified rows, provider expansion, explicit protocols, source allowlist, merge precedence and duplicate rejection');

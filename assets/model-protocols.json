@@ -125,6 +125,90 @@
     "minimax-models": {
       "label": "MiniMax OpenAI SDK supported models",
       "url": "https://platform.minimax.cn/docs/api-reference/text-openai-api"
+    },
+    "openai-responses": {
+      "label": "OpenAI Responses API",
+      "url": "https://platform.openai.com/docs/api-reference/responses"
+    },
+    "openai-chat": {
+      "label": "OpenAI Chat Completions API",
+      "url": "https://platform.openai.com/docs/api-reference/chat"
+    },
+    "anthropic-messages": {
+      "label": "Anthropic Messages API",
+      "url": "https://platform.claude.com/docs/en/api/messages"
+    },
+    "xai-api": {
+      "label": "xAI inference API",
+      "url": "https://docs.x.ai/developers/rest-api-reference/inference"
+    },
+    "mistral-api": {
+      "label": "Mistral API",
+      "url": "https://docs.mistral.ai/api"
+    },
+    "groq-api": {
+      "label": "Groq API reference",
+      "url": "https://console.groq.com/docs/api-reference"
+    },
+    "cerebras-api": {
+      "label": "Cerebras Chat Completions",
+      "url": "https://inference-docs.cerebras.ai/api-reference/chat-completions"
+    },
+    "perplexity-api": {
+      "label": "Perplexity API",
+      "url": "https://docs.perplexity.ai"
+    },
+    "together-api": {
+      "label": "Together Chat Completions",
+      "url": "https://docs.together.ai/reference/chat-completions"
+    },
+    "fireworks-api": {
+      "label": "Fireworks API",
+      "url": "https://docs.fireworks.ai"
+    },
+    "nvidia-api": {
+      "label": "NVIDIA NIM LLM APIs",
+      "url": "https://docs.api.nvidia.com/nim/reference/llm-apis"
+    },
+    "huggingface-api": {
+      "label": "Hugging Face Chat Completion",
+      "url": "https://huggingface.co/docs/inference-providers/tasks/chat-completion"
+    },
+    "siliconflow-api": {
+      "label": "SiliconFlow API guide",
+      "url": "https://docs.siliconflow.cn/docs/userguide/quickstart"
+    },
+    "stepfun-api": {
+      "label": "StepFun API docs",
+      "url": "https://platform.stepfun.com"
+    },
+    "tencent-api": {
+      "label": "Tencent TokenHub API",
+      "url": "https://cloud.tencent.com/document/product/1823/130078"
+    },
+    "zai-api": {
+      "label": "Z.AI API guide",
+      "url": "https://docs.z.ai/guides/overview/quick-start"
+    },
+    "google-openai": {
+      "label": "Gemini OpenAI compatibility",
+      "url": "https://ai.google.dev/gemini-api/docs/openai"
+    },
+    "openrouter-chat": {
+      "label": "OpenRouter API reference",
+      "url": "https://openrouter.ai/docs/api-reference/overview"
+    },
+    "openrouter-responses": {
+      "label": "OpenRouter Responses API",
+      "url": "https://openrouter.ai/docs/api_reference/responses/overview"
+    },
+    "openrouter-messages": {
+      "label": "OpenRouter Messages endpoint",
+      "url": "https://openrouter.ai/docs/api/api-reference/batch/create-a-batch"
+    },
+    "volcengine-api": {
+      "label": "Volcengine Ark API docs",
+      "url": "https://docs.volcengine.com/docs/ark/product-overview?lang=zh"
     }
   },
   "models": [
@@ -1262,6 +1346,872 @@
         "reasoning": true,
         "toolCalling": true
       }
+    },
+    {
+      "modelId": "qwen3.8-2.4t-a95b",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation",
+        "alibaba-responses",
+        "alibaba-messages"
+      ]
+    },
+    {
+      "modelId": "qwen3.8-27b",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation",
+        "alibaba-responses",
+        "alibaba-messages"
+      ]
+    },
+    {
+      "modelId": "qwen3.6-27b",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation",
+        "alibaba-messages"
+      ]
+    },
+    {
+      "modelId": "qwen3.6-35b-a3b",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation",
+        "alibaba-responses"
+      ]
+    },
+    {
+      "modelId": "qwen3.5-397b-a17b",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation",
+        "alibaba-responses",
+        "alibaba-messages"
+      ]
+    },
+    {
+      "modelId": "qwen3.5-122b-a10b",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation",
+        "alibaba-responses",
+        "alibaba-messages"
+      ]
+    },
+    {
+      "modelId": "qwen3.5-27b",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation",
+        "alibaba-responses",
+        "alibaba-messages"
+      ]
+    },
+    {
+      "modelId": "qwen3.5-35b-a3b",
+      "vendor": "Qwen",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation",
+        "alibaba-responses",
+        "alibaba-messages"
+      ]
+    }
+  ],
+  "providerDefaults": [
+    {
+      "providerId": "anthropic",
+      "vendor": "Anthropic",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "anthropic-messages"
+      ]
+    },
+    {
+      "providerId": "openai",
+      "vendor": "OpenAI",
+      "protocols": [
+        "openai-responses",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "openai-responses",
+        "openai-chat"
+      ]
+    },
+    {
+      "providerId": "xai",
+      "vendor": "xAI",
+      "protocols": [
+        "openai-responses",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "xai-api"
+      ]
+    },
+    {
+      "providerId": "mistral",
+      "vendor": "Mistral",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "mistral-api"
+      ]
+    },
+    {
+      "providerId": "groq",
+      "vendor": "Groq",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "groq-api"
+      ]
+    },
+    {
+      "providerId": "cerebras",
+      "vendor": "Cerebras",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "cerebras-api"
+      ]
+    },
+    {
+      "providerId": "perplexity",
+      "vendor": "Perplexity",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "perplexity-api"
+      ]
+    },
+    {
+      "providerId": "togetherai",
+      "vendor": "Together",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "together-api"
+      ]
+    },
+    {
+      "providerId": "fireworks-ai",
+      "vendor": "Fireworks",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "fireworks-api"
+      ]
+    },
+    {
+      "providerId": "nvidia",
+      "vendor": "NVIDIA",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "nvidia-api"
+      ]
+    },
+    {
+      "providerId": "huggingface",
+      "vendor": "Hugging Face",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "huggingface-api"
+      ]
+    },
+    {
+      "providerId": "siliconflow",
+      "vendor": "SiliconFlow",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "siliconflow-api"
+      ]
+    },
+    {
+      "providerId": "siliconflow-cn",
+      "vendor": "SiliconFlow",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "siliconflow-api"
+      ]
+    },
+    {
+      "providerId": "stepfun",
+      "vendor": "StepFun",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "stepfun-api"
+      ]
+    },
+    {
+      "providerId": "stepfun-ai",
+      "vendor": "StepFun",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "stepfun-api"
+      ]
+    },
+    {
+      "providerId": "stepfun-step-plan",
+      "vendor": "StepFun",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "stepfun-api"
+      ]
+    },
+    {
+      "providerId": "tencent-tokenhub",
+      "vendor": "Tencent TokenHub",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "tencent-api"
+      ]
+    },
+    {
+      "providerId": "tencent-coding-plan",
+      "vendor": "Tencent TokenHub",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "tencent-api"
+      ]
+    },
+    {
+      "providerId": "zai",
+      "vendor": "Z.AI",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "zai-api"
+      ]
+    },
+    {
+      "providerId": "zai-coding-plan",
+      "vendor": "Z.AI",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "zai-api"
+      ]
+    },
+    {
+      "providerId": "google",
+      "vendor": "Gemini",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "google-openai"
+      ]
+    },
+    {
+      "providerId": "openrouter",
+      "vendor": "OpenRouter",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "openrouter-chat"
+      ]
+    },
+    {
+      "providerId": "volcengine",
+      "vendor": "Volcengine Ark",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "volcengine-api"
+      ]
+    },
+    {
+      "providerId": "alibaba",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation"
+      ]
+    },
+    {
+      "providerId": "alibaba-cn",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation"
+      ]
+    },
+    {
+      "providerId": "alibaba-coding-plan",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation"
+      ]
+    },
+    {
+      "providerId": "alibaba-coding-plan-cn",
+      "vendor": "Qwen",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation"
+      ]
+    },
+    {
+      "providerId": "moonshotai",
+      "vendor": "Kimi",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-api-chat",
+        "kimi-api-messages"
+      ]
+    },
+    {
+      "providerId": "moonshotai-cn",
+      "vendor": "Kimi",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-api-chat",
+        "kimi-api-messages"
+      ]
+    },
+    {
+      "providerId": "kimi-code-plan-cn",
+      "vendor": "Kimi",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-codex",
+        "kimi-claude",
+        "kimi-api-chat"
+      ]
+    },
+    {
+      "providerId": "kimi-code-plan-global",
+      "vendor": "Kimi",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-codex",
+        "kimi-claude",
+        "kimi-api-chat"
+      ]
+    },
+    {
+      "providerId": "zhipuai",
+      "vendor": "Zhipu",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "glm-53"
+      ]
+    },
+    {
+      "providerId": "zhipuai-coding-plan",
+      "vendor": "Zhipu",
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "glm-53"
+      ]
+    },
+    {
+      "providerId": "minimax",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ]
+    },
+    {
+      "providerId": "minimax-cn",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ]
+    },
+    {
+      "providerId": "minimax-coding-plan",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ]
+    },
+    {
+      "providerId": "minimax-cn-coding-plan",
+      "vendor": "MiniMax",
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-openai-chat",
+        "minimax-anthropic"
+      ]
+    },
+    {
+      "providerId": "deepseek",
+      "vendor": "DeepSeek",
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "deepseek-pricing",
+        "deepseek-responses",
+        "deepseek-anthropic"
+      ]
+    }
+  ],
+  "modelRules": [
+    {
+      "providers": [
+        "openai"
+      ],
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "openai-chat"
+      ],
+      "prefix": [
+        "gpt-3.5"
+      ]
+    },
+    {
+      "providers": [
+        "openai"
+      ],
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "openai-chat"
+      ],
+      "prefix": [
+        "gpt-4-"
+      ]
+    },
+    {
+      "providers": [
+        "openai"
+      ],
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "openai-chat"
+      ],
+      "exact": [
+        "gpt-4"
+      ]
+    },
+    {
+      "providers": [
+        "openai"
+      ],
+      "protocols": [
+        "openai-responses",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "openai-responses",
+        "openai-chat"
+      ],
+      "prefix": [
+        "gpt-5",
+        "gpt-6",
+        "codex",
+        "o3",
+        "o4"
+      ]
+    },
+    {
+      "providers": [
+        "openrouter"
+      ],
+      "protocols": [
+        "anthropic-messages",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "openrouter-messages",
+        "openrouter-chat"
+      ],
+      "contains": [
+        "claude"
+      ]
+    },
+    {
+      "providers": [
+        "openrouter"
+      ],
+      "protocols": [
+        "openai-responses",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "openrouter-responses",
+        "openrouter-chat"
+      ],
+      "contains": [
+        "gpt-",
+        "codex",
+        "o3",
+        "o4"
+      ]
+    },
+    {
+      "providers": [
+        "openrouter"
+      ],
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "openrouter-chat"
+      ],
+      "contains": [
+        "gemini"
+      ]
+    },
+    {
+      "providers": [
+        "volcengine"
+      ],
+      "protocols": [
+        "openai-responses",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "volcengine-api"
+      ],
+      "contains": [
+        "doubao-seed",
+        "deepseek"
+      ]
+    },
+    {
+      "providers": [
+        "alibaba",
+        "alibaba-cn"
+      ],
+      "protocols": [
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation"
+      ],
+      "contains": [
+        "qwen3-coder"
+      ]
+    },
+    {
+      "providers": [
+        "alibaba",
+        "alibaba-cn"
+      ],
+      "protocols": [
+        "openai-responses",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation",
+        "alibaba-responses"
+      ],
+      "contains": [
+        "qwen3.8",
+        "qwen3.7",
+        "qwen3.6",
+        "qwen3.5"
+      ]
+    },
+    {
+      "providers": [
+        "alibaba",
+        "alibaba-cn"
+      ],
+      "protocols": [
+        "openai-responses",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "alibaba-text-generation",
+        "alibaba-responses"
+      ],
+      "contains": [
+        "deepseek-v4",
+        "glm-5.3",
+        "glm-5.2",
+        "kimi-k3"
+      ]
+    },
+    {
+      "providers": [
+        "moonshotai",
+        "moonshotai-cn"
+      ],
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-codex",
+        "kimi-claude",
+        "kimi-api-chat"
+      ],
+      "contains": [
+        "kimi-k3",
+        "k3"
+      ]
+    },
+    {
+      "providers": [
+        "moonshotai",
+        "moonshotai-cn"
+      ],
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-api-chat",
+        "kimi-api-messages"
+      ],
+      "contains": [
+        "kimi-k2"
+      ]
+    },
+    {
+      "providers": [
+        "kimi-code-plan-cn",
+        "kimi-code-plan-global"
+      ],
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-api-chat",
+        "kimi-api-messages"
+      ],
+      "contains": [
+        "kimi-for-coding-highspeed"
+      ]
+    },
+    {
+      "providers": [
+        "kimi-code-plan-cn",
+        "kimi-code-plan-global"
+      ],
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "kimi-codex",
+        "kimi-claude",
+        "kimi-api-chat"
+      ],
+      "contains": [
+        "kimi-for-coding",
+        "k3"
+      ]
+    },
+    {
+      "providers": [
+        "zhipuai",
+        "zhipuai-coding-plan",
+        "zai",
+        "zai-coding-plan"
+      ],
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "glm-53",
+        "glm-responses",
+        "glm-claude"
+      ],
+      "prefix": [
+        "glm-5.3",
+        "glm-5.2"
+      ]
+    },
+    {
+      "providers": [
+        "zhipuai",
+        "zhipuai-coding-plan",
+        "zai",
+        "zai-coding-plan"
+      ],
+      "protocols": [
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "glm-claude"
+      ],
+      "prefix": [
+        "glm-5",
+        "glm-4"
+      ]
+    },
+    {
+      "providers": [
+        "minimax",
+        "minimax-cn",
+        "minimax-coding-plan",
+        "minimax-cn-coding-plan"
+      ],
+      "protocols": [
+        "openai-responses",
+        "chat-completions",
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "minimax-openai-chat",
+        "minimax-anthropic",
+        "minimax-responses"
+      ],
+      "contains": [
+        "minimax-m3"
+      ]
+    },
+    {
+      "providers": [
+        "anthropic"
+      ],
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "sourceIds": [
+        "anthropic-messages"
+      ],
+      "contains": [
+        "claude"
+      ]
+    },
+    {
+      "providers": [
+        "xai"
+      ],
+      "protocols": [
+        "openai-responses",
+        "chat-completions"
+      ],
+      "sourceIds": [
+        "xai-api"
+      ],
+      "contains": [
+        "grok"
+      ]
     }
   ]
 }

@@ -31,7 +31,7 @@ const methods = [
   'fetchModels', 'validateProvider', 'getClaudeEnvironmentOverrides', 'isChatGptRunning',
   'setTheme', 'setLanguage', 'setAutomaticUpdates', 'setTraceAppearance', 'setTraceStoragePolicy', 'toggleTracing', 'toggleClient',
   'updateCodexConfig', 'setModelService', 'refresh', 'disableBreaksCodex',
-  'minimizeWindow', 'toggleFullscreen', 'toggleMaximize', 'setManagerView', 'closeWindow',
+  'minimizeWindow', 'toggleFullscreen', 'toggleMaximize', 'setManagerView', 'closeWindow', 'confirmApplicationExit', 'acknowledgeApplicationResetResult',
   'moveWindowStart', 'moveWindow', 'moveWindowEnd', 'resizeWindowStart', 'resizeWindowMove', 'resizeWindowEnd',
   'openSetupWebsite', 'checkForUpdates', 'downloadUpdate', 'restartAndInstall', 'cancelUpdate',
   'setStartupEnabled', 'chooseTraceBackground', 'clearTraceBackground', 'repairApplication', 'migrateWebCryptoKey',
@@ -72,6 +72,7 @@ setInterval(() => {
   }).catch(() => undefined).finally(() => { checkingNotices = false; });
 }, 2000);
 native.event.listen('pilot-metadata', () => window.dispatchEvent(new CustomEvent('xwxdeck:metadata-changed')));
+native.event.listen('pilot-exit-requested', () => window.dispatchEvent(new Event('xwxdeck:request-exit')));
 native.event.listen('pilot-trace-action', (event: any) => {
   if (typeof event.payload === 'boolean') window.dispatchEvent(new CustomEvent('xwxdeck:trace-action', { detail: event.payload }));
 });

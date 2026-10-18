@@ -46,6 +46,19 @@ function tourSteps(): readonly TourStep[] { return [
 ]; }
 
 const STORAGE_KEY = 'xwx-deck.onboardingSeen';
+const PROGRESS_KEY = 'xwx-deck.onboardingProgress.v1';
+interface Progress { preparing: boolean; setupStep: number; index: number; }
+function readProgress(): Progress {
+  const initial = { preparing: true, setupStep: 0, index: 0 };
+  try {
+    if (new URLSearchParams(location.search).get('tour') === '1') return initial;
+    const value = JSON.parse(localStorage.getItem(PROGRESS_KEY) ?? 'null');
+    if (value && typeof value.preparing === 'boolean' && Number.isInteger(value.setupStep)
+      && value.setupStep >= 0 && value.setupStep <= 2 && Number.isInteger(value.index)
+      && value.index >= 0 && value.index < 4) return value;
+  } catch { /* Unavailable or invalid storage starts a fresh guide. */ }
+  return initial;
+}
 const PAD = 8; // 高亮框外扩
 
 interface Rect { top: number; left: number; width: number; height: number; round: boolean; }
@@ -56,6 +69,7 @@ function navigateTo(page: PageId): void {
 
 export function OnboardingTour(): React.ReactElement | null {
   const language = useLanguage();
+  const [initial] = React.useState(readProgress);
   const [active, setActive] = React.useState<boolean>(() => {
     try {
       const query = new URLSearchParams(location.search);
@@ -65,25 +79,31 @@ export function OnboardingTour(): React.ReactElement | null {
       return localStorage.getItem(STORAGE_KEY) !== 'true';
     } catch { return true; }
   });
-  const [preparing, setPreparing] = React.useState(true);
-  const [index, setIndex] = React.useState(0);
+  const [preparing, setPreparing] = React.useState(initial.preparing);
+  const [setupStep, setSetupStep] = React.useState(initial.setupStep);
+  const [index, setIndex] = React.useState(initial.index);
   const [rect, setRect] = React.useState<Rect | null>(null);
 
   const STEPS = React.useMemo(tourSteps, [language]);
   const step = STEPS[index];
 
   const finish = React.useCallback(() => {
-    try { localStorage.setItem(STORAGE_KEY, 'true'); } catch { /* ignore */ }
+    try { localStorage.setItem(STORAGE_KEY, 'true'); localStorage.removeItem(PROGRESS_KEY); } catch { /* ignore */ }
     setActive(false);
     navigateTo('signal');
   }, []);
 
+  React.useLayoutEffect(() => {
+    if (!active) return;
+    try { localStorage.setItem(PROGRESS_KEY, JSON.stringify({ preparing, setupStep, index })); } catch { /* ignore */ }
+  }, [active, preparing, setupStep, index]);
+
   React.useEffect(() => {
     if (!active || preparing) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') finish(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setActive(false); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [active, preparing, finish]);
+  }, [active, preparing]);
 
   React.useEffect(() => {
     if (active) document.body.dataset.tourActive = 'true';
@@ -151,7 +171,8 @@ export function OnboardingTour(): React.ReactElement | null {
 
   if (!active || !step) return null;
 
-  if (preparing) return <OnboardingSetup onDone={() => setPreparing(false)} onSkip={finish} />;
+  if (preparing) return <OnboardingSetup initialStep={setupStep} onStepChange={setSetupStep}
+    onDone={() => setPreparing(false)} onSkip={finish} onDismiss={() => setActive(false)} />;
 
   const last = index === STEPS.length - 1;
 

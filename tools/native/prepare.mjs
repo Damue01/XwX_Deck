@@ -1,7 +1,7 @@
 import { cp, mkdir, readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import esbuild from 'esbuild';
-import { mergeOfficialModels } from '../build/official-models.mjs';
+import { expandProtocolTable, mergeOfficialModels } from '../build/official-models.mjs';
 
 const pilot = import.meta.dirname;
 const root = resolve(pilot, '../..');
@@ -52,6 +52,7 @@ try {
   // Retired capability tables must not remain in the embedded resource set.
   for (const retired of ['builtin-models.json', 'probed-models.json']) await rm(resolve(assets, retired), { force: true });
   const protocolTable = JSON.parse(await readFile(resolve(root, 'assets/model-protocols.json'), 'utf8'));
-  await writeFile(resolve(assets, 'official-models.json'), JSON.stringify(mergeOfficialModels(OFFICIAL_MODEL_REGISTRY, protocolTable)));
+  const modelsDev = JSON.parse(await readFile(resolve(root, 'assets/models-dev-capabilities.json'), 'utf8'));
+  await writeFile(resolve(assets, 'official-models.json'), JSON.stringify(mergeOfficialModels(OFFICIAL_MODEL_REGISTRY, expandProtocolTable(protocolTable, modelsDev.catalog))));
   await writeFile(resolve(assets, 'setup-websites.json'), JSON.stringify(Object.fromEntries(['darwin','win32','linux'].map(platform=>[platform,Object.fromEntries(['arm64','x64'].map(arch=>[arch,setupWebsitesFor(platform,arch)]))]))));
 } finally { await rm(temporary, { recursive: true }); }

@@ -65,6 +65,7 @@
 | [codex-models-renderer-test.mjs](../tools/native/codex-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |
 | [metadata-test.mjs](../tools/native/metadata-test.mjs) | 后端默认入口 | MO06 |
 | [model-metadata-consumption-test.mjs](../tools/native/model-metadata-consumption-test.mjs) | 后端默认入口 | MO01、MO03、CL01 |
+| [model-protocols-test.mjs](../tools/native/model-protocols-test.mjs) | 后端默认入口 | MO01 |
 | [models-dev-unification-test.mjs](../tools/native/models-dev-unification-test.mjs) | 后端默认入口 | CO02、CO04、MO01、MO06 |
 | [official-catalog-test.mjs](../tools/native/official-catalog-test.mjs) | 后端默认入口 | MO01 |
 | [protocol-test.mjs](../tools/native/protocol-test.mjs) | 后端默认入口 | MO01、MO02、MO03、MO06 |
@@ -173,6 +174,7 @@
 | [language-renderer-test.mjs](../tools/native/language-renderer-test.mjs) | 后端默认入口 | UI02、UI03、UI05、UI07 |
 | [language-test.mjs](../tools/native/language-test.mjs) | 后端默认入口 | UI07 |
 | [onboarding-renderer-test.mjs](../tools/native/onboarding-renderer-test.mjs) | 后端默认入口 | UI01、UI02、UI03、UI05 |
+| [onboarding-restart-test.mjs](../tools/native/onboarding-restart-test.mjs) | 独立专题入口 | UI01 |
 | [preferences-test.mjs](../tools/native/preferences-test.mjs) | 后端默认入口 | SE02、SE03、SE04、AC01、UI04、LF03 |
 | [shared-fonts-test.mjs](../tools/native/shared-fonts-test.mjs) | 独立专题入口 | UI07 |
 | [subscription-import-renderer-test.mjs](../tools/native/subscription-import-renderer-test.mjs) | 后端默认入口 | UI01 |

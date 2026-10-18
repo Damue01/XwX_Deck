@@ -1,18 +1,26 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, copyFile, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, copyFile, readFile, writeFile, access, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { nativeTestBinary } from './test-support.mjs';
+import { rustToolchain } from './toolchain.mjs';
 
 if (process.platform !== 'win32') { console.log('SKIP physical Windows EXE replacement: requires native Windows; Mac updates use manual DMG'); process.exit(0); }
 const root = await mkdtemp(join(tmpdir(), 'xwx-physical-update-'));
 const fixture = resolve(import.meta.dirname, 'portable-update-fixture.rs');
 const original = join(root, 'old.exe'), newer = join(root, 'new.exe');
-execFileSync('rustc', ['--edition=2021', '-O', fixture, '-o', original]);
-execFileSync('rustc', ['--edition=2021', '-O', '--cfg', 'fixture_new', fixture, '-o', newer]);
+const toolchain = rustToolchain(resolve(import.meta.dirname, '../..'));
+const compileRoot=await mkdtemp(join(toolchain.env.TEMP,'portable-update-fixture-'));
+try {
+  for(const [name,destination,flags] of [['old.exe',original,[]],['new.exe',newer,['--cfg','fixture_new']]]) {
+    const output=join(compileRoot,name);
+    execFileSync(toolchain.rustc,['--edition=2021','-O',...flags,fixture,'-o',output],{env:toolchain.env,windowsHide:true});
+    await copyFile(output,destination);
+  }
+} finally { await rm(compileRoot,{recursive:true,force:true}); }
 const hash = async path => createHash('sha256').update(await readFile(path)).digest('hex');
 const oldHash = await hash(original), newHash = await hash(newer);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));

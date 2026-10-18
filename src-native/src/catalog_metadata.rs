@@ -124,6 +124,14 @@ pub(super) fn attach(entry: &mut Value, row: &Value) {
     let mut cap = json!({});
     for (key, paths) in [
         (
+            "recommendedContextWindow",
+            vec![
+                "/recommended_context_window",
+                "/default_context_window",
+                "/recommendedContextWindow",
+            ],
+        ),
+        (
             "contextWindow",
             vec![
                 "/context_window",

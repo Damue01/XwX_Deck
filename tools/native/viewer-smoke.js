@@ -1,5 +1,5 @@
 (async()=>{
- const checks=[];const delay=ms=>new Promise(r=>setTimeout(r,ms));const wait=async(test,label,timeout=15000)=>{for(let i=0;i<timeout/100;i++){if(test())return;await delay(100);}throw Error(label);};const check=(label,value)=>{if(!value)throw Error(label);checks.push(label);};
+ const checks=[],environmentBlocks=[];const delay=ms=>new Promise(r=>setTimeout(r,ms));const wait=async(test,label,timeout=15000)=>{for(let i=0;i<timeout/100;i++){if(test())return;await delay(100);}throw Error(label);};const check=(label,value)=>{if(!value)throw Error(label);checks.push(label);};
  let report;
  try{
   await wait(()=>document.querySelector('.dash-table tbody tr')&&liveConnected,'live native Trace table');
@@ -56,7 +56,9 @@
   check('native detail exposes the session folder action at the top right',!document.querySelector('#revealSession').hidden&&document.querySelector('#revealSession').getBoundingClientRect().width>0&&document.querySelector('#revealSession').textContent.includes('打开所在文件夹'));
   document.querySelector('#revealSession').click();
   await wait(()=>!document.querySelector('#revealSession').disabled,'native folder reveal finishes');
-  check('native WebKit folder action completes without an error',!document.querySelector('#toast')?.textContent);
+  const folderError=document.querySelector('#toast')?.textContent||'';
+  if(navigator.platform.startsWith('Win')&&folderError.includes('0x80070005'))environmentBlocks.push({check:'open session folder',error:folderError});
+  else check('native WebView folder action completes without an error: '+folderError,!folderError);
   check('request details have no separators between metrics and messages',!document.querySelector('.return-divider')&&[...document.querySelectorAll('.head .seg,.metrics .mcol,.metrics-detail .mdcol,.msg')].every(element=>getComputedStyle(element).borderLeftWidth==='0px'&&getComputedStyle(element).borderTopWidth==='0px'));
   const savedState=state,savedId=selectedId,savedSid=selectedSessionId;
   try{
@@ -88,7 +90,7 @@
     check('native WebKit decodes native compact summaries and shows the compact request label',compactFixture.innerText.includes('native compact summary') && compactFixture.innerText.includes('上下文压缩') && !compactFixture.innerText.includes('xwxc1:'));
   } finally { compactFixture.remove(); }
 
-  report={passed:true,checks,userAgent:navigator.userAgent};
+  report={passed:environmentBlocks.length===0,checks,environmentBlocks,userAgent:navigator.userAgent};
  }catch(error){report={...report,passed:false,checks,error:String(error)};}
  await fetch('/__native-viewer-smoke',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(report)});
 })();

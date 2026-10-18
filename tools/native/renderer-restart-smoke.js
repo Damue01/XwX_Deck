@@ -35,6 +35,45 @@
   try {
     await wait(() => window.xwxDeck && document.querySelector('#captureBtn'));
     const boot = window.__nativeRendererPreferencesBoot;
+    if (stage >= 5) {
+      const providers = JSON.stringify(await window.xwxDeck.getProviders());
+      if (stage === 5) {
+        await wait(() => document.querySelector('.onboarding-panel[data-step="0"]'));
+        document.querySelector('.onboarding-start').click();
+        await wait(() => document.querySelector('.onboarding-panel[data-step="1"],.onboarding-panel[data-step="2"]'));
+        if (document.querySelector('.onboarding-panel[data-step="1"]')) document.querySelector('.onboarding-foot .btn.primary').click();
+        await wait(() => document.querySelector('.onboarding-panel[data-step="2"]'));
+        check('actual welcome controls persist the import step before application exit', JSON.parse(localStorage.getItem('xwx-deck.onboardingProgress.v1')).setupStep === 2);
+      } else if (stage === 6) {
+        await wait(() => document.querySelector('.onboarding-panel[data-step="2"]'));
+        check('full native process restart restores the import step without marking it complete', localStorage.getItem('xwx-deck.onboardingSeen') !== 'true');
+        await wait(() => [...document.querySelectorAll('.configuration-import-actions .btn.primary')].some(b => !b.disabled));
+        [...document.querySelectorAll('.configuration-import-actions .btn.primary')].find(b => !b.disabled).click();
+        await wait(() => document.querySelector('.tour-root[data-tour-index="0"]'));
+        document.querySelector('.tour-next').click();
+        await wait(() => document.querySelector('.tour-root[data-tour-index="1"]'));
+      } else if (stage === 7 || stage === 8) {
+        await wait(() => document.querySelector('.tour-root[data-tour-index="1"]'));
+        check('full native process restart restores the model walkthrough step', localStorage.getItem('xwx-deck.onboardingSeen') !== 'true');
+        if (stage === 7) {
+          window.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape'}));
+          await wait(() => !document.querySelector('.tour-root'));
+          check('Escape suspends the guide and keeps its saved step', JSON.parse(localStorage.getItem('xwx-deck.onboardingProgress.v1')).index === 1 && localStorage.getItem('xwx-deck.onboardingSeen') !== 'true');
+        } else {
+          for (const index of [1, 2, 3]) {
+            await wait(() => document.querySelector(`.tour-root[data-tour-index="${index}"]`));
+            document.querySelector('.tour-next').click();
+          }
+          await wait(() => !document.querySelector('.tour-root'));
+          check('explicit finish clears progress and records completion', localStorage.getItem('xwx-deck.onboardingSeen') === 'true' && localStorage.getItem('xwx-deck.onboardingProgress.v1') === null);
+        }
+      } else {
+        check('finished guide stays dismissed after another native process restart', !document.querySelector('#onboarding-setup,.tour-root') && localStorage.getItem('xwx-deck.onboardingSeen') === 'true');
+      }
+      check('resuming the guide never changes providers or activates Trace', JSON.stringify(await window.xwxDeck.getProviders()) === providers && !(await window.xwxDeck.getState()).tracingEnabled);
+      await window.__TAURI__.core.invoke('pilot_smoke_report', {report:{passed:true,stage,checks,nativeWebView:true,persistentStore:true,isolatedFixtures:true}});
+      return;
+    }
     const modelsFoldKey = 'xwx-deck:settings:models:expanded:v1';
     const applicationFoldKey = 'xwx-deck:settings:application:expanded:v1';
     check('legacy migration marker survives or is set before React', localStorage.getItem('xwxdeck.rendererMigration.v1') === 'done');

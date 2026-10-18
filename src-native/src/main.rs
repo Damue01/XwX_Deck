@@ -726,6 +726,44 @@ async fn pilot_rpc(
             }
             Ok(Value::Null)
         }
+        "smokeRequestExit" if std::env::args().any(|arg| arg == "--smoke") => {
+            app.exit(0);
+            Ok(Value::Null)
+        }
+        "confirmApplicationExit" => {
+            pilot.lock().await.stop().await?;
+            app.exit(0);
+            Ok(Value::Null)
+        }
+        "acknowledgeApplicationResetResult" => {
+            let result = pilot
+                .lock()
+                .await
+                .call("getApplicationResetResult", &[])
+                .await?;
+            if result.is_null() || result["atMs"] != args.first().cloned().unwrap_or(Value::Null) {
+                return Err("重置记录已变化，请重新检查".into());
+            }
+            if args.get(1) == Some(&json!(true)) {
+                let backup = result["backupPath"]
+                    .as_str()
+                    .map(PathBuf::from)
+                    .filter(|p| p.is_absolute() && p.is_dir())
+                    .ok_or("备份目录不可用")?;
+                app.opener()
+                    .open_path(backup.to_string_lossy().into_owned(), None::<&str>)
+                    .map_err(|e| e.to_string())?;
+            }
+            pilot
+                .lock()
+                .await
+                .call(
+                    "ackApplicationResetResult",
+                    &[json!({"atMs":result["atMs"]})],
+                )
+                .await?;
+            Ok(Value::Null)
+        }
         _ => {
             let mut pilot = pilot.lock().await;
             if method == "toggleTracing" {
@@ -1239,7 +1277,7 @@ fn main() {
     let restart_stage = if smoke {
         argument("--smoke-renderer-restart")
             .and_then(|s| s.parse::<u8>().ok())
-            .filter(|n| (1..=4).contains(n))
+            .filter(|n| (1..=9).contains(n))
     } else {
         None
     };
@@ -1454,26 +1492,6 @@ fn main() {
         .expect("failed to build XwX Deck native host");
     let exit_retry_pending = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     app.run(move |handle, event| match event {
-        tauri::RunEvent::Ready if !smoke => {
-            let shared=pilot.clone();let app=handle.clone();
-            tauri::async_runtime::spawn(async move {
-                let Ok(result)=shared.lock().await.call("getApplicationResetResult",&[]).await else{return;};
-                if result.is_null() || result["noticeSeen"]==true{return;}
-                let Some(backup)=result["backupPath"].as_str().map(PathBuf::from) else{return;};
-                if !backup.is_absolute() || !backup.is_dir(){return;}
-                let failed=result["status"]!="completed";
-                let skipped=result["skippedClientFiles"].as_array().map(Vec::len).unwrap_or(0);
-                let detail=if failed {format!("重置未完成：{}",result["reason"].as_str().unwrap_or("请检查恢复记录"))}
-                    else if skipped>0 {format!("应用重置完成；{skipped} 个客户端文件因外部变化或占用而保留，请核对后再处理。")}
-                    else {"应用已重置，原数据与凭据恢复记录已归档。客户端历史、Skills 与 Agents 保留。".to_owned()};
-                let dialog=app.dialog().message(format!("{detail}\n\n备份：{}",backup.display())).title(if failed {"重置未完成"}else{"重置完成"}).buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancelCustom("打开备份".into(),"继续".into()));
-                let dialog=if let Some(window)=app.get_webview_window("main"){dialog.parent(&window)}else{dialog};
-                dialog.show(move|open|{
-                    if open {let _=app.opener().open_path(backup.to_string_lossy().into_owned(),None::<&str>);}
-                    tauri::async_runtime::spawn(async move{let _=shared.lock().await.call("ackApplicationResetResult",&[json!({"atMs":result["atMs"]})]).await;});
-                });
-            });
-        }
         tauri::RunEvent::ExitRequested { api, .. } => {
             if std::env::args().any(|a| a == "--smoke") {
                 eprintln!("native-exit-requested");
@@ -1499,43 +1517,8 @@ fn main() {
             };
             if active {
                 api.prevent_exit();
-                {
-                    let shared = pilot.clone();
-                    let handle = handle.clone();
-                    show_main(&handle);
-                    let dialog = handle
-                        .dialog()
-                        .message("退出前将停止 Trace 并恢复客户端直连；尚未完成的请求可能中断。")
-                        .title("退出 XwX Deck")
-                        .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancelCustom(
-                            "恢复直连并退出".into(),
-                            "继续运行".into(),
-                        ));
-                    let dialog = if let Some(window) = handle.get_webview_window("main") {
-                        dialog.parent(&window)
-                    } else {
-                        dialog
-                    };
-                    dialog.show(move |accepted| {
-                        if std::env::args().any(|a| a == "--smoke") {
-                            eprintln!("native-exit-confirmed {accepted}");
-                        }
-                        if accepted {
-                            tauri::async_runtime::spawn(async move {
-                                let result = shared.lock().await.stop().await;
-                                if let Err(error) = result {
-                                    handle
-                                        .dialog()
-                                        .message(error)
-                                        .title("配置恢复未完成，Gateway 继续运行")
-                                        .show(|_| {});
-                                } else {
-                                    handle.exit(0);
-                                }
-                            });
-                        }
-                    });
-                }
+                show_main(handle);
+                let _ = handle.emit("pilot-exit-requested", ());
             }
         }
         tauri::RunEvent::Exit => {

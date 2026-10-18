@@ -7,8 +7,8 @@ import { once } from 'node:events';
 import { createHash } from 'node:crypto';
 import { verifyCandidate } from './source-fingerprint.mjs';
 
-const binary = resolve(process.env.XWX_NATIVE_TEST_BINARY ?? 'test-results/rust-pilot-package/XwXDeck Rust Validation.app/Contents/MacOS/xwx-deck-native');
-const build = JSON.parse(await readFile(resolve(process.env.XWX_NATIVE_TEST_BUILD_REPORT ?? 'test-results/rust-pilot-package/native-build-report.json'), 'utf8'));
+const binary = resolve(process.env.XWX_NATIVE_TEST_BINARY ?? (process.platform === 'win32' ? 'test-results/native-package/XwX Deck.exe' : 'test-results/rust-pilot-package/XwXDeck Rust Validation.app/Contents/MacOS/xwx-deck-native'));
+const build = JSON.parse(await readFile(resolve(process.env.XWX_NATIVE_TEST_BUILD_REPORT ?? (process.platform === 'win32' ? 'test-results/native-package/native-build-report.json' : 'test-results/rust-pilot-package/native-build-report.json')), 'utf8'));
 const provenance = await verifyCandidate({ root: resolve('.'), report: build, binary, allowManualAcceptance: Boolean(process.env.XWX_NATIVE_TEST_BINARY && process.env.XWX_NATIVE_TEST_BUILD_REPORT) });
 const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-window-lifecycle-'));
 await writeFile(join(root,'.xwx-rust-pilot'),'isolated-rust-pilot-v1\n');

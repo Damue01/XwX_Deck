@@ -16,6 +16,12 @@
     await window.__TAURI__.core.invoke('pilot_smoke_progress',{checks,pending:'read reset state'});
     const reset=await window.xwxDeck.getApplicationResetResult();
     if(reset){
+      await wait(()=>document.querySelector('[role="alertdialog"]')?.textContent.includes(reset.backupPath),'designed reset result');
+      const resultDialog=document.querySelector('[role="alertdialog"]');
+      check('reset result uses the shared designed dialog with a backup continuation',resultDialog.textContent.includes(reset.backupPath)&&resultDialog.querySelectorAll('button').length===2);
+      [...resultDialog.querySelectorAll('button')].find(button=>['继续','Continue'].includes(button.textContent.trim())).click();
+      await wait(()=>!document.querySelector('[role="alertdialog"]'),'dismiss reset result');
+      await wait(async()=>(await window.xwxDeck.getApplicationResetResult()).noticeSeen===true,'reset notice acknowledged');
       check('independent worker completed reset and relaunched the same native executable',reset.status==='completed'&&reset.backupPath&&reset.skippedClientFiles.length===0);
       check('full reset clears an unknown localStorage key across a real process restart',localStorage.getItem('xwx-deck.synthetic.reset')===null);
       check('full reset clears IndexedDB rather than treating it as network cache',await value(false)===undefined);

@@ -107,6 +107,9 @@ impl OfficialCatalog {
             }
             if row["context_window"].as_u64().is_some_and(|n| n > 0) {
                 entry["contextWindow"] = row["context_window"].clone();
+                entry["codexContextWindow"] = row["context_window"].clone();
+                entry["codexContextWindowSource"] = json!("codex");
+                entry["nativeCodexContextWindow"] = row["context_window"].clone();
             }
             if row["input_modalities"].is_array() {
                 entry["inputModalities"] = row["input_modalities"].clone();
@@ -952,9 +955,9 @@ impl Pilot {
                 let bytes=response.bytes().await.map_err(err)?;if bytes.len()>8*1024*1024{return Err("模型目录超过 8 MB 上限".into());}
                 let body:Value=serde_json::from_slice(&bytes).map_err(|_|"无效模型目录 JSON".to_string())?;
                 let rows=body["data"].as_array().or_else(||body.as_array()).ok_or("无效模型列表")?;
-                let official:Value=serde_json::from_str(include_str!("../../test-results/native-assets/official-models.json")).map_err(err)?;
+                let official=catalog::official_protocol_registry();
                 let entries:Vec<_>=rows.iter().filter_map(|m|m["id"].as_str().map(|id|{
-                    let known=official.as_array().unwrap().iter().find(|e|catalog::official_model_key(text(e,"modelId"))==catalog::official_model_key(id));
+                    let known=official.as_array().unwrap().iter().find(|e|text(e,"modelId").eq_ignore_ascii_case(id)).or_else(||official.as_array().unwrap().iter().find(|e|catalog::official_model_key(text(e,"modelId"))==catalog::official_model_key(id)));
                     let explicit=match provider.adapter.as_str(){"responses"=>Some("openai-responses"),"chat-completions"=>Some("chat-completions"),"anthropic-messages"=>Some("anthropic-messages"),_=>None};
                     let declared=m["protocols"].as_array().or_else(||m["supported_endpoint_types"].as_array()).map(|values|values.iter().filter_map(|v|v.as_str()).filter_map(|s|match s {"responses"|"openai-responses"=>Some("openai-responses"),"chat"|"chat-completions"|"chat_completion"=>Some("chat-completions"),"anthropic"|"messages"|"anthropic-messages"=>Some("anthropic-messages"),_=>None}).map(|s|json!(s)).collect::<Vec<_>>()).filter(|a|!a.is_empty());
                     let protocols=if let Some(p)=explicit{json!([p])}else if let Some(p)=declared.clone(){json!(p)}else if let Some(e)=known{e["protocols"].clone()}else{json!(["openai-responses","chat-completions","anthropic-messages"])};

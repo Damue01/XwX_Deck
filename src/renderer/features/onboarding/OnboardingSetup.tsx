@@ -33,9 +33,13 @@ function SettlingTitle({ text }: { text: string }): React.ReactElement {
  * existing configurations. It covers the manager entirely; the feature
  * walkthrough that follows uses the spotlight over the real interface.
  */
-export function OnboardingSetup({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }): React.ReactElement {
+export function OnboardingSetup({ onDone, onSkip, onDismiss = onSkip, initialStep = 0, onStepChange }: {
+  onDone: () => void; onSkip: () => void; onDismiss?: () => void;
+  initialStep?: number; onStepChange?: (step: number) => void;
+}): React.ReactElement {
   useLanguage();
-  const [step, setStep] = React.useState(0);
+  const [step, setStep] = React.useState(initialStep);
+  React.useLayoutEffect(() => { onStepChange?.(step); }, [step, onStepChange]);
   const [importCount, setImportCount] = React.useState<number | null>(null);
   const [importBusy, setImportBusy] = React.useState(false);
   const [importActions, setImportActions] = React.useState<HTMLDivElement | null>(null);
@@ -84,7 +88,7 @@ export function OnboardingSetup({ onDone, onSkip }: { onDone: () => void; onSkip
 
   const detectionState = installs.error ? installs.error : !settled ? t('正在检测…') : '';
 
-  return <Dialog.Root open onOpenChange={open => { if (!open && !importBusy && !leaving) finish(onSkip); }}><Dialog.Portal>
+  return <Dialog.Root open onOpenChange={open => { if (!open && !importBusy && !leaving) finish(onDismiss); }}><Dialog.Portal>
     <Dialog.Popup initialFocus={() => panel.current?.querySelector<HTMLElement>('h1') ?? false} finalFocus={false} id="onboarding-setup" className={`onboarding-setup${leaving ? ' leaving' : ''}`} role="dialog" aria-modal="true" aria-label={t('新手引导')} data-field-host>
     <div className="onboarding-field" aria-hidden="true"><ParticleField scale={58} flow={0.9} /></div>
     <div className="onboarding-panel" ref={panel} data-step={step}>

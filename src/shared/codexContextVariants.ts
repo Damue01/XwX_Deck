@@ -30,7 +30,7 @@ export function codexContextVariants(model: CodexContextCapableModel): readonly 
   const modelId = model.id.trim();
   const verifiedWindow = verifiedContextWindow(model);
   const defaultWindow = codexDefaultContextWindow(model);
-  if (!isGptModel(modelId) || defaultWindow === undefined) {
+  if (!isGptModel(modelId)) {
     return [{ modelId, label: modelId, contextWindow: null }];
   }
 
@@ -38,11 +38,11 @@ export function codexContextVariants(model: CodexContextCapableModel): readonly 
     const choices: CodexContextVariant[] = [
       {
         modelId,
-        label: `${modelId}[${formatContextWindow(defaultWindow)}]`,
+        label: defaultWindow === undefined ? modelId : `${modelId}[${formatContextWindow(defaultWindow)}]`,
         contextWindow: null
       }
     ];
-    if (defaultWindow !== CODEX_EXTENDED_CONTEXT_WINDOW) choices.push({
+    if (defaultWindow === undefined || defaultWindow < CODEX_EXTENDED_CONTEXT_WINDOW) choices.push({
         modelId,
         label: `${modelId}[${formatContextWindow(CODEX_EXTENDED_CONTEXT_WINDOW)}]`,
         contextWindow: CODEX_EXTENDED_CONTEXT_WINDOW
@@ -52,7 +52,7 @@ export function codexContextVariants(model: CodexContextCapableModel): readonly 
 
   return [{
     modelId,
-    label: `${modelId}[${formatContextWindow(defaultWindow)}]`,
+    label: defaultWindow === undefined ? modelId : `${modelId}[${formatContextWindow(defaultWindow)}]`,
     contextWindow: null
   }];
 }
@@ -62,10 +62,13 @@ export function codexDefaultContextWindow(model: CodexContextCapableModel): numb
   const verifiedWindow = verifiedContextWindow(model);
   if (Number.isSafeInteger(model.codexContextWindow) && (model.codexContextWindow ?? 0) > 0
     && model.codexContextWindowSource !== 'fallback'
+    && model.codexContextWindowSource !== 'models.dev'
     && (verifiedWindow !== undefined || ['codex', 'provider'].includes(model.codexContextWindowSource ?? ''))) {
     return verifiedWindow === undefined ? model.codexContextWindow : Math.min(model.codexContextWindow!, verifiedWindow);
   }
-  return verifiedWindow;
+  // Capacity is not an operational recommendation. Unknown defaults stay
+  // automatic instead of offering 1050K as another default next to 1M.
+  return undefined;
 }
 
 export function formatContextWindow(tokens: number): string {
@@ -86,6 +89,6 @@ function verifiedContextWindow(model: CodexContextCapableModel): number | undefi
 }
 
 function isGptModel(modelId: string): boolean {
-  const normalized = modelId.trim().toLowerCase().replace(/^models\//, '');
+  const normalized = modelId.trim().toLowerCase().split('/').at(-1) ?? '';
   return /^gpt(?:[-.]|$)/.test(normalized);
 }

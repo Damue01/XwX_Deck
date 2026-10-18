@@ -41,6 +41,7 @@
     "build:native:isolated": "npm run compile && node tools/native/build.mjs --pilot",
     "test:native:backend": "node tools/native/run-backend-tests.mjs",
     "test:native:webview": "node tools/native/native-test.mjs",
+    "test:native:onboarding-restart": "node tools/native/onboarding-restart-test.mjs",
     "test:native:window-lifecycle": "node tools/native/window-lifecycle-test.mjs",
     "start:native:isolated": "node tools/native/launch.mjs",
     "test:native:reset": "node tools/native/application-reset-test.mjs",

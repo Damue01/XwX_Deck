@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "@/styles.css";
 import { App } from "@/App";
 import { initTheme } from "@/lib/theme";
+import "../shared/edit-context-menu.browser.js";
 
 initTheme();
 

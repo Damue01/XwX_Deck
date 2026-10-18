@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';import{join,resolve}from'node:path';import{spawn}
 const root=await mkdtemp(join(await realpath(tmpdir()),'xwx-rust-protocol-'));
 const calls=[];const content='本地 protocol fixture';
 const upstream=createServer(async(req,res)=>{
+ if(req.url.endsWith('/models')){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'gpt-7-future'},{id:'kimi-k3-future'},{id:'qwen3.8-max-future'},{id:'gpt-7-chat-only',native_endpoints:['chat-completions']},{id:'private-future',native_endpoints:['responses']},{id:'unknown-future'}]}));return;}
  let data='';for await(const b of req)data+=b;const body=JSON.parse(data);calls.push({path:req.url,auth:req.headers.authorization,body});
  const callName=body.tools?.[0]?.function?.name??body.tools?.[0]?.name??'lookup';
  let response;
@@ -84,5 +85,20 @@ try{
  assert.deepEqual(imageMessages[2].content.map(part=>part.image_url),['low','high','auto','auto'].map(detail=>({url:toolImageUrl,detail})));
  pass('tool-result image payload and explicit low/high/auto detail survive the actual Chat route; omitted detail defaults to auto');
  await rpc('toggleTracing',false);
+ const auto='Protocol_auto';await rpc('saveProvider',{id:auto,displayName:auto,baseUrl:base,bearerToken:'key-auto',adapter:'auto',codexApiFormat:'chat-completions',codexModel:'gpt-7-future'});
+ await rpc('switchClientProvider',{client:'codex',providerId:auto});
+ await rpc('switchClientProvider',{client:'claude',providerId:auto});
+ const catalog=await rpc('fetchProviderModels',{providerId:auto,refresh:true});
+ assert.ok(catalog.find(m=>m.id==='gpt-7-future').officialProtocols.includes('openai-responses'));
+ state=await rpc('toggleTracing',true);
+ for(const id of ['gpt-7-future','kimi-k3-future','qwen3.8-max-future','private-future']){
+   await post(state,'codex',{model:id,input:'native route fixture'});assert.equal(calls.at(-1).path,'/v1/responses',id);assert.equal(calls.at(-1).body.input,'native route fixture');assert.equal(calls.at(-1).body.messages,undefined);
+ }
+ await post(state,'codex',{model:'gpt-7-chat-only',input:'declared chat'});assert.equal(calls.at(-1).path,'/v1/chat/completions');
+ await post(state,'codex',{model:'unknown-future',input:'connection default'});assert.equal(calls.at(-1).path,'/v1/chat/completions');
+ await rpc('updateClaudeModels',{sonnet:'kimi-k3-future'});
+ await post(state,'claude',{model:'sonnet',messages:[{role:'user',content:'native messages fixture'}],max_tokens:32});assert.equal(calls.at(-1).path,'/v1/messages');assert.equal(calls.at(-1).body.model,'kimi-k3-future');
+ await stopUnexecutedToolFixtures(rpc,1);
+ pass('live new GPT/Kimi/Qwen models use native Responses; Claude uses native Messages; explicit service Chat and unknown connection defaults win without probing or retry');
  child.stdin.end();const[code]=await once(child,'exit');assert.equal(code,0);console.log(JSON.stringify({passed:true,checks,sandbox:root,requests:calls.length}));
 }finally{if(child.exitCode===null)child.kill();await new Promise(resolve=>upstream.close(resolve));}

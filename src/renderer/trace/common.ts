@@ -5,6 +5,7 @@ import webviewCommonSource from './common.browser.js?raw';
 import traceCacheRateSource from '../../shared/trace-cache-rate.browser.js?raw';
 import traceUsageSource from '../../shared/trace-usage.browser.js?raw';
 import traceCostSource from '../../shared/trace-cost.browser.js?raw';
+import editContextMenuSource from '../../shared/edit-context-menu.browser.js?raw';
 
 /**
  * Return the browser helper as source text without passing it through the
@@ -13,5 +14,5 @@ import traceCostSource from '../../shared/trace-cost.browser.js?raw';
  * helper identifiers inside the serialised function.
  */
 export function webviewCommonScript(): string {
-  return modelsDevSource + '\n' + tracePricingSource + '\n' + formatBytesSource + '\n' + traceUsageSource + '\n' + traceCostSource + '\n' + traceCacheRateSource + '\n' + webviewCommonSource;
+  return modelsDevSource + '\n' + tracePricingSource + '\n' + formatBytesSource + '\n' + traceUsageSource + '\n' + traceCostSource + '\n' + traceCacheRateSource + '\n' + webviewCommonSource + '\n' + editContextMenuSource;
 }

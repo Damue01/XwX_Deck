@@ -7,7 +7,7 @@
     throw new Error(`Timed out: ${label}; page=${document.querySelector('.page.current')?.id}; clients=${JSON.stringify([...document.querySelectorAll('[data-client-tab]')].map(tab=>({id:tab.dataset.clientTab,selected:tab.getAttribute('aria-selected')})))}; dialogs=${JSON.stringify([...document.querySelectorAll('[role=dialog]:not([data-position])')].map(dialog=>dialog.id))}`);
   };
   const check = (label, value) => { if (!value) throw new Error(label); checks.push(label); void window.__TAURI__.core.invoke('pilot_smoke_progress', {checks: [...checks]}).catch(() => {}); };
-  const layerEvidence = [], hotSwitchNotices = [];
+  const layerEvidence = [], hotSwitchNotices = [], environmentBlocks = [];
   const toastByTitle = text => [...document.querySelectorAll('[data-slot=toast-title]')].filter(title => !title.closest('[aria-hidden=true]')).find(title => title.textContent === text)?.closest('[data-position]');
   const dismissToasts = async () => { for(let i=0; i<30; i++) { const titles=[...document.querySelectorAll('[data-slot=toast-title]')].filter(title=>!title.closest('[aria-hidden=true]')); if(!titles.length) return; for(const title of titles) title.closest('[data-position]')?.querySelector('[data-slot=toast-close]')?.click(); await delay(300); } };
   const publishNotice = notice => window.__TAURI__.core.invoke('pilot_rpc', {method:'smokeNotice',args:[notice]});
@@ -414,7 +414,11 @@
       document.querySelector('[data-service="deepseek"]').click(); await delay(150);
       check('download navigation retains service draft', document.querySelector('#provider-name').value === 'Retained_Draft');
       check('nonempty Key has one accessible reveal control and starts masked', document.querySelector('#provider-key').type === 'password' && document.querySelectorAll('.secret-input-visibility').length === 1 && document.querySelector('.secret-input-visibility').getAttribute('aria-label') === '显示 Key' && document.querySelector('.secret-input-visibility').getAttribute('aria-controls') === 'provider-key');
+      const maskedKey = document.querySelector('#provider-key');
+      const maskedKeySize = getComputedStyle(maskedKey).fontSize;
+      check('hidden Key retains its exact synthetic character count', maskedKey.value === 'isolated-draft-key' && maskedKey.value.length === 18);
       document.querySelector('.secret-input-visibility').click(); await delay(100);
+      check('revealing Key keeps character count, input size and typography unchanged', maskedKey.value.length === 18 && getComputedStyle(maskedKey).fontSize === maskedKeySize);
       check('reveal shows the retained Key without submitting or closing the editor', document.querySelector('#provider-key').type === 'text' && document.querySelector('#provider-key').value === 'isolated-draft-key' && document.querySelector('.secret-input-visibility').type === 'button' && document.querySelector('.secret-input-visibility').getAttribute('aria-pressed') === 'true' && document.querySelector('.secret-input-visibility').getAttribute('aria-label') === '隐藏 Key' && !!document.querySelector('#provider-editor'));
       document.querySelector('.secret-input-visibility').click(); await delay(100);
       check('second click masks Key', document.querySelector('#provider-key').type === 'password' && document.querySelector('.secret-input-visibility').getAttribute('aria-pressed') === 'false');
@@ -629,9 +633,31 @@
       }
       const request = await window.__TAURI__.core.invoke('pilot_rpc', { method: 'smokeRequest', args: [false] });
       check('native window real streaming round trip', request.status === 200 && request.body.includes('response.completed'));
+      await window.__TAURI__.core.invoke('pilot_rpc',{method:'smokeRequestExit',args:[]});
+      await wait(()=>document.querySelector('[role="alertdialog"]'),'designed exit confirmation');
+      const exitDialog=document.querySelector('[role="alertdialog"]');
+      check('native application exit renders the shared designed confirmation',exitDialog.textContent.includes('恢复直连并退出') && exitDialog.textContent.includes('继续运行'));
+      const edit=document.createElement('textarea');edit.value='isolated menu selection';exitDialog.appendChild(edit);edit.focus();edit.setSelectionRange(0,8);
+      const bounds=edit.getBoundingClientRect();
+      const menuEvent=new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:Math.min(innerWidth-10,bounds.left+10),clientY:Math.min(innerHeight-10,bounds.top+10)});
+      edit.dispatchEvent(menuEvent);
+      await wait(()=>document.querySelector('.xwx-edit-menu'),'designed edit menu in modal');
+      check('native WebView context menu suppresses system menu and exposes designed edit actions',menuEvent.defaultPrevented && document.querySelector('.xwx-edit-menu').textContent.includes('复制') && document.querySelector('.xwx-edit-menu').textContent.includes('粘贴'));
+      const selectAll=[...document.querySelectorAll('.xwx-edit-menu button')].find(button=>button.textContent==='全选');
+      const mr=selectAll.getBoundingClientRect();
+      check('edit menu remains clickable above the confirmation modal',document.elementFromPoint(mr.x+mr.width/2,mr.y+mr.height/2)===selectAll);
+      selectAll.click();await wait(()=>!document.querySelector('.xwx-edit-menu'),'edit action closes menu');
+      check('designed select all changes the actual native input selection',edit.selectionStart===0 && edit.selectionEnd===edit.value.length);
+      edit.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:100}));
+      document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+      check('Escape closes edit menu and restores the input focus',!document.querySelector('.xwx-edit-menu') && document.activeElement===edit);
+      edit.remove();[...exitDialog.querySelectorAll('button')].find(button=>button.textContent==='继续运行').click();
+      await wait(()=>!document.querySelector('[role="alertdialog"]'),'exit cancellation');
+      check('cancelled application exit retains the active Gateway',(await window.xwxDeck.getState()).tracingEnabled);
       document.querySelector('#dashBtn').click();
       let viewer;for(let i=0;i<400;i++){viewer=await window.__TAURI__.core.invoke('pilot_rpc',{method:'smokeViewerReport',args:[]});if(viewer)break;await delay(100);}
-      check('native Trace Viewer real render and live SSE',viewer?.passed===true || (()=>{throw Error(JSON.stringify(viewer));})());
+      if(viewer?.environmentBlocks?.length&&!viewer.error)environmentBlocks.push(...viewer.environmentBlocks);
+      check('native Trace Viewer real render and live SSE',viewer?.passed===true || (!!viewer?.environmentBlocks?.length&&!viewer.error) || (()=>{throw Error(JSON.stringify(viewer));})());
       check('native Trace Viewer actual row interaction',viewer.checks.includes('visible session row opens real request details'));
       await window.__TAURI__.core.invoke('pilot_rpc',{method:'smokeCloseViewer',args:[]});
 
@@ -683,7 +709,7 @@
     document.querySelector('.rail [data-page="signal"]').click();await delay(100);
     check('no framework overlay', !document.querySelector('vite-error-overlay, nextjs-portal'));
     check('console health', window.__pilotErrors.length === 0);
-    const report = { passed: true, checks, layerEvidence, hotSwitchNotices, title: document.title, url: location.href, viewport: { width: innerWidth, height: innerHeight }, runtime: document.body.dataset.runtime, errors: window.__pilotErrors, userAgent: navigator.userAgent };
+    const report = { passed: environmentBlocks.length===0, environmentBlocks, checks, layerEvidence, hotSwitchNotices, title: document.title, url: location.href, viewport: { width: innerWidth, height: innerHeight }, runtime: document.body.dataset.runtime, errors: window.__pilotErrors, userAgent: navigator.userAgent };
     await window.__TAURI__.core.invoke('pilot_smoke_report', { report });
   } catch (error) {
     await window.__TAURI__.core.invoke('pilot_smoke_report', { report: { passed: false, checks, layerEvidence, hotSwitchNotices, error: String(error), modelUi: { notices:[...document.querySelectorAll('[data-position]:not([aria-hidden=true])')].map(notice=>({title:notice.querySelector('[data-slot=toast-title]')?.textContent,description:notice.querySelector('[data-slot=toast-description]')?.textContent})), selectedService:document.querySelector('button[aria-label="ChatGPT 使用的模型服务"]')?.textContent, nativeProviders:await window.xwxDeck.getProviders().then(value=>({selected:value.selected,active:value.active,warning:value.warning})).catch(String), nativeModel:await window.xwxDeck.getCodexConfig().then(value=>({mode:value.mode,model:value.compatible?.model,warning:value.warning,activeBaseUrl:value.activeBaseUrl})).catch(String), nativeTrace:await window.xwxDeck.getState().then(value=>({tracingEnabled:value.tracingEnabled,backgroundGatewayActive:value.backgroundGatewayActive,localBaseUrl:value.localBaseUrl,lastError:value.lastError})).catch(String), selection:document.querySelector('[data-codex-model]')?.dataset.value, trigger:[...document.querySelectorAll('[data-codex-model] button')].map(button=>({text:button.textContent,disabled:button.disabled,expanded:button.getAttribute('aria-expanded'),rect:button.getBoundingClientRect().toJSON()})), menus:[...document.querySelectorAll('.model-choice-positioner')].map(menu=>({hidden:menu.hidden,opacity:getComputedStyle(menu).opacity,rect:menu.getBoundingClientRect().toJSON(),items:[...menu.querySelectorAll('[role=option]')].map(item=>item.textContent)})) }, errors: window.__pilotErrors } });

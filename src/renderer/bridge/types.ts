@@ -384,6 +384,9 @@ export interface XwXDeckApi {
   toggleMaximize(): Promise<{ maximized: boolean; fullscreen: boolean }>;
   setManagerView(view: 'home' | 'settings'): Promise<boolean>;
   closeWindow(): Promise<void>;
+  confirmApplicationExit(): Promise<void>;
+  getApplicationResetResult(): Promise<{ atMs: number; noticeSeen?: boolean; backupPath?: string; status: string; reason?: string; skippedClientFiles?: unknown[] } | null>;
+  acknowledgeApplicationResetResult(atMs: number, openBackup: boolean): Promise<void>;
   moveWindowStart(payload: { screenX: number; screenY: number }): void;
   moveWindow(payload: { screenX: number; screenY: number }): void;
   moveWindowEnd(): void;

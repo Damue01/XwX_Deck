@@ -35,6 +35,9 @@ export function systemLanguage(languages: readonly string[] = typeof navigator =
 }
 let language: Language = typeof document === 'undefined' ? 'zh-CN' : systemLanguage();
 try { const hint = localStorage.getItem(storageKey); if (isLanguage(hint)) language = hint; } catch { /* Runtime settings remain authoritative. */ }
+// Shared browser helpers and assistive technology read the DOM language even
+// before the native settings snapshot arrives.
+if (typeof document !== 'undefined') document.documentElement.lang = language;
 let locallyChosen = false;
 export function getLanguage(): Language { return language; }
 export function applyLanguage(next: Language): void {
