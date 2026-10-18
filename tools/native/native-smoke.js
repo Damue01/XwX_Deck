@@ -420,7 +420,7 @@
       check('downloads render in same dialog with mirrors collapsed', document.querySelectorAll('[role="dialog"]:not([data-position])').length === 1 && [...document.querySelectorAll('#configuration-clients details')].every(item => !item.open));
       document.querySelector('#configuration-clients .setup-card-link').click(); await delay(150);
       check('official client website shortcut preserved', opened.at(-1) === 'codex' && window.xwxDeck.setupWebsites.codex === 'https://learn.chatgpt.com/docs/app');
-      check('download metadata does not grant model management', !document.querySelector('[data-client-download="deepseek-harness"]') && window.xwxDeck.setupWebsites['download-deepseek-harness'] === 'https://deepseek.com/harness/');
+      check('Harness retains its official download without being implicitly enrolled', !!document.querySelector('[data-client-download="deepseek-harness"]') && !(await window.xwxDeck.getModelClients()).includes('deepseek-harness') && window.xwxDeck.setupWebsites['download-deepseek-harness'] === 'https://deepseek.com/harness/');
       document.querySelector('[data-client-download="codex"]').click(); await delay(150);
       document.querySelector('#configuration-clients details').open = true;
       document.querySelector('#configuration-clients [aria-label="Windows ARM64 国内镜像下载（第三方）"]').click(); await delay(150);
