@@ -58,7 +58,9 @@ export function OnboardingSetup({ onDone, onSkip, onDismiss = onSkip, initialSte
   const settled = installs.snapshot !== null && !installs.checking;
   // Detection runs behind the welcome screen. Recommendations appear only for
   // missing clients; an unfinished or failed check keeps the step reachable.
-  const recommend = missing.length > 0 || !settled || !!installs.error;
+  // A focus refresh does not invalidate the last successful discovery. Otherwise
+  // Back briefly enters recommendations and is immediately sent to import again.
+  const recommend = missing.length > 0 || !installs.snapshot?.available || !!installs.error;
   const steps = recommend ? [0, 1, 2] : [0, 2];
   const stepIndex = steps.indexOf(step);
 
