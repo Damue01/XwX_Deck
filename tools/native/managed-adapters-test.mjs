@@ -62,6 +62,17 @@ try{
  state=await rpc('toggleTracing',false);check('Trace stops and restores every original byte',!state.tracingEnabled);for(const[path,source]of Object.entries(files))assert.equal(await read(path),source,path);
  await close();start();for(const id of clients)check(id+' saved selection survives restart',(await rpc('getClientRoute',id)).model==='model-b');
  await rpc('toggleTracing',true);const dshPath=join(home,'.dsh/profiles/desktop/cordis.patch.yml');await writeFile(dshPath,(await readFile(dshPath,'utf8')).replace('model: model-b','model: external-choice'));const stopped=await raw('toggleTracing',false);check('external model choice prevents destructive restore',!stopped.ok&&(await readFile(dshPath,'utf8')).includes('external-choice'));await writeFile(dshPath,(await readFile(dshPath,'utf8')).replace('model: external-choice','model: model-b'));await rpc('toggleTracing',false);
+ // The real Harness rewrites refs as an empty flow map while adding its browser grant.
+ const credentials=join(home,'.dsh/.credentials.yaml'),browserGrant='version: 1\nrefs: {} # browser-owned store\nrecords:\n  client-connection/browser-session:\n    kind: plain\n    payload:\n      version: 1\n      secret: synthetic-browser-grant\n';
+ await writeFile(credentials,browserGrant);await select('deepseek-harness','model-a');await rpc('toggleTracing',true);
+ await writeFile(credentials,browserGrant);
+ const secondSaved=await rpc('saveProvider',{displayName:'local adapters second',baseUrl:`http://127.0.0.1:${upstream.address().port}/alternate/v1`,bearerToken:'synthetic-upstream-second',adapter:'responses'}),secondProvider=secondSaved.connections.find(p=>p.displayName==='local adapters second').id;
+ await rpc('fetchProviderModels',{providerId:secondProvider});const beforeSwitch=await rpc('getClientRoute','deepseek-harness');
+ await rpc('setClientRoute',{client:'deepseek-harness',providerId:secondProvider,model:'model-b',configDigest:beforeSwitch.configDigest,takeoverConfirmed:true});
+ const switchedRows=yaml(await read('.dsh/profiles/desktop/cordis.patch.yml')),switchedPick=switchedRows.filter(row=>row.id==='agent-default-model').at(-1).config,switchedRoute=switchedRows.filter(row=>row.id==='llm-pi-ai').at(-1).config.providers[switchedPick.provider];
+ const switchedResponse=await fetch(switchedRoute.baseURL+'/responses',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer xwx-deck'},body:JSON.stringify({model:switchedPick.model,input:'Harness browser-grant switch fixture'})});
+ check('Harness native empty refs and browser grant permit a real provider/model switch',switchedResponse.ok&&(await switchedResponse.text()).includes('adapter reply')&&calls.at(-1).path==='/alternate/v1/responses'&&calls.at(-1).model==='model-b'&&calls.at(-1).auth==='Bearer synthetic-upstream-second');
+ await rpc('toggleTracing',false);check('Harness switch and stop retain the exact external browser grant and empty refs bytes',(await readFile(credentials,'utf8'))===browserGrant);
  if(process.platform==='win32'){
    const portable=join(root,'custom Code'),portableUser=join(portable,'data/user-data/User');
    await mkdir(join(portable,'resources/app'),{recursive:true});await mkdir(portableUser,{recursive:true});
@@ -76,17 +87,6 @@ try{
    await rpc('toggleTracing',false);check('manual portable Code restores exact personal settings',(await readFile(join(portableUser,'settings.json'),'utf8'))===original);check('portable selection never rewrites normal Code preferences',(await read('AppData/Roaming/Code/User/settings.json'))===files['AppData/Roaming/Code/User/settings.json']);
    await writeFile(join(portable,'resources/app/package.json'),'{"version":"1.100.0"}');
  }
- // The real Harness rewrites refs as an empty flow map while adding its browser grant.
- const credentials=join(home,'.dsh/.credentials.yaml'),browserGrant='version: 1\nrefs: {} # browser-owned store\nrecords:\n  client-connection/browser-session:\n    kind: plain\n    payload:\n      version: 1\n      secret: synthetic-browser-grant\n';
- await writeFile(credentials,browserGrant);await select('deepseek-harness','model-a');await rpc('toggleTracing',true);
- await writeFile(credentials,browserGrant);
- const secondSaved=await rpc('saveProvider',{displayName:'local adapters second',baseUrl:`http://127.0.0.1:${upstream.address().port}/alternate/v1`,bearerToken:'synthetic-upstream-second',adapter:'responses'}),secondProvider=secondSaved.connections.find(p=>p.displayName==='local adapters second').id;
- await rpc('fetchProviderModels',{providerId:secondProvider});const beforeSwitch=await rpc('getClientRoute','deepseek-harness');
- await rpc('setClientRoute',{client:'deepseek-harness',providerId:secondProvider,model:'model-b',configDigest:beforeSwitch.configDigest,takeoverConfirmed:true});
- const switchedRows=yaml(await read('.dsh/profiles/desktop/cordis.patch.yml')),switchedPick=switchedRows.filter(row=>row.id==='agent-default-model').at(-1).config,switchedRoute=switchedRows.filter(row=>row.id==='llm-pi-ai').at(-1).config.providers[switchedPick.provider];
- const switchedResponse=await fetch(switchedRoute.baseURL+'/responses',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer xwx-deck'},body:JSON.stringify({model:switchedPick.model,input:'Harness browser-grant switch fixture'})});
- check('Harness native empty refs and browser grant permit a real provider/model switch',switchedResponse.ok&&(await switchedResponse.text()).includes('adapter reply')&&calls.at(-1).path==='/alternate/v1/responses'&&calls.at(-1).model==='model-b'&&calls.at(-1).auth==='Bearer synthetic-upstream-second');
- await rpc('toggleTracing',false);check('Harness switch and stop retain the exact external browser grant and empty refs bytes',(await readFile(credentials,'utf8'))===browserGrant);
  const oldPackage=join(home,app,process.platform==='win32'?'resources/app/package.json':'Resources/app/package.json');await writeFile(oldPackage,'{"version":"1.100.0"}');check('old VS Code does not advertise management',(await rpc('detectClientInstallations')).clients.find(row=>row.id==='vscode').modelManagement===false);
  console.log(JSON.stringify({passed:true,checks,actualRequests:calls.length,scope:'isolated consumer formats and loopback HTTP; actual installed consumer consumption is separate'},null,2));
 }catch(error){console.error(error);throw error;}finally{if(child?.exitCode===null)await close();upstream.closeAllConnections();await new Promise(resolve=>upstream.close(resolve));}
