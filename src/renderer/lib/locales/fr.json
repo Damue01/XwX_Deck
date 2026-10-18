@@ -1,4 +1,8 @@
 {
+  "选择安装位置": "Choisir le dossier d’installation",
+  "保存安装位置": "Enregistrer le dossier d’installation",
+  "无法识别客户端安装位置": "Impossible d’identifier l’installation du client",
+  "所选位置不支持此客户端的模型配置": "Le dossier sélectionné ne permet pas de configurer les modèles de ce client",
   "本机客户端": "Clients sur cet ordinateur",
   "客户端检测失败，可继续导入配置": "La détection des clients a échoué. Vous pouvez toujours importer des configurations.",
   "正在检测客户端…": "Détection des clients…",

@@ -2360,7 +2360,10 @@ impl Pilot {
                 let location = if method == "addModelClient" {
                     args.get(1).and_then(Value::as_str).map(|path| self.inspect_client_installation(id,path)).transpose()?
                 } else { None };
-                if location.is_some() && self.gateway.is_some() && self.client_enabled(id) && self.client_configured(id) {
+                let active_installation = self.root.join(format!("client-wiring-{id}.json")).exists()
+                    || (self.gateway.is_some() && ((self.client_enabled(id) && self.client_configured(id))
+                        || self.settings.other.get("clientRoutes").and_then(|routes|routes.get(id)).is_some_and(|route|route["enabled"]!=false && !text(route,"providerId").is_empty())));
+                if location.is_some() && active_installation {
                     return Err("请先停止此客户端的追踪，再更改安装位置".into());
                 }
                 let mut clients = self.model_clients();

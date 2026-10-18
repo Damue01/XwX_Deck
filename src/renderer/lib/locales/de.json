@@ -1,4 +1,8 @@
 {
+  "选择安装位置": "Installationsordner auswählen",
+  "保存安装位置": "Installationsordner speichern",
+  "无法识别客户端安装位置": "Die Client-Installation konnte nicht erkannt werden",
+  "所选位置不支持此客户端的模型配置": "Der ausgewählte Ordner unterstützt die Modellkonfiguration dieses Clients nicht",
   "本机客户端": "Clients auf diesem Computer",
   "客户端检测失败，可继续导入配置": "Client-Erkennung fehlgeschlagen. Konfigurationen können weiterhin importiert werden.",
   "正在检测客户端…": "Clients werden erkannt…",

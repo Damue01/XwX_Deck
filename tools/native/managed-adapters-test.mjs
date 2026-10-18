@@ -75,4 +75,4 @@ try{
  }
  const oldPackage=join(home,app,process.platform==='win32'?'resources/app/package.json':'Resources/app/package.json');await writeFile(oldPackage,'{"version":"1.100.0"}');check('old VS Code does not advertise management',(await rpc('detectClientInstallations')).clients.find(row=>row.id==='vscode').modelManagement===false);
  console.log(JSON.stringify({passed:true,checks,actualRequests:calls.length,scope:'isolated consumer formats and loopback HTTP; actual installed consumer consumption is separate'},null,2));
-}finally{if(child?.exitCode===null)await close();upstream.closeAllConnections();await new Promise(resolve=>upstream.close(resolve));}
+}catch(error){console.error(error);throw error;}finally{if(child?.exitCode===null)await close();upstream.closeAllConnections();await new Promise(resolve=>upstream.close(resolve));}

@@ -1,4 +1,8 @@
 {
+  "选择安装位置": "Escolher pasta de instalação",
+  "保存安装位置": "Salvar pasta de instalação",
+  "无法识别客户端安装位置": "Não foi possível identificar a instalação do cliente",
+  "所选位置不支持此客户端的模型配置": "A pasta selecionada não permite configurar os modelos deste cliente",
   "本机客户端": "Clientes neste computador",
   "客户端检测失败，可继续导入配置": "Falha ao detectar clientes. Você ainda pode importar configurações.",
   "正在检测客户端…": "Detectando clientes…",
