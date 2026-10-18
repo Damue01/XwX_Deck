@@ -7,6 +7,8 @@ SetFont "Microsoft YaHei UI" 10
 !include "FileFunc.nsh"
 !include "WordFunc.nsh"
 !include "x64.nsh"
+!include "StrFunc.nsh"
+${Using:StrFunc} StrRep
 Name "XwX Deck"
 Caption "XwX Deck 安装程序"
 UninstallCaption "XwX Deck 卸载程序"
@@ -98,6 +100,10 @@ Function .onInit
   System::Call 'kernel32::GetCurrentProcessId() i .r0'
   StrCpy $LogPath "$TEMP\XwXDeck-setup-$0.log"
   ${GetParameters} $0
+  ; Windows callers quote the whole argument when a path contains spaces.
+  ; FileFunc expects quotes around the value instead; preserve the same value.
+  ${StrRep} $0 $0 '$\"/PILOTROOT=' '/PILOTROOT=$\"'
+  ${StrRep} $0 $0 '$\"/LOG=' '/LOG=$\"'
   ${GetOptions} $0 "/PILOTROOT=" $PilotRoot
   ${GetOptions} $0 "/LOG=" $1
   ${If} $1 != ""

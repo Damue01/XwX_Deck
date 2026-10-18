@@ -1,6 +1,7 @@
 // Explicit per-user Setup acceptance. Never replace a pre-existing installation.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
@@ -38,7 +39,9 @@ function setup(binary,args,name) {
  console.log('Setup: '+name);
  const command=['/S',`"/LOG=${join(work,name+'.log')}"`,...args];
  const result=spawnSync(binary,command,{windowsVerbatimArguments:true,windowsHide:true,timeout:60000,stdio:'ignore'});
- if(result.error)throw result.error;return result.status;
+ if(result.error)throw result.error;
+ assert.ok(existsSync(join(work,name+'.log')),'Setup must honor the explicit quoted log argument');
+ return result.status;
 }
 async function uninstall(name) {
  const current=registration();assert.ok(current);
