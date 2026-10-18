@@ -73,7 +73,9 @@ static void drawButton(DRAWITEMSTRUCT* item) {
   RECT r=item->rcItem;FillRect(item->hDC,&r,white);SetBkMode(item->hDC,TRANSPARENT);
   if(primary||hover){HBRUSH fill=CreateSolidBrush(primary?(disabled?RGB(161,162,164):pressed||hover?RGB(57,58,60):RGB(23,24,26)):RGB(241,241,239));HGDIOBJ oldBrush=SelectObject(item->hDC,fill),oldPen=SelectObject(item->hDC,GetStockObject(NULL_PEN));RoundRect(item->hDC,r.left,r.top,r.right,r.bottom,px(10),px(10));SelectObject(item->hDC,oldBrush);SelectObject(item->hDC,oldPen);DeleteObject(fill);}
   SetTextColor(item->hDC,primary?RGB(255,255,255):disabled?RGB(180,181,183):close?RGB(164,166,167):RGB(115,117,121));
-  wchar_t text[64];GetWindowText(item->hwndItem,text,64);HFONT old=(HFONT)SelectObject(item->hDC,regular);DrawText(item->hDC,text,-1,&r,DT_CENTER|DT_VCENTER|DT_SINGLELINE);SelectObject(item->hDC,old);
+  wchar_t text[64];GetWindowText(item->hwndItem,text,64);
+  for(unsigned i=0;text[i]&&text[i+1];++i)if(text[i]==L'('&&text[i+1]==L'&'){text[i]=0;break;}
+  HFONT old=(HFONT)SelectObject(item->hDC,regular);DrawText(item->hDC,text,-1,&r,DT_CENTER|DT_VCENTER|DT_SINGLELINE);SelectObject(item->hDC,old);
   if((item->itemState&ODS_FOCUS)&&!(item->itemState&ODS_NOFOCUSRECT)){InflateRect(&r,-px(3),-px(3));DrawFocusRect(item->hDC,&r);}
 }
 static LRESULT CALLBACK skinProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
@@ -101,6 +103,7 @@ extern "C" void __stdcall Skin(HWND parent,HWND page,const wchar_t* version,int 
   }
   // NSIS changes pages and button state; retain its normal keyboard/default actions.
   HWND next=GetDlgItem(parent,IDOK),cancel=GetDlgItem(parent,IDCANCEL);move(next,530,187,58,29);move(cancel,478,187,42,29);ownerButton(next);ownerButton(cancel);ShowWindow(GetDlgItem(parent,3),SW_HIDE);
+  ShowWindow(next,mode==2?SW_HIDE:SW_SHOW);
   SetWindowText(cancel,L"取消");SendMessage(parent,DM_SETDEFID,IDOK,0);
   for(HWND child=GetWindow(parent,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)){int id=GetDlgCtrlID(child);if(child!=page&&child!=next&&child!=cancel&&id!=60001&&id!=60003)ShowWindow(child,SW_HIDE);}
   move(page,0,0,620,180);ShowWindow(page,SW_SHOW);SetWindowSubclass(page,skinProc,1,0);
