@@ -719,17 +719,9 @@ impl Pilot {
             .unwrap_or_else(|| self.client_configured(client))
     }
     fn model_clients(&self) -> Vec<String> {
-        let mut clients: Vec<String> = if self.settings.other.get("modelClientsVersion")
-            == Some(&json!(2))
-        {
-            vec![]
-        } else {
-            ["claude", "codex"]
-                .into_iter()
-                .filter(|id| self.client_discovery().installed(id) || self.client_configured(id))
-                .map(str::to_string)
-                .collect()
-        };
+        // Installation discovery is read-only. Only explicit saved enrollment
+        // creates model tabs, including on the first run.
+        let mut clients = vec![];
         for id in self
             .settings
             .other

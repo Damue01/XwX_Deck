@@ -71,7 +71,7 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
   const tab = activeTab ?? catalogTab;
   const setTab = (next: ConfigurationTab) => { if (onTabChange) onTabChange(next); else setCatalogTab(next); };
   const [client, setClient] = React.useState<DownloadClientId | null>(null);
-  const installation = useClientInstallations(open && (clientsOnly || tab === 'clients'));
+  const installation = useClientInstallations(open && (clientsOnly || tab === 'clients' || importOpen));
   const clientAdded = client !== null && modelClients.includes(canonicalModelClient(client));
   const clientInstalled = installation.snapshot?.clients.some(item => item.id === (client && (canonicalModelClient(client))) && item.installed) === true;
   const wasOpen = React.useRef(false);
@@ -179,7 +179,7 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
         </header>
 
         <div id={tab === 'saved' ? 'configuration-saved' : 'configuration-services'} role={importing ? undefined : "tabpanel"} aria-labelledby={importing ? undefined : tab === 'saved' ? "configuration-saved-tab" : "configuration-services-tab"} hidden={clientsOnly || (tab !== 'services' && tab !== 'saved')} >
-          {importOpen ? <ImportConfigurations visible={open && (tab === 'services' || tab === 'saved')} onBack={closeImport} onBusyChange={setImportBusy} onImported={result => { closeImport(); onImported?.(result.providers, result.added); }} /> : <div className={`configuration-content${detail && (tab === 'services' || tab === 'saved') ? ' has-detail' : ''}${maintenance ? ' configuration-maintenance' : ''}`}>
+          {importOpen ? <ImportConfigurations visible={open && (tab === 'services' || tab === 'saved')} clientDetection={installation} onBack={closeImport} onBusyChange={setImportBusy} onImported={result => { closeImport(); onImported?.(result.providers, result.added); }} /> : <div className={`configuration-content${detail && (tab === 'services' || tab === 'saved') ? ' has-detail' : ''}${maintenance ? ' configuration-maintenance' : ''}`}>
             <div className="configuration-directory">
               {selected !== null && !maintenance && <button type="button" className="provider-text-action configuration-back" onClick={onBack} disabled={busy}><ArrowLeft size={15} aria-hidden="true" />{t("全部服务商")}</button>}
               <div ref={serviceList} className={selected === null && !maintenance ? 'configuration-grid' : 'configuration-list'} aria-label={t(maintenance ? '已保存的配置' : '服务商')}>

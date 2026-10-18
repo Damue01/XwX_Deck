@@ -1483,8 +1483,41 @@ impl Pilot {
         }
         let selected: Vec<String> =
             serde_json::from_value(input["fingerprints"].clone()).map_err(|_| "无效导入选择")?;
-        if selected.is_empty() || selected.len() > 1000 {
-            return Err("请选择要导入的配置".into());
+        let clients: Vec<String> = match input.get("clients") {
+            Some(value) => serde_json::from_value(value.clone()).map_err(|_| "无效客户端选择")?,
+            None => vec![],
+        };
+        if (selected.is_empty() && clients.is_empty())
+            || selected.len() > 1000
+            || clients.len() > 100
+        {
+            return Err("请选择要导入的配置或纳入管理的客户端".into());
+        }
+        // Validate enrollment before mutating either registry. Import and client
+        // selection share one local settings transaction and never activate routes.
+        let catalog: Value = serde_json::from_str(include_str!(
+            "../../test-results/native-assets/clients.json"
+        ))
+        .map_err(err)?;
+        let discovery = self.client_discovery();
+        let mut model_clients = self.model_clients();
+        let mut added_clients = vec![];
+        for client in clients {
+            if !catalog
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| row["id"] == client))
+            {
+                return Err("未知客户端，未写入任何配置".into());
+            }
+            let id = client_installations::canonical_id(&client);
+            if model_clients.iter().any(|old| old == id) {
+                continue;
+            }
+            if !discovery.installed(id) {
+                return Err("客户端安装状态已变化，请重新检测；未写入任何配置".into());
+            }
+            model_clients.push(id.to_owned());
+            added_clients.push(id.to_owned());
         }
         let mut candidates = vec![];
         let mut accounts = vec![];
@@ -1514,6 +1547,23 @@ impl Pilot {
         }
         let old_connections = self.settings.connections.clone();
         let old_other = self.settings.other.clone();
+        if !accounts.is_empty()
+            && self
+                .settings
+                .other
+                .get(imported_subscriptions::KEY)
+                .is_some_and(|value| !value.is_array())
+        {
+            return Err("导入账号记录无法读取，原设置已保留".into());
+        }
+        if !added_clients.is_empty() {
+            self.settings
+                .other
+                .insert("modelClients".into(), json!(model_clients));
+            self.settings
+                .other
+                .insert("modelClientsVersion".into(), json!(2));
+        }
         let mut added = vec![];
         let mut added_accounts = vec![];
         for account in accounts {
@@ -1597,7 +1647,7 @@ impl Pilot {
             if storage::digest(current.as_bytes()) != expected {
                 return Err("XwX Deck 配置已在外部修改，未覆盖原文件".into());
             }
-            if !added.is_empty() || !added_accounts.is_empty() {
+            if !added.is_empty() || !added_accounts.is_empty() || !added_clients.is_empty() {
                 let backup = self
                     .root
                     .join(format!("settings-before-import-{}.json", millis()));
@@ -1611,7 +1661,9 @@ impl Pilot {
             self.settings.other = old_other;
             return Err(error);
         }
-        Ok(json!({"providers":self.providers().await,"added":added,"addedAccounts":added_accounts}))
+        Ok(
+            json!({"providers":self.providers().await,"added":added,"addedAccounts":added_accounts,"modelClients":self.model_clients(),"addedClients":added_clients}),
+        )
     }
     pub(super) fn remove_imported_account(&mut self, id: &str) -> Result<Value> {
         self.import_target()?;

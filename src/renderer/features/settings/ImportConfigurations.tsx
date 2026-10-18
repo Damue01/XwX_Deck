@@ -7,14 +7,18 @@ import { Popover } from '@base-ui/react/popover';
 import { useBridge } from '@/bridge/store';
 import { showErrorToast, showToast } from '@/lib/toast';
 import type { AppliedConfigurationImport, ConfigurationImportPreview, ConfigurationImportSpec } from '../../../shared/configImport';
-import { MODEL_CLIENT_CATALOG, clientCatalogLabel, normalizeModelClients, type ClientInstallationSnapshot } from '../../../shared/clientDownloads';
+import { MODEL_CLIENT_CATALOG, clientCatalogLabel, normalizeModelClients, supportsModelManagement, type ClientInstallationSnapshot, type DownloadClientId } from '../../../shared/clientDownloads';
+import { useClientInstallations } from '../models/useClientInstallations';
 import { ProviderIcon } from './ProviderIcon';
 
 export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding = false, onImported, actionsContainer, onDetected, clientDetection }: { visible: boolean; onBack: () => void; onBusyChange: (busy: boolean) => void; onboarding?: boolean; onImported?: (result: AppliedConfigurationImport) => void; actionsContainer?: HTMLElement | null; onDetected?: (count: number) => void; clientDetection?: { snapshot: ClientInstallationSnapshot | null; checking: boolean; error: string; refresh: () => Promise<unknown> } }): React.ReactElement {
   useLanguage();
-  const { api, patch } = useBridge();
+  const { api, patch, modelClients = [] } = useBridge();
+  const localDetection = useClientInstallations(visible && !clientDetection);
+  const detection = clientDetection ?? localDetection;
   const [preview, setPreview] = React.useState<ConfigurationImportPreview | null>(null);
   const [picked, setPicked] = React.useState<readonly string[]>([]);
+  const [pickedClients, setPickedClients] = React.useState<readonly DownloadClientId[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const specs = React.useRef<readonly ConfigurationImportSpec[] | undefined>(undefined);
@@ -23,7 +27,7 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
   const lock = React.useRef(false);
   const container = React.useRef<HTMLDivElement | null>(null);
   const seen = React.useRef(new Set<string>());
-  const refreshClients = clientDetection?.refresh;
+  const refreshClients = detection.refresh;
   const scan = React.useCallback(async () => {
     if (lock.current) return;
     const current = ++generation.current;
@@ -59,13 +63,14 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
     if (chosen) await scan();
   };
   const apply = async () => {
-    if (!preview || !picked.length || !api.importConfigurations || lock.current) return;
+    if (!preview || (!picked.length && !selectedClients.length) || !api.importConfigurations || lock.current) return;
     lock.current = true; setBusy(true); onBusyChange(true);
     try {
-      const result = await api.importConfigurations({ sources: preview.sources.map(({ source, path }) => ({ source, path })), targetDigest: preview.targetDigest, fingerprints: picked });
-      patch({ providers: result.providers });
+      const result = await api.importConfigurations({ sources: preview.sources.map(({ source, path }) => ({ source, path })), targetDigest: preview.targetDigest, fingerprints: picked, clients: selectedClients });
+      patch({ providers: result.providers, ...(result.modelClients ? { modelClients: result.modelClients } : {}) });
       const count = result.added.length + (result.addedAccounts?.length ?? 0);
-      showToast(count ? t("已导入 {0} 个配置与账号", count) : t('所选配置已存在'), 'success');
+      const clientCount = result.addedClients?.length ?? 0;
+      showToast(clientCount ? count ? t('已导入 {0} 个配置与账号，已添加 {1} 个客户端', count, clientCount) : t('已添加 {0} 个客户端', clientCount) : count ? t("已导入 {0} 个配置与账号", count) : t('所选配置已存在'), 'success');
       if (onImported) onImported(result);
       else onBack();
     } catch (failure) { showErrorToast(t('导入未完成'), failure); }
@@ -74,11 +79,15 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
   const sources = preview?.sources.filter(source => source.found) ?? [];
   const items = sources.flatMap(source => source.items.filter(item => item.status !== 'duplicate').map(item => ({ ...item, sourceName: source.name, sourcePath: source.path })));
   const problems = sources.filter(source => source.error);
-  const installedIds = normalizeModelClients(clientDetection?.snapshot?.clients.filter(client => client.installed).map(client => client.id) ?? []);
+  const installedIds = normalizeModelClients(detection.snapshot?.available ? detection.snapshot.clients.filter(client => client.installed).map(client => client.id) : []);
   const installedClients = MODEL_CLIENT_CATALOG.filter(client => installedIds.includes(client.id));
+  const managedClients = normalizeModelClients(modelClients);
+  const selectedClients = pickedClients.filter(id => installedIds.includes(id) && supportsModelManagement(id) && !managedClients.includes(id));
+  const hasSelection = picked.length > 0 || selectedClients.length > 0;
+  const cannotApply = !preview || !api.importConfigurations || (!!selectedClients.length && (detection.checking || !!detection.error));
   const actions = <div className="configuration-import-actions">
-    {(!onboarding || picked.length > 0) && <button type="button" className="btn" disabled={busy} onClick={onBack}>{onboarding ? t('跳过') : t('取消')}</button>}
-    <button type="button" className="btn primary" disabled={busy || (!onboarding && !picked.length) || (picked.length > 0 && !api.importConfigurations)} onClick={() => { if (onboarding && !picked.length) onBack(); else void apply(); }}>{busy ? t('处理中') : onboarding ? picked.length ? t('导入并继续') : t('继续') : t('导入')}</button>
+    {(!onboarding || hasSelection) && <button type="button" className="btn" disabled={busy} onClick={onBack}>{onboarding ? t('跳过') : t('取消')}</button>}
+    <button type="button" className="btn primary" disabled={busy || (!onboarding && !hasSelection) || (hasSelection && cannotApply)} onClick={() => { if (onboarding && !hasSelection) onBack(); else void apply(); }}>{busy ? t('处理中') : onboarding ? hasSelection ? picked.length ? t('导入并继续') : t('确认并继续') : t('继续') : picked.length ? t('导入') : t('确认')}</button>
   </div>;
   return <div ref={container} className="configuration-import" tabIndex={-1} aria-busy={busy}>
     <div className="configuration-import-toolbar">
@@ -106,14 +115,25 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
       <RefreshButton className="configuration-close configuration-import-refresh" label={t("重新检测")} busy={busy || !!clientDetection?.checking} onClick={() => void scan()} />
     </div>
     <div className="configuration-import-body">
-      {clientDetection && <section className="configuration-import-clients" aria-label={t('本机客户端')} aria-busy={clientDetection.checking}>
+      <section className="configuration-import-clients" aria-label={t('本机客户端')} aria-busy={detection.checking}>
         <h2>{t('本机客户端')}</h2>
-        {!!installedClients.length && <ul>{installedClients.map(client => <li key={client.id} data-detected-client={client.id}><ProviderIcon kind={client.icon} /><span>{clientCatalogLabel(client)}</span></li>)}</ul>}
-        {clientDetection.error ? <p className="provider-field-error" role="alert">{t('客户端检测失败，可继续导入配置')}<span>{clientDetection.error}</span></p>
-          : clientDetection.checking ? <p className="configuration-import-status" role="status">{t('正在检测客户端…')}</p>
-          : clientDetection.snapshot?.available === false ? <p className="configuration-import-status">{t('当前环境暂不支持客户端检测')}</p>
-          : clientDetection.snapshot && !installedClients.length ? <p className="configuration-import-status">{t('未检测到已安装客户端')}</p> : null}
-      </section>}
+        {!!installedClients.length && <>
+          <p className="configuration-import-client-hint">{t('点击选择要纳入管理的客户端，确认后显示在模型页。')}</p>
+          <ul>{installedClients.map(client => {
+            const managed = managedClients.includes(client.id);
+            const supported = supportsModelManagement(client.id);
+            const selected = managed || selectedClients.includes(client.id);
+            return <li key={client.id}><button type="button" className="configuration-import-client" data-detected-client={client.id} aria-pressed={selected} disabled={busy || managed || !supported || (!selected && (detection.checking || !!detection.error))} onClick={() => setPickedClients(current => current.includes(client.id) ? current.filter(id => id !== client.id) : [...current, client.id])}>
+              <ProviderIcon kind={client.icon} /><span>{clientCatalogLabel(client)}</span>
+              {managed ? <small>{t('已管理')}</small> : !supported ? <small>{t('暂不支持模型配置')}</small> : <span className="configuration-import-client-check" aria-hidden="true">{selected ? '✓' : '+'}</span>}
+            </button></li>;
+          })}</ul>
+        </>}
+        {detection.error ? <p className="provider-field-error" role="alert">{t('客户端检测失败，可继续导入配置')}<span>{detection.error}</span></p>
+          : detection.checking ? <p className="configuration-import-status" role="status">{t('正在检测客户端…')}</p>
+          : detection.snapshot?.available === false ? <p className="configuration-import-status">{t('当前环境暂不支持客户端检测')}</p>
+          : detection.snapshot && !installedClients.length ? <p className="configuration-import-status">{t('未检测到已安装客户端')}</p> : null}
+      </section>
       {busy && !preview && <p className="configuration-import-status" role="status">{t("正在读取本地配置…")}</p>}
       {error && <p className="provider-field-error" role="alert">{error}</p>}
       {problems.map(source => <p className="provider-field-error" role="alert" key={`${source.source}:${source.path}`}>{t(source.name)}: {source.error}</p>)}

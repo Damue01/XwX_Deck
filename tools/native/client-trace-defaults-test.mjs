@@ -39,13 +39,13 @@ try {
   state=await rpc('getState');assert.equal(enabled(state,'codex'),false);assert.equal(enabled(state,'claude'),false);
   await mkdir(join(root,'installations/.local/bin'),{recursive:true});
   await writeFile(join(root,'installations/.local/bin',process.platform==='win32'?'claude.cmd':'claude'),'fixture',{mode:0o755});
-  assert.deepEqual(await rpc('getModelClients'),['claude']);assert.equal(enabled(await rpc('getState'),'claude'),false);
+  assert.deepEqual(await rpc('getModelClients'),[]);assert.equal(enabled(await rpc('getState'),'claude'),false);
   console.log('PASS blank install has no fabricated clients; empty files and installed-only clients stay off');
   const codex=`model_provider = "external_fixture"\nmodel = "client-model"\n[model_providers.external_fixture]\nname = "External fixture"\nbase_url = "${base}/v1"\nwire_api = "responses"\nexperimental_bearer_token = "client-only-key"\n[model_providers.inactive_fixture]\nbase_url = "https://inactive.invalid/v1"\n`;
   await writeFile(join(root,'codex/config.toml'),codex);
   await writeFile(join(root,'codex/auth.json'),JSON.stringify({tokens:{access_token:'never-borrow-official-token'}}));
   assert.equal(enabled(await rpc('getState'),'codex'),true);
-  assert.deepEqual(await rpc('getModelClients'),['claude','codex']);
+  assert.deepEqual(await rpc('getModelClients'),[]);
   state=await rpc('toggleTracing',true);assert.equal(state.tracingEnabled,true);
   assert.ok(Number(new URL(state.localBaseUrl).port)>0);assert.ok(!Array.from({length:10},(_,i)=>45233+i).includes(Number(new URL(state.localBaseUrl).port)),'isolated Gateway must not bind normal client ports');
   const managed=await readFile(join(root,'codex/config.toml'),'utf8');assert.match(managed,/model_provider = "external_fixture"/);assert.match(managed,/inactive\.invalid/);

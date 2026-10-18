@@ -405,7 +405,7 @@ getClientRoute?(client: string): Promise<GatewayClientRoute>;
 setClientRoute?(input: { client: string; providerId: string; model: string; configDigest: string; takeoverConfirmed?: boolean }): Promise<GatewayClientRoute>;
 toggleGatewayClient?(client: string): Promise<XwXDeckRuntimeState>;
 previewConfigurationImport?(input?: import('../../shared/configImport').ConfigurationImportInput): Promise<import('../../shared/configImport').ConfigurationImportPreview>;
-importConfigurations?(input: import('../../shared/configImport').ConfigurationImportInput & { targetDigest: string; fingerprints: readonly string[] }): Promise<import('../../shared/configImport').AppliedConfigurationImport>;
+importConfigurations?(input: import('../../shared/configImport').ConfigurationImportSelection): Promise<import('../../shared/configImport').AppliedConfigurationImport>;
 chooseConfigurationImportFile?(): Promise<string | null>;
 detectClientInstallations?(): Promise<import('../../shared/clientDownloads').ClientInstallationSnapshot>;
 getModelClients?(): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;

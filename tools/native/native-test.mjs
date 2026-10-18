@@ -48,7 +48,7 @@ if(nativeOfficialFixture){
   const claims={sub:'native-official-fixture',email:'native-official@example.test'};
   await writeFile(join(root,'codex/auth.json'),JSON.stringify({auth_mode:'chatgpt',tokens:{access_token:'isolated-native-official-access',refresh_token:'isolated-native-official-refresh',account_id:'native-official-workspace',id_token:'e30.'+Buffer.from(JSON.stringify(claims)).toString('base64url')+'.fixture'}}));
 }
-for (const name of ['claude', 'codex']) {
+for (const name of ['claude', 'codex', 'qwen']) {
   const path = join(installations, '.local/bin', process.platform === 'win32' ? name + '.cmd' : name);
   await mkdir(resolve(path, '..'), {recursive:true});
   await writeFile(path, 'isolated installed-client fixture', {mode:0o755});

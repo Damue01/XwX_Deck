@@ -1,6 +1,12 @@
 /** Product copy only. User-entered values and model IDs are never translated. */
 export const english: Readonly<Record<string, string>> = {
   "本机客户端": "Clients on this computer",
+  "点击选择要纳入管理的客户端，确认后显示在模型页。": "Select clients to manage. They will appear on the Models page after confirmation.",
+  "已管理": "Managed",
+  "暂不支持模型配置": "Model setup unavailable",
+  "确认并继续": "Confirm and continue",
+  "已添加 {0} 个客户端": "Added {0} clients",
+  "已导入 {0} 个配置与账号，已添加 {1} 个客户端": "Imported {0} configurations and accounts, and added {1} clients",
   "此连接由 Deck 提供认证，授权凭证保留在本机。": "Deck handles authentication for this connection. Credentials stay on this device.",
   "选择已保存；此连接需要 Deck 提供认证，请开启 Trace。": "Choice saved. Enable Trace so Deck can authenticate this connection.",
   "客户端检测失败，可继续导入配置": "Client detection failed. You can still import configurations.",

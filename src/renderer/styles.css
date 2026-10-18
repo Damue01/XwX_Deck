@@ -1863,8 +1863,16 @@ html[data-theme="night"] .tour-backdrop-full { background: rgba(0,0,0,.7); }
 .configuration-import-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .configuration-import-clients { padding: 8px 0 16px; margin-bottom: 12px; border-bottom: 1px solid var(--hairline); }
 .configuration-import-clients h2 { margin: 0 0 12px; color: var(--quiet); font-size: 12px; font-weight: 500; }
-.configuration-import-clients ul { display: flex; flex-wrap: wrap; gap: 12px 24px; list-style: none; padding: 0; margin: 0; }
-.configuration-import-clients li { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 13px; }
+.configuration-import-client-hint { margin: -4px 0 12px; color: var(--quiet); font-size: 12px; line-height: 1.6; }
+.configuration-import-clients ul { display: flex; flex-wrap: wrap; gap: 8px 16px; list-style: none; padding: 0; margin: 0; }
+.configuration-import-client { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--quiet); font-size: 13px; cursor: pointer; }
+.configuration-import-client[aria-pressed="false"] .provider-brand-icon { filter: grayscale(1); opacity: .55; }
+.configuration-import-client[aria-pressed="true"] { color: var(--ink); }
+.configuration-import-client:hover:not(:disabled) { background: var(--hover); }
+.configuration-import-client:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.configuration-import-client:disabled { cursor: default; }
+.configuration-import-client small { font-size: 11px; color: var(--quiet); }
+.configuration-import-client-check { width: 14px; text-align: center; font-size: 12px; }
 .configuration-import-clients .provider-brand-icon { width: 18px; height: 18px; flex-shrink: 0; }
 .configuration-import-clients .configuration-import-status { padding: 0; margin: 8px 0 0; }
 .configuration-import-clients .provider-field-error span { display: block; margin-top: 4px; }

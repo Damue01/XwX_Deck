@@ -55,9 +55,13 @@
     const detectedClients=()=>[...document.querySelectorAll('[data-detected-client]')].map(client=>client.dataset.detectedClient).sort();
     const expectedClients=[...new Set(discovery.clients.filter(client=>client.installed).map(client=>canonicalClient(client.id)))].sort();
     check('import step shows the actual read-only client detection without duplicate Desktop and CLI entries',JSON.stringify(detectedClients())===JSON.stringify(expectedClients));
+    check('detected clients start muted and no client is implicitly managed', (await window.xwxDeck.getModelClients()).length===0 && [...document.querySelectorAll('[data-detected-client]')].every(client=>client.getAttribute('aria-pressed')==='false') && getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='grayscale(1)');
+    document.querySelector('[data-detected-client="codex"]').click(); await delay(50);
+    check('selecting a client restores its icon without writing settings before confirmation', document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='true' && getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='none' && (await window.xwxDeck.getModelClients()).length===0);
     document.querySelector('.configuration-import-refresh').click();
     await wait(()=>!document.querySelector('.configuration-import-refresh').disabled&&importContinue(),'combined client and configuration refresh');
     check('import recheck retains detected clients and configuration preview',JSON.stringify(detectedClients())===JSON.stringify(expectedClients)&&!!document.querySelector('.configuration-import-list'));
+    check('rechecking preserves the explicit client selection',document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='true');
     check('client detection and import preview do not change services or activate a route',JSON.stringify(await window.xwxDeck.getProviders())===onboardingProviders);
     document.querySelector('#onboarding-setup .onboarding-foot > .btn').click();
     await wait(()=>onboardingStep()===0||onboardingStep()===1,'back from import preserves the conditional recommendation');
@@ -69,10 +73,10 @@
     const continueRect = continueButton.getBoundingClientRect();
     const continueHit = document.elementFromPoint(continueRect.x + continueRect.width / 2, continueRect.y + continueRect.height / 2);
     check('returned import continuation is visible in the shared footer and receives pointer input', continueHit === continueButton || continueButton.contains(continueHit));
-    const skipImport=document.querySelector('#onboarding-setup .configuration-import-actions .btn:not(.primary)');
-    if(skipImport)skipImport.click();else continueButton.click();
+    document.querySelector('[data-detected-client="claude"]').click(); await delay(50);
+    document.querySelector('#onboarding-setup .configuration-import-actions .primary').click();
     await wait(()=>document.querySelector('.tour-root')&&!document.querySelector('#onboarding-setup'),'continue to real feature walkthrough');
-    check('skipping import preserves the saved provider registry',JSON.stringify(await window.xwxDeck.getProviders())===onboardingProviders);
+    check('confirming client-only onboarding preserves providers and explicitly enrolls selected clients',JSON.stringify(await window.xwxDeck.getProviders())===onboardingProviders && JSON.stringify(await window.xwxDeck.getModelClients())===JSON.stringify(['codex','claude']));
     const guideTitles=['添加配置','切换模型','按需开启 Trace','在仪表盘查看详情'];
     check('public onboarding starts at adding configuration and has four focused steps',document.querySelector('.tour-title').textContent===guideTitles[0]&&document.querySelectorAll('.tour-dots i').length===4);
     for(let index=0;index<4;index++) {
@@ -233,6 +237,11 @@
       window.xwxDeck.importConfigurations = async input => { importRequests.push(input); return {providers:await window.xwxDeck.getProviders(),added:['ui-fixture']}; };
       document.querySelector('.configuration-import-entry').click();
       await wait(() => document.querySelector('.configuration-import input[type=checkbox]') && !document.querySelector('.configuration-import-refresh').disabled, 'flat import list');
+      await wait(()=>document.querySelector('.configuration-import-clients')?.getAttribute('aria-busy')==='false','card import discovery');
+      check('configuration card import uses the same detected client selection and marks existing management',document.querySelector('[data-detected-client="codex"]').textContent.includes('已管理') && document.querySelector('[data-detected-client="codex"]').disabled && document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='false');
+      document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);
+      check('card client selection is pending until confirmation',document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='true' && !(await window.xwxDeck.getModelClients()).includes('qwen-code'));
+      document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);
       check('import is a single titled task without configuration tabs or a return link', document.querySelectorAll('[role=dialog]:not([data-position])').length === 1 && !document.querySelector('.configuration-header .configuration-tabs') && document.querySelector('.configuration-header').textContent.includes('导入配置') && !document.querySelector('.configuration-back'));
       check('import lists unique detected configurations with inline sources and no missing-source placeholders', document.querySelectorAll('.configuration-import-item').length === 2 && document.querySelectorAll('.configuration-import input[type=checkbox]').length === 1 && !document.querySelector('.configuration-import').textContent.includes('Claude CLI') && [...document.querySelectorAll('.configuration-import-source-label')].map(item=>item.textContent).join(',')==='Magpie,CC Switch');
       const cancelImport = document.querySelector('.configuration-import-actions .btn:not(.primary)'), primaryImport = document.querySelector('.configuration-import-actions .primary');
@@ -264,6 +273,15 @@
       toastByTitle('已导入 1 个配置与账号').querySelector('[data-slot=toast-close]').click();
       await wait(() => !document.querySelector('[data-slot=toast-title]'), 'import notification dismissed');
       window.xwxDeck.previewConfigurationImport=originalImportPreview; window.xwxDeck.chooseConfigurationImportFile=originalImportFile; window.xwxDeck.importConfigurations=originalImportApply;
+      document.querySelector('.configuration-import-entry').click();
+      await wait(()=>document.querySelector('[data-detected-client="qwen-code"]')?.disabled===false && !document.querySelector('.configuration-import-refresh').disabled,'real card enrollment');
+      document.querySelector('[data-detected-client="qwen-code"]').click();await delay(50);
+      document.querySelector('.configuration-import-actions .primary').click();
+      await wait(()=>!document.querySelector('.configuration-import'),'real client-only card confirmation');
+      check('card confirmation enrolls the client in the real registry without changing services or enabling Trace',(await window.xwxDeck.getModelClients()).includes('qwen-code') && (await window.xwxDeck.getProviders()).connections.length===0 && !(await window.xwxDeck.getState()).tracingEnabled);
+      await wait(()=>toastByTitle('已添加 1 个客户端'),'client enrollment notification');
+      toastByTitle('已添加 1 个客户端').querySelector('[data-slot=toast-close]').click();
+      await wait(()=>!document.querySelector('[data-slot=toast-title]'),'enrollment notification dismissed');
       await wait(() => document.querySelector('[data-service=deepseek]')?.disabled===false,'service directory ready after import');
       document.querySelector('[data-service="deepseek"]').click(); await delay(200);
       check('selection replaces grid with list and configuration in same dialog', document.querySelectorAll('[role="dialog"]:not([data-position])').length === 1 && document.querySelector('.configuration-list') && document.querySelector('#provider-url')?.value === 'https://api.deepseek.com');
