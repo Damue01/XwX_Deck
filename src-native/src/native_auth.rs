@@ -145,7 +145,9 @@ pub(super) fn configure(
             .into(),
     );
     auth.insert("args", args.into());
-    auth.insert("timeout_ms", 45000.into());
+    // A closed-host command may first wait for the root lease (40 s), then
+    // finish the existing bounded account refresh (25 s).
+    auth.insert("timeout_ms", 75000.into());
     auth.insert("refresh_interval_ms", 30000.into());
     let table = document
         .get_mut("model_providers")
@@ -261,10 +263,13 @@ async fn exchange(
 ) {
     let operation = async {
         let mut line = String::new();
-        BufReader::new((&mut stream).take(32769))
-            .read_line(&mut line)
-            .await
-            .map_err(err)?;
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            BufReader::new((&mut stream).take(32769)).read_line(&mut line),
+        )
+        .await
+        .map_err(|_| "认证请求超时")?
+        .map_err(err)?;
         if line.len() > 32768 {
             return Err("认证请求过大".into());
         }
@@ -284,9 +289,9 @@ async fn exchange(
             serde_json::from_value(input["binding"].clone()).map_err(|_| "原生认证绑定无效")?;
         token(&root, &accounts, &binding).await
     };
-    let result = tokio::time::timeout(Duration::from_secs(40), operation)
-        .await
-        .unwrap_or_else(|_| Err("订阅续期超时，请重试".into()));
+    // The caller can time out or disconnect. Let the account owner finish and
+    // persist a rotated refresh token before releasing its lock.
+    let result = operation.await;
     let reply = match result {
         Ok(token) => json!({"token":token}),
         Err(error) => json!({"error":error}),
