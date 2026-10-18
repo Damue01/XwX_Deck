@@ -107,7 +107,7 @@ extern "C" void __stdcall Skin(HWND parent,HWND page,const wchar_t* version,int 
   if(mode==0)SetProp(page,L"folder",(HANDLE)1);else RemoveProp(page,L"folder");
   label(page,60002,L"XwX Deck",32,88,175,42,titleFont);
   if(mode==2){ // NSIS's real extraction/registration progress, not a timer animation.
-    HWND bar=GetDlgItem(page,1004),caption=GetDlgItem(page,1006);move(bar,225,119,363,4);move(caption,225,86,363,22);SendMessage(caption,WM_SETFONT,(WPARAM)regular,TRUE);ShowWindow(bar,SW_SHOW);ShowWindow(caption,SW_SHOW);SetWindowTheme(bar,L"",L"");SendMessage(bar,PBM_SETBARCOLOR,0,RGB(23,24,26));SendMessage(bar,PBM_SETBKCOLOR,0,RGB(240,240,238));
+    HWND bar=GetDlgItem(page,1004),caption=GetDlgItem(page,1006);move(bar,225,119,363,4);move(caption,225,86,363,22);SendMessage(caption,WM_SETFONT,(WPARAM)regular,TRUE);SetWindowSubclass(caption,labelProc,4,0);ShowWindow(bar,SW_SHOW);ShowWindow(caption,SW_SHOW);SetWindowTheme(bar,L"",L"");SendMessage(bar,PBM_SETBARCOLOR,0,RGB(23,24,26));SendMessage(bar,PBM_SETBKCOLOR,0,RGB(240,240,238));
   }
   if(mode==1||mode==4){ShowWindow(cancel,SW_HIDE);EnableWindow(GetDlgItem(parent,60001),FALSE);}else if(mode==2)EnableWindow(GetDlgItem(parent,60001),FALSE);
   InvalidateRect(parent,nullptr,TRUE);InvalidateRect(page,nullptr,TRUE);

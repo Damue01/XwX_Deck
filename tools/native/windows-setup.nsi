@@ -73,11 +73,17 @@ Var UninstallMetadataTouched
 Var PreviousStartup
 
 !macro Log Message
-  DetailPrint "${Message}"
   FileWrite $LogHandle "${Message}$\r$\n"
 !macroend
 
+!macro Status Message
+  SetDetailsPrint textonly
+  DetailPrint "${Message}"
+  SetDetailsPrint none
+!macroend
+
 Function .onInit
+  SetAutoClose true
   SetShellVarContext current
   SetRegView 64
   InitPluginsDir
@@ -310,6 +316,7 @@ Function Rollback
 FunctionEnd
 
 Section "XwX Deck"
+  !insertmacro Status "检查安装位置…"
   Call ValidateTarget
   ${If} $ErrorMessage != ""
     !insertmacro Log "$ErrorMessage"
@@ -324,6 +331,7 @@ Section "XwX Deck"
   CreateDirectory "$INSTDIR"
   SetOutPath "$INSTDIR"
   !insertmacro Log "准备程序文件"
+  !insertmacro Status "准备程序文件…"
   IfFileExists "$INSTDIR\.xwx-deck-new.exe" install_failed
   IfFileExists "$INSTDIR\.xwx-deck-old.exe" install_failed
   IfFileExists "$INSTDIR\.xwx-deck-old-uninstall.exe" install_failed
@@ -362,6 +370,7 @@ Section "XwX Deck"
     StrCpy $HadUninstaller 1
   StrCpy $Stage 2
   !insertmacro Log "安装 XwX Deck"
+  !insertmacro Status "正在$OperationName…"
   Rename "$INSTDIR\.xwx-deck-new.exe" "$INSTDIR\XwX Deck.exe"
   IfErrors install_failed
   StrCpy $OwnStaging 0
@@ -378,6 +387,7 @@ Section "XwX Deck"
     IfErrors install_failed
   ${EndIf}
   !insertmacro Log "登记当前用户安装"
+  !insertmacro Status "正在完成安装…"
   StrCpy $Stage 4
   WriteRegStr HKCU "${KEY}" "AppId" "app.xwxdeck.desktop"
   WriteRegStr HKCU "${KEY}" "InstallerType" "nsis-v1"
@@ -424,6 +434,7 @@ install_done:
 SectionEnd
 
 Function un.onInit
+  SetAutoClose true
   SetShellVarContext current
   SetRegView 64
   InitPluginsDir
@@ -536,6 +547,7 @@ Function un.RestoreRegistration
 FunctionEnd
 
 Section "Uninstall"
+  !insertmacro Status "正在卸载…"
   StrCpy $Stage 0
   StrCpy $RollbackFailed 0
   StrCpy $UninstallMetadataTouched 0
