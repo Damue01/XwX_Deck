@@ -12,6 +12,16 @@ export function NativeLifecycleActions(): null {
   const resetSeen = React.useRef(false);
   React.useEffect(() => {
     const clipboardError = (event: Event) => showToast((event as CustomEvent<string>).detail, 'error', 'clipboard-error');
+    const validationError = (event: Event) => {
+      if (document.documentElement.dataset.platform !== 'win32') return;
+      const field = event.target;
+      if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement)) return;
+      event.preventDefault();
+      // Keep constraint validation; replace only the WebView's default bubble.
+      if (field.form?.querySelector('input:invalid,textarea:invalid,select:invalid') !== field) return;
+      field.focus({ preventScroll: true });
+      showToast(field.validationMessage, 'error', 'form-validation');
+    };
     const exit = async () => {
       if (exitPending.current) return;
       exitPending.current = true;
@@ -25,9 +35,11 @@ export function NativeLifecycleActions(): null {
     };
     window.addEventListener('xwxdeck:request-exit', exit);
     window.addEventListener('xwxdeck:clipboard-error', clipboardError);
+    document.addEventListener('invalid', validationError, true);
     return () => {
       window.removeEventListener('xwxdeck:request-exit', exit);
       window.removeEventListener('xwxdeck:clipboard-error', clipboardError);
+      document.removeEventListener('invalid', validationError, true);
     };
   }, [api, confirm]);
   React.useEffect(() => {

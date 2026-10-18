@@ -260,6 +260,15 @@
       check('selection replaces grid with list and configuration in same dialog', document.querySelectorAll('[role="dialog"]:not([data-position])').length === 1 && document.querySelector('.configuration-list') && document.querySelector('#provider-url')?.value === 'https://api.deepseek.com');
       check('visible production connection form without column or action dividers', document.querySelector('#provider-editor').getBoundingClientRect().height > 0 && getComputedStyle(document.querySelector('.configuration-content.has-detail .configuration-directory')).borderRightWidth === '0px' && getComputedStyle(document.querySelector('.configuration-detail .prov-save-bar')).borderTopWidth === '0px');
       check('default configuration fields are name URL and Key only', document.querySelectorAll('#provider-editor input').length === 3 && !document.querySelector('#provider-adapter') && document.querySelector('#provider-key').type === 'password');
+      if(document.documentElement.dataset.platform==='win32') {
+        const invalidKey=document.querySelector('#provider-key'),beforeInvalid=JSON.stringify(await window.xwxDeck.getProviders()),invalidEvents=[];
+        const observeInvalid=event=>{if(event.target===invalidKey)invalidEvents.push(event.defaultPrevented);};document.addEventListener('invalid',observeInvalid,true);
+        document.querySelector('#provider-editor').requestSubmit();
+        await wait(()=>toastByTitle(invalidKey.validationMessage),'designed form validation notice');document.removeEventListener('invalid',observeInvalid,true);
+        check('Windows form validation uses application Toast instead of a native bubble',invalidEvents.length===1&&invalidEvents[0]&&!!toastByTitle(invalidKey.validationMessage));
+        check('invalid form keeps its draft and focuses the field without saving',document.activeElement===invalidKey&&JSON.stringify(await window.xwxDeck.getProviders())===beforeInvalid&&!!document.querySelector('#provider-editor'));
+        await dismissToasts();
+      }
       const fill = async (id, value) => {
         const field = document.querySelector(id);
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, value);
