@@ -5736,6 +5736,7 @@ dependencies = [
  "toml_edit 0.22.27",
  "unicode-normalization",
  "webview2-com",
+ "windows",
  "windows-core",
  "zeroize",
  "zstd",

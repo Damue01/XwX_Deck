@@ -53,7 +53,7 @@ try{
  assert.equal(report.passed,true,JSON.stringify(result));assert.equal(requests,2,'both initial and cancelled-exit requests must reach local upstream');
  console.log(JSON.stringify({...result,root,pid:child.pid},null,2));
  if(keepOpen){console.log('Physical tray acceptance ready; the manager has an isolated Open tray button.');await once(child,'exit');}
- else if(child.exitCode===null){const timer=setTimeout(()=>child.kill(),15000);try{assert.equal((await once(child,'exit'))[0],0,'closing an idle manager must exit even after a hidden tray window was created');}finally{clearTimeout(timer);}}
+ else if(child.exitCode===null){const timer=setTimeout(()=>child.kill(),15000);try{assert.equal((await once(child,'exit'))[0],0,'explicit test exit must terminate even after a hidden tray window was created');}finally{clearTimeout(timer);}}
  if(reminders){
   for(let n=0;n<40&&heldClosed<2;n++)await new Promise(r=>setTimeout(r,50));
   const config=await readFile(join(root,'codex/config.toml'),'utf8');assert.match(config,/model_provider\s*=\s*"Tray_Fixture"/);assert.equal(heldClosed,2,'both actual unfinished streams must be closed');

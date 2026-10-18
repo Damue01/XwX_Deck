@@ -7,6 +7,14 @@
   try{
     await wait(()=>document.querySelector('.tour-skip'),'onboarding');document.querySelector('.tour-skip').click();
     await wait(()=>!document.querySelector('#onboarding-setup,.tour-root'),'onboarding releases manager');
+    await window.xwxDeck.closeWindow();
+    await wait(async()=>!(await rpc('smokeManagerWindow')).visible,'idle manager hidden by Close button');
+    check('idle Close hides the manager without confirmation, exit or Trace activation',!document.querySelector('[role=alertdialog]') && !(await window.xwxDeck.getState()).tracingEnabled);
+    await rpc('smokeManagerWindow','show');
+    await rpc('smokeManagerWindow','close');
+    await wait(async()=>!(await rpc('smokeManagerWindow')).visible,'idle manager hidden');
+    check('native system Close also hides the idle manager without confirmation',!document.querySelector('[role=alertdialog]'));
+    await rpc('smokeManagerWindow','show');
     await open();let view=await inspect();
     check('Windows tray uses exactly two application-rendered menu items',view.items.map(x=>x.label).join('|')==='开启 Trace|退出'&&!view.managerMounted);
     check('tray menu shares the application font and menu surface',view.font.includes('Urbanist')&&view.background==='rgb(255, 255, 255)');
@@ -26,7 +34,11 @@
     await rpc('smokeTrayWindow','click-trace');await wait(async()=>(await window.xwxDeck.getState()).tracingEnabled,'tray starts Trace');
     check('custom tray Start dispatches the actual native Trace transition',true);
     await wait(async()=>!(await rpc('smokeTrayWindow'))?.visible,'tray action dismisses popup');check('selecting an action dismisses the tray menu',true);
-    const response=await rpc('smokeRequest');check('tray-started Gateway completes an actual local request',response.status===200);
+    await window.xwxDeck.closeWindow();
+    await wait(async()=>!(await rpc('smokeManagerWindow')).visible,'active manager hidden');
+    check('Close with Trace on hides the manager without confirmation or stopping its Gateway',!document.querySelector('[role=alertdialog]') && (await window.xwxDeck.getState()).tracingEnabled);
+    await rpc('smokeManagerWindow','show');
+    const response=await rpc('smokeRequest');check('tray-started Gateway completes an actual local request after closing and restoring its manager',response.status===200);
     await open();view=await inspect();check('reopening changes Start to Stop from actual runtime state',view.items[0].label==='关闭 Trace');
     await rpc('smokeTrayWindow','click-exit');await wait(()=>document.querySelector('[role=alertdialog]')?.textContent.includes('恢复直连并退出'),'custom exit confirmation');
     check('tray Exit uses the application confirmation while Trace is active',true);

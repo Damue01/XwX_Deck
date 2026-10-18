@@ -211,6 +211,15 @@ async fn pilot_rpc(
                 .map_err(|_| "无法调整测试窗口")?;
             Ok(Value::Null)
         }
+        "smokeManagerWindow" if std::env::args().any(|arg| arg == "--smoke") => {
+            let main = app.get_webview_window("main").ok_or("主窗口不存在")?;
+            match args.first().and_then(Value::as_str) {
+                Some("show") => show_main(&app),
+                Some("close") => main.close().map_err(|e| e.to_string())?,
+                _ => {}
+            }
+            Ok(json!({"visible":main.is_visible().unwrap_or(false)}))
+        }
         "getOfficialChatgptResetCredits" => {
             let accounts = pilot.lock().await.subscription_context();
             accounts
@@ -866,6 +875,11 @@ async fn pilot_rpc(
         }
         "moveWindow" | "moveWindowEnd" | "resizeWindowMove" | "resizeWindowEnd" => Ok(Value::Null),
         "closeWindow" => {
+            #[cfg(target_os = "windows")]
+            if window.label() == "main" {
+                window.hide().map_err(|e| e.to_string())?;
+                return Ok(Value::Null);
+            }
             if pilot.lock().await.active() {
                 window.hide().map_err(|e| e.to_string())?;
             } else {
@@ -964,12 +978,10 @@ async fn pilot_smoke_report(
     )
     .map_err(|e| e.to_string())?;
     if std::env::args().any(|arg| arg == "--smoke-exit") && !pilot.active() {
-        if let Some(window) = app.get_webview_window("main") {
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                let _ = window.close();
-            });
-        }
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            app.exit(0);
+        });
     }
     Ok(())
 }
@@ -1490,6 +1502,7 @@ fn main() {
     };
     #[cfg(target_os = "windows")]
     let isolated_root = argument("--pilot-root").map(|_| root.clone());
+    #[cfg(not(target_os = "windows"))]
     let shared = pilot.clone();
     let builder = embedded_fonts::builder();
     #[cfg(target_os = "macos")]
@@ -1631,11 +1644,13 @@ fn main() {
                         let _=viewer.eval("window.__xwxTraceDispose?.()");
                     }
                 }
-                // Only the manager stays in the tray while Trace is running.
+                // Main-window Close is separate from explicit tray Exit.
                 // Hiding a fullscreen dashboard leaves a blank macOS Space.
                 if window.label()=="main" {
+                    #[cfg(target_os="windows")]
+                    {api.prevent_close();let _=window.hide();}
+                    #[cfg(not(target_os="windows"))]
                     if tauri::async_runtime::block_on(async{shared.lock().await.active()}) {api.prevent_close();let _=window.hide();}
-                    else {#[cfg(target_os="windows")]windows_tray::destroy(window.app_handle());}
                 }
             }
             if let tauri::WindowEvent::Resized(_)=event {

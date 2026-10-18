@@ -11,6 +11,10 @@
   document.querySelector('#captureBtn').click();await wait(async()=>(await window.xwxDeck.getState()).tracingEnabled,'Trace enabled');
   const held=rpc('smokeRequest').catch(()=>null);await wait(running,'actual ongoing request');
   check('reminder fixture has an actual unfinished streamed request',await running());
+  await rpc('closeWindow');await wait(async()=>!(await rpc('smokeManagerWindow')).visible,'busy manager hidden');
+  check('closing the manager during a streamed request hides without confirmation and preserves the Gateway',!dialog()&&await running());
+  await rpc('smokeManagerWindow','show');await wait(async()=>(await rpc('smokeManagerWindow')).visible,'busy manager restored');
+  check('restoring the manager preserves the same unfinished streamed request',await running());
   document.querySelector('#stopCaptureBtn').click();await wait(()=>dialog()?.textContent.includes('强制停止'),'busy stop confirmation');await delay(200);
   check('busy Trace stop uses the shared application confirmation',styled()&&!!action('继续等待')&&!!action('强制停止'));
   check('busy stop initially focuses the safe waiting action',document.activeElement===action('继续等待'));

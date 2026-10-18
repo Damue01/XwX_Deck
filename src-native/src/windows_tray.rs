@@ -36,14 +36,6 @@ pub fn hide(app: &tauri::AppHandle) {
     }
 }
 
-pub fn destroy(app: &tauri::AppHandle) {
-    REQUESTED.store(false, Ordering::Release);
-    READY.store(false, Ordering::Release);
-    if let Some(window) = app.get_webview_window(LABEL) {
-        let _ = window.destroy();
-    }
-}
-
 pub fn ready(app: &tauri::AppHandle) -> Result<(), String> {
     READY.store(true, Ordering::Release);
     if REQUESTED.load(Ordering::Acquire) {

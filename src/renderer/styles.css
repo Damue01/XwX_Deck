@@ -1636,11 +1636,14 @@ html[data-surface="tray"], html[data-surface="tray"] body, html[data-surface="tr
   display: flex; align-items: center; gap: 9px; width: 100%; height: 36px; padding: 0 9px;
   border: 0; border-radius: 6px; background: transparent; color: var(--ink);
   font: 500 13px var(--sans); text-align: left; cursor: pointer; outline: none;
+  transition: background-color 120ms ease;
 }
+.tray-menu-item:hover:not(:disabled) { background: var(--hover); }
 .tray-menu-item svg { flex-shrink: 0; color: var(--graphite); }
 .tray-menu { outline: none; }
 .tray-menu-item:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -2px; }
 .tray-menu-item:disabled { opacity: .45; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .tray-menu-item { transition: none; } }
 
 html[data-surface="recovery"] body, html[data-surface="recovery"] #root { width:100%; height:100%; min-width:0; margin:0; padding:0; background:var(--surface); }
 .recovery-window { display:flex; flex-direction:column; height:100%; padding:20px; color:var(--ink); }

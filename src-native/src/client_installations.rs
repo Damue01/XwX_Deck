@@ -17,6 +17,155 @@ pub struct Discovery {
     bins: Vec<PathBuf>,
     apps: Vec<PathBuf>,
     extensions: Vec<PathBuf>,
+    packages: Vec<(String, PathBuf)>,
+}
+
+fn package_client(name: &str) -> Option<&'static str> {
+    match name.to_ascii_lowercase().as_str() {
+        "openai.codex" | "openai.chatgpt-desktop" | "openai.chatgpt" => Some("codex"),
+        "claude" | "anthropic.claude" => Some("claude"),
+        _ => None,
+    }
+}
+
+/// Current-user registration is authoritative; cached package data is not an installation.
+#[cfg(windows)]
+fn windows_packages() -> windows_core::Result<Vec<(String, PathBuf)>> {
+    use windows::{
+        core::{w, PCWSTR, PWSTR},
+        Win32::{
+            Foundation::{ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS},
+            Storage::Packaging::Appx::{
+                GetPackagePathByFullName, GetPackagesByPackageFamily, PackageFamilyNameFromFullName,
+            },
+            System::Registry::{
+                RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
+            },
+        },
+    };
+    struct Key(HKEY);
+    impl Drop for Key {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = RegCloseKey(self.0);
+            }
+        }
+    }
+    let mut handle = HKEY::default();
+    let opened = unsafe {
+        RegOpenKeyExW(HKEY_CURRENT_USER, w!("Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages"), None, KEY_READ, &mut handle)
+    };
+    if opened == ERROR_FILE_NOT_FOUND {
+        return Ok(vec![]);
+    }
+    opened.ok()?;
+    let key = Key(handle);
+    let mut rows = vec![];
+    let mut families = std::collections::HashSet::new();
+    for index in 0..4096 {
+        let mut name = vec![0u16; 1024];
+        let mut length = name.len() as u32;
+        let status = unsafe {
+            RegEnumKeyExW(
+                key.0,
+                index,
+                Some(PWSTR(name.as_mut_ptr())),
+                &mut length,
+                None,
+                None,
+                None,
+                None,
+            )
+        };
+        if status == ERROR_NO_MORE_ITEMS {
+            break;
+        }
+        status.ok()?;
+        let full_name = String::from_utf16_lossy(&name[..length as usize]);
+        let identity = full_name.split('_').next().unwrap_or("");
+        if package_client(identity).is_none() {
+            continue;
+        }
+        let mut family = vec![0u16; 1024];
+        let mut family_length = family.len() as u32;
+        if unsafe {
+            PackageFamilyNameFromFullName(
+                PCWSTR(name.as_ptr()),
+                &mut family_length,
+                Some(PWSTR(family.as_mut_ptr())),
+            )
+        }
+        .is_err()
+        {
+            continue;
+        }
+        if !families.insert(family.clone()) {
+            continue;
+        }
+        // This native query is restricted to the current user's registration.
+        // https://learn.microsoft.com/windows/win32/api/appmodel/nf-appmodel-getpackagesbypackagefamily
+        let mut count = 0;
+        let mut buffer_length = 0;
+        let query = unsafe {
+            GetPackagesByPackageFamily(
+                PCWSTR(family.as_ptr()),
+                &mut count,
+                None,
+                &mut buffer_length,
+                None,
+            )
+        };
+        if query != ERROR_INSUFFICIENT_BUFFER
+            || count == 0
+            || count > 256
+            || buffer_length > 1024 * 1024
+        {
+            continue;
+        }
+        let mut names = vec![PWSTR::null(); count as usize];
+        let mut buffer = vec![0u16; buffer_length as usize];
+        if unsafe {
+            GetPackagesByPackageFamily(
+                PCWSTR(family.as_ptr()),
+                &mut count,
+                Some(names.as_mut_ptr()),
+                &mut buffer_length,
+                Some(PWSTR(buffer.as_mut_ptr())),
+            )
+        }
+        .is_err()
+        {
+            continue;
+        }
+        for name in names.iter().take(count as usize) {
+            let mut path_length = 0;
+            if unsafe { GetPackagePathByFullName(PCWSTR(name.0), &mut path_length, None) }
+                != ERROR_INSUFFICIENT_BUFFER
+                || path_length == 0
+                || path_length > 32768
+            {
+                continue;
+            }
+            let mut path = vec![0u16; path_length as usize];
+            if unsafe {
+                GetPackagePathByFullName(
+                    PCWSTR(name.0),
+                    &mut path_length,
+                    Some(PWSTR(path.as_mut_ptr())),
+                )
+            }
+            .is_ok()
+            {
+                rows.push((
+                    identity.to_owned(),
+                    PathBuf::from(String::from_utf16_lossy(
+                        &path[..path_length.saturating_sub(1) as usize],
+                    )),
+                ));
+            }
+        }
+    }
+    Ok(rows)
 }
 
 fn directories(path: &Path, limit: usize) -> Vec<PathBuf> {
@@ -70,11 +219,18 @@ impl Discovery {
         Self::in_home(home)
     }
     pub fn system() -> Self {
-        let home = env::var_os("HOME")
-            .or_else(|| env::var_os("USERPROFILE"))
-            .map(PathBuf::from)
-            .unwrap_or_default();
+        let home = if cfg!(windows) {
+            env::var_os("USERPROFILE").or_else(|| env::var_os("HOME"))
+        } else {
+            env::var_os("HOME").or_else(|| env::var_os("USERPROFILE"))
+        }
+        .map(PathBuf::from)
+        .unwrap_or_default();
         let mut discovery = Self::in_home(&home);
+        #[cfg(windows)]
+        {
+            discovery.packages = windows_packages().unwrap_or_default();
+        }
         discovery.bins.extend(
             env::var_os("PATH")
                 .into_iter()
@@ -156,9 +312,21 @@ impl Discovery {
                 bins.push(version.join("installation/bin"));
             }
         }
+        let mut apps = vec![home.join("Applications"), home.join(".local/share")];
+        if cfg!(windows) {
+            for root in [home.join("AppData/Local"), home.join("AppData/Roaming")] {
+                apps.push(root.join("Programs"));
+                apps.push(root.clone());
+                bins.push(root.join("npm"));
+            }
+            let root = home.join("AppData/Local/OpenAI/Codex/bin");
+            bins.push(root.clone());
+            bins.extend(directories(&root, 64));
+        }
         Self {
             bins,
-            apps: vec![home.join("Applications"), home.join(".local/share")],
+            apps,
+            packages: vec![],
             extensions: [
                 ".vscode/extensions",
                 ".vscode-insiders/extensions",
@@ -173,7 +341,7 @@ impl Discovery {
     pub fn installed(&self, id: &str) -> bool {
         let (apps, commands): (&[&str], &[&str]) = match canonical_id(id) {
             "codex" => (&["ChatGPT", "Codex"], &["codex"]),
-            "claude" => (&["Claude"], &["claude"]),
+            "claude" => (&["Claude", "AnthropicClaude"], &["claude"]),
             "deepseek-harness" => (&["DeepSeek Harness", "DSH"], &["dsh"]),
             "zcode" => (&["ZCode"], &["zcode"]),
             "kimi-code" => (&["Kimi Code"], &["kimi"]),
@@ -207,6 +375,16 @@ impl Discovery {
             "lmstudio-app" => (&["LM Studio"], &["lms"]),
             _ => return false,
         };
+        if self.packages.iter().any(|(name, root)| {
+            package_client(name) == Some(canonical_id(id))
+                && apps.iter().any(|app| {
+                    [root.clone(), root.join("app")]
+                        .iter()
+                        .any(|folder| executable(&folder.join(format!("{app}.exe"))))
+                })
+        }) {
+            return true;
+        }
         if self.bins.iter().any(|directory| {
             commands.iter().any(|command| {
                 if cfg!(windows) {
@@ -244,10 +422,12 @@ impl Discovery {
                     return true;
                 }
                 // Electron installs on Windows often put the executable in app-<version>.
-                if directories(&directory, 32)
-                    .iter()
-                    .any(|version| executable(&version.join(format!("{name}.exe"))))
-                {
+                if directories(&directory, 32).iter().any(|version| {
+                    executable(&version.join(format!("{name}.exe")))
+                        || commands
+                            .iter()
+                            .any(|command| executable(&version.join(format!("{command}.exe"))))
+                }) {
                     return true;
                 }
                 commands.iter().any(|command| {
@@ -379,6 +559,62 @@ mod tests {
         let f = Fixture::new();
         f.file("Applications/ChatGPT/ChatGPT.exe", true);
         assert!(Discovery::in_home(&f.0).installed("codex"));
+    }
+
+    #[test]
+    fn registered_packages_require_a_matching_identity_and_executable() {
+        let f = Fixture::new();
+        let mut discovery = Discovery::in_home(&f.0);
+        discovery
+            .packages
+            .push(("OpenAI.Codex".into(), f.0.join("msix/codex")));
+        discovery
+            .packages
+            .push(("Claude".into(), f.0.join("msix/claude")));
+        assert!(!discovery.installed("codex"));
+        f.file("msix/codex/app/Codex.exe", true);
+        f.file("msix/claude/app/Claude.exe", true);
+        assert!(discovery.installed("codex-cli"));
+        assert!(discovery.installed("claude-code"));
+        discovery.packages[0].0 = "Unrelated.ChatGPT".into();
+        assert!(!discovery.installed("codex"));
+        discovery.packages.clear();
+        assert!(
+            !discovery.installed("claude"),
+            "orphaned files without package registration must not count"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn finds_windows_user_installs_and_bundled_cli_without_path() {
+        let f = Fixture::new();
+        f.file("AppData/Local/AnthropicClaude/app-1.2.3/claude.exe", true);
+        f.file(
+            "AppData/Local/OpenAI/Codex/bin/fixture-version/codex.exe",
+            true,
+        );
+        let discovery = Discovery::in_home(&f.0);
+        assert!(discovery.installed("claude"));
+        assert!(discovery.installed("codex"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn opt_in_current_user_package_discovery_without_path_or_config() {
+        let Ok(expected) = env::var("XWX_NATIVE_TEST_SYSTEM_CLIENT") else {
+            return;
+        };
+        let discovery = Discovery {
+            bins: vec![],
+            apps: vec![],
+            extensions: vec![],
+            packages: windows_packages().expect("read current-user package registration"),
+        };
+        assert!(
+            discovery.installed(&expected),
+            "registered package executable must be detected without PATH or client settings"
+        );
     }
 
     #[test]
