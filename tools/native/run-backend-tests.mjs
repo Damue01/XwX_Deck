@@ -80,6 +80,7 @@ const suites = [
   "universal-gateway-test.mjs",
   "gateway-forwarding-test.mjs",
   "expanded-clients-test.mjs",
+  "managed-adapters-test.mjs",
   "client-models-renderer-test.mjs",
   "codex-models-renderer-test.mjs",
   "trace-index-repair-test.mjs",

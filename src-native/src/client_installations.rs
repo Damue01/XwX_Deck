@@ -20,6 +20,106 @@ pub struct Discovery {
     packages: Vec<(String, PathBuf)>,
 }
 
+// Installers may use any drive. Only inspect registered installation locations;
+// executable checks below still establish which product is actually present.
+#[cfg(windows)]
+fn windows_install_roots() -> Vec<PathBuf> {
+    use windows::{
+        core::{PCWSTR, PWSTR},
+        Win32::{Foundation::ERROR_NO_MORE_ITEMS, System::Registry::*},
+    };
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(Some(0)).collect()
+    }
+    fn value(key: HKEY, name: &str) -> Option<String> {
+        let name = wide(name);
+        let mut data = vec![0u16; 32768];
+        let mut size = (data.len() * 2) as u32;
+        let result = unsafe {
+            RegGetValueW(
+                key,
+                None,
+                PCWSTR(name.as_ptr()),
+                RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+                None,
+                Some(data.as_mut_ptr().cast()),
+                Some(&mut size),
+            )
+        };
+        result.ok().ok()?;
+        Some(
+            String::from_utf16_lossy(&data[..size as usize / 2])
+                .trim_end_matches('\0')
+                .to_owned(),
+        )
+    }
+    let mut roots = vec![];
+    for hive in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        for branch in [
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ] {
+            let name = wide(branch);
+            let mut key = HKEY::default();
+            if unsafe { RegOpenKeyExW(hive, PCWSTR(name.as_ptr()), None, KEY_READ, &mut key) }
+                .is_err()
+            {
+                continue;
+            }
+            for index in 0..4096 {
+                let mut name = vec![0u16; 1024];
+                let mut length = name.len() as u32;
+                let status = unsafe {
+                    RegEnumKeyExW(
+                        key,
+                        index,
+                        Some(PWSTR(name.as_mut_ptr())),
+                        &mut length,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                };
+                if status == ERROR_NO_MORE_ITEMS {
+                    break;
+                }
+                if status.is_err() {
+                    continue;
+                }
+                let mut entry = HKEY::default();
+                if unsafe { RegOpenKeyExW(key, PCWSTR(name.as_ptr()), None, KEY_READ, &mut entry) }
+                    .is_err()
+                {
+                    continue;
+                }
+                if let Some(location) = value(entry, "InstallLocation").filter(|s| !s.is_empty()) {
+                    roots.push(PathBuf::from(location.trim_matches('"')));
+                }
+                if let Some(icon) = value(entry, "DisplayIcon") {
+                    let icon = icon
+                        .rsplit_once(',')
+                        .filter(|(_, index)| index.trim().parse::<i32>().is_ok())
+                        .map_or(icon.as_str(), |(path, _)| path);
+                    if let Some(parent) = Path::new(icon.trim_matches('"')).parent() {
+                        roots.push(parent.to_path_buf());
+                    }
+                }
+                unsafe {
+                    let _ = RegCloseKey(entry);
+                }
+            }
+            unsafe {
+                let _ = RegCloseKey(key);
+            }
+        }
+    }
+    roots.retain(|root| root.is_absolute());
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
 fn package_client(name: &str) -> Option<&'static str> {
     match name.to_ascii_lowercase().as_str() {
         "openai.codex" | "openai.chatgpt-desktop" | "openai.chatgpt" => Some("codex"),
@@ -215,6 +315,66 @@ fn codex_bundle_identity(path: &Path) -> bool {
 }
 
 impl Discovery {
+    pub fn management_supported(&self, id: &str) -> bool {
+        if id == "cline" {
+            if self.bins.iter().any(|dir| {
+                ["cline", "cline.exe", "cline.cmd", "cline.bat"]
+                    .iter()
+                    .any(|name| executable(&dir.join(name)))
+            }) {
+                return true;
+            }
+            return self.extensions.iter().any(|dir| {
+                directories(dir, 512).iter().any(|extension| {
+                    fs::read_to_string(extension.join("package.json"))
+                        .ok()
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                        .is_some_and(|v| {
+                            (v["name"] == "claude-dev" || v["name"] == "cline")
+                                && v["version"]
+                                    .as_str()
+                                    .and_then(|s| s.split('.').next())
+                                    .and_then(|s| s.parse::<u32>().ok())
+                                    .is_some_and(|major| major >= 4)
+                        })
+                })
+            });
+        }
+        if id != "vscode" {
+            return true;
+        }
+        self.apps.iter().any(|root| {
+            [
+                root.join("resources/app/package.json"),
+                root.join("Microsoft VS Code/resources/app/package.json"),
+                root.join("Visual Studio Code.app/Contents/Resources/app/package.json"),
+            ]
+            .iter()
+            .any(|path| {
+                let identity = path
+                    .parent()
+                    .and_then(|dir| fs::read_to_string(dir.join("product.json")).ok())
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+                if !identity.is_some_and(|v| {
+                    v["applicationName"] == "code" && v["nameShort"] == "Visual Studio Code"
+                }) {
+                    return false;
+                }
+                fs::read_to_string(path)
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|v| v["version"].as_str().map(str::to_owned))
+                    .is_some_and(|version| {
+                        let mut parts = version
+                            .split('.')
+                            .filter_map(|part| part.parse::<u32>().ok());
+                        let major = parts.next().unwrap_or(0);
+                        let minor = parts.next().unwrap_or(0);
+                        major > 1 || major == 1 && minor >= 122
+                    })
+            })
+        })
+    }
     pub fn for_home(home: &Path) -> Self {
         Self::in_home(home)
     }
@@ -230,6 +390,9 @@ impl Discovery {
         #[cfg(windows)]
         {
             discovery.packages = windows_packages().unwrap_or_default();
+            let roots = windows_install_roots();
+            discovery.bins.extend(roots.iter().cloned());
+            discovery.apps.extend(roots);
         }
         discovery.bins.extend(
             env::var_os("PATH")
@@ -298,6 +461,7 @@ impl Discovery {
             ".mimocode/bin",
             ".qoder/bin",
             ".omp/bin",
+            ".dsh/bin",
         ]
         .map(|path| home.join(path))
         .to_vec();
@@ -429,6 +593,13 @@ impl Discovery {
             return true;
         }
         if self.apps.iter().any(|root| {
+            // Registry roots already name the installation directory itself.
+            if apps
+                .iter()
+                .any(|name| executable(&root.join(format!("{name}.exe"))))
+            {
+                return true;
+            }
             apps.iter().any(|name| {
                 let bundle = root.join(format!("{name}.app/Contents/MacOS"));
                 let supported_bundle = !(bundle.is_dir()

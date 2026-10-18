@@ -1522,6 +1522,9 @@ impl Pilot {
             if !discovery.installed(id) {
                 return Err("客户端安装状态已变化，请重新检测；未写入任何配置".into());
             }
+            if !discovery.management_supported(id) {
+                return Err("当前客户端版本不支持模型配置，未写入任何配置".into());
+            }
             model_clients.push(id.to_owned());
             added_clients.push(id.to_owned());
         }

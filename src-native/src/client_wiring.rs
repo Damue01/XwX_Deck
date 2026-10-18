@@ -1,6 +1,8 @@
 //! Small, reversible client configuration edits. Comments and unrelated fields survive.
 use super::*;
 use sha2::{Digest, Sha256};
+#[path = "client_adapters.rs"]
+mod adapters;
 pub(super) const CLIENTS: &[&str] = &[
     "opencode",
     "gemini-cli",
@@ -12,6 +14,11 @@ pub(super) const CLIENTS: &[&str] = &[
     "droid",
     "codebuddy-code",
     "workbuddy",
+    "deepseek-harness",
+    "cline",
+    "vscode",
+    "kimi-code",
+    "grok-build",
 ];
 
 pub(super) fn checked_model(id: &str, model: &str) -> Result<()> {
@@ -478,6 +485,9 @@ impl Pilot {
     }
     pub(super) fn wiring_paths(&self, id: &str) -> Result<Vec<PathBuf>> {
         let home = self.client_home();
+        if let Some(paths) = adapters::paths(self, id)? {
+            return Ok(paths);
+        }
         Ok(match id {
             "opencode" => {
                 let directory = if self.isolated {
@@ -593,6 +603,24 @@ impl Pilot {
             if let Some(source) = source {
                 if path
                     .extension()
+                    .is_some_and(|extension| extension == "toml")
+                    && !source.trim().is_empty()
+                {
+                    external = true;
+                }
+                if id == "deepseek-harness"
+                    && path
+                        .file_name()
+                        .is_some_and(|name| name == "cordis.patch.yml")
+                {
+                    external |= source.lines().any(|line| {
+                        !line.trim().is_empty()
+                            && !line.trim().starts_with('#')
+                            && line.trim() != "[]"
+                    });
+                }
+                if path
+                    .extension()
                     .is_some_and(|e| e == "json" || e == "jsonc")
                 {
                     let v = parsed(&source)?;
@@ -622,6 +650,15 @@ impl Pilot {
                         }
                         "codebuddy-code" | "workbuddy" => {
                             v.get("models").is_some() || v.is_array() || v.get("model").is_some()
+                        }
+                        "cline" => {
+                            v.get("lastUsedProvider").is_some()
+                                || v.get("actModeApiProvider").is_some()
+                                || v.get("planModeApiProvider").is_some()
+                        }
+                        "vscode" => {
+                            v.is_array() && v.as_array().is_some_and(|rows| !rows.is_empty())
+                                || v.get("chat.defaultModel").is_some()
                         }
                         _ => v["model"]["name"].as_str().is_some_and(|v| !v.is_empty()),
                     };
@@ -653,6 +690,9 @@ impl Pilot {
         }
         let model = text(route, "model");
         checked_model(id, model)?;
+        if let Some(plans) = adapters::plan(self, id, port, route)? {
+            return Ok(plans);
+        }
         let base = format!("http://127.0.0.1:{port}/clients/{id}");
         let mut plans = vec![];
         let options = match id {
@@ -877,12 +917,41 @@ impl Pilot {
                     let _ = self.restore_client_wiring(Some(id));
                     return Err(error);
                 }
+                if plan["yamlMapping"] == true
+                    || (id == "cline"
+                        && path.file_name().is_some_and(|name| name == "secrets.json"))
+                {
+                    credentials::private_permissions(&path, false)?;
+                }
             }
         }
         Ok(())
     }
     fn wiring_recovery_paths(&self, id: &str) -> Result<Vec<PathBuf>> {
-        let paths = self.wiring_paths(id)?;
+        let mut paths = self.wiring_paths(id)?;
+        if id == "vscode" {
+            if let Some(dir) = paths.first().and_then(|path| path.parent()) {
+                let profiles = dir.join("profiles");
+                if let Ok(entries) = fs::read_dir(profiles) {
+                    let extra: Vec<_> = entries
+                        .take(128)
+                        .flatten()
+                        .filter(|entry| entry.path().is_dir())
+                        .flat_map(|entry| {
+                            [
+                                entry.path().join("chatLanguageModels.json"),
+                                entry.path().join("settings.json"),
+                            ]
+                        })
+                        .collect();
+                    for path in extra {
+                        if !paths.contains(&path) {
+                            paths.push(path);
+                        }
+                    }
+                }
+            }
+        }
         let home = self.client_home();
         let legacy = if self.isolated {
             None
@@ -947,7 +1016,15 @@ fn restore_wiring_ledgers(
                 None => return Err("客户端配置被删除，保留恢复证据".into()),
             };
             let mut restored = current.clone();
-            if plan["env"] == true {
+            if plan["toml"] == true {
+                restored = adapters::restore_toml(&current, &plan)?;
+            } else if plan["jsonGroup"] == true {
+                restored = adapters::restore_group(&current, &plan)?;
+            } else if plan["yamlBlock"] == true {
+                restored = adapters::restore_yaml_block(&current, &plan)?;
+            } else if plan["yamlMapping"] == true {
+                restored = adapters::restore_yaml_mapping(&current, &plan)?;
+            } else if plan["env"] == true {
                 for p in plan["patches"].as_array().ok_or("恢复账本损坏")? {
                     let key = text(p, "key");
                     checked_env(&current, key)?;

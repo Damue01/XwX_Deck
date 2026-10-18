@@ -80,9 +80,9 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
   const items = sources.flatMap(source => source.items.filter(item => item.status !== 'duplicate').map(item => ({ ...item, sourceName: source.name, sourcePath: source.path })));
   const problems = sources.filter(source => source.error);
   const installedIds = normalizeModelClients(detection.snapshot?.available ? detection.snapshot.clients.filter(client => client.installed).map(client => client.id) : []);
-  const installedClients = MODEL_CLIENT_CATALOG.filter(client => installedIds.includes(client.id));
+  const installedClients = MODEL_CLIENT_CATALOG.filter(client => installedIds.includes(client.id) && detection.snapshot?.clients.find(row => row.id === client.id)?.modelManagement !== false);
   const managedClients = normalizeModelClients(modelClients);
-  const selectedClients = pickedClients.filter(id => installedIds.includes(id) && supportsModelManagement(id) && !managedClients.includes(id));
+  const selectedClients = pickedClients.filter(id => installedClients.some(client => client.id === id) && !managedClients.includes(id));
   const hasSelection = picked.length > 0 || selectedClients.length > 0;
   const cannotApply = !preview || !api.importConfigurations || (!!selectedClients.length && (detection.checking || !!detection.error));
   const actions = <div className="configuration-import-actions">
@@ -122,9 +122,8 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
             const managed = managedClients.includes(client.id);
             const supported = supportsModelManagement(client.id);
             const selected = managed || selectedClients.includes(client.id);
-            return <li key={client.id}><button type="button" className="configuration-import-client" data-detected-client={client.id} aria-pressed={selected} disabled={busy || managed || !supported || (!selected && (detection.checking || !!detection.error))} onClick={() => setPickedClients(current => current.includes(client.id) ? current.filter(id => id !== client.id) : [...current, client.id])}>
+            return <li key={client.id}><button type="button" className="configuration-choice configuration-import-client" data-detected-client={client.id} data-unconfigured={!selected || undefined} aria-pressed={selected} disabled={busy || managed || !supported || (!selected && (detection.checking || !!detection.error))} onClick={() => setPickedClients(current => current.includes(client.id) ? current.filter(id => id !== client.id) : [...current, client.id])}>
               <ProviderIcon kind={client.icon} /><span>{clientCatalogLabel(client)}</span>
-              {managed ? <small>{t('已管理')}</small> : !supported ? <small>{t('暂不支持模型配置')}</small> : <span className="configuration-import-client-check" aria-hidden="true">{selected ? '✓' : '+'}</span>}
             </button></li>;
           })}</ul>
         </>}
@@ -139,7 +138,7 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
       {preview && !items.length && !problems.length && <p className="configuration-import-status">{t("未检测到可导入配置")}</p>}
       <div className="configuration-import-list" aria-label={t("已有配置")}>{items.map(item => {
         const selectable = ['new', 'paused', 'needs-login'].includes(item.status);
-        const status = item.status === 'existing' ? t('已添加') : item.status === 'paused' ? t('已停用') : item.status === 'needs-login' ? t('需登录') : item.status === 'unsupported' ? t(item.reason.includes('登录') ? '需登录' : '无法导入') : '';
+        const status = item.status === 'paused' ? t('已停用') : item.status === 'needs-login' ? t('需登录') : item.status === 'unsupported' ? t(item.reason.includes('登录') ? '需登录' : '无法导入') : '';
         return <label className={`configuration-import-item${selectable ? '' : ' configuration-import-item-disabled'}`} key={`${item.sourcePath}:${item.fingerprint}`}>
           <span className="configuration-import-identity"><strong>{item.name}</strong><span className="configuration-import-meta">{item.baseUrl && <span className="configuration-import-url">{item.baseUrl}</span>}<span className="configuration-import-source-label">{t(item.sourceName)}</span>{item.accountKind && <span>{t(item.accountKind === 'official' ? '官方账号登录' : 'API 授权')}</span>}</span></span>
           <span className="configuration-import-selection">

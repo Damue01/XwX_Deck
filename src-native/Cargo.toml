@@ -18,6 +18,7 @@ tauri = { version = "2", default-features = false, features = ["wry", "compressi
 tauri-runtime = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_yaml_ng = "0.10"
 regex = "1"
 unicode-normalization = "0.1"
 tokio = { version = "1", features = ["net", "sync", "time", "io-util", "rt-multi-thread", "process"] }

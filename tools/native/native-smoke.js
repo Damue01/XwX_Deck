@@ -115,9 +115,11 @@
     await wait(() => document.querySelector('#configuration-clients [data-client-download="opencode"]'), 'client manager');
     check('client management opens at one level without expanding settings', document.querySelectorAll('[role=dialog]:not([data-position])').length===1 && document.querySelector('#page-models').classList.contains('current') && document.querySelector('#model-config-content').hidden);
     check('merged desktop and CLI have no duplicate manager entries', !document.querySelector('#configuration-clients [data-client-download="codex-cli"]') && !document.querySelector('#configuration-clients [data-client-download="claude-code"]'));
-    check('unverified clients and editor plugins are absent from management', ['cursor','vscode','trae','cline','antigravity-cli','openchamber','t3-code'].every(id=>!document.querySelector(`#configuration-clients [data-client-download="${id}"]`)));
+    check('client directory retains download entries independently of model management', ['cursor','vscode','trae','cline','antigravity-cli','openchamber','t3-code','deepseek-harness'].every(id=>document.querySelector(`#configuration-clients [data-client-download="${id}"]`)));
     check('installed but unmanaged OpenCode stays muted while saved ChatGPT enrollment is normal', document.querySelector('[data-client-download="opencode"]').dataset.unconfigured==='true'&&!document.querySelector('[data-client-download="codex"]').dataset.unconfigured);
     check('unmanaged client icons are grayscale and saved clients retain their brand color',getComputedStyle(document.querySelector('[data-client-download="opencode"] .provider-brand-icon')).filter==='grayscale(1)'&&getComputedStyle(document.querySelector('[data-client-download="codex"] .provider-brand-icon')).filter==='none');
+    document.querySelector('[data-client-download="trae"]').click(); await delay(100);
+    check('download-only product retains its links without an add-to-model action',!!document.querySelector('#configuration-clients .setup-card-downloads')&&!document.querySelector('#configuration-clients .configuration-client-actions'));
     document.querySelector('#configuration-clients [data-client-download="opencode"]').click();
     await wait(() => document.querySelector('.configuration-client-actions .btn.primary')?.disabled === false, 'isolated installed client');
     check('client details offer the explicit add action', document.querySelector('.configuration-client-actions .btn.primary').textContent === '添加到模型页');
@@ -227,6 +229,7 @@
       }
       const emptyApiChoice = document.querySelector('[data-service=deepseek]'), customChoice = document.querySelector('[data-service=custom]');
       check('confirmed missing API configuration is muted but enabled; custom and import actions keep normal colors', emptyApiChoice.dataset.unconfigured === 'true' && !emptyApiChoice.disabled && !customChoice.dataset.unconfigured && !document.querySelector('.configuration-import-entry').dataset.unconfigured && getComputedStyle(emptyApiChoice).color !== getComputedStyle(customChoice).color && getComputedStyle(emptyApiChoice.querySelector('.provider-brand-icon')).opacity === '0.7');
+      check('API cards use the same monochrome unconfigured rule without added borders',getComputedStyle(emptyApiChoice.querySelector('.provider-brand-icon')).filter==='grayscale(1)'&&getComputedStyle(emptyApiChoice).borderTopWidth==='0px');
       const originalImportPreview = window.xwxDeck.previewConfigurationImport, originalImportFile = window.xwxDeck.chooseConfigurationImportFile, originalImportApply = window.xwxDeck.importConfigurations;
       const importRequests = [], fileRequests = [];
       const importFixture = { targetDigest:'ui-fixture-digest', sources:[
@@ -240,7 +243,8 @@
       document.querySelector('.configuration-import-entry').click();
       await wait(() => document.querySelector('.configuration-import input[type=checkbox]') && !document.querySelector('.configuration-import-refresh').disabled, 'flat import list');
       await wait(()=>document.querySelector('.configuration-import-clients')?.getAttribute('aria-busy')==='false','card import discovery');
-      check('configuration card import uses the same detected client selection and marks existing management',document.querySelector('[data-detected-client="codex"]').textContent.includes('已管理') && document.querySelector('[data-detected-client="codex"]').disabled && document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='false');
+      check('configuration card import uses saved selection without status badges or plus signs',document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='true' && !document.querySelector('[data-detected-client="codex"] small,.configuration-import-client-check') && document.querySelector('[data-detected-client="codex"]').disabled && document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='false');
+      check('import selected and unselected cards keep shared brand states without a selection border',getComputedStyle(document.querySelector('[data-detected-client="codex"]')).opacity==='1'&&getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='none'&&getComputedStyle(document.querySelector('[data-detected-client="qwen-code"] .provider-brand-icon')).filter==='grayscale(1)'&&getComputedStyle(document.querySelector('[data-detected-client="codex"]')).borderTopWidth==='0px');
       document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);
       check('card client selection is pending until confirmation',document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='true' && !(await window.xwxDeck.getModelClients()).includes('qwen-code'));
       document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);

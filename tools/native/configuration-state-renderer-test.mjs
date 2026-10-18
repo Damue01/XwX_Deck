@@ -65,7 +65,7 @@ try{
   assert.equal(muted('[data-client-download="claude"]'),true);
   await click('[data-client-download="claude"]');assert.equal(document.querySelector('[data-client-download="claude"]').getAttribute('aria-pressed'),'true');
   fixture.modelClients=['codex-cli'];await act(async()=>root.render(React.createElement(AddConfigurationDialog,{open:true,busy:false,selected:null,onSelect(){},onBack(){},onOpenChange(){},finalFocus:{current:null},editor:null,manageClients:true})));assert.equal(muted('[data-client-download="codex"]'),false,'saved CLI enrollment owns Desktop family color');
-  assert.equal(document.querySelector('[data-client-download="trae"]'),null);assert.equal(document.querySelector('[data-client-download="vscode"]'),null);
+  assert.ok(document.querySelector('[data-client-download="trae"]'),'download-only products remain discoverable');assert.ok(document.querySelector('[data-client-download="vscode"]'));
   installation={available:false,clients:[]};await act(async()=>window.dispatchEvent(new Event('focus')));await flush();assert.equal(muted('[data-client-download="claude"]'),true,'detection failure cannot enroll a client');assert.equal(muted('[data-client-download="codex"]'),false,'detection failure cannot revoke saved enrollment');
   console.log('PASS API/local/Coding Plan/subscription isolation; live save/remove; custom/import exemptions and name; client colors follow saved enrollment independently of discovery; unknown API registry stays neutral');
 

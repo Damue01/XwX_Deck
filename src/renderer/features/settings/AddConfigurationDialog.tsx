@@ -15,7 +15,7 @@ import { ImportConfigurations } from './ImportConfigurations';
 import { ClientDownloads } from './ProviderSetupShortcuts';
 import { useClientInstallations } from '../models/useClientInstallations';
 import { ConfigurationDeleteAction } from '@/components/ui/configuration-delete-action';
-import { CLIENT_DOWNLOADS, MODEL_CLIENT_CATALOG, clientCatalogLabel, MODEL_CLIENT_ADDED_EVENT, canonicalModelClient, normalizeModelClients, supportsModelManagement, type DownloadClientId } from '../../../shared/clientDownloads';
+import { CLIENT_DOWNLOADS, clientCatalogLabel, MODEL_CLIENT_ADDED_EVENT, canonicalModelClient, normalizeModelClients, supportsModelManagement, type DownloadClientId } from '../../../shared/clientDownloads';
 
 type Service = OfficialProviderId | 'custom';
 const TABS = ['services', 'accounts', 'saved', 'clients'] as const;
@@ -123,8 +123,9 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
     {api.previewConfigurationImport && <button ref={importEntry} type="button" className="configuration-choice configuration-import-entry" disabled={busy} onClick={() => setImportOpen(true)}><FileUp className="provider-brand-icon" aria-hidden="true" /><span>{t('导入配置')}</span></button>}
   </>;
   const clientInfo = CLIENT_DOWNLOADS.find(item => item.id === client);
-  const manageable = (id: DownloadClientId) => supportsModelManagement(id) || managedClients.includes(canonicalModelClient(id));
-  const catalogClients = CLIENT_DOWNLOADS.filter(item => MODEL_CLIENT_CATALOG.some(entry => entry.id === item.id) || managedClients.includes(item.id));
+  const canManage = (id: DownloadClientId) => supportsModelManagement(id) && installation.snapshot?.clients.find(row => row.id === id)?.modelManagement !== false;
+  const manageable = (id: DownloadClientId) => canManage(id) || managedClients.includes(canonicalModelClient(id));
+  const catalogClients = CLIENT_DOWNLOADS.filter(item => !['codex-cli', 'claude-code', 'cursor-cli'].includes(item.id));
   const clients = catalogClients.map(item => {
     const managed = managedClients.includes(canonicalModelClient(item.id));
     return <button key={item.id} type="button" className="configuration-choice" data-client-download={item.id} data-unconfigured={!managed || undefined} aria-pressed={client === item.id} disabled={addingClient} onClick={() => setClient(item.id)}>
@@ -212,11 +213,11 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
             {client !== null && <div className="configuration-detail">
               <div className="configuration-detail-heading"><h3><ProviderIcon kind={clientInfo?.icon} />{clientInfo && clientCatalogLabel(clientInfo)}</h3></div>
               <ClientDownloads key={client} client={client} />
-              {!supportsModelManagement(client) && <p className="configuration-import-status" role="status">{t('暂不支持模型配置')}</p>}
+              {!canManage(client) && <p className="configuration-import-status" role="status">{t('暂不支持模型配置')}</p>}
               {manageable(client) && <div className="configuration-client-actions prov-save-bar">
                 {manageClients && clientAdded && <ConfigurationDeleteAction label={t('移除客户端')} busyLabel={t('移除中…')} disabled={addingClient || !api.removeModelClient}
                   confirmation={{ title: t('移除客户端「{0}」？', clientInfo && clientCatalogLabel(clientInfo)), body: t('从模型页和 Trace 客户端列表中移除，并停止此客户端的追踪。保留客户端安装和已保存的模型配置。'), confirmText: t('移除') }} onDelete={() => changeClient(true)} />}
-                {supportsModelManagement(client) && <button type="button" className="btn primary" disabled={addingClient || (!clientAdded && (!api.addModelClient || !clientInstalled || installation.checking))} onClick={() => {
+                {canManage(client) && <button type="button" className="btn primary" disabled={addingClient || (!clientAdded && (!api.addModelClient || !clientInstalled || installation.checking))} onClick={() => {
                   if (clientOperation.current) return;
                   if (clientAdded) {
                     onOpenClient?.(canonicalModelClient(client));

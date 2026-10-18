@@ -61,7 +61,7 @@ export function canonicalModelClient(id: DownloadClientId): DownloadClientId {
 }
 
 /** Clients with reversible configuration adapters, rather than download-only entries. */
-const MANAGED_MODEL_CLIENTS: readonly DownloadClientId[] = ['claude', 'codex', 'opencode', 'gemini-cli', 'qwen-code', 'pi', 'mimo-code', 'crush', 'droid', 'codebuddy-code', 'workbuddy'];
+const MANAGED_MODEL_CLIENTS: readonly DownloadClientId[] = ['claude', 'codex', 'opencode', 'gemini-cli', 'qwen-code', 'pi', 'mimo-code', 'crush', 'droid', 'codebuddy-code', 'workbuddy', 'deepseek-harness', 'cline', 'vscode', 'kimi-code', 'grok-build'];
 export function supportsManagedModels(client: DownloadClientId): boolean {
   return MANAGED_MODEL_CLIENTS.includes(canonicalModelClient(client));
 }
