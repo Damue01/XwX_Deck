@@ -15,12 +15,24 @@ pub(crate) fn builder() -> tauri::Builder<tauri::Wry> {
     let builder = builder.plugin(
         tauri::plugin::Builder::<tauri::Wry>::new("application-context-menus")
             .on_webview_ready(|webview| {
+                crate::windows_menus::attach(&webview.window());
                 let _ = webview.with_webview(|webview| unsafe {
+                    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings9;
+                    use windows_core::Interface;
                     let result = webview
                         .controller()
                         .CoreWebView2()
                         .and_then(|view| view.Settings())
-                        .and_then(|settings| settings.SetAreDefaultContextMenusEnabled(false));
+                        .and_then(|settings| {
+                            settings.SetAreDefaultContextMenusEnabled(false)?;
+                            // Wry enables CSS caption regions, whose native menu
+                            // bypasses the parent window procedure. Our titlebar
+                            // already starts native dragging on left clicks.
+                            if let Ok(caption) = settings.cast::<ICoreWebView2Settings9>() {
+                                caption.SetIsNonClientRegionSupportEnabled(false)?;
+                            }
+                            Ok(())
+                        });
                     if let Err(error) = result {
                         eprintln!("无法停用系统右键菜单：{error}");
                     }

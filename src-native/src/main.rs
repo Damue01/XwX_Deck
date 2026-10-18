@@ -12,6 +12,8 @@ mod renderer_preferences;
 mod webcrypto_store;
 mod webview_cache;
 #[cfg(target_os = "windows")]
+mod windows_menus;
+#[cfg(target_os = "windows")]
 mod windows_recovery;
 #[cfg(target_os = "windows")]
 mod windows_tray;
