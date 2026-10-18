@@ -15,15 +15,16 @@ await writeFile(join(root,'.xwx-rust-pilot'),'isolated-rust-pilot-v1\n');
 await mkdir(join(root,'codex'));await mkdir(join(root,'work'));
 const auth=JSON.stringify({auth_mode:'chatgpt',tokens:{access_token:'unrelated-original-access',refresh_token:'unrelated-original-refresh'}});
 await writeFile(join(root,'codex/auth.json'),auth);
-const accounts=['a','b'].map(id=>({id:'native-'+id,label:'Native '+id,subject:id,email:id+'@example.test',clientId:'client-'+id,access:'expired-'+id,refresh:'refresh-'+id+'-0',idToken:'',scopes:['resource.invoke','chatgpt.tokens.use.direct','offline_access'],expires:0}));
+const accounts=['a','b','c','d'].map(id=>({id:'native-'+id,label:'Native '+id,subject:id,email:id+'@example.test',clientId:'client-'+id,access:'expired-'+id,refresh:'refresh-'+id+'-0',idToken:'',scopes:['resource.invoke','chatgpt.tokens.use.direct','offline_access'],expires:0}));
 await writeFile(join(root,'subscription-accounts.json'),JSON.stringify({hostId:'native-auth-fixture',accounts}));
-const rotations=new Map(),calls=[],checks=[];let lifetime=62,child,lines,base,refreshStarted,refreshRelease;
+const rotations=new Map(),calls=[],checks=[],heldRefreshes=new Map();let lifetime=62,child,lines,base,refreshStarted,refreshRelease;
 const server=createServer(async(req,res)=>{
  let raw='';for await(const b of req)raw+=b;
  if(req.url==='/api/accounts/oauth/token'){
   const f=new URLSearchParams(raw),id=f.get('client_id').slice(-1),n=(rotations.get(id)??0)+1;
   assert.equal(f.get('refresh_token'),'refresh-'+id+'-'+(n-1));rotations.set(id,n);
   if(refreshStarted){refreshStarted();refreshStarted=null;await new Promise(resolve=>refreshRelease=resolve);}
+  const hold=heldRefreshes.get(id);if(hold){hold.started();await hold.wait;}
   res.setHeader('content-type','application/json');res.end(JSON.stringify({access_token:'access-'+id+'-'+n,refresh_token:'refresh-'+id+'-'+n,token_type:'Bearer',expires_in:lifetime,scope:'resource.invoke chatgpt.tokens.use.direct offline_access'}));return;
  }
  if(req.url==='/v1/models'){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'native-response-model'}]}));return;}
@@ -90,7 +91,14 @@ try{
  for(const result of await Promise.all(offline)){assert.equal(result.code,0,result.stderr);assert.equal(result.stdout.trim(),'access-b-2');}
  await reopened;assert.equal(rotations.get('b'),2);assert.equal(await readFile(join(root,'settings.json'),'utf8'),beforeSettings);assert.equal(await readFile(join(root,'codex/config.toml'),'utf8'),beforeConfig);assert.equal(await readFile(join(root,'codex/auth.json'),'utf8'),auth);
  pass('closed Deck serializes concurrent one-shot refresh; application startup waits without changing client settings or the original login');
- const restarted=await helper(cb);assert.equal(restarted.stdout.trim(),'access-b-2');state=await rpc('getState');assert.equal(state.tracingEnabled,false);assert.equal(state.backgroundGatewayActive,false);await stop();
+ const restarted=await helper(cb);assert.equal(restarted.stdout.trim(),'access-b-2');state=await rpc('getState');assert.equal(state.tracingEnabled,false);assert.equal(state.backgroundGatewayActive,false);
  pass('application restart retains the selected native binding and renews credentials independently of Trace');
+ const snapshots=[];for(const id of ['c','d']){const p=providers.connections.find(p=>p.subscriptionAccountId==='native-'+id);await rpc('switchClientProvider',{client:'codex',providerId:p.id});await rpc('updateCodexConfig',{expectedProviderId:p.id,compatibleModel:'native-response-model'});snapshots.push(await config());}
+ const held=id=>{let started,release;const entered=new Promise(resolve=>started=resolve),wait=new Promise(resolve=>release=resolve);heldRefreshes.set(id,{started,wait});return{entered,release};};
+ const hc=held('c'),hd=held('d'),firstSlow=helper(snapshots[0]);await hc.entered;const timedOut=helper(snapshots[1]);const timer=setTimeout(hc.release,20000);
+ await hd.entered;clearTimeout(timer);const expiredCaller=await timedOut;assert.notEqual(expiredCaller.code,0);assert.match(expiredCaller.stderr,/超时/);hd.release();heldRefreshes.clear();
+ assert.equal((await firstSlow).stdout.trim(),'access-c-1');const afterTimeout=await helper(snapshots[1]);assert.equal(afterTimeout.code,0,afterTimeout.stderr);assert.equal(afterTimeout.stdout.trim(),'access-d-1');assert.equal(rotations.get('d'),1);
+ await rpc('switchClientProvider',{client:'codex',providerId:b.id});assert.deepEqual(await config(),cb);assert.equal((await rpc('getState')).backgroundGatewayActive,false);await stop();
+ pass('queued refresh persists its rotated credentials after the requesting command times out, without duplicate rotation or Trace');
  const report={passed:true,binarySha256:createHash('sha256').update(await readFile(nativeTestBinary)).digest('hex'),checks,installedClient,isolatedFixtures:true,requests:calls.length};await writeFile(resolve('test-results/native-auth-summary.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
 }finally{if(child?.exitCode===null)child.kill();server.closeAllConnections();server.close();}
