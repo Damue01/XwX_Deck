@@ -92,8 +92,10 @@ try {
   assert.equal(requests.length, 3);
   assert.equal(viewer.passed,true,JSON.stringify(viewer));
   assert.equal(updateDownloads,0,'notification checks must not automatically download an installer');
-  for (const request of requests) {
-    assert.equal(request.authorization, 'Bearer isolated-test-key'); assert.equal(request.path, '/v1/responses'); assert.equal(request.body.model, 'pilot-model');
+  for (const [index, request] of requests.entries()) {
+    // The OpenCode fixture explicitly requests gpt-4.1. Generic routes retain
+    // that choice; the two Codex fixtures request their configured pilot-model.
+    assert.equal(request.authorization, 'Bearer isolated-test-key'); assert.equal(request.path, '/v1/responses'); assert.equal(request.body.model, index === 0 ? 'gpt-4.1' : 'pilot-model');
   }
   const directConfig=await readFile(join(root,'codex/config.toml'),'utf8');
   if(nativeOfficialFixture){assert.match(directConfig,/model\s*=\s*"gpt-6-luna"/);assert.ok(!/model_provider\s*=\s*"Native_Second"/.test(directConfig));const auth=JSON.parse(await readFile(join(root,'codex/auth.json'),'utf8'));assert.equal(auth.tokens.refresh_token,'isolated-native-official-refresh');}
