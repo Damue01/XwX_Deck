@@ -516,7 +516,7 @@
           "tools/native/catalog-contract-edges-test.mjs",
           "tools/native/provider-validation-test.mjs",
           "tools/native/protocol-test.mjs",
-      "tools/native/model-protocols-test.mjs",
+          "tools/native/model-protocols-test.mjs",
           "tools/native/models-dev-unification-test.mjs",
           "tools/native/catalog-contract-test.mjs",
           "tools/native/official-catalog-test.mjs",
@@ -1241,7 +1241,8 @@
           "tools/native/trace-clients-renderer-test.mjs",
           "tools/native/toast-layer-renderer-test.mjs",
           "tools/native/configuration-state-renderer-test.mjs",
-          "tools/native/client-installations-renderer-test.mjs"
+          "tools/native/client-installations-renderer-test.mjs",
+          "tools/native/tray-menu-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1285,7 +1286,8 @@
         "scripts": [
           "tools/native/theme-test.mjs",
           "tools/native/preferences-test.mjs",
-          "tools/tests/run-theme-regressions.mjs"
+          "tools/tests/run-theme-regressions.mjs",
+          "tools/native/tray-menu-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1350,7 +1352,8 @@
         "scripts": [
           "tools/native/language-renderer-test.mjs",
           "tools/native/language-test.mjs",
-          "tools/native/shared-fonts-test.mjs"
+          "tools/native/shared-fonts-test.mjs",
+          "tools/native/tray-menu-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1394,7 +1397,8 @@
           "tools/native/tool-wait-test.mjs",
           "tools/native/desktop-lifecycle-test.mjs",
           "tools/native/application-reset-test.mjs",
-          "tools/native/window-lifecycle-test.mjs"
+          "tools/native/window-lifecycle-test.mjs",
+          "tools/native/tray-menu-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"

@@ -73,6 +73,7 @@ pub fn directory(root: &Path, name: &str) -> Result<std::path::PathBuf, String> 
         "ephemeral-webview",
         "viewer-webview",
         "licenses-webview",
+        "tray-webview",
     ]
     .contains(&name)
     {

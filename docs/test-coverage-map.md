@@ -182,6 +182,7 @@
 | [toast-layer-renderer-test.mjs](../tools/native/toast-layer-renderer-test.mjs) | 独立专题入口 | UI02、UI03、UI06 |
 | [toast-renderer-test.mjs](../tools/native/toast-renderer-test.mjs) | 后端默认入口 | UI02、UI03、UI05、UI06 |
 | [trace-clients-renderer-test.mjs](../tools/native/trace-clients-renderer-test.mjs) | 独立专题入口 | CO06、UI02、UI03、UI05 |
+| [tray-menu-test.mjs](../tools/native/tray-menu-test.mjs) | 独立专题入口 | UI02、UI04、UI07、LF02 |
 | [run-theme-regressions.mjs](../tools/tests/run-theme-regressions.mjs) | test:built 入口 | UI04 |
 | [run-trace-notice-regressions.mjs](../tools/tests/run-trace-notice-regressions.mjs) | test:built 入口 | UI06 |
 
@@ -200,6 +201,7 @@
 | [toggle-renderer-test.mjs](../tools/native/toggle-renderer-test.mjs) | 后端默认入口 | LF01 |
 | [tool-wait-test.mjs](../tools/native/tool-wait-test.mjs) | 后端默认入口 | TR06、LF01、LF02、LF04、LF05 |
 | [trace-stop-admission-test.mjs](../tools/native/trace-stop-admission-test.mjs) | 后端默认入口 | LF01、LF02、LF04、LF05 |
+| [tray-menu-test.mjs](../tools/native/tray-menu-test.mjs) | 独立专题入口 | UI02、UI04、UI07、LF02 |
 | [window-lifecycle-test.mjs](../tools/native/window-lifecycle-test.mjs) | 独立专题入口 | LF02、LF04、LF05、LF07 |
 
 ## RE 构建、安装、更新与交付

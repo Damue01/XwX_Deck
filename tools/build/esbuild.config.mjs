@@ -34,6 +34,10 @@ if (css.status !== 0) process.exit(css.status ?? 1);
 // Copy host document.
 await fs.mkdir('dist/renderer', { recursive: true });
 await fs.copyFile('src/renderer/index.html', 'dist/renderer/index.html');
+const trayHtml = (await fs.readFile('src/renderer/index.html', 'utf8'))
+  .replace('<html lang="zh-CN"', '<html data-surface="tray" lang="zh-CN"')
+  .replace('<title>XwX Deck</title>', '<title>XwX Deck 托盘菜单</title>');
+await fs.writeFile('dist/renderer/tray.html', trayHtml);
 await fs.copyFile('assets/icon-runtime.png', 'dist/renderer/icon-runtime.png');
 console.log('[renderer] copied index.html and window icon');
 console.log('[native] React frontend compiled; backend is Rust.');

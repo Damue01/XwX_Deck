@@ -71,6 +71,7 @@ export const english: Readonly<Record<string, string>> = {
   "语言未保存": "Could not save language",
   "当前版本不支持语言设置": "This version does not support language settings",
   "开启 Trace": "Start Trace",
+  "退出": "Exit",
   "重试关闭": "Retry stopping",
   "检查模型配置": "Check model settings",
   "修复": "Repair",

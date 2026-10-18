@@ -25,13 +25,12 @@
       "capabilities": [
         {
           "identifier": "pilot-main",
-          "windows": [
-            "main"
-          ],
+          "windows": ["main"],
           "permissions": [
             "core:event:default"
           ]
-        }
+        },
+        { "identifier": "tray-events", "windows": ["tray-menu"], "permissions": ["core:event:default"] }
       ],
       "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data: xwx-font: http://xwx-font.localhost; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost"
     }

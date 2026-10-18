@@ -11,6 +11,8 @@ mod renderer_preferences;
 #[cfg(target_os = "macos")]
 mod webcrypto_store;
 mod webview_cache;
+#[cfg(target_os = "windows")]
+mod windows_tray;
 use core::{Pilot, Shared};
 use serde_json::{json, Value};
 use std::{
@@ -29,42 +31,117 @@ fn request_trace_from_tray(app: &tauri::AppHandle, enabled: bool) {
 }
 
 fn sync_trace_tray(app: &tauri::AppHandle, state: &Value, pending: bool) {
-    use tauri::menu::{Menu, MenuItem};
-    static LAST_STATE: std::sync::Mutex<Option<(bool, bool)>> = std::sync::Mutex::new(None);
-    let Some(tray) = app.tray_by_id("xwx-deck") else {
-        return;
-    };
-    let enabled = state["tracingEnabled"].as_bool().unwrap_or(false);
-    let busy = pending || state["traceTransition"].as_str().is_some();
-    let Ok(mut last) = LAST_STATE.lock() else {
-        return;
-    };
-    if *last == Some((enabled, busy)) {
-        return;
+    #[cfg(target_os = "windows")]
+    windows_tray::sync(app, state, pending);
+    #[cfg(not(target_os = "windows"))]
+    {
+        use tauri::menu::{Menu, MenuItem};
+        static LAST_STATE: std::sync::Mutex<Option<(bool, bool)>> = std::sync::Mutex::new(None);
+        let Some(tray) = app.tray_by_id("xwx-deck") else {
+            return;
+        };
+        let enabled = state["tracingEnabled"].as_bool().unwrap_or(false);
+        let busy = pending || state["traceTransition"].as_str().is_some();
+        let Ok(mut last) = LAST_STATE.lock() else {
+            return;
+        };
+        if *last == Some((enabled, busy)) {
+            return;
+        }
+        let result = (|| -> tauri::Result<()> {
+            let show = MenuItem::with_id(app, "show", "打开 XwX Deck", true, None::<&str>)?;
+            let trace = MenuItem::with_id(
+                app,
+                if enabled { "trace-stop" } else { "trace-start" },
+                if enabled {
+                    "关闭 Trace"
+                } else {
+                    "开启 Trace"
+                },
+                !busy,
+                None::<&str>,
+            )?;
+            let licenses = MenuItem::with_id(app, "licenses", "开源许可证", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出 XwX Deck", !busy, None::<&str>)?;
+            tray.set_menu(Some(Menu::with_items(
+                app,
+                &[&show, &trace, &licenses, &quit],
+            )?))?;
+            Ok(())
+        })();
+        if result.is_ok() {
+            *last = Some((enabled, busy));
+        }
     }
-    let result = (|| -> tauri::Result<()> {
-        let show = MenuItem::with_id(app, "show", "打开 XwX Deck", true, None::<&str>)?;
-        let trace = MenuItem::with_id(
-            app,
-            if enabled { "trace-stop" } else { "trace-start" },
-            if enabled {
-                "关闭 Trace"
-            } else {
-                "开启 Trace"
-            },
-            !busy,
-            None::<&str>,
-        )?;
-        let licenses = MenuItem::with_id(app, "licenses", "开源许可证", true, None::<&str>)?;
-        let quit = MenuItem::with_id(app, "quit", "退出 XwX Deck", !busy, None::<&str>)?;
-        tray.set_menu(Some(Menu::with_items(
-            app,
-            &[&show, &trace, &licenses, &quit],
-        )?))?;
-        Ok(())
-    })();
-    if result.is_ok() {
-        *last = Some((enabled, busy));
+}
+
+#[tauri::command]
+async fn pilot_tray(
+    app: tauri::AppHandle,
+    caller: tauri::WebviewWindow,
+    pilot: tauri::State<'_, Shared>,
+    action: String,
+    enabled: Option<bool>,
+    report: Option<Value>,
+) -> Result<Value, String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, caller, pilot, action, enabled, report);
+        Err("此平台不使用 Windows 托盘菜单".into())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if caller.label() != windows_tray::LABEL {
+            return Err("托盘操作只允许在托盘菜单发起".into());
+        }
+        let _rpc = core::admit_rpc("trayAction")?;
+        if action == "smoke-report"
+            && argument("--pilot-root").is_some()
+            && std::env::args().any(|arg| arg == "--smoke")
+        {
+            let bytes = serde_json::to_vec(&report.ok_or("缺少托盘验证报告")?)
+                .map_err(|e| e.to_string())?;
+            if bytes.len() > 16 * 1024 {
+                return Err("托盘验证报告过大".into());
+            }
+            std::fs::write(pilot.lock().await.root.join("tray-smoke.json"), bytes)
+                .map_err(|e| e.to_string())?;
+            return Ok(Value::Null);
+        }
+        let state = pilot.lock().await.state();
+        let snapshot = windows_tray::snapshot(&state, false);
+        match action.as_str() {
+            "state" => Ok(snapshot),
+            "ready" => {
+                windows_tray::ready(&app)?;
+                Ok(Value::Null)
+            }
+            "hide" => {
+                windows_tray::hide(&app);
+                Ok(Value::Null)
+            }
+            "trace" | "exit" => {
+                if snapshot["busy"] == true {
+                    return Ok(snapshot);
+                }
+                let requested = if action == "trace" {
+                    Some(enabled.ok_or("缺少 Trace 目标状态")?)
+                } else {
+                    None
+                };
+                windows_tray::hide(&app);
+                if let Some(requested) = requested {
+                    if snapshot["enabled"] != requested {
+                        sync_trace_tray(&app, &state, true);
+                        request_trace_from_tray(&app, requested);
+                    }
+                } else {
+                    app.exit(0);
+                }
+                Ok(Value::Null)
+            }
+            _ => Err("无效托盘操作".into()),
+        }
     }
 }
 
@@ -201,6 +278,72 @@ async fn pilot_rpc(
             let enabled = args.first().and_then(Value::as_bool).ok_or("无效开关")?;
             request_trace_from_tray(&app, enabled);
             Ok(Value::Null)
+        }
+        #[cfg(target_os = "windows")]
+        "smokeTrayWindow"
+            if argument("--pilot-root").is_some()
+                && std::env::args().any(|arg| arg == "--smoke") =>
+        {
+            let action = args.first().and_then(Value::as_str).unwrap_or("");
+            if action == "open" {
+                let monitor = window
+                    .current_monitor()
+                    .map_err(|e| e.to_string())?
+                    .ok_or("显示器不可用")?;
+                let area = monitor.work_area();
+                let point = tauri::PhysicalPosition::new(
+                    f64::from(area.position.x)
+                        + f64::from(area.size.width) / 2.0
+                        + 106.0 * monitor.scale_factor(),
+                    f64::from(area.position.y)
+                        + f64::from(area.size.height) / 2.0
+                        + 50.0 * monitor.scale_factor(),
+                );
+                let state = pilot.lock().await.state();
+                windows_tray::show(&app, point, &state)?;
+            }
+            let Some(tray) = app.get_webview_window(windows_tray::LABEL) else {
+                return Ok(Value::Null);
+            };
+            match action {
+                "inspect" => {
+                    let path = pilot.lock().await.root.join("tray-smoke.json");
+                    let _ = std::fs::remove_file(path);
+                    tray.eval(include_str!("../../tools/native/tray-popup-smoke.js")).map_err(|e|e.to_string())?;
+                },
+                "click-trace" => tray.eval("document.querySelectorAll('[role=menuitem]')[0].click()").map_err(|e|e.to_string())?,
+                "click-exit" => tray.eval("document.querySelectorAll('[role=menuitem]')[1].click()").map_err(|e|e.to_string())?,
+                "down" => tray.eval("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}))").map_err(|e|e.to_string())?,
+                "escape" => tray.eval("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))").map_err(|e|e.to_string())?,
+                "stale-stop" => tray.eval("window.__TAURI__.core.invoke('pilot_tray',{action:'trace',enabled:false})").map_err(|e|e.to_string())?,
+                "deny" => {
+                    let path = pilot.lock().await.root.join("tray-smoke.json");let _=std::fs::remove_file(path);
+                    tray.eval("window.__TAURI__.core.invoke('pilot_rpc',{method:'getProviders',args:[]}).then(()=>false,()=>true).then(denied=>window.__TAURI__.core.invoke('pilot_tray',{action:'smoke-report',report:{denied}}))").map_err(|e|e.to_string())?;
+                },
+                "blur" => show_main(&app),
+                "hide" => windows_tray::hide(&app),
+                _=>{}
+            }
+            let scale = tray.scale_factor().map_err(|e| e.to_string())?;
+            let size = tray
+                .inner_size()
+                .map_err(|e| e.to_string())?
+                .to_logical::<f64>(scale);
+            Ok(
+                json!({"visible":tray.is_visible().unwrap_or(false),"width":size.width,"height":size.height,"scale":scale}),
+            )
+        }
+        #[cfg(target_os = "windows")]
+        "smokeTrayReport"
+            if argument("--pilot-root").is_some()
+                && std::env::args().any(|arg| arg == "--smoke") =>
+        {
+            let path = pilot.lock().await.root.join("tray-smoke.json");
+            if !path.exists() {
+                return Ok(Value::Null);
+            }
+            serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())
         }
         "setStartupEnabled" => {
             let mut p = pilot.lock().await;
@@ -1361,6 +1504,7 @@ fn main() {
                     isolated_webview::create_ephemeral(app, root).map_err(std::io::Error::other)?;
                 }
             }
+            #[cfg(not(target_os="windows"))]
             use tauri::menu::{Menu,MenuItem};
             use tauri::tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState};
             // Captures must refresh native counters even when WebKit throttles polling.
@@ -1391,6 +1535,8 @@ fn main() {
                 let window=Submenu::with_items(app,"窗口",true,&[&PredefinedMenuItem::minimize(app,None)?,&PredefinedMenuItem::maximize(app,None)?,&PredefinedMenuItem::fullscreen(app,None)?])?;
                 app.set_menu(Menu::with_items(app,&[&application,&edit,&window])?)?;
             }
+            #[cfg(not(target_os="windows"))]
+            let tray = {
             let show=MenuItem::with_id(app,"show","打开 XwX Deck",true,None::<&str>)?;
             let quit=MenuItem::with_id(app,"quit","退出 XwX Deck",true,None::<&str>)?;
             let licenses=MenuItem::with_id(app,"licenses","开源许可证",true,None::<&str>)?;
@@ -1401,7 +1547,18 @@ fn main() {
             let tray_icon=tauri::include_image!("../assets/tray.png");
             TrayIconBuilder::with_id("xwx-deck").icon(tray_icon).icon_as_template(cfg!(target_os="macos")).tooltip("XwX Deck").menu(&menu).show_menu_on_left_click(false)
               .on_menu_event(|app,event|{match event.id.as_ref(){"show"=>show_main(app),"trace-start"=>request_trace_from_tray(app,true),"trace-stop"=>request_trace_from_tray(app,false),"licenses"=>show_licenses(app),"quit"=>app.exit(0),_=>{}}})
-              .on_tray_icon_event(|tray,event|{if matches!(event,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){show_main(tray.app_handle());}}).build(app)?;
+            };
+            #[cfg(target_os="windows")]
+            let tray = TrayIconBuilder::with_id("xwx-deck").icon(tauri::include_image!("../assets/tray.png")).tooltip("XwX Deck").show_menu_on_left_click(false);
+            tray.on_tray_icon_event(|tray,event|{match event {
+                TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..} => {
+                    #[cfg(target_os="windows")]windows_tray::hide(tray.app_handle());
+                    show_main(tray.app_handle());
+                },
+                #[cfg(target_os="windows")]
+                TrayIconEvent::Click{button:MouseButton::Right,button_state:MouseButtonState::Up,position,..} => windows_tray::open(tray.app_handle(),position),
+                _=>{}
+            }}).build(app)?;
             sync_trace_tray(app.handle(), &tauri::async_runtime::block_on(async { app.state::<Shared>().lock().await.state() }), false);
             if !std::env::args().any(|a|a=="--pilot-root"){
                 let shared=app.state::<Shared>().inner().clone();let handle=app.handle().clone();
@@ -1435,12 +1592,17 @@ fn main() {
         .on_menu_event(|app,event|{if std::env::args().any(|a|a=="--smoke"){eprintln!("native-menu {}",event.id.as_ref());}
  if event.id.as_ref()=="native-quit"{app.exit(0);}else if event.id.as_ref()=="licenses"{show_licenses(app);}})
         .manage(pilot.clone())
-        .invoke_handler(tauri::generate_handler![pilot_rpc,pilot_smoke_report,pilot_smoke_progress])
+        .invoke_handler(tauri::generate_handler![pilot_rpc,pilot_tray,pilot_smoke_report,pilot_smoke_progress])
         .on_page_load(move |window,payload| {
             if smoke && payload.event()==tauri::webview::PageLoadEvent::Finished
-                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
+                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-tray"){include_str!("../../tools/native/tray-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
         })
         .on_window_event(move |window,event| {
+            #[cfg(target_os="windows")]
+            if window.label()==windows_tray::LABEL {
+                if matches!(event,tauri::WindowEvent::Focused(false)) && window.is_visible().unwrap_or(false) {windows_tray::hide(window.app_handle());}
+                if let tauri::WindowEvent::CloseRequested{api,..}=event {api.prevent_close();windows_tray::hide(window.app_handle());}
+            }
             if let tauri::WindowEvent::CloseRequested{api,..}=event {
                 if window.label()=="dashboard" {
                     // WKWebView may retain a closed page. Release its SSE slot
@@ -1451,7 +1613,10 @@ fn main() {
                 }
                 // Only the manager stays in the tray while Trace is running.
                 // Hiding a fullscreen dashboard leaves a blank macOS Space.
-                if window.label()=="main" && tauri::async_runtime::block_on(async{shared.lock().await.active()}) {api.prevent_close();let _=window.hide();}
+                if window.label()=="main" {
+                    if tauri::async_runtime::block_on(async{shared.lock().await.active()}) {api.prevent_close();let _=window.hide();}
+                    else {#[cfg(target_os="windows")]windows_tray::destroy(window.app_handle());}
+                }
             }
             if let tauri::WindowEvent::Resized(_)=event {
                 let _=window.emit("pilot-window",json!({"maximized":window.is_maximized().unwrap_or(false),"fullscreen":window.is_fullscreen().unwrap_or(false),"nativeFrame":cfg!(target_os="macos")}));
