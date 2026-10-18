@@ -757,5 +757,11 @@
   "请更新桌面应用后移除账号": "Mettez à jour l’application pour retirer des comptes",
   "移除账号失败": "Impossible de retirer le compte",
   "XwX Deck 无法启动": "Impossible de démarrer XwX Deck",
-  "无法启动，请检查应用数据和访问权限。": "Vérifiez les données de l’application et les droits d’accès."
+  "无法启动，请检查应用数据和访问权限。": "Vérifiez les données de l’application et les droits d’accès.",
+  "点击选择要纳入管理的客户端，确认后显示在模型页。": "Sélectionnez les clients à gérer. Ils apparaîtront sur la page Modèles après confirmation.",
+  "已管理": "Géré",
+  "暂不支持模型配置": "Configuration des modèles indisponible",
+  "确认并继续": "Confirmer et continuer",
+  "已添加 {0} 个客户端": "{0} clients ajoutés",
+  "已导入 {0} 个配置与账号，已添加 {1} 个客户端": "{0} configurations et comptes importés, {1} clients ajoutés"
 }
