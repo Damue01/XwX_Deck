@@ -20,6 +20,8 @@ let child, passed = false;
 try {
   // An isolated, uncontacted loopback provider permits Trace lifecycle checks.
   for (const [method, args] of [
+    ['addModelClient', ['claude']],
+    ['addModelClient', ['codex']],
     ['saveProvider', [{ displayName: 'Window_Fixture', baseUrl: 'http://127.0.0.1:9/v1', bearerToken: 'isolated-window-key', adapter: 'responses', codexModel: 'window-model' }]],
     ['switchClientProvider', [{ client: 'codex', providerId: 'Window_Fixture' }]]
   ]) {
