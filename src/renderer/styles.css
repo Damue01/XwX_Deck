@@ -1065,7 +1065,7 @@ svg.ic { width: 20px; height: 20px; display: block; fill: none; stroke: currentC
 /* ---- Models page ---- */
 .configuration-client-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 24px; }
 .configuration-client-error { color: var(--danger); font-size: 12px; margin-top: 12px; }
-.configuration-client-location { margin-left: 12px; color: var(--quiet); }
+.configuration-client-location { color: var(--quiet); }
 .configuration-header-actions { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
 .models-switch [data-slot="tabs-list"] { min-width: 0; max-width: 100%; flex-shrink: 1; justify-content: flex-start; overflow-x: auto; scrollbar-width: thin; }
 .models-switch [data-slot="tab-indicator"] { display: none; }
@@ -1269,6 +1269,7 @@ html[data-theme="night"] .setup-card-backdrop { background: rgba(0,0,0,.5); }
 .setup-card-download-versions { display: grid; gap: 24px; }
 .setup-card-download-groups { display: grid; gap: 8px; }
 .setup-card-download-version-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; min-height: 32px; }
+.setup-card-download-version-heading:has(> .configuration-client-location) { justify-content: flex-start; gap: 8px 20px; }
 .setup-card-download-version-heading h4 { margin: 0; color: var(--ink); font-size: 13px; font-weight: 550; }
 .setup-card-downloads summary { display: flex; align-items: center; justify-content: space-between; min-height: 36px; padding: 0 8px; margin: 0 -8px; border-radius: 7px; color: var(--ink); font-size: 13px; cursor: pointer; list-style: none; }
 .setup-card-downloads summary::-webkit-details-marker { display: none; }
