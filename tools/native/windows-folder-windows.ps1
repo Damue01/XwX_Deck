@@ -7,10 +7,15 @@ function FolderWindows {
   foreach ($window in @($shell.Windows())) {
     try {
       if ([IO.Path]::GetFileName($window.FullName) -ine 'explorer.exe') { continue }
-      $path = [string]$window.Document.Folder.Self.Path
-      if (![IO.Path]::IsPathRooted($path) -or !$window.Document.Folder.Self.IsFileSystem) { continue }
-      [PSCustomObject]@{ id = [string]$window.HWND; path = [IO.Path]::GetFullPath($path); window = $window }
+      $id = [string]$window.HWND
     } catch { continue }
+    # Preserve pre-existing Home/This PC and still-loading windows too.
+    $path = ''
+    try {
+      $folder = $window.Document.Folder.Self
+      if ($folder.IsFileSystem -and [IO.Path]::IsPathRooted([string]$folder.Path)) { $path = [IO.Path]::GetFullPath([string]$folder.Path) }
+    } catch {}
+    [PSCustomObject]@{ id = $id; path = $path; window = $window }
   }
 }
 if ($requestData.operation -eq 'snapshot') {
