@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { mkdtemp, mkdir, readFile, writeFile, access, copyFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname, relative } from 'node:path';
 import { buildWindowsMsi } from './windows-msi.mjs';
 import { standardWindowsArtifact } from './windows-execution-level.mjs';
 
@@ -15,7 +15,7 @@ const repo=resolve(import.meta.dirname,'../..');
 const arg=name=>process.argv.find(value=>value.startsWith(name+'='))?.slice(name.length+1);
 const oldInput=resolve(arg('--old-binary')||'test-results/msi-old-debug.exe');
 const newInput=resolve(arg('--new-binary')||'test-results/msi-new-debug.exe');
-const oldVersion=arg('--old-version')||'0.9.9',newVersion=arg('--new-version')||'1.0.0';
+const oldVersion=arg('--old-version')||'0.9.9',newVersion=arg('--new-version')||JSON.parse(await readFile(join(repo,'package.json'),'utf8')).version;
 const work=await mkdtemp(join(repo,'test-results/windows-msi-acceptance-'));
 await standardWindowsArtifact(work);
 const oldBinary=join(work,'old.exe'),newBinary=join(work,'new.exe');
@@ -61,7 +61,15 @@ const executable=join(install,'XwX Deck.exe');let installed=false,ui;
 const wait=async(test,label,limit=1200)=>{for(let n=0;n<limit;n++){if(await test())return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error(label);};
 let settingsBefore,providersBefore,traceFile,traceBefore;
 try{
- artifacts={old:await buildWindowsMsi({root:repo,binary:oldBinary,output:join(work,'old.msi'),version:oldVersion}),new:await buildWindowsMsi({root:repo,binary:newBinary,output:join(work,'new.msi'),version:newVersion})};
+ let next;
+ if(arg('--new-msi')){
+  const path=resolve(arg('--new-msi')),report=JSON.parse(await readFile(join(dirname(path),'native-build-report.json'),'utf8'));
+  assert.equal(report.dirty,false);assert.equal(report.version,newVersion);
+  assert.equal(report.candidate.binarySha256,hash(await readFile(newBinary)));
+  assert.equal(report.installer.sha256,hash(await readFile(path)));
+  next={...report.installer,path};
+ }else next=await buildWindowsMsi({root:repo,binary:newBinary,output:join(work,'new.msi'),version:newVersion});
+ artifacts={old:await buildWindowsMsi({root:repo,binary:oldBinary,output:join(work,'old.msi'),version:oldVersion}),new:next};
  assert.ok(artifacts.old.iceValidated && artifacts.new.iceValidated);
  console.log('Built MSI fixtures: '+work);
  await rpcSession(newBinary,async rpc=>{
@@ -89,13 +97,13 @@ try{
  pass('uninstall refuses a running installed application without terminating it or removing files');
  let installerPath,finishedPid;
  await rpcSession(executable,async(rpc,child)=>{
-  finishedPid=child.pid;await rpc('checkForUpdates');await rpc('downloadUpdate');
+  finishedPid=child.pid;assert.equal((await rpc('checkForAutomaticUpdates')).status,'available');await rpc('downloadAutomaticUpdate');
   await wait(async()=>{const state=await rpc('getUpdateState');if(state.status==='error')throw Error(state.error);if(state.status==='ready'){installerPath=state.downloadPath;return true;}return false;},'MSI fixture did not download');
   const bytes=await readFile(installerPath);await writeFile(installerPath,'modified fixture');
   await assert.rejects(rpc('restartAndInstall'),/已被修改/);await writeFile(installerPath,bytes);
   assert.equal((await rpc('restartAndInstall')).path,installerPath);
  });
- pass('installed updater selects MSI over a portable artifact and rejects modified bytes before preparing installation');
+ pass('automatic check/download selects the actual MSI over a portable artifact and rejects modified bytes before preparing installation');
  const failedHelper=join(data,'updates/xwx-msi-update-failure.exe');await copyFile(executable,failedHelper);
  const failed=spawn(failedHelper,['--install-msi-update',installerPath,'--replace-executable',executable,'--expected-sha256','0'.repeat(64),'--expected-version',newVersion,'--parent-pid',String(finishedPid),'--pilot-root',data,'--smoke-msi-restart'],{windowsHide:true,stdio:'ignore'});
  assert.equal((await once(failed,'exit'))[0],1);
@@ -104,7 +112,7 @@ try{
  await wait(()=>{const r=spawnSync('tasklist.exe',['/FI','PID eq '+failure.recoveryPid,'/FO','CSV','/NH'],{encoding:'utf8',windowsHide:true});return !r.stdout.includes('"'+failure.recoveryPid+'"');},'Recovery test app did not exit');
  assert.equal(registration().Version,oldVersion);assert.equal(hash(await readFile(traceFile)),traceBefore);
  pass('detached worker rejects tampering, reports failure and renders the unchanged old application again');
- ui=spawn(executable,['--pilot-root',data,'--smoke','--smoke-msi-update','--smoke-msi-restart'],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:['ignore','ignore','ignore']});
+ ui=spawn(executable,['--pilot-root',relative(process.cwd(),data),'--smoke','--smoke-msi-update','--smoke-msi-restart'],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:['ignore','ignore','ignore']});
  await wait(async()=>{try{const report=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));if(!report.passed)throw Error(report.error);return report.stage==='downloaded';}catch(error){if(error.code==='ENOENT')return false;throw error;}},'MSI update did not download');
  await wait(()=>ui.exitCode!==null,'Old app did not exit for MSI update');assert.equal(ui.exitCode,0);
  await wait(async()=>{try{const report=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));if(!report.passed)throw Error(report.error);return report.stage==='restarted' && report.version===newVersion;}catch(error){if(error.code==='ENOENT')return false;throw error;}},'New app did not render after MSI upgrade');

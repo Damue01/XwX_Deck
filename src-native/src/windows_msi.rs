@@ -229,9 +229,9 @@ pub fn spawn(source: &Path, expected: &str, version: &str) -> Result<()> {
         .arg(version)
         .arg("--parent-pid")
         .arg(std::process::id().to_string());
-    // Preserve only the existing verified isolated launch, never invent a data path.
-    if let Some(root) = crate::argument("--pilot-root") {
-        command.arg("--pilot-root").arg(root);
+    // Resolve before changing working directories; preserve the caller's root.
+    if let Some((flag, root)) = launch_root()? {
+        command.arg(flag).arg(root);
     }
     if std::env::args().any(|a| a == "--smoke-msi-restart") {
         command.arg("--smoke-msi-restart");
@@ -458,16 +458,17 @@ pub fn worker() -> Option<i32> {
 fn restart(target: &Path) -> Result<std::process::Child> {
     let mut command = Command::new(target);
     command.current_dir(target.parent().ok_or("无效安装目录")?);
-    if let Some(root) = crate::argument("--pilot-root") {
-        if fs::read_to_string(Path::new(&root).join(".xwx-rust-pilot"))
-            .ok()
-            .as_deref()
-            != Some("isolated-rust-pilot-v1\n")
+    if let Some((flag, root)) = launch_root()? {
+        if flag == "--pilot-root"
+            && fs::read_to_string(root.join(".xwx-rust-pilot"))
+                .ok()
+                .as_deref()
+                != Some("isolated-rust-pilot-v1\n")
         {
             return Err("隔离重启目录无效".into());
         }
-        command.arg("--pilot-root").arg(root);
-        if std::env::args().any(|a| a == "--smoke-msi-restart") {
+        command.arg(flag).arg(root);
+        if flag == "--pilot-root" && std::env::args().any(|a| a == "--smoke-msi-restart") {
             command.args(["--smoke", "--smoke-msi-restart", "--smoke-exit"]);
         }
     }
@@ -475,6 +476,17 @@ fn restart(target: &Path) -> Result<std::process::Child> {
         .creation_flags(0x08000000)
         .spawn()
         .map_err(|e| format!("自动重启失败：{e}"))
+}
+fn launch_root() -> Result<Option<(&'static str, PathBuf)>> {
+    for flag in ["--pilot-root", "--data-root"] {
+        if let Some(root) = crate::argument(flag) {
+            return Ok(Some((
+                flag,
+                fs::canonicalize(root).map_err(|e| format!("无法保留数据目录：{e}"))?,
+            )));
+        }
+    }
+    Ok(None)
 }
 fn save_result(value: &Value) {
     if let Ok(helper) = std::env::current_exe() {

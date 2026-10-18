@@ -2497,7 +2497,7 @@ impl Pilot {
             "restartAndInstall" => {
                 // Validate the immutable release before changing a working route.
                 let path = self.updates.installer().await?;
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 self.stop_checked(false).await?;
                 let mut update = self.updates.state();
                 update["path"] = json!(path);

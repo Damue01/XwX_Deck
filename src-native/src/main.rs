@@ -455,7 +455,6 @@ async fn pilot_rpc(
             }
             #[cfg(target_os = "windows")]
             {
-                pilot.lock().await.stop().await?;
                 spawn_windows_update(std::path::Path::new(path), &result)?;
                 app.exit(0);
                 Ok(Value::Null)

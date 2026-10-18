@@ -31,11 +31,14 @@ MSI 版本只选择同平台、同架构的 MSI。
 MSI 还须匹配产品名称、UpgradeCode 和按用户安装范围。
 
 应用安全停止 Gateway 后退出。
+回复或工具结果尚未完成时，拒绝手动更新并保留下载结果。
 独立助手等待旧进程退出，再调用 Windows Installer。
 助手在成功安装后核对登记版本，重新打开安装目录中的程序。
 失败时保留错误与安装日志，并尝试重新打开原程序。
 需要重启 Windows 时明确记录该状态。
 卸载不包含删除用户数据的步骤。
+启动时指定的数据目录会传给更新助手和新版程序。
+相对路径在切换工作目录前解析。
 
 ## 构建
 
@@ -70,7 +73,7 @@ node tools/native/build.mjs --acceptance --require-platform=win32 --require-arch
 
 ```powershell
 node tools/native/windows-msi-fixture.mjs --output=test-results/msi-old-debug.exe
-node tools/native/windows-msi-test.mjs --old-binary=test-results/msi-old-debug.exe --new-binary="release/XwX Deck.exe"
+node tools/native/windows-msi-test.mjs --old-binary=test-results/msi-old-debug.exe --new-binary="release/XwX Deck.exe" --new-msi="release/XwX Deck.msi"
 ```
 
 检查包含中文及空格路径、保留配置和 Trace、运行中拒绝卸载。

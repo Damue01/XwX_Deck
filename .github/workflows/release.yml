@@ -138,6 +138,13 @@ jobs:
       - name: Verify isolated native UI
         run: node tools/native/native-test.mjs
 
+      - name: Verify per-user MSI installation, upgrade and uninstall
+        shell: pwsh
+        run: |
+          node tools/native/windows-msi-fixture.mjs --output=test-results/msi-old-debug.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/native/windows-msi-test.mjs --old-binary=test-results/msi-old-debug.exe --new-binary="release/XwX Deck.exe" --new-msi="release/XwX Deck.msi"
+
       - name: Upload Windows verification evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -146,6 +153,8 @@ jobs:
           path: |
             test-results/*.json
             test-results/*.log
+            test-results/windows-msi-acceptance-*/summary.json
+            test-results/windows-msi-acceptance-*/*.log
             release/native-build-report.json
           if-no-files-found: warn
 
