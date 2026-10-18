@@ -9,6 +9,13 @@ MSI 安装包只安装到当前用户。
 安装和卸载均不删除该数据目录。
 新数据目录的连接列表为空。
 
+安装界面沿用 macOS 的 Trace 粒子背景。
+欢迎页直接显示安装位置，支持输入与“更改”。
+进度页显示实际安装阶段，完成、取消和错误使用定制对话框。
+不再使用 WiX 默认的许可向导。
+包默认生成详细安装日志，便于定位失败与等待。
+日志路径由 Windows Installer 的 `MsiLogFileLocation` 提供。
+
 安装器使用固定的 UpgradeCode。
 该标识以 `release-contract.json` 为准。
 新版本使用新的 ProductCode。
@@ -58,6 +65,15 @@ MSI 使用 WiX 3.14.1。
 构建不修改用户数据目录的权限。
 机制见 [Microsoft 完整性控制文档](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)。
 
+交互安装曾在进度为零时等待系统还原点。
+本机原包该阶段约耗时 14 秒。
+包只安装当前用户的程序文件与 HKCU 登记。
+现使用 `MSIFASTINSTALL=1` 跳过本次系统还原点创建。
+Windows Installer 自身的事务回滚继续保留。
+不改变系统的还原设置。
+该属性只选择数值 1，不减少进度消息。
+定义见 [Microsoft 安装属性文档](https://learn.microsoft.com/en-us/windows/win32/msi/msifastinstall)。
+
 ```powershell
 npm run compile
 node tools/native/build.mjs --acceptance --require-platform=win32 --require-arch=x64
@@ -81,5 +97,8 @@ node tools/native/windows-msi-test.mjs --old-binary=test-results/msi-old-debug.e
 随后用保留的服务完成本地请求。
 最后卸载、重装并再次卸载。
 测试同时检查被修改的安装包和失败后的原程序恢复。
+完整界面模式另检查进度流程、中文 C 盘路径与还原点等待。
+该检查在隔离副本中跳过人工输入和结束按钮。
+它不代替路径选择器的鼠标交互验收。
 结果、日志和安装包摘要写入本次隔离目录。
 公开更新源、签名和安全提示仍需在发布候选上单独核对。

@@ -1244,7 +1244,9 @@
           "tools/native/configuration-state-renderer-test.mjs",
           "tools/native/client-installations-renderer-test.mjs",
           "tools/native/tray-menu-test.mjs",
-          "tools/native/startup-recovery-test.mjs"
+          "tools/native/startup-recovery-test.mjs",
+          "tools/native/native-test.mjs",
+          "tools/native/windows-folder-windows-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"

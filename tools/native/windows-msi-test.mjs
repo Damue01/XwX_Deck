@@ -18,22 +18,23 @@ const newInput=resolve(arg('--new-binary')||'test-results/msi-new-debug.exe');
 const oldVersion=arg('--old-version')||'0.9.9',newVersion=arg('--new-version')||JSON.parse(await readFile(join(repo,'package.json'),'utf8')).version;
 const work=await mkdtemp(join(repo,'test-results/windows-msi-acceptance-'));
 await standardWindowsArtifact(work);
+await writeFile(join(work,'.xwx-msi-test'),'isolated-msi-test\n');
 const oldBinary=join(work,'old.exe'),newBinary=join(work,'new.exe');
 await copyFile(oldInput,oldBinary);await copyFile(newInput,newBinary);
 const data=join(work,'existing-data'),install=join(work,'用户 程序');
 await mkdir(data);await writeFile(join(data,'.xwx-rust-pilot'),'isolated-rust-pilot-v1\n');
 const msiexec=join(process.env.WINDIR,'System32/msiexec.exe');
 function registration(){
-  const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',String.raw`$p=Get-ItemProperty -LiteralPath 'HKCU:\Software\XwX Deck\Installation' -ErrorAction SilentlyContinue; if($p){@{Path=$p.Path;ProductCode=$p.ProductCode;Version=$p.Version;UpgradeCode=$p.UpgradeCode}|ConvertTo-Json -Compress}; exit 0`],{encoding:'utf8',windowsHide:true});
+  const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',String.raw`[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false); $p=Get-ItemProperty -LiteralPath 'HKCU:\Software\XwX Deck\Installation' -ErrorAction SilentlyContinue; if($p){@{Path=$p.Path;ProductCode=$p.ProductCode;Version=$p.Version;UpgradeCode=$p.UpgradeCode}|ConvertTo-Json -Compress}; exit 0`],{encoding:'utf8',windowsHide:true});
   assert.equal(result.status,0,result.stderr);return result.stdout.trim()?JSON.parse(result.stdout):null;
 }
 assert.equal(registration(),null,'An MSI already exists; do not replace another installation.');
 const shortcut=join(process.env.APPDATA,'Microsoft/Windows/Start Menu/Programs/XwX Deck.lnk');
 const previousShortcut=await readFile(shortcut).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
-async function msi(args,name){
+async function msi(args,name,fullUi=false){
   console.log('Windows Installer: '+name);
-  const command=[...args,'/qn','/norestart','REBOOT=ReallySuppress','/L*v',join(work,name+'.log')].map(arg=>arg.startsWith('INSTALLDIR=')?'INSTALLDIR="'+arg.slice(11)+'"':/\s/.test(arg)?'"'+arg+'"':arg);
-  const result=spawnSync(msiexec,command,{windowsVerbatimArguments:true,windowsHide:true,timeout:90000,encoding:'utf8'});
+  const command=[...args,...(fullUi?[]:['/qn']),'/norestart','REBOOT=ReallySuppress','/L*v',join(work,name+'.log')].map(arg=>arg.startsWith('INSTALLDIR=')?'INSTALLDIR="'+arg.slice(11)+'"':/\s/.test(arg)?'"'+arg+'"':arg);
+  const result=spawnSync(msiexec,command,{windowsVerbatimArguments:true,windowsHide:!fullUi,timeout:90000,encoding:'utf8'});
   if(result.error)throw result.error;
   return result.status;
 }
@@ -57,7 +58,7 @@ const server=createServer(async(req,res)=>{
  if(req.url==='/v1/responses'){for await(const _ of req){}if(req.headers.authorization!=='Bearer synthetic-msi-key'){res.writeHead(401);res.end('Synthetic credential was not preserved');return;}modelRequests++;res.setHeader('content-type','application/json');res.end(JSON.stringify({id:'msi-fixture',object:'response',status:'completed',output:[],usage:{input_tokens:2,output_tokens:1,total_tokens:3}}));return;}
  res.writeHead(404);res.end();
 });server.listen(0,'127.0.0.1');await once(server,'listening');const base='http://127.0.0.1:'+server.address().port;
-const executable=join(install,'XwX Deck.exe');let installed=false,ui;
+const executable=join(install,'XwX Deck.exe');let installed=false,ui,ownedInstall=install,fullUi;
 const wait=async(test,label,limit=1200)=>{for(let n=0;n<limit;n++){if(await test())return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error(label);};
 let settingsBefore,providersBefore,traceFile,traceBefore;
 try{
@@ -72,6 +73,20 @@ try{
  artifacts={old:await buildWindowsMsi({root:repo,binary:oldBinary,output:join(work,'old.msi'),version:oldVersion}),new:next};
  assert.ok(artifacts.old.iceValidated && artifacts.new.iceValidated);
  console.log('Built MSI fixtures: '+work);
+ const uiFixture=join(work,'installer.ui-test.msi');
+ const request=Buffer.from(JSON.stringify({source:artifacts.new.path,target:uiFixture})).toString('base64');
+ const prepared=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',join(repo,'tools/native/windows-msi-ui-fixture.ps1'),'-Request',request],{encoding:'utf8',windowsHide:true});
+ assert.equal(prepared.status,0,prepared.stderr);
+ ownedInstall=join(process.env.LOCALAPPDATA,'Programs','Deck 验收 '+work.split(/[\\/]/).at(-1));
+ const began=Date.now();assert.equal(await msi(['/i',uiFixture,'INSTALLDIR='+ownedInstall],'full-ui-install',true),0);installed=true;
+ const uiLog=await readFile(join(work,'full-ui-install.log'),'utf16le');
+ assert.ok(uiLog.includes('DeckProgress'),'Full MSI UI must enter its branded progress dialog');
+ assert.ok(!uiLog.includes('Calling SRSetRestorePoint API'),'Per-user setup must not wait for a machine restore checkpoint');
+ assert.equal(registration().Path.replace(/[\\/]$/,''),ownedInstall);
+ assert.equal(hash(await readFile(join(ownedInstall,'XwX Deck.exe'))),hash(await readFile(newBinary)));
+ fullUi={elapsedMs:Date.now()-began,restoreCheckpointRequested:false,customPath:true,scope:'full UI progress and engine; entry/finish gates bypassed in an isolated copy; no mouse-interaction claim'};
+ pass('full UI progress completes without a system restore checkpoint and installs exact files to the chosen C-drive Unicode path');
+ assert.equal(await msi(['/x',registration().ProductCode],'uninstall-full-ui'),0);installed=false;ownedInstall=install;
  await rpcSession(newBinary,async rpc=>{
   assert.deepEqual((await rpc('getProviders')).connections,[]);
   const p=await rpc('saveProvider',{id:'msi-preserved',displayName:'MSI fixture',baseUrl:base+'/v1',bearerToken:'synthetic-msi-key',adapter:'responses',codexModel:'fixture-model'});
@@ -132,10 +147,10 @@ try{
  await rpcSession(executable,async rpc=>{assert.deepEqual(await rpc('getProviders'),providersBefore);});
  assert.equal(await msi(['/x',registration().ProductCode],'uninstall-reinstalled'),0);installed=false;
  pass('reinstall opens the retained configuration and a second uninstall cleans the installation');
- await writeFile(join(work,'summary.json'),JSON.stringify({passed:true,checks,artifacts,modelRequests,work,scope:'isolated local MSI installation, upgrade, rendered restart and uninstall; no real user data'},null,2)+'\n');console.log(JSON.stringify({passed:true,checks:checks.length,work}));
+ await writeFile(join(work,'summary.json'),JSON.stringify({passed:true,checks,artifacts,fullUi,modelRequests,work,scope:'isolated local MSI installation, upgrade, rendered restart and uninstall; no real user data'},null,2)+'\n');console.log(JSON.stringify({passed:true,checks:checks.length,work}));
 }finally{
- if(ui?.exitCode===null)ui.kill();
- if(installed){const current=registration();if(current?.Path.replace(/[\\/]$/,'')===install){const code=await msi(['/x',current.ProductCode],'cleanup-owned-installation');if(code)console.error('Owned MSI cleanup failed; inspect logs:',current.ProductCode,code);}}
+ if(ui?.exitCode===null){const ended=once(ui,'exit');ui.kill();await ended;}
+ if(installed){const current=registration();if(current?.Path.replace(/[\\/]$/,'')===ownedInstall){const code=await msi(['/x',current.ProductCode],'cleanup-owned-installation');if(code)console.error('Owned MSI cleanup failed; inspect logs:',current.ProductCode,code);}}
  if(previousShortcut && !registration())await writeFile(shortcut,previousShortcut);
  server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
 }

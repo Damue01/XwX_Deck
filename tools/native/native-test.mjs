@@ -6,9 +6,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
+import { trackWindowsFolderWindows } from './windows-folder-windows.mjs';
 
 
 const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-rust-pilot-native-'));
+await writeFile(join(root, '.xwx-rust-pilot'), 'isolated-rust-pilot-v1\n');
+const folderWindows = await trackWindowsFolderWindows(root);
 const installations=join(root,'installations');
 let binary = process.env.XWX_NATIVE_TEST_BINARY ? resolve(process.env.XWX_NATIVE_TEST_BINARY) : resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwXDeck Rust Validation.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
 const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
@@ -42,7 +45,7 @@ const upstream = createServer(async (req, res) => {
 upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
 const base = `http://127.0.0.1:${upstream.address().port}/v1`;
 const keepOpen = process.argv.includes('--keep-open');
-await writeFile(join(root, '.xwx-rust-pilot'), 'isolated-rust-pilot-v1\n');
+let runFailure, reportsWritten = false;
 if(nativeOfficialFixture){
   await mkdir(join(root,'codex'),{recursive:true});
   const claims={sub:'native-official-fixture',email:'native-official@example.test'};
@@ -61,6 +64,14 @@ try {
     ? ['Cursor/Cursor.exe', 'OpenCode/OpenCode.exe']
     : ['Cursor.app/Contents/MacOS/Cursor', 'OpenCode.app/Contents/MacOS/OpenCode'];
   for (const name of desktopFixtures) { const path=join(installations,'Applications',name); await mkdir(resolve(path,'..'),{recursive:true}); await writeFile(path,'isolated discovery fixture'); await chmod(path,0o755); }
+  if (process.argv.includes('--fail-after-folder-open')) {
+    for (let n = 0; n < 1800; n++) {
+      if (await folderWindows.hasOpened()) throw Error('Injected failure after a real folder window opened');
+      if (child.exitCode !== null || child.signalCode !== null) throw Error('Candidate exited before folder failure injection');
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw Error('Folder failure injection timed out');
+  }
   if(process.platform==='darwin' && process.env.XWX_NATIVE_TEST_ACTIVATE==='1') {
     // Activate only the exact child created above; never search by an app name.
     let activated=false, activationError='';
@@ -87,6 +98,7 @@ try {
   // Always replace both reports, including failure, so a previous package's
   // successful Viewer result cannot be mistaken for this run's evidence.
   await writeFile(resolve('test-results/native-viewer-summary.json'),JSON.stringify({...viewer,binarySha256},null,2)+'\n');
+  reportsWritten = true;
   assert.ok(report, `Native smoke timed out; sandbox ${root}`);
   assert.equal(report.passed, true, JSON.stringify({ ...report, sandbox: root }));
   assert.equal(requests.length, 3);
@@ -108,9 +120,22 @@ try {
   } else if (child.exitCode === null) {
     const [code] = await once(child, 'exit'); assert.equal(code, 0);
   }
+} catch (error) {
+  runFailure = error;
+  throw error;
 } finally {
-  if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+  if (child.exitCode === null && child.signalCode === null) { const ended=once(child,'exit'); child.kill('SIGTERM'); await ended; }
   if (stagedAppDirectory) await rm(stagedAppDirectory, {recursive:true, force:true});
   upstream.closeAllConnections();
   if (upstream.listening) await new Promise(resolve => upstream.close(resolve));
+  let cleanup, cleanupError;
+  try { cleanup = await folderWindows.close(); if (cleanup.passed === false) throw Error('Test folder windows remain open'); }
+  catch (error) { cleanupError = error; cleanup = { ...cleanup, applicable: process.platform === 'win32', passed: false, error: String(error) }; }
+  await mkdir(resolve('test-results'), { recursive: true });
+  for (const name of ['native-webview-summary.json', 'native-viewer-summary.json']) {
+    const report = reportsWritten ? JSON.parse(await readFile(resolve('test-results',name),'utf8')) : { passed:false, binarySha256 };
+    await writeFile(resolve('test-results',name),JSON.stringify({...report,sandbox:root,passed:report.passed&&!runFailure&&!cleanupError,
+      ...(runFailure||cleanupError?{error:[runFailure,cleanupError].filter(Boolean).map(String).join('; ')}:{}),folderWindows:cleanup},null,2)+'\n');
+  }
+  if (cleanupError) throw new AggregateError([runFailure,cleanupError].filter(Boolean),'Native test failed to clean its folder windows');
 }

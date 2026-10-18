@@ -174,6 +174,7 @@
 | [configuration-state-renderer-test.mjs](../tools/native/configuration-state-renderer-test.mjs) | 后端默认入口 | UI02 |
 | [language-renderer-test.mjs](../tools/native/language-renderer-test.mjs) | 后端默认入口 | UI02、UI03、UI05、UI07 |
 | [language-test.mjs](../tools/native/language-test.mjs) | 后端默认入口 | UI07 |
+| [native-test.mjs](../tools/native/native-test.mjs) | 独立专题入口 | UI02 |
 | [onboarding-renderer-test.mjs](../tools/native/onboarding-renderer-test.mjs) | 后端默认入口 | UI01、UI02、UI03、UI05 |
 | [onboarding-restart-test.mjs](../tools/native/onboarding-restart-test.mjs) | 独立专题入口 | UI01 |
 | [preferences-test.mjs](../tools/native/preferences-test.mjs) | 后端默认入口 | SE02、SE03、SE04、AC01、UI04、LF03 |
@@ -185,6 +186,7 @@
 | [toast-renderer-test.mjs](../tools/native/toast-renderer-test.mjs) | 后端默认入口 | UI02、UI03、UI05、UI06 |
 | [trace-clients-renderer-test.mjs](../tools/native/trace-clients-renderer-test.mjs) | 独立专题入口 | CO06、UI02、UI03、UI05 |
 | [tray-menu-test.mjs](../tools/native/tray-menu-test.mjs) | 独立专题入口 | UI02、UI04、UI07、LF02 |
+| [windows-folder-windows-test.mjs](../tools/native/windows-folder-windows-test.mjs) | test:built 入口 | UI02 |
 | [run-theme-regressions.mjs](../tools/tests/run-theme-regressions.mjs) | test:built 入口 | UI04 |
 | [run-trace-notice-regressions.mjs](../tools/tests/run-trace-notice-regressions.mjs) | test:built 入口 | UI06 |
 

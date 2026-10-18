@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { windowsWix } from './windows-wix.mjs';
 import { standardWindowsArtifact } from './windows-execution-level.mjs';
+import { windowsMsiUi } from './windows-msi-ui.mjs';
 
 const contract = JSON.parse(await readFile(new URL('../../release-contract.json', import.meta.url), 'utf8'));
 export const MSI_UPGRADE_CODE = contract.platforms.windows.upgradeCode;
@@ -22,16 +23,16 @@ export async function buildWindowsMsi({ root, binary, output, version }) {
   await mkdir(dirname(output), { recursive: true });
   const source = join(work, 'installer.wxs');
   const object = join(work, 'installer.wixobj');
-  const rtf = join(work, 'license.rtf');
-  const license = await readFile(join(root, 'LICENSE'), 'utf8');
-  await writeFile(rtf, '{\\rtf1\\ansi\\deff0 {\\fonttbl {\\f0 Arial;}}\\f0\\fs18 '+license.replaceAll('\\','\\\\').replaceAll('{','\\{').replaceAll('}','\\}').replaceAll('\n','\\par\n')+'}');
   await writeFile(source, `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
- <Product Id="*" Name="XwX Deck" Language="1033" Version="${xml(version)}" Manufacturer="XwX Deck" UpgradeCode="${MSI_UPGRADE_CODE}">
+ <Product Id="*" Name="XwX Deck" Language="2052" Codepage="936" Version="${xml(version)}" Manufacturer="XwX Deck" UpgradeCode="${MSI_UPGRADE_CODE}">
   <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" InstallPrivileges="limited" Platform="x64" />
   <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer XwX Deck is already installed." />
   <MediaTemplate EmbedCab="yes" />
   <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
+  <!-- Per-user files and HKCU only: retain MSI rollback, skip a machine restore checkpoint. -->
+  <Property Id="MSIFASTINSTALL" Value="1" />
+  <Property Id="MsiLogging" Value="voicewarmup" />
   <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
   <Property Id="INSTALLDIR"><RegistrySearch Id="PreviousInstallLocation" Root="HKCU" Key="Software\\XwX Deck\\Installation" Name="Path" Type="raw" /></Property>
   <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLDIR]" After="CostFinalize" />
@@ -59,12 +60,11 @@ export async function buildWindowsMsi({ root, binary, output, version }) {
   <Feature Id="Application" Title="XwX Deck" Level="1"><ComponentRef Id="DeckApplication" /></Feature>
   <CustomAction Id="PrepareSafeUninstall" FileKey="DeckExecutable" ExeCommand="--prepare-msi-uninstall [WIX_UPGRADE_DETECTED]" Execute="immediate" Return="check" Impersonate="yes" />
   <InstallExecuteSequence><Custom Action="PrepareSafeUninstall" Before="InstallValidate">(REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE) OR WIX_UPGRADE_DETECTED</Custom></InstallExecuteSequence>
-  <UIRef Id="WixUI_Minimal" />
-  <WixVariable Id="WixUILicenseRtf" Value="${xml(rtf)}" />
+  ${windowsMsiUi(root)}
  </Product>
 </Wix>`);
   const env = { ...process.env, TEMP: work, TMP: work };
-  for (const [tool, args] of [['candle.exe', ['-nologo', '-arch', 'x64', '-out', object, source]], ['light.exe', ['-nologo', '-ext', 'WixUIExtension', '-out', output, object]]]) {
+  for (const [tool, args] of [['candle.exe', ['-nologo', '-arch', 'x64', '-out', object, source]], ['light.exe', ['-nologo', '-out', output, object]]]) {
     const result = spawnSync(join(wix, tool), args, { cwd: work, env, encoding: 'utf8', windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
     await writeFile(join(work, tool+'.log'), (result.stdout || '')+(result.stderr || ''));
     if (result.error || result.status) throw Error(`${tool}: ${result.error?.message || result.stdout || result.stderr}`);

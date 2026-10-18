@@ -5,8 +5,10 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {startNativeRpc} from './rpc-test-session.mjs';
+import {trackWindowsFolderWindows} from './windows-folder-windows.mjs';
 const root=await mkdtemp(join(await realpath(tmpdir()),'deck-dashboard-api-'));
 let app=startNativeRpc(root);await app.rpc('getState');await app.stop();
+const folderWindows=await trackWindowsFolderWindows(root);
 const traceRoot=join(root,'traces');await mkdir(traceRoot,{recursive:true});
 const file=join(traceRoot,'large.jsonl'),tiny=join(traceRoot,'small.jsonl');
 const record=n=>({id:'request-'+n,sessionId:'large',source:'codex-cli',startedAt:new Date(1791800000000+n*1000).toISOString(),request:{model:'fixture',body:{input:'x'.repeat(9*1024*1024)}},response:{statusCode:200},usage:{totalTokens:1}});
@@ -51,4 +53,14 @@ try{
  checks.push('paging, language synchronization and revealing leave the raw trace and index bytes unchanged');
  const report={passed:true,checks,syntheticRecords:true,normalDataModified:false,boundary:'Programmatic actual native HTTP/storage/settings; no new real upstream request',binarySha256:createHash('sha256').update(await readFile(process.env.XWX_NATIVE_TEST_BINARY||resolve('test-results/native-target/release/xwx-deck-native'))).digest('hex')};
  await mkdir(resolve('test-results'),{recursive:true});await writeFile(resolve('test-results/trace-dashboard-api-summary.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));passed=true;
-}finally{await app.stop();if(passed)await rm(root,{recursive:true,force:true});else console.log('Retained failed synthetic fixture: '+root)}
+}finally{
+ try{await app.stop();}finally{
+  const cleanup=await folderWindows.close();
+  if(cleanup.passed===false)passed=false;
+  const reportPath=resolve('test-results/trace-dashboard-api-summary.json');
+  const report=await readFile(reportPath,'utf8').then(JSON.parse,()=>({passed:false}));
+  await writeFile(reportPath,JSON.stringify({...report,passed:passed&&report.passed,folderWindows:cleanup},null,2)+'\n');
+  if(cleanup.passed===false)throw Error('Test folder windows remain open');
+ }
+ if(passed)await rm(root,{recursive:true,force:true});else console.log('Retained failed synthetic fixture: '+root);
+}
