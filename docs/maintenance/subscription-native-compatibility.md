@@ -61,8 +61,3 @@ Codex 也支持命令提供 Bearer 令牌。
 - [GitHub：Copilot SDK 认证](https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/authenticate)：原生登录和会话令牌续期。
 - [Grok Build：开始使用](https://docs.x.ai/build/overview)：浏览器登录和公开 API 示例。
 - [Cursor：API 概览](https://cursor.com/docs/api)：Agent API 与独立模型推理 API 的边界。
-
-Key 遮罩字形由项目独立绘制。
-其生成器为 `tools/build/generate-secret-mask.py`。
-该脚本是手动资产工具，依赖开发环境中的 fonttools 与 brotli。
-正常编译使用已保存的 WOFF2，不安装 Python 依赖。

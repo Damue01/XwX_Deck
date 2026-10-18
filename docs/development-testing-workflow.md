@@ -130,6 +130,13 @@ npm run check:quality
 
 ## 页面体验能覆盖到哪里
 
+Key 遮罩使用项目独立绘制的离线字形。
+生成器为 [generate-secret-mask.py](../tools/build/generate-secret-mask.py)。
+该脚本是手动资产工具，依赖开发环境中的 fonttools 与 brotli。
+正常编译使用已保存的 WOFF2，不安装 Python 依赖。
+遮罩验收需核对实际字形、字符数和显示前后的字距。
+仅比较 CSS 字号不能证明显示正确。
+
 | 方式 | 可以检查 | 不能据此推断 |
 | --- | --- | --- |
 | 实际 React 组件与合成桥接 | 表单、草稿、焦点、迟到结果、错误入口、通知队列 | 系统窗口、真实凭据、实际客户端读取 |
