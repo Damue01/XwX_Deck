@@ -15,7 +15,7 @@ using namespace Gdiplus;
 static HWND mainWindow;
 static int dpi = 96;
 static HBRUSH white;
-static HFONT regular, titleFont, mono, versionFont;
+static HFONT regular, titleFont, headingFont, mono, versionFont;
 static HBITMAP field;
 static ULONG_PTR graphicsToken;
 static LRESULT CALLBACK editProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
@@ -60,6 +60,11 @@ static void paintField(HWND window,HDC dc) {
   RECT r;GetClientRect(window,&r);POINT p={0,0};MapWindowPoints(window,mainWindow,&p,1);HDC memory=CreateCompatibleDC(dc);HGDIOBJ old=SelectObject(memory,field);BitBlt(dc,0,0,r.right,r.bottom,memory,p.x,p.y,SRCCOPY);SelectObject(memory,old);DeleteDC(memory);
   if(GetProp(window,L"folder")){HPEN pen=CreatePen(PS_SOLID,1,RGB(153,155,157));HGDIOBJ oldPen=SelectObject(dc,pen),oldBrush=SelectObject(dc,GetStockObject(NULL_BRUSH));POINT points[]={{px(227),px(113)},{px(227),px(110)},{px(232),px(110)},{px(234),px(112)},{px(239),px(112)},{px(239),px(121)},{px(227),px(121)},{px(227),px(113)},{px(239),px(113)}};Polyline(dc,points,9);SelectObject(dc,oldPen);SelectObject(dc,oldBrush);DeleteObject(pen);}
 }
+static LRESULT CALLBACK labelProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
+  if(msg==WM_ERASEBKGND)return 1;
+  if(msg==WM_PAINT){PAINTSTRUCT paint;HDC dc=BeginPaint(window,&paint);paintField(window,dc);RECT r;GetClientRect(window,&r);int id=GetDlgCtrlID(window);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,GetProp(window,L"error")?RGB(166,52,41):id==60003?RGB(164,166,168):id==60002||GetProp(window,L"heading")?RGB(23,24,26):RGB(139,141,144));HFONT font=(HFONT)SendMessage(window,WM_GETFONT,0,0);HGDIOBJ old=SelectObject(dc,font?font:regular);wchar_t text[2048];GetWindowText(window,text,2048);DrawText(dc,text,-1,&r,DT_NOPREFIX|(id==60002||id==60003?DT_SINGLELINE:DT_WORDBREAK));SelectObject(dc,old);EndPaint(window,&paint);return 0;}
+  return DefSubclassProc(window,msg,wp,lp);
+}
 static void move(HWND control,int x,int y,int w,int h) { SetWindowPos(control,nullptr,px(x),px(y),px(w),px(h),SWP_NOZORDER|SWP_NOACTIVATE); }
 static void ownerButton(HWND button) { SetWindowTheme(button,L"",L"");SetWindowLongPtr(button,GWL_STYLE,(GetWindowLongPtr(button,GWL_STYLE)&~BS_TYPEMASK)|BS_OWNERDRAW);SendMessage(button,WM_SETFONT,(WPARAM)regular,TRUE);SetWindowSubclass(button,buttonProc,2,0); }
 static void drawButton(DRAWITEMSTRUCT* item) {
@@ -80,12 +85,13 @@ static LRESULT CALLBACK skinProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_P
   return DefSubclassProc(window,msg,wp,lp);
 }
 static HWND label(HWND parent,int id,const wchar_t* text,int x,int y,int w,int h,HFONT font) {
-  HWND control=CreateWindow(L"STATIC",text,WS_CHILD|WS_VISIBLE|SS_NOPREFIX,x,y,w,h,parent,(HMENU)(INT_PTR)id,GetModuleHandle(nullptr),nullptr);move(control,x,y,w,h);SendMessage(control,WM_SETFONT,(WPARAM)font,TRUE);return control;
+  HWND control=CreateWindow(L"STATIC",text,WS_CHILD|WS_VISIBLE|SS_NOPREFIX,x,y,w,h,parent,(HMENU)(INT_PTR)id,GetModuleHandle(nullptr),nullptr);move(control,x,y,w,h);SendMessage(control,WM_SETFONT,(WPARAM)font,TRUE);SetWindowSubclass(control,labelProc,4,0);return control;
 }
 extern "C" void __stdcall Skin(HWND parent,HWND page,const wchar_t* version,int mode) {
   if(!mainWindow){mainWindow=parent;dpi=GetDpiForWindow(parent);white=CreateSolidBrush(RGB(255,255,255));
     regular=CreateFont(-px(11),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
     titleFont=CreateFont(-px(28),0,0,0,FW_MEDIUM,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+    headingFont=CreateFont(-px(15),0,0,0,FW_MEDIUM,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
     mono=CreateFont(-px(11),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,FIXED_PITCH,L"Consolas");versionFont=CreateFont(-px(9),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,FIXED_PITCH,L"Consolas");makeField();
     RECT r;GetWindowRect(parent,&r);SetWindowLongPtr(parent,GWL_STYLE,WS_POPUP|WS_SYSMENU|WS_CLIPCHILDREN);SetWindowLongPtr(parent,GWL_EXSTYLE,WS_EX_APPWINDOW);
     SetWindowPos(parent,nullptr,(r.left+r.right-px(620))/2,(r.top+r.bottom-px(240))/2,px(620),px(240),SWP_NOZORDER|SWP_FRAMECHANGED);
@@ -113,9 +119,10 @@ extern "C" void __stdcall Field(HWND window,int kind) {
   if(kind==1)move(window,558,104,36,28);
   if(kind==2)move(window,225,78,363,18);
   if(kind==3){move(window,225,140,363,34);SetProp(window,L"error",(HANDLE)1);}
-  if(kind==4)move(window,225,78,363,22);
+  if(kind==4){move(window,225,78,363,22);SetProp(window,L"heading",(HANDLE)1);SendMessage(window,WM_SETFONT,(WPARAM)headingFont,TRUE);}
   if(kind==5)move(window,225,111,363,24);
   if(kind==6)move(window,225,106,363,44);
+  if(kind==2||kind==3||kind==4||kind==6)SetWindowSubclass(window,labelProc,4,0);
   // Remove theme edges only from the editable path. Keep genuine edit/button controls.
   if(kind==0){SetWindowTheme(window,L"",L"");SetWindowLongPtr(window,GWL_STYLE,GetWindowLongPtr(window,GWL_STYLE)&~WS_BORDER);SetWindowLongPtr(window,GWL_EXSTYLE,GetWindowLongPtr(window,GWL_EXSTYLE)&~WS_EX_CLIENTEDGE);SendMessage(window,WM_SETFONT,(WPARAM)mono,TRUE);SetWindowSubclass(window,editProc,3,0);SetWindowPos(window,nullptr,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);}
   else if(kind==1)ownerButton(window);
