@@ -12,6 +12,8 @@ mod renderer_preferences;
 mod webcrypto_store;
 mod webview_cache;
 #[cfg(target_os = "windows")]
+mod windows_recovery;
+#[cfg(target_os = "windows")]
 mod windows_tray;
 use core::{Pilot, Shared};
 use serde_json::{json, Value};
@@ -1135,26 +1137,31 @@ fn show_licenses(app: &tauri::AppHandle) {
 }
 
 fn show_startup_recovery(message: &str) {
-    // No Pilot is opened and no browser store is created while data recovery
-    // is blocked. A Finder launch still gets an actionable native explanation.
-    let mut context = tauri::generate_context!();
-    for window in &mut context.config_mut().app.windows {
-        window.create = false;
-    }
-    if let Ok(app) = tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .build(context)
+    #[cfg(target_os = "windows")]
+    windows_recovery::show(message);
+    #[cfg(not(target_os = "windows"))]
     {
-        let message = message.to_owned();
-        app.run(move |app, event| {
-            if matches!(event, tauri::RunEvent::Ready) {
-                let handle = app.clone();
-                app.dialog()
-                    .message(&message)
-                    .title("XwX Deck 无法启动")
-                    .show(move |_| handle.exit(2));
-            }
-        });
+        // No Pilot is opened and no browser store is created while data recovery
+        // is blocked. A Finder launch still gets an actionable native explanation.
+        let mut context = tauri::generate_context!();
+        for window in &mut context.config_mut().app.windows {
+            window.create = false;
+        }
+        if let Ok(app) = tauri::Builder::default()
+            .plugin(tauri_plugin_dialog::init())
+            .build(context)
+        {
+            let message = message.to_owned();
+            app.run(move |app, event| {
+                if matches!(event, tauri::RunEvent::Ready) {
+                    let handle = app.clone();
+                    app.dialog()
+                        .message(&message)
+                        .title("XwX Deck 无法启动")
+                        .show(move |_| handle.exit(2));
+                }
+            });
+        }
     }
 }
 fn main() {
@@ -1302,6 +1309,11 @@ fn main() {
                 .join("xwx-deck")
             }
         });
+    #[cfg(target_os = "windows")]
+    if argument("--pilot-root").is_some() && std::env::args().any(|arg| arg == "--smoke-recovery") {
+        windows_recovery::show("隔离启动失败验收：<script>window.recoveryInjected=true</script>\n原配置保留，请检查恢复记录。");
+        std::process::exit(2);
+    }
     match core::pending_reset(&root) {
         Ok(Some(job)) => match core::resume_reset(&job) {
             Ok(()) => {
@@ -1457,21 +1469,7 @@ fn main() {
     #[cfg(target_os = "windows")]
     let isolated_root = argument("--pilot-root").map(|_| root.clone());
     let shared = pilot.clone();
-    let builder =
-        tauri::Builder::default().register_uri_scheme_protocol("xwx-font", |_context, request| {
-            let bytes = if request.method() == tauri::http::Method::GET {
-                embedded_fonts::get(request.uri().path())
-            } else {
-                None
-            };
-            tauri::http::Response::builder()
-                .status(if bytes.is_some() { 200 } else { 404 })
-                .header("Content-Type", "font/woff2")
-                .header("Access-Control-Allow-Origin", "*")
-                .header("Cache-Control", "public, max-age=31536000, immutable")
-                .body(bytes.unwrap_or_default().to_vec())
-                .unwrap()
-        });
+    let builder = embedded_fonts::builder();
     #[cfg(target_os = "macos")]
     let builder = builder
         .manage(webcrypto_store::Store::new(
@@ -1595,7 +1593,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![pilot_rpc,pilot_tray,pilot_smoke_report,pilot_smoke_progress])
         .on_page_load(move |window,payload| {
             if smoke && payload.event()==tauri::webview::PageLoadEvent::Finished
-                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-tray"){include_str!("../../tools/native/tray-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
+                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-reminders"){include_str!("../../tools/native/reminders-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-tray"){include_str!("../../tools/native/tray-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
         })
         .on_window_event(move |window,event| {
             #[cfg(target_os="windows")]

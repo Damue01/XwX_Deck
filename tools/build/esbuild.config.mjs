@@ -38,6 +38,10 @@ const trayHtml = (await fs.readFile('src/renderer/index.html', 'utf8'))
   .replace('<html lang="zh-CN"', '<html data-surface="tray" lang="zh-CN"')
   .replace('<title>XwX Deck</title>', '<title>XwX Deck 托盘菜单</title>');
 await fs.writeFile('dist/renderer/tray.html', trayHtml);
+const recoveryHtml = (await fs.readFile('src/renderer/index.html', 'utf8'))
+  .replace('<html lang="zh-CN"', '<html data-surface="recovery" lang="zh-CN"')
+  .replace('<title>XwX Deck</title>', '<title>XwX Deck 无法启动</title>');
+await fs.writeFile('dist/renderer/recovery.html', recoveryHtml);
 await fs.copyFile('assets/icon-runtime.png', 'dist/renderer/icon-runtime.png');
 console.log('[renderer] copied index.html and window icon');
 console.log('[native] React frontend compiled; backend is Rust.');

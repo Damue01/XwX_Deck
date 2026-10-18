@@ -13,7 +13,7 @@ export function Titlebar({ isMaximized, nativeFrame }: Props): React.ReactElemen
   const api = getApi();
 
   const onPointerDown = React.useCallback((e: React.PointerEvent<HTMLElement>) => {
-    if (nativeFrame) return;
+    if (nativeFrame || e.button !== 0) return;
     if ((e.target as HTMLElement).closest('button')) return;
     api.moveWindowStart({ screenX: e.screenX, screenY: e.screenY });
     const onMove = (ev: PointerEvent) => api.moveWindow({ screenX: ev.screenX, screenY: ev.screenY });

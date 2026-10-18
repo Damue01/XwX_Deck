@@ -177,6 +177,7 @@
 | [onboarding-restart-test.mjs](../tools/native/onboarding-restart-test.mjs) | 独立专题入口 | UI01 |
 | [preferences-test.mjs](../tools/native/preferences-test.mjs) | 后端默认入口 | SE02、SE03、SE04、AC01、UI04、LF03 |
 | [shared-fonts-test.mjs](../tools/native/shared-fonts-test.mjs) | 独立专题入口 | UI07 |
+| [startup-recovery-test.mjs](../tools/native/startup-recovery-test.mjs) | 独立专题入口 | UI02、UI07、LF02 |
 | [subscription-import-renderer-test.mjs](../tools/native/subscription-import-renderer-test.mjs) | 后端默认入口 | UI01 |
 | [theme-test.mjs](../tools/native/theme-test.mjs) | 独立专题入口 | UI04 |
 | [toast-layer-renderer-test.mjs](../tools/native/toast-layer-renderer-test.mjs) | 独立专题入口 | UI02、UI03、UI06 |
@@ -198,6 +199,7 @@
 | [desktop-lifecycle-test.mjs](../tools/native/desktop-lifecycle-test.mjs) | 后端默认入口 | CL06、LF02、LF03、LF04、LF05 |
 | [preferences-test.mjs](../tools/native/preferences-test.mjs) | 后端默认入口 | SE02、SE03、SE04、AC01、UI04、LF03 |
 | [routing-consumption-test.mjs](../tools/native/routing-consumption-test.mjs) | 后端默认入口 | TR01、TR02、TR07、MO03、MO06、CL01、CL02、CL05、CL06、LF03 |
+| [startup-recovery-test.mjs](../tools/native/startup-recovery-test.mjs) | 独立专题入口 | UI02、UI07、LF02 |
 | [toggle-renderer-test.mjs](../tools/native/toggle-renderer-test.mjs) | 后端默认入口 | LF01 |
 | [tool-wait-test.mjs](../tools/native/tool-wait-test.mjs) | 后端默认入口 | TR06、LF01、LF02、LF04、LF05 |
 | [trace-stop-admission-test.mjs](../tools/native/trace-stop-admission-test.mjs) | 后端默认入口 | LF01、LF02、LF04、LF05 |

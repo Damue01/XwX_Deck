@@ -34,7 +34,20 @@
   } finally {matrix.remove();PRICE_RULES.splice(PRICE_RULES.indexOf(fixturePrice),1);}
   check('dashboard header, columns and table rows have no dividers',getComputedStyle(document.querySelector('.top')).borderBottomWidth==='0px'&&getComputedStyle(document.querySelector('.rail')).borderRightWidth==='0px'&&[...document.querySelectorAll('.dash-table th,.dash-table td')].every(element=>getComputedStyle(element).borderBottomWidth==='0px'));
   const idleRow=document.querySelector('.dash-table tbody tr');
+  const blankContext=new MouseEvent('contextmenu',{bubbles:true,cancelable:true});document.querySelector('.dash-hero').dispatchEvent(blankContext);
+  check('native Viewer suppresses the system context menu on dashboard surfaces',blankContext.defaultPrevented&&!document.querySelector('.xwx-edit-menu'));
+  openSearch();await delay(100);
+  check('Viewer search uses the application modal and typography',document.querySelector('#searchOv.on [role=dialog]')?.getBoundingClientRect().height>0&&getComputedStyle(document.querySelector('#searchOv .modal')).fontFamily.includes('Urbanist'));
+  const searchInput=document.querySelector('#globalSearch');searchInput.value='synthetic search';searchInput.focus();searchInput.select();const searchRect=searchInput.getBoundingClientRect();
+  const searchContext=new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:searchRect.x+10,clientY:searchRect.y+10});searchInput.dispatchEvent(searchContext);
+  check('Viewer search input has a designed edit menu inside its modal',searchContext.defaultPrevented&&!!document.querySelector('#searchOv .xwx-edit-menu'));
+  document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+  check('Viewer edit-menu dismissal preserves the search modal',!document.querySelector('.xwx-edit-menu')&&document.querySelector('#searchOv').classList.contains('on'));
+  closeSearch();openPricing();await delay(100);
+  check('Viewer pricing uses its application modal',document.querySelector('#pricingOv.on [role=dialog]')?.getBoundingClientRect().height>0);
+  closePricing();
   const deletePrompt = confirmDeleteSession(idleRow.dataset.sid);
+  check('Viewer delete reminder uses its application modal',document.querySelector('#confirmDeleteOv.on [role=dialog]')?.getBoundingClientRect().height>0&&getComputedStyle(document.querySelector('#confirmDeleteOv .modal')).fontFamily.includes('Urbanist'));
   check('native delete confirmation preserves accounting by default', !document.querySelector('#confirmDeleteUsage').checked && document.querySelector('#confirmDeleteUsageLabel').getBoundingClientRect().height>0);
   document.querySelector('#confirmDeleteUsage').click();
   document.querySelector('#confirmDeleteCancel').click(); await deletePrompt;

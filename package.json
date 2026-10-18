@@ -44,6 +44,8 @@
     "test:native:onboarding-restart": "node tools/native/onboarding-restart-test.mjs",
     "test:native:window-lifecycle": "node tools/native/window-lifecycle-test.mjs",
     "test:native:tray": "node tools/native/tray-menu-test.mjs",
+    "test:native:reminders": "node tools/native/tray-menu-test.mjs --reminders",
+    "test:native:startup-recovery": "node tools/native/startup-recovery-test.mjs",
     "start:native:isolated": "node tools/native/launch.mjs",
     "test:native:reset": "node tools/native/application-reset-test.mjs",
     "test:native:reset-webview": "node tools/native/application-reset-ui-test.mjs",

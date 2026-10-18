@@ -74,12 +74,14 @@ try {
   if(!report) { const progress=await readFile(join(root,'native-smoke-progress.json'),'utf8').then(JSON.parse).catch(()=>({checks:[]})); report={...progress,passed:false,error:'Native smoke timed out'}; }
   await mkdir(resolve('test-results'),{recursive:true});
   await writeFile(resolve('test-results/native-webview-summary.json'),JSON.stringify({...report,binarySha256,nativeHttpRequests:requests.length,controlledActivation:process.env.XWX_NATIVE_TEST_ACTIVATE==='1',syntheticUpstream:true},null,2)+'\n');
+  const viewer=await readFile(join(root,'traces/native-viewer-smoke.json'),'utf8').then(JSON.parse,()=>({passed:false,error:'Viewer did not report for this candidate'}));
+  // Always replace both reports, including failure, so a previous package's
+  // successful Viewer result cannot be mistaken for this run's evidence.
+  await writeFile(resolve('test-results/native-viewer-summary.json'),JSON.stringify({...viewer,binarySha256},null,2)+'\n');
   assert.ok(report, `Native smoke timed out; sandbox ${root}`);
   assert.equal(report.passed, true, JSON.stringify({ ...report, sandbox: root }));
   assert.equal(requests.length, 2);
-  const viewer=JSON.parse(await readFile(join(root,'traces/native-viewer-smoke.json'),'utf8'));
   assert.equal(viewer.passed,true,JSON.stringify(viewer));
-  await writeFile(resolve('test-results/native-viewer-summary.json'),JSON.stringify({...viewer,binarySha256},null,2)+'\n');
   assert.equal(updateDownloads,0,'notification checks must not automatically download an installer');
   for (const request of requests) {
     assert.equal(request.authorization, 'Bearer isolated-test-key'); assert.equal(request.path, '/v1/responses'); assert.equal(request.body.model, 'pilot-model');

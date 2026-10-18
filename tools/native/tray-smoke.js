@@ -10,10 +10,12 @@
     await open();let view=await inspect();
     check('Windows tray uses exactly two application-rendered menu items',view.items.map(x=>x.label).join('|')==='开启 Trace|退出'&&!view.managerMounted);
     check('tray menu shares the application font and menu surface',view.font.includes('Urbanist')&&view.background==='rgb(255, 255, 255)');
+    check('tray opens without an extra background or initial item highlight',view.menuFocused&&view.itemBackgrounds.every(color=>color==='rgba(0, 0, 0, 0)'));
     check('tray item boxes fit the native viewport and receive pointer input',view.items.every(x=>x.hit&&x.rect.x>=0&&x.rect.y>=0&&x.rect.right<=view.viewport.width&&x.rect.bottom<=view.viewport.height));
     check('tray receives only runtime state and presentation preferences',view.stateKeys.join('|')==='busy|enabled|language|theme');
     await rpc('smokeTrayWindow','deny');await wait(async()=>(await rpc('smokeTrayReport'))?.denied,'restricted tray caller');
     check('tray WebView cannot read provider configuration through the main RPC',true);
+    await rpc('smokeTrayWindow','down');view=await inspect();check('ArrowDown first focuses Trace without a filled background',view.focused==='开启 Trace'&&view.itemBackgrounds.every(color=>color==='rgba(0, 0, 0, 0)'));
     await rpc('smokeTrayWindow','down');view=await inspect();check('ArrowDown moves keyboard focus to Exit',view.focused==='退出');
     await rpc('smokeTrayWindow','escape');await wait(async()=>!(await rpc('smokeTrayWindow'))?.visible,'Escape hides tray');check('Escape dismisses the custom tray window',true);
     await open();await rpc('smokeTrayWindow','blur');await wait(async()=>!(await rpc('smokeTrayWindow'))?.visible,'focus loss hides tray');check('focus loss dismisses the custom tray window',true);

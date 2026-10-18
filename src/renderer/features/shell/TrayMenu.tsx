@@ -17,7 +17,6 @@ export function TrayMenu(): React.ReactElement {
   const [state, setState] = React.useState<TrayState>();
   const [pending, setPending] = React.useState(false);
   const menu = React.useRef<HTMLDivElement>(null);
-  const first = React.useRef<HTMLButtonElement>(null);
   React.useEffect(() => {
     let disposed = false;
     const accept = (next: TrayState) => {
@@ -27,13 +26,13 @@ export function TrayMenu(): React.ReactElement {
       setState(next);
     };
     const refresh = () => { void rpc<TrayState>('state').then(accept).catch(() => {}); };
-    const focus = () => { refresh(); requestAnimationFrame(() => (first.current?.disabled ? menu.current : first.current)?.focus()); };
+    const focus = () => { refresh(); requestAnimationFrame(() => menu.current?.focus()); };
     const subscription = native.event.listen<TrayState>('pilot-tray-state', event => accept(event.payload));
     window.addEventListener('focus', focus);
     refresh();
     return () => { disposed = true; window.removeEventListener('focus', focus); void subscription.then(unlisten => unlisten()); };
   }, []);
-  React.useEffect(() => { if (state && !state.busy) first.current?.focus(); }, [state?.busy, !!state]);
+  React.useEffect(() => { if (state && !state.busy) menu.current?.focus(); }, [state?.busy, !!state]);
   React.useEffect(() => { if (state) void rpc('ready').catch(() => {}); }, [!!state]);
   const choose = async (action: 'trace' | 'exit') => {
     if (!state || state.busy || pending) return;
@@ -48,13 +47,13 @@ export function TrayMenu(): React.ReactElement {
     event.preventDefault();
     const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
     const index = items.indexOf(document.activeElement as HTMLButtonElement);
-    const target = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+    const target = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : index < 0 ? (event.key === 'ArrowUp' ? items.length - 1 : 0) : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
     items[target]?.focus();
   };
   const disabled = !state || state.busy || pending;
   return <div className="tray-menu-wrap">
     <div className="xwx-combobox-popup tray-menu" role="menu" aria-label="XwX Deck" ref={menu} tabIndex={-1} onKeyDown={keydown}>
-      <button className="tray-menu-item" role="menuitem" ref={first} disabled={disabled} onClick={() => { void choose('trace'); }}>
+      <button className="tray-menu-item" role="menuitem" disabled={disabled} onClick={() => { void choose('trace'); }}>
         {state?.enabled ? <Square size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}<span>{t(state?.enabled ? '关闭 Trace' : '开启 Trace')}</span>
       </button>
       <button className="tray-menu-item" role="menuitem" disabled={disabled} onClick={() => { void choose('exit'); }}><LogOut size={14} aria-hidden="true" /><span>{t('退出')}</span></button>

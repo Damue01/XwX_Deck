@@ -748,5 +748,7 @@
   "客户端已从 Deck 移除": "Cliente removido do Deck",
   "已从 Deck 移除，来源登录保持不变": "Removido do Deck; as sessões de origem foram mantidas",
   "请更新桌面应用后移除账号": "Atualize o aplicativo para remover contas",
-  "移除账号失败": "Não foi possível remover a conta"
+  "移除账号失败": "Não foi possível remover a conta",
+  "XwX Deck 无法启动": "Não foi possível iniciar o XwX Deck",
+  "无法启动，请检查应用数据和访问权限。": "Verifique os dados do aplicativo e as permissões de acesso."
 }

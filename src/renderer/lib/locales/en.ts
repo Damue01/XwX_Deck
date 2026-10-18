@@ -753,4 +753,6 @@ export const english: Readonly<Record<string, string>> = {
   "已从 Deck 移除，来源登录保持不变": "Removed from Deck; source clients remain signed in",
   "请更新桌面应用后移除账号": "Update the desktop app to remove accounts",
   "移除账号失败": "Could not remove account",
+  "XwX Deck 无法启动": "XwX Deck could not start",
+  "无法启动，请检查应用数据和访问权限。": "Could not start. Check the application data and access permissions.",
 };
