@@ -71,7 +71,7 @@ try{
   const direct=await fetch(base+'/v1/responses',{method:'POST',headers:{authorization:'Bearer '+renewed.stdout.trim(),'content-type':'application/json'},body:JSON.stringify({model:'native-response-model',input:'local fixture',store:false,stream:true})});assert.equal(direct.status,200);await direct.text();
   pass('credential command authenticates a direct native Responses stream against the isolated upstream');
  }
- lifetime=62;await rpc('switchClientProvider',{client:'codex',providerId:b.id});await rpc('updateCodexConfig',{expectedProviderId:b.id,compatibleModel:'native-response-model'});
+ lifetime=62;const switched=await rpc('switchClientProvider',{client:'codex',providerId:b.id});assert.match(switched.warning,/重启 Codex/);assert.ok(!switched.warning.includes('开启 Trace'));await rpc('updateCodexConfig',{expectedProviderId:b.id,compatibleModel:'native-response-model'});
  const cb=await config(),current=await helper(cb),old=await helper(ca);assert.equal(current.stdout.trim(),'access-b-1');assert.equal(old.stdout.trim(),'access-a-2');assert.equal((await rpc('getProviders')).selected.codex,b.id);
  pass('account switch publishes the new binding while an old client snapshot can only retrieve its original account');
  for(const change of [{accountId:'native-b'},{baseUrl:'https://other.example.test/v1'},{headers:{'ChatGPT-Account-Id':'other'}}]){

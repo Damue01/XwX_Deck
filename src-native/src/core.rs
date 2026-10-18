@@ -2705,6 +2705,7 @@ impl Pilot {
                 let old_alias = if client == "codex" {
                     provider_field(&self.config()?, "xwx_deck", "base_url").and_then(Item::as_str).map(str::to_string)
                 } else { None };
+                let old_auth = if client == "codex" {provider_field(&self.config()?, "xwx_deck", "auth").map(ToString::to_string)} else {None};
                 if client == "codex" {
                     self.write_direct(takeover)?;
                 } else if client == "claude" {
@@ -2723,7 +2724,9 @@ impl Pilot {
                 }
                 if let Some(old) = old_alias {
                     let current_config = self.config()?;
-                    if provider_field(&current_config, "xwx_deck", "base_url").and_then(Item::as_str) != Some(old.as_str()) {
+                    let changed_auth = self.settings.other.get("traceDesiredEnabled") != Some(&json!(true))
+                        && provider_field(&current_config, "xwx_deck", "auth").map(ToString::to_string) != old_auth;
+                    if changed_auth || provider_field(&current_config, "xwx_deck", "base_url").and_then(Item::as_str) != Some(old.as_str()) {
                         snapshot["warning"] = json!("旧会话连接已更新。请等待当前回答结束后重启 Codex，再打开原会话继续。");
                     }
                 }
