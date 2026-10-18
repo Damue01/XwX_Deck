@@ -1,5 +1,6 @@
 //! Read-only installation discovery. Never launch a client or read its credentials.
 use std::{
+    collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
 };
@@ -13,11 +14,34 @@ pub fn canonical_id(id: &str) -> &str {
     }
 }
 
+pub fn manual_locations(
+    settings: &serde_json::Map<String, serde_json::Value>,
+    isolated_root: Option<&Path>,
+) -> BTreeMap<String, PathBuf> {
+    settings
+        .get("clientInstallationLocations")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flatten()
+        .map(|(id, value)| {
+            let path = PathBuf::from(value.as_str().unwrap_or(""));
+            let allowed = isolated_root.is_none_or(|root| {
+                path.canonicalize()
+                    .ok()
+                    .zip(root.canonicalize().ok())
+                    .is_some_and(|(path, root)| path.starts_with(root))
+            });
+            (id.clone(), if allowed { path } else { PathBuf::new() })
+        })
+        .collect()
+}
+
 pub struct Discovery {
     bins: Vec<PathBuf>,
     apps: Vec<PathBuf>,
     extensions: Vec<PathBuf>,
     packages: Vec<(String, PathBuf)>,
+    manual_locations: BTreeMap<String, PathBuf>,
 }
 
 // Installers may use any drive. Only inspect registered installation locations;
@@ -58,6 +82,8 @@ fn windows_install_roots() -> Vec<PathBuf> {
         for branch in [
             r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
             r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+            r"Software\Microsoft\Windows\CurrentVersion\App Paths",
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths",
         ] {
             let name = wide(branch);
             let mut key = HKEY::default();
@@ -95,6 +121,13 @@ fn windows_install_roots() -> Vec<PathBuf> {
                 }
                 if let Some(location) = value(entry, "InstallLocation").filter(|s| !s.is_empty()) {
                     roots.push(PathBuf::from(location.trim_matches('"')));
+                }
+                if branch.ends_with("App Paths") {
+                    if let Some(program) = value(entry, "") {
+                        if let Some(parent) = Path::new(program.trim().trim_matches('"')).parent() {
+                            roots.push(parent.to_path_buf());
+                        }
+                    }
                 }
                 if let Some(icon) = value(entry, "DisplayIcon") {
                     let icon = icon
@@ -315,7 +348,39 @@ fn codex_bundle_identity(path: &Path) -> bool {
 }
 
 impl Discovery {
+    pub fn with_manual_locations(mut self, locations: BTreeMap<String, PathBuf>) -> Self {
+        self.manual_locations = locations;
+        self
+    }
+    /// A user-selected installation folder is inspected without launching it.
+    pub fn for_location(location: &Path) -> Self {
+        let mut discovery = Self {
+            bins: vec![],
+            apps: vec![],
+            extensions: vec![],
+            packages: vec![],
+            manual_locations: BTreeMap::new(),
+        };
+        if !location.is_absolute() || !location.is_dir() {
+            return discovery;
+        }
+        discovery
+            .bins
+            .extend([location.to_path_buf(), location.join("bin")]);
+        discovery.apps.push(location.to_path_buf());
+        discovery.extensions.push(location.to_path_buf());
+        // A selected .app or extension folder needs its containing catalog root.
+        if location.extension().is_some_and(|ext| ext == "app") {
+            if let Some(parent) = location.parent() {
+                discovery.apps.push(parent.to_path_buf());
+            }
+        }
+        discovery
+    }
     pub fn management_supported(&self, id: &str) -> bool {
+        if let Some(location) = self.manual_locations.get(canonical_id(id)) {
+            return Self::for_location(location).management_supported(id);
+        }
         if id == "cline" {
             if self.bins.iter().any(|dir| {
                 ["cline", "cline.exe", "cline.cmd", "cline.bat"]
@@ -325,19 +390,22 @@ impl Discovery {
                 return true;
             }
             return self.extensions.iter().any(|dir| {
-                directories(dir, 512).iter().any(|extension| {
-                    fs::read_to_string(extension.join("package.json"))
-                        .ok()
-                        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                        .is_some_and(|v| {
-                            (v["name"] == "claude-dev" || v["name"] == "cline")
-                                && v["version"]
-                                    .as_str()
-                                    .and_then(|s| s.split('.').next())
-                                    .and_then(|s| s.parse::<u32>().ok())
-                                    .is_some_and(|major| major >= 4)
-                        })
-                })
+                directories(dir, 512)
+                    .iter()
+                    .chain(std::iter::once(dir))
+                    .any(|extension| {
+                        fs::read_to_string(extension.join("package.json"))
+                            .ok()
+                            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                            .is_some_and(|v| {
+                                (v["name"] == "claude-dev" || v["name"] == "cline")
+                                    && v["version"]
+                                        .as_str()
+                                        .and_then(|s| s.split('.').next())
+                                        .and_then(|s| s.parse::<u32>().ok())
+                                        .is_some_and(|major| major >= 4)
+                            })
+                    })
             });
         }
         if id != "vscode" {
@@ -500,6 +568,7 @@ impl Discovery {
             bins,
             apps,
             packages: vec![],
+            manual_locations: BTreeMap::new(),
             extensions: [
                 ".vscode/extensions",
                 ".vscode-insiders/extensions",
@@ -514,6 +583,9 @@ impl Discovery {
     /// Locate the native account interface shipped with the desktop app or CLI.
     /// Never launch ChatGPT.exe/Codex.exe from the GUI root as an account helper.
     pub fn codex_executable(&self) -> Option<PathBuf> {
+        if let Some(location) = self.manual_locations.get("codex") {
+            return Self::for_location(location).codex_executable();
+        }
         let mut candidates = vec![];
         for (name, root) in &self.packages {
             if package_client(name) == Some("codex") {
@@ -524,6 +596,13 @@ impl Discovery {
             }
         }
         for root in &self.apps {
+            if ["ChatGPT.exe", "Codex.exe"]
+                .iter()
+                .any(|name| executable(&root.join(name)))
+            {
+                candidates.push(root.join("resources/codex.exe"));
+                candidates.push(root.join("resources/codex-cli/bin/codex.exe"));
+            }
             for app in ["Codex", "ChatGPT"] {
                 let bundle = root.join(format!("{app}.app"));
                 if codex_bundle_identity(&bundle.join("Contents/Info.plist")) {
@@ -542,6 +621,9 @@ impl Discovery {
     }
 
     pub fn installed(&self, id: &str) -> bool {
+        if let Some(location) = self.manual_locations.get(canonical_id(id)) {
+            return Self::for_location(location).installed(id);
+        }
         let (apps, commands): (&[&str], &[&str]) = match canonical_id(id) {
             "codex" => (&["ChatGPT", "Codex"], &["codex"]),
             "claude" => (&["Claude", "AnthropicClaude"], &["claude"]),
@@ -656,15 +738,18 @@ impl Discovery {
         }
         id == "cline"
             && self.extensions.iter().any(|root| {
-                directories(root, 512).iter().any(|directory| {
-                    let name = directory.file_name().unwrap_or_default().to_string_lossy();
-                    (name.starts_with("saoudrizwan.claude-dev-")
-                        || name.starts_with("cline.cline-"))
-                        && directory.join("package.json").is_file()
-                        && ["dist/extension.js", "extension.js"]
-                            .iter()
-                            .any(|path| directory.join(path).is_file())
-                })
+                directories(root, 512)
+                    .iter()
+                    .chain(std::iter::once(root))
+                    .any(|directory| {
+                        let name = directory.file_name().unwrap_or_default().to_string_lossy();
+                        (name.starts_with("saoudrizwan.claude-dev-")
+                            || name.starts_with("cline.cline-"))
+                            && directory.join("package.json").is_file()
+                            && ["dist/extension.js", "extension.js"]
+                                .iter()
+                                .any(|path| directory.join(path).is_file())
+                    })
             })
     }
 }
@@ -706,6 +791,45 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+    #[test]
+    fn manual_location_is_product_scoped_and_missing_choice_does_not_fall_back() {
+        let f = Fixture::new();
+        let command = if cfg!(windows) { "dsh.cmd" } else { "dsh" };
+        f.file(&format!("custom install/{command}"), true);
+        f.file(&format!(".local/bin/{command}"), true);
+        let chosen = f.0.join("custom install");
+        let discovery = Discovery::for_home(&f.0).with_manual_locations(BTreeMap::from([(
+            "deepseek-harness".into(),
+            chosen.clone(),
+        )]));
+        assert!(discovery.installed("deepseek-harness"));
+        assert!(!Discovery::for_location(&chosen).installed("claude"));
+        fs::remove_file(chosen.join(command)).unwrap();
+        assert!(!discovery.installed("deepseek-harness"));
+        assert!(Discovery::for_home(&f.0).installed("deepseek-harness"));
+    }
+    #[test]
+    fn isolated_manual_locations_cannot_escape_the_fixture_root() {
+        let f = Fixture::new();
+        let settings = serde_json::json!({"clientInstallationLocations":{"deepseek-harness":f.0.parent().unwrap(),"vscode":f.0}});
+        let locations = manual_locations(settings.as_object().unwrap(), Some(&f.0));
+        assert!(locations["deepseek-harness"].as_os_str().is_empty());
+        assert_eq!(locations["vscode"], f.0);
+    }
+    #[test]
+    #[cfg(windows)]
+    fn manual_desktop_location_reuses_the_native_codex_account_interface() {
+        let f = Fixture::new();
+        f.file("custom/Codex.exe", true);
+        f.file("custom/resources/codex.exe", true);
+        let discovery = Discovery::for_home(&f.0)
+            .with_manual_locations(BTreeMap::from([("codex".into(), f.0.join("custom"))]));
+        assert!(discovery.installed("codex-cli"));
+        assert_eq!(
+            discovery.codex_executable(),
+            Some(f.0.join("custom/resources/codex.exe"))
+        );
     }
     #[test]
     fn does_not_mistake_configuration_or_empty_bundle_for_installation() {
@@ -872,6 +996,7 @@ mod tests {
             apps: vec![],
             extensions: vec![],
             packages: windows_packages().expect("read current-user package registration"),
+            manual_locations: BTreeMap::new(),
         };
         assert!(
             discovery.installed(&expected),

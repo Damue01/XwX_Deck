@@ -1,5 +1,9 @@
 /** Product copy only. User-entered values and model IDs are never translated. */
 export const english: Readonly<Record<string, string>> = {
+  "选择安装位置": "Choose installation location",
+  "保存安装位置": "Save installation location",
+  "无法识别客户端安装位置": "Cannot identify the client installation",
+  "所选位置不支持此客户端的模型配置": "The selected location does not support model configuration for this client",
   "本机客户端": "Clients on this computer",
   "已管理": "Managed",
   "暂不支持模型配置": "Model setup unavailable",

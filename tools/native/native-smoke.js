@@ -421,6 +421,19 @@
       document.querySelector('#configuration-clients .setup-card-link').click(); await delay(150);
       check('official client website shortcut preserved', opened.at(-1) === 'codex' && window.xwxDeck.setupWebsites.codex === 'https://learn.chatgpt.com/docs/app');
       check('Harness retains its official download without being implicitly enrolled', !!document.querySelector('[data-client-download="deepseek-harness"]') && !(await window.xwxDeck.getModelClients()).includes('deepseek-harness') && window.xwxDeck.setupWebsites['download-deepseek-harness'] === 'https://deepseek.com/harness/');
+      document.querySelector('[data-client-download="deepseek-harness"]').click(); await delay(150);
+      const originalDirectoryPicker = window.xwxDeck.chooseDirectory, originalInspection = window.xwxDeck.inspectClientInstallation;
+      try {
+        check('uninstalled Harness offers a borderless manual location action without enrollment', !!document.querySelector('.configuration-client-location') && getComputedStyle(document.querySelector('.configuration-client-location')).borderTopWidth === '0px' && document.querySelector('.configuration-client-actions .btn.primary').disabled);
+        window.xwxDeck.chooseDirectory = async () => null;
+        document.querySelector('.configuration-client-location').click(); await delay(150);
+        check('native picker cancellation keeps Harness unavailable', document.querySelector('.configuration-client-actions .btn.primary').disabled);
+        window.xwxDeck.chooseDirectory = async options => { if (options.kind !== 'client') throw Error('wrong picker kind'); return 'E:/isolated/synthetic-Harness'; };
+        window.xwxDeck.inspectClientInstallation = async input => ({ location: input.location, installed: true, modelManagement: true });
+        document.querySelector('.configuration-client-location').click();
+        await wait(() => !document.querySelector('.configuration-client-actions .btn.primary').disabled, 'read-only manual Harness inspection');
+        check('pending manual location enables confirmation without coloring or saving the client', document.querySelector('[data-client-download="deepseek-harness"]').dataset.unconfigured === 'true' && !(await window.xwxDeck.getModelClients()).includes('deepseek-harness'));
+      } finally { window.xwxDeck.chooseDirectory = originalDirectoryPicker; window.xwxDeck.inspectClientInstallation = originalInspection; }
       document.querySelector('[data-client-download="codex"]').click(); await delay(150);
       document.querySelector('#configuration-clients details').open = true;
       document.querySelector('#configuration-clients [aria-label="Windows ARM64 国内镜像下载（第三方）"]').click(); await delay(150);

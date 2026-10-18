@@ -686,19 +686,55 @@ impl Pilot {
         clients::validate_provider(job.0, job.1, job.2).await
     }
     fn client_discovery(&self) -> client_installations::Discovery {
-        if self.isolated && std::env::args().any(|arg| arg == "--rpc" || arg == "--smoke") {
-            if let Some(home) = std::env::var_os("XWX_CLIENT_INSTALLATIONS_TEST_HOME")
-                .map(PathBuf::from)
-                .filter(|path| path.is_absolute() && path.starts_with(&self.root))
-            {
-                return client_installations::Discovery::for_home(&home);
-            }
-        }
-        if self.isolated {
-            client_installations::Discovery::for_home(&self.root.join("installations"))
+        let fixture_home =
+            if self.isolated && std::env::args().any(|arg| arg == "--rpc" || arg == "--smoke") {
+                std::env::var_os("XWX_CLIENT_INSTALLATIONS_TEST_HOME")
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_absolute() && path.starts_with(&self.root))
+            } else {
+                None
+            };
+        let discovery = if self.isolated {
+            client_installations::Discovery::for_home(
+                &fixture_home.unwrap_or_else(|| self.root.join("installations")),
+            )
         } else {
             client_installations::Discovery::system()
+        };
+        let locations = client_installations::manual_locations(
+            &self.settings.other,
+            self.isolated.then_some(self.root.as_path()),
+        );
+        discovery.with_manual_locations(locations)
+    }
+    fn inspect_client_installation(&self, id: &str, location: &str) -> Result<PathBuf> {
+        let catalog: Value = serde_json::from_str(include_str!(
+            "../../test-results/native-assets/clients.json"
+        ))
+        .map_err(err)?;
+        let id = client_installations::canonical_id(id);
+        if !catalog.as_array().is_some_and(|rows| {
+            rows.iter()
+                .any(|row| row["id"] == id && row["modelManagement"] == true)
+        }) {
+            return Err("暂不支持此客户端的模型配置".into());
         }
+        let path = PathBuf::from(location);
+        if !path.is_absolute() || !path.is_dir() {
+            return Err("请选择客户端的安装目录".into());
+        }
+        let path = std::fs::canonicalize(path).map_err(err)?;
+        if self.isolated && !path.starts_with(std::fs::canonicalize(&self.root).map_err(err)?) {
+            return Err("隔离验证只允许选择本次测试目录中的安装位置".into());
+        }
+        let discovery = client_installations::Discovery::for_location(&path);
+        if !discovery.installed(id) {
+            return Err("所选位置未找到对应客户端，请选择其安装目录".into());
+        }
+        if !discovery.management_supported(id) {
+            return Err("所选客户端版本不支持模型配置，请更新后重试".into());
+        }
+        Ok(path)
     }
     fn client_configured(&self, client: &str) -> bool {
         if self
@@ -2311,11 +2347,22 @@ impl Pilot {
                 Ok(json!({"available":true,"clients":catalog.as_array().into_iter().flatten().map(|client|json!({"id":client["id"],"installed":discovery.installed(text(client,"id")),"modelManagement":client["modelManagement"]==true && discovery.management_supported(text(client,"id"))})).collect::<Vec<_>>()}))
             }
             "getModelClients" => Ok(json!(self.model_clients())),
+            "inspectClientInstallation" => {
+                let id = text(&input,"client");
+                let path = self.inspect_client_installation(id, text(&input,"location"))?;
+                Ok(json!({"location":path,"installed":true,"modelManagement":true}))
+            }
             "addModelClient" | "removeModelClient" => {
                 let id = input.as_str().ok_or("无效客户端")?;
                 let catalog: Value = serde_json::from_str(include_str!("../../test-results/native-assets/clients.json")).map_err(err)?;
                 if !catalog.as_array().is_some_and(|rows|rows.iter().any(|row|row["id"]==id)) { return Err("未知客户端".into()); }
                 let id = client_installations::canonical_id(id);
+                let location = if method == "addModelClient" {
+                    args.get(1).and_then(Value::as_str).map(|path| self.inspect_client_installation(id,path)).transpose()?
+                } else { None };
+                if location.is_some() && self.gateway.is_some() && self.client_enabled(id) && self.client_configured(id) {
+                    return Err("请先停止此客户端的追踪，再更改安装位置".into());
+                }
                 let mut clients = self.model_clients();
                 if method == "removeModelClient" {
                     if ingress::valid_client(id)&&self.settings.other.get("clientRoutes").and_then(|r|r.get(id)).is_some_and(|r|r["enabled"]!=false){Box::pin(self.call("toggleClient",&[json!(id)])).await?;}
@@ -2323,16 +2370,29 @@ impl Pilot {
                 }
                 else if !clients.iter().any(|client|client==id) {
                     if !catalog.as_array().is_some_and(|rows|rows.iter().any(|row|row["id"]==id && row["modelManagement"]==true)) { return Err("暂不支持此客户端的模型配置".into()); }
-                    if !self.client_discovery().installed(id) { return Err("未检测到客户端安装，请先安装并重新检测".into()); }
-                    if !self.client_discovery().management_supported(id) { return Err("当前客户端版本不支持模型配置，请更新后重试".into()); }
+                    if location.is_none() && !self.client_discovery().installed(id) { return Err("未检测到客户端安装，请先安装、手动选择安装位置或重新检测".into()); }
+                    if location.is_none() && !self.client_discovery().management_supported(id) { return Err("当前客户端版本不支持模型配置，请更新后重试".into()); }
                     clients.push(id.to_owned());
                 }
                 let value=json!(clients);
                 let before = self.settings.other.insert("modelClients".into(), value.clone());
                 let version_before = self.settings.other.insert("modelClientsVersion".into(),json!(2));
+                let locations_before = self.settings.other.get("clientInstallationLocations").cloned();
+                if let Some(location) = location {
+                    let mut locations = locations_before.clone().unwrap_or(json!({}));
+                    if !locations.is_object() {
+                        // Preserve unreadable externally supplied state instead of discarding it.
+                        if let Some(old)=before {self.settings.other.insert("modelClients".into(),old);} else {self.settings.other.remove("modelClients");}
+                        if let Some(old)=version_before {self.settings.other.insert("modelClientsVersion".into(),old);} else {self.settings.other.remove("modelClientsVersion");}
+                        return Err("客户端安装位置记录已变化，请检查设置后重试".into());
+                    }
+                    locations[id] = json!(location);
+                    self.settings.other.insert("clientInstallationLocations".into(),locations);
+                }
                 if let Err(error)=self.persist() {
                     if let Some(old)=before { self.settings.other.insert("modelClients".into(),old); } else { self.settings.other.remove("modelClients"); }
                     if let Some(old)=version_before { self.settings.other.insert("modelClientsVersion".into(),old); } else { self.settings.other.remove("modelClientsVersion"); }
+                    if let Some(old)=locations_before {self.settings.other.insert("clientInstallationLocations".into(),old);} else {self.settings.other.remove("clientInstallationLocations");}
                     return Err(error);
                 }
                 Ok(value)

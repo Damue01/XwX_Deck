@@ -59,6 +59,20 @@ try{
  state=await rpc('toggleTracing',false);check('Trace stops and restores every original byte',!state.tracingEnabled);for(const[path,source]of Object.entries(files))assert.equal(await read(path),source,path);
  await close();start();for(const id of clients)check(id+' saved selection survives restart',(await rpc('getClientRoute',id)).model==='model-b');
  await rpc('toggleTracing',true);const dshPath=join(home,'.dsh/profiles/desktop/cordis.patch.yml');await writeFile(dshPath,(await readFile(dshPath,'utf8')).replace('model: model-b','model: external-choice'));const stopped=await raw('toggleTracing',false);check('external model choice prevents destructive restore',!stopped.ok&&(await readFile(dshPath,'utf8')).includes('external-choice'));await writeFile(dshPath,(await readFile(dshPath,'utf8')).replace('model: external-choice','model: model-b'));await rpc('toggleTracing',false);
+ if(process.platform==='win32'){
+   const portable=join(root,'custom Code'),portableUser=join(portable,'data/user-data/User');
+   await mkdir(join(portable,'resources/app'),{recursive:true});await mkdir(portableUser,{recursive:true});
+   await writeFile(join(portable,'Code.exe'),'isolated portable fixture');await writeFile(join(portable,'resources/app/package.json'),'{"version":"1.126.0"}');await writeFile(join(portable,'resources/app/product.json'),'{"applicationName":"code","nameShort":"Code"}');
+   const original='{"editor.fontSize":18,"chat.defaultModel":"portable-original"}';await writeFile(join(portableUser,'settings.json'),original);
+   const inspected=await rpc('inspectClientInstallation',{client:'vscode',location:portable});
+   await rpc('toggleTracing',true);const settingsBefore=await readFile(join(root,'settings.json'),'utf8');check('active client installation cannot be rebound before restore',!(await raw('addModelClient','vscode',inspected.location)).ok&&(await readFile(join(root,'settings.json'),'utf8'))===settingsBefore);await rpc('toggleTracing',false);
+   await rpc('addModelClient','vscode',inspected.location);
+   await select('vscode','model-a');await rpc('toggleTracing',true);
+   const portableGroups=JSON.parse(await readFile(join(portableUser,'chatLanguageModels.json'),'utf8')),model=portableGroups.find(g=>g.name==='XwX Deck').models[0];
+   const response=await fetch(model.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer xwx-deck'},body:JSON.stringify({model:model.id,input:'portable fixture'})});check('manual portable Code configuration completes actual local request',response.ok&&(await response.text()).includes('adapter reply'));
+   await rpc('toggleTracing',false);check('manual portable Code restores exact personal settings',(await readFile(join(portableUser,'settings.json'),'utf8'))===original);check('portable selection never rewrites normal Code preferences',(await read('AppData/Roaming/Code/User/settings.json'))===files['AppData/Roaming/Code/User/settings.json']);
+   await writeFile(join(portable,'resources/app/package.json'),'{"version":"1.100.0"}');
+ }
  const oldPackage=join(home,app,process.platform==='win32'?'resources/app/package.json':'Resources/app/package.json');await writeFile(oldPackage,'{"version":"1.100.0"}');check('old VS Code does not advertise management',(await rpc('detectClientInstallations')).clients.find(row=>row.id==='vscode').modelManagement===false);
  console.log(JSON.stringify({passed:true,checks,actualRequests:calls.length,scope:'isolated consumer formats and loopback HTTP; actual installed consumer consumption is separate'},null,2));
 }finally{if(child?.exitCode===null)await close();upstream.closeAllConnections();await new Promise(resolve=>upstream.close(resolve));}

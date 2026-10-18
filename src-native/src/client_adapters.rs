@@ -243,7 +243,25 @@ pub(super) fn paths(pilot: &Pilot, id: &str) -> Result<Option<Vec<PathBuf>>> {
             ]
         }
         "vscode" => {
-            let dir = if cfg!(windows) {
+            let portable = pilot
+                .settings
+                .other
+                .get("clientInstallationLocations")
+                .and_then(|locations| locations.get("vscode"))
+                .and_then(Value::as_str)
+                .map(PathBuf::from)
+                .map(|root| root.join("data"));
+            let dir = if cfg!(windows) && portable.as_ref().is_some_and(|path| path.is_dir()) {
+                let data = portable.unwrap();
+                if pilot.isolated
+                    && !data.canonicalize().is_ok_and(|path| {
+                        path.starts_with(pilot.root.canonicalize().unwrap_or_default())
+                    })
+                {
+                    return Err("便携版配置不在本次隔离目录中".into());
+                }
+                data.join("user-data/User")
+            } else if cfg!(windows) {
                 pilot
                     .wiring_directory("APPDATA", home.join("AppData/Roaming"))
                     .join("Code/User")

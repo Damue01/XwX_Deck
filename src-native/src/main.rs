@@ -647,10 +647,11 @@ async fn pilot_rpc(
             Ok(json!(path))
         }
         "chooseDirectory" => {
+            let title = if args.first().is_some_and(|input| input["kind"] == "client") { "选择客户端安装位置" } else { "选择目录" };
             let path = app
                 .dialog()
                 .file()
-                .set_title("选择目录")
+                .set_title(title)
                 .blocking_pick_folder()
                 .map(|p| p.into_path().map_err(|e| e.to_string()))
                 .transpose()?;

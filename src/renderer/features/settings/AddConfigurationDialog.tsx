@@ -67,14 +67,18 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
   const busy = providerBusy || importBusy;
   const [addingClient, setAddingClient] = React.useState(false);
   const clientOperation = React.useRef(false);
+  const clientDialogGeneration = React.useRef(0);
+  React.useLayoutEffect(() => { if (!open) clientDialogGeneration.current += 1; }, [open]);
   const [catalogTab, setCatalogTab] = React.useState<ConfigurationTab>('services');
   const tab = activeTab ?? catalogTab;
   const setTab = (next: ConfigurationTab) => { if (onTabChange) onTabChange(next); else setCatalogTab(next); };
   const [client, setClient] = React.useState<DownloadClientId | null>(null);
+  const [manualLocations, setManualLocations] = React.useState<Partial<Record<DownloadClientId, string>>>({});
   const installation = useClientInstallations(open && (clientsOnly || tab === 'clients' || importOpen));
   const managedClients = normalizeModelClients(modelClients);
   const clientAdded = client !== null && managedClients.includes(canonicalModelClient(client));
-  const clientInstalled = installation.snapshot?.clients.some(item => item.id === (client && (canonicalModelClient(client))) && item.installed) === true;
+  const manualLocation = client ? manualLocations[client] : undefined;
+  const clientInstalled = !!manualLocation || installation.snapshot?.clients.some(item => item.id === (client && (canonicalModelClient(client))) && item.installed) === true;
   const wasOpen = React.useRef(false);
   const initialTabButton = React.useRef<HTMLButtonElement | null>(null);
   const serviceList = React.useRef<HTMLDivElement | null>(null);
@@ -107,7 +111,7 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
     if (open && client !== null) clientList.current?.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [open, client]);
   React.useEffect(() => {
-    if (open && !wasOpen.current) { setCatalogTab(initialTab); setClient(null); setImportOpen(false); setEnhancementsOpen(initialTab === 'saved' && !selectedConnectionId && selected === null); }
+    if (open && !wasOpen.current) { setCatalogTab(initialTab); setClient(null); setManualLocations({}); setImportOpen(false); setEnhancementsOpen(initialTab === 'saved' && !selectedConnectionId && selected === null); }
     wasOpen.current = open;
   }, [open, initialTab, selectedConnectionId, selected]);
   const preset = OFFICIAL_PROVIDERS.find(item => item.id === selected);
@@ -123,7 +127,7 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
     {api.previewConfigurationImport && <button ref={importEntry} type="button" className="configuration-choice configuration-import-entry" disabled={busy} onClick={() => setImportOpen(true)}><FileUp className="provider-brand-icon" aria-hidden="true" /><span>{t('导入配置')}</span></button>}
   </>;
   const clientInfo = CLIENT_DOWNLOADS.find(item => item.id === client);
-  const canManage = (id: DownloadClientId) => supportsModelManagement(id) && installation.snapshot?.clients.find(row => row.id === id)?.modelManagement !== false;
+  const canManage = (id: DownloadClientId) => supportsModelManagement(id) && (!!manualLocations[id] || installation.snapshot?.clients.find(row => row.id === id)?.modelManagement !== false);
   const manageable = (id: DownloadClientId) => canManage(id) || managedClients.includes(canonicalModelClient(id));
   const catalogClients = CLIENT_DOWNLOADS.filter(item => !['codex-cli', 'claude-code', 'cursor-cli'].includes(item.id));
   const clients = catalogClients.map(item => {
@@ -141,7 +145,7 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
     clientOperation.current = true;
     setAddingClient(true);
     try {
-      const modelClients = await action(client);
+      const modelClients = remove ? await api.removeModelClient!(client) : await api.addModelClient!(client, manualLocation);
       patch({ modelClients });
       if (remove) { void api.getState().then(runtime => patch({ runtime })).catch(() => undefined); showToast(t('客户端已从 Deck 移除'), 'success'); }
       if (!remove) {
@@ -154,6 +158,21 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
   async function refreshClients() {
     const result = await installation.refresh();
     if (result) showToast(result.available ? t('客户端检测完成') : t('当前无法检测客户端'), result.available ? 'success' : 'warning');
+  }
+  async function chooseInstallation() {
+    if (!client || clientOperation.current || !api.inspectClientInstallation) return;
+    const selectedClient = client;
+    const generation = clientDialogGeneration.current;
+    clientOperation.current = true; setAddingClient(true);
+    try {
+      const location = await api.chooseDirectory({ kind: 'client' });
+      if (!location) return;
+      const result = await api.inspectClientInstallation({ client: selectedClient, location });
+      if (generation !== clientDialogGeneration.current) return;
+      if (!result.installed || !result.modelManagement) throw new Error(t('所选位置不支持此客户端的模型配置'));
+      setManualLocations(current => ({ ...current, [selectedClient]: result.location }));
+    } catch (error) { if (generation === clientDialogGeneration.current) showErrorToast(t('无法识别客户端安装位置'), error); }
+    finally { clientOperation.current = false; setAddingClient(false); }
   }
   return <Dialog.Root open={open} actionsRef={dialogActions} onOpenChange={value => { if (!busy && !clientOperation.current) onOpenChange(value); }}>
     <Dialog.Portal>
@@ -213,18 +232,19 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
             {client !== null && <div className="configuration-detail">
               <div className="configuration-detail-heading"><h3><ProviderIcon kind={clientInfo?.icon} />{clientInfo && clientCatalogLabel(clientInfo)}</h3></div>
               <ClientDownloads key={client} client={client} />
+              {supportsModelManagement(client) && api.inspectClientInstallation && <button type="button" className="provider-text-action configuration-client-location" title={manualLocation} disabled={addingClient || busy} onClick={() => void chooseInstallation()}>{t('选择安装位置')}</button>}
               {!canManage(client) && <p className="configuration-import-status" role="status">{t('暂不支持模型配置')}</p>}
               {manageable(client) && <div className="configuration-client-actions prov-save-bar">
                 {manageClients && clientAdded && <ConfigurationDeleteAction label={t('移除客户端')} busyLabel={t('移除中…')} disabled={addingClient || !api.removeModelClient}
                   confirmation={{ title: t('移除客户端「{0}」？', clientInfo && clientCatalogLabel(clientInfo)), body: t('从模型页和 Trace 客户端列表中移除，并停止此客户端的追踪。保留客户端安装和已保存的模型配置。'), confirmText: t('移除') }} onDelete={() => changeClient(true)} />}
-                {canManage(client) && <button type="button" className="btn primary" disabled={addingClient || (!clientAdded && (!api.addModelClient || !clientInstalled || installation.checking))} onClick={() => {
+                {canManage(client) && <button type="button" className="btn primary" disabled={addingClient || (!clientAdded && (!api.addModelClient || !clientInstalled || (!manualLocation && installation.checking)))} onClick={() => {
                   if (clientOperation.current) return;
-                  if (clientAdded) {
+                  if (clientAdded && !manualLocation) {
                     onOpenClient?.(canonicalModelClient(client));
                     onOpenChange(false);
                     window.dispatchEvent(new CustomEvent(MODEL_CLIENT_ADDED_EVENT, { detail: client }));
                   } else void changeClient(false);
-                }}>{clientAdded ? t('打开模型页') : t('添加到模型页')}</button>}
+                }}>{clientAdded ? manualLocation ? t('保存安装位置') : t('打开模型页') : t('添加到模型页')}</button>}
                 {!manageClients && !clientAdded && <button type="button" className="txt-action" disabled={installation.checking || addingClient} onClick={() => void refreshClients()}>{installation.checking ? t('正在检测…') : t('重新检测')}</button>}
               </div>}
               {installation.error && <p className="configuration-client-error" role="status">{installation.error}</p>}

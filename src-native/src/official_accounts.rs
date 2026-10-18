@@ -227,7 +227,23 @@ impl OfficialAccounts {
         } else {
             client_installations::Discovery::system()
         };
-        discovery.codex_executable()
+        let settings = read(&self.root.join("settings.json"))
+            .ok()
+            .flatten()
+            .and_then(|source| serde_json::from_str::<Value>(&source).ok())
+            .unwrap_or(json!({}));
+        let locations = settings
+            .as_object()
+            .map(|settings| {
+                client_installations::manual_locations(
+                    settings,
+                    self.isolated.then_some(self.root.as_path()),
+                )
+            })
+            .unwrap_or_default();
+        discovery
+            .with_manual_locations(locations)
+            .codex_executable()
     }
     fn local(&self) -> Result<Value> {
         read(&self.home.join("auth.json"))?

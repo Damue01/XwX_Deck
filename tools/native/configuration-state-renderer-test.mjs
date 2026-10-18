@@ -27,6 +27,7 @@ globalThis.__configurationStateFixture=fixture;
 const entry=resolve(base,'src/renderer/features/settings/AddConfigurationDialog.tsx');
 const bundled=await esbuild.build({stdin:{contents:"export {AddConfigurationDialog} from './src/renderer/features/settings/AddConfigurationDialog';export {SubscriptionAccountsPanel} from './src/renderer/features/settings/SubscriptionAccountsPanel';",resolveDir:base},bundle:true,platform:'node',format:'cjs',write:false,alias:{'@':resolve(base,'src/renderer')},external:['react','react/*','react-dom','react-dom/*'],plugins:[{name:'metadata-fixture',setup(build){
   build.onResolve({filter:/^@\/(bridge\/store|lib\/i18n|lib\/toast|components\/ui\/confirm-dialog)$/},args=>({path:args.path,namespace:'fixture'}));
+  build.onResolve({filter:/^\.\/confirm-dialog$/},()=>({path:'@/components/ui/confirm-dialog',namespace:'fixture'}));
   build.onResolve({filter:/^\.\/(EnhancementsPanel|ImportConfigurations)$/},args=>args.importer===entry?{path:args.path,namespace:'empty'}:undefined);
   build.onLoad({filter:/.*/,namespace:'empty'},args=>({contents:`export const ${args.path.slice(2)}=()=>null;`}));
   build.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:args.path.endsWith('store')?'export const useBridge=()=>globalThis.__configurationStateFixture':args.path.endsWith('i18n')?'export const t=s=>s;export const useLanguage=()=>{}':args.path.endsWith('confirm-dialog')?'export const useConfirm=()=>async()=>false':'export const showToast=()=>{};export const showErrorToast=()=>{};'}));
@@ -68,6 +69,38 @@ try{
   assert.ok(document.querySelector('[data-client-download="trae"]'),'download-only products remain discoverable');assert.ok(document.querySelector('[data-client-download="vscode"]'));
   installation={available:false,clients:[]};await act(async()=>window.dispatchEvent(new Event('focus')));await flush();assert.equal(muted('[data-client-download="claude"]'),true,'detection failure cannot enroll a client');assert.equal(muted('[data-client-download="codex"]'),false,'detection failure cannot revoke saved enrollment');
   console.log('PASS API/local/Coding Plan/subscription isolation; live save/remove; custom/import exemptions and name; client colors follow saved enrollment independently of discovery; unknown API registry stays neutral');
+
+  await act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
+  installation={available:true,clients:[{id:'deepseek-harness',installed:false,modelManagement:true}]};
+  fixture.modelClients=[];
+  let pickerResult='E:/isolated/custom Harness',inspectionFailure=false,pendingInspection=null,dialogState;
+  const additions=[];
+  fixture.api.chooseDirectory=async options=>{assert.equal(options.kind,'client');return pickerResult;};
+  fixture.api.inspectClientInstallation=async input=>{assert.equal(input.client,'deepseek-harness');if(pendingInspection)return pendingInspection;if(inspectionFailure)throw Error('wrong product');return {...input,installed:true,modelManagement:true};};
+  fixture.api.addModelClient=async(...args)=>{additions.push(args);fixture.modelClients=['deepseek-harness'];return fixture.modelClients;};
+  function ManualHarness(){const [open,setOpen]=React.useState(true);dialogState={setOpen};return React.createElement(AddConfigurationDialog,{open,busy:false,selected:null,onSelect(){},onBack(){},onOpenChange:setOpen,finalFocus:{current:null},editor:null,manageClients:true,clientsOnly:true});}
+  await act(async()=>root.render(React.createElement(ManualHarness)));await flush();
+  await click('[data-client-download="deepseek-harness"]');
+  const primary=()=>document.querySelector('.configuration-client-actions .btn.primary');
+  assert.equal(primary().disabled,true);
+  await click('.configuration-client-location');assert.equal(primary().disabled,false);
+  assert.equal(muted('[data-client-download="deepseek-harness"]'),true,'read-only inspection cannot enroll or color the card');assert.equal(additions.length,0);
+  await act(async()=>dialogState.setOpen(false));await flush();await act(async()=>dialogState.setOpen(true));await flush();
+  await click('[data-client-download="deepseek-harness"]');assert.equal(primary().disabled,true,'cancel discards pending installation');
+  pickerResult=null;await click('.configuration-client-location');assert.equal(primary().disabled,true,'native picker cancellation has no state change');
+  pickerResult='E:/isolated/custom Harness';inspectionFailure=true;await click('.configuration-client-location');assert.equal(primary().disabled,true,'wrong product never enables enrollment');
+  inspectionFailure=false;await click('.configuration-client-location');await click('.configuration-client-actions .btn.primary');await flush();
+  assert.deepEqual(additions,[['deepseek-harness','E:/isolated/custom Harness']]);
+  await act(async()=>dialogState.setOpen(true));await flush();await click('[data-client-download="deepseek-harness"]');assert.equal(muted('[data-client-download="deepseek-harness"]'),false);
+  await click('.configuration-client-location');assert.equal(primary().textContent,'保存安装位置');await click('.configuration-client-actions .btn.primary');await flush();assert.equal(additions.length,2);
+  await act(async()=>dialogState.setOpen(true));await flush();await click('[data-client-download="trae"]');assert.equal(document.querySelector('.configuration-client-location'),null,'download-only has no manual enrollment escape');assert.equal(primary(),null);
+  await click('[data-client-download="deepseek-harness"]');
+  let finishInspection;pendingInspection=new Promise(resolve=>{finishInspection=resolve;});
+  await act(async()=>document.querySelector('.configuration-client-location').click());await flush();
+  await act(async()=>dialogState.setOpen(false));await flush();await act(async()=>dialogState.setOpen(true));await flush();
+  await act(async()=>finishInspection({location:'E:/stale',installed:true,modelManagement:true}));await flush();pendingInspection=null;
+  await click('[data-client-download="deepseek-harness"]');assert.equal(primary().textContent,'打开模型页','old native picker result cannot enter a reopened dialog');
+  console.log('PASS manual location: inspect without enrollment, cancel/reopen, native cancel, wrong product, atomic confirm, existing enrollment update and stale picker result');
 
   await act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
   const renderPanel=async visible=>{await act(async()=>root.render(React.createElement(SubscriptionAccountsPanel,{visible,open:true})));await flush();};

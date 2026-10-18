@@ -366,7 +366,7 @@ export interface XwXDeckApi {
     expectedProviderId?: string | null;
   }): Promise<readonly ModelCatalogEntry[]>;
 
-  chooseDirectory(payload?: { kind?: 'trace' | 'logs' | 'claude' }): Promise<string | undefined>;
+  chooseDirectory(payload?: { kind?: 'trace' | 'logs' | 'claude' | 'client' }): Promise<string | undefined>;
   updateTraceDirectories(payload: Record<string, unknown>): Promise<XwXDeckRuntimeState>;
 
   // Shell
@@ -408,8 +408,9 @@ previewConfigurationImport?(input?: import('../../shared/configImport').Configur
 importConfigurations?(input: import('../../shared/configImport').ConfigurationImportSelection): Promise<import('../../shared/configImport').AppliedConfigurationImport>;
 chooseConfigurationImportFile?(): Promise<string | null>;
 detectClientInstallations?(): Promise<import('../../shared/clientDownloads').ClientInstallationSnapshot>;
+inspectClientInstallation?(input: { client: import('../../shared/clientDownloads').DownloadClientId; location: string }): Promise<{ location: string; installed: boolean; modelManagement: boolean }>;
 getModelClients?(): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
-addModelClient?(id: import('../../shared/clientDownloads').DownloadClientId): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
+addModelClient?(id: import('../../shared/clientDownloads').DownloadClientId, installationLocation?: string): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
 removeModelClient?(id: import('../../shared/clientDownloads').DownloadClientId): Promise<readonly import('../../shared/clientDownloads').DownloadClientId[]>;
 setSubscriptionRouting?(input: { platform: import('../../shared/subscriptionAccounts').SubscriptionRoutingGroup; policy: import('../../shared/subscriptionAccounts').SubscriptionRoutingPolicy }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccountsSnapshot>;
 getOfficialChatgptAccount?(input?: { refresh?: boolean }): Promise<import('../../shared/subscriptionAccounts').SubscriptionAccount>;
