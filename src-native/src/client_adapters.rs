@@ -518,6 +518,23 @@ fn credential_plan(path: &Path) -> Result<Value> {
         let re = regex::Regex::new(r"(?m)^refs:[ \t]*(?:#[^\r\n]*)?\r?$").unwrap();
         if let Some(found) = re.find(&content) {
             content.insert_str(found.end(), "\n  XWX_DECK_GATEWAY_KEY: xwx-deck");
+        } else if value["refs"]
+            .as_mapping()
+            .is_some_and(|refs| refs.is_empty())
+        {
+            // Harness serializes an empty store as `refs: {}` after writing
+            // its browser grant. Expand only this empty map, retaining records.
+            let empty =
+                regex::Regex::new(r"(?m)^(refs:[ \t]*)\{\}([ \t]*(?:#[^\r\n]*)?)(\r?)$").unwrap();
+            if empty.find_iter(&content).count() != 1 {
+                return Err("Harness refs 格式无法安全编辑，原文件已保留".into());
+            }
+            content = empty
+                .replace(
+                    &content,
+                    "${1}${2}${3}\n  XWX_DECK_GATEWAY_KEY: xwx-deck${3}",
+                )
+                .into_owned();
         } else if value["refs"].is_null() {
             if !content.ends_with('\n') {
                 content.push('\n');
@@ -855,6 +872,42 @@ mod tests {
         );
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn empty_harness_refs_survive_browser_grants_and_repeated_enrollment() {
+        let root = std::env::temp_dir().join(format!(
+            "xwx-dsh-empty-refs-{}-{}",
+            std::process::id(),
+            millis()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join(".credentials.yaml");
+        for newline in ["\n", "\r\n"] {
+            let source = "version: 1\n# retained preference\nrefs: {} # retained refs comment\nrecords:\n  browser:\n    secret: synthetic-grant\n".replace('\n', newline);
+            fs::write(&path, &source).unwrap();
+            let plan = credential_plan(&path).unwrap();
+            assert_eq!(
+                yaml(text(&plan, "content")).unwrap()["refs"]["XWX_DECK_GATEWAY_KEY"].as_str(),
+                Some("xwx-deck")
+            );
+            let changed = text(&plan, "content").replace("synthetic-grant", "external-grant");
+            let restored = restore_yaml_mapping(&changed, &plan).unwrap();
+            assert!(restored.contains("# retained preference"));
+            assert!(restored.contains("# retained refs comment"));
+            assert!(!restored.contains("XWX_DECK_GATEWAY_KEY"));
+            assert_eq!(
+                yaml(&restored).unwrap()["records"]["browser"]["secret"].as_str(),
+                Some("external-grant")
+            );
+            fs::write(&path, restored).unwrap();
+            assert!(credential_plan(&path).is_ok());
+        }
+        let unknown = "version: 1\nrefs: { PERSONAL_KEY: synthetic }\nrecords: {}\n";
+        fs::write(&path, unknown).unwrap();
+        assert!(credential_plan(&path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), unknown);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn credential_edit_preserves_other_credentials_comments_and_external_changes() {
         let root =
