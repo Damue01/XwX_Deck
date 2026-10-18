@@ -47,6 +47,8 @@
       } else if (stage === 6) {
         await wait(() => document.querySelector('.onboarding-panel[data-step="2"]'));
         check('full native process restart restores the import step without marking it complete', localStorage.getItem('xwx-deck.onboardingSeen') !== 'true');
+        await wait(() => document.querySelector('.configuration-import-clients')?.getAttribute('aria-busy') === 'false');
+        check('restored import step reruns read-only client detection', !!document.querySelector('.configuration-import-clients h2'));
         await wait(() => [...document.querySelectorAll('.configuration-import-actions .btn.primary')].some(b => !b.disabled));
         [...document.querySelectorAll('.configuration-import-actions .btn.primary')].find(b => !b.disabled).click();
         await wait(() => document.querySelector('.tour-root[data-tour-index="0"]'));

@@ -775,7 +775,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       };
     }
     if (!providerRequiresTrace(selectedCodexProvider ?? bridge.compatibleServiceConfig ?? undefined, modelId, activeCodexCatalog)) return undefined;
-    if (selectedCodexProvider?.subscriptionAccountId) return { label: t('需 Trace'), hint: traceEnabled ? t('订阅账号通过 Trace 调用，授权凭证保留在本机。') : t('选择已保存；使用订阅账号时请开启 Trace。') };
+    if (selectedCodexProvider?.subscriptionAccountId) return { label: t('需 Trace'), hint: traceEnabled ? t('此连接由 Deck 提供认证，授权凭证保留在本机。') : t('选择已保存；此连接需要 Deck 提供认证，请开启 Trace。') };
     return traceEnabled
       ? { label: t('需 Trace'), hint: t("{0} 需要协议转换。Trace 已开启，可直接使用。", modelId) }
       : {

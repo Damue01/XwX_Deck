@@ -49,6 +49,14 @@
     const importContinue = () => [...document.querySelectorAll('#onboarding-setup .onboarding-foot .configuration-import-actions .btn.primary')].find(button => !button.disabled && button.getBoundingClientRect().height > 0);
     await wait(()=>onboardingStep()===2&&importContinue(),'onboarding read-only import scan');
     await checkOnboardingLayout(2);
+    await wait(()=>document.querySelector('.configuration-import-clients')?.getAttribute('aria-busy')==='false','import client discovery settled');
+    const canonicalClient=id=>['codex-cli','claude-code'].includes(id)?(id==='codex-cli'?'codex':'claude'):id==='cursor-cli'?'cursor':id;
+    const detectedClients=()=>[...document.querySelectorAll('[data-detected-client]')].map(client=>client.dataset.detectedClient).sort();
+    const expectedClients=[...new Set(discovery.clients.filter(client=>client.installed).map(client=>canonicalClient(client.id)))].sort();
+    check('import step shows the actual read-only client detection without duplicate Desktop and CLI entries',JSON.stringify(detectedClients())===JSON.stringify(expectedClients));
+    document.querySelector('.configuration-import-refresh').click();
+    await wait(()=>!document.querySelector('.configuration-import-refresh').disabled&&importContinue(),'combined client and configuration refresh');
+    check('import recheck retains detected clients and configuration preview',JSON.stringify(detectedClients())===JSON.stringify(expectedClients)&&!!document.querySelector('.configuration-import-list'));
     check('client detection and import preview do not change services or activate a route',JSON.stringify(await window.xwxDeck.getProviders())===onboardingProviders);
     document.querySelector('#onboarding-setup .onboarding-foot > .btn').click();
     await wait(()=>onboardingStep()===0||onboardingStep()===1,'back from import preserves the conditional recommendation');
@@ -426,6 +434,12 @@
       check('nonempty Key has one accessible reveal control and starts masked', document.querySelector('#provider-key').type === 'password' && document.querySelectorAll('.secret-input-visibility').length === 1 && document.querySelector('.secret-input-visibility').getAttribute('aria-label') === '显示 Key' && document.querySelector('.secret-input-visibility').getAttribute('aria-controls') === 'provider-key');
       const maskedKey = document.querySelector('#provider-key');
       const maskedKeySize = getComputedStyle(maskedKey).fontSize;
+      await document.fonts.load('500 13px "Deck Secret Mask"','\u2022\u25cf');
+      const keyStyle=getComputedStyle(maskedKey);
+      const keyCanvas=document.createElement('canvas').getContext('2d');
+      keyCanvas.font=`${keyStyle.fontWeight} ${keyStyle.fontSize} ${keyStyle.fontFamily}`;
+      const maskMetrics=keyCanvas.measureText('\u2022'), digitMetrics=keyCanvas.measureText('0');
+      check('bundled Key mask paints a readable glyph with the same advance as the revealed digit',keyStyle.fontFamily.includes('Deck Secret Mask')&&maskMetrics.actualBoundingBoxAscent+maskMetrics.actualBoundingBoxDescent>=6&&Math.abs(maskMetrics.width-digitMetrics.width)<.1);
       check('hidden Key retains its exact synthetic character count', maskedKey.value === 'isolated-draft-key' && maskedKey.value.length === 18);
       document.querySelector('.secret-input-visibility').click(); await delay(100);
       check('revealing Key keeps character count, input size and typography unchanged', maskedKey.value.length === 18 && getComputedStyle(maskedKey).fontSize === maskedKeySize);

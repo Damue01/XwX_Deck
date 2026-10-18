@@ -14,6 +14,17 @@
   unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
 }
 
+/* Native password inputs use a font glyph, not a separately sized UI dot.
+   Own only those glyphs; the real input, selection and caret stay native. */
+@font-face {
+  font-family: "Deck Secret Mask";
+  font-style: normal;
+  font-display: block;
+  font-weight: 500;
+  src: url(../../assets/fonts/deck-secret-mask.woff2) format("woff2");
+  unicode-range: U+2022,U+25CF;
+}
+
 @source "./**/*.{ts,tsx}";
 
 /* ---- XwX Deck design tokens (matches WEBVIEW_TOKEN_CSS in main process) ---- */
@@ -1331,6 +1342,7 @@ html[data-theme="night"] .setup-card-backdrop { background: rgba(0,0,0,.5); }
 .prov-save-bar .configuration-destructive:is(:hover, :focus-visible):not(:disabled) { color: var(--danger); }
 /* Own the single reveal control; Edge/WebView2 otherwise adds a second eye. */
 .secret-input { position: relative; width: 100%; }
+.provider-editor .secret-input .txt-input { font-family: "Deck Secret Mask", var(--mono); }
 .secret-input[data-has-value] .txt-input { padding-right: 40px; }
 .secret-input input::-ms-reveal { display: none; }
 .secret-input-visibility { position: absolute; right: 5px; top: 50%; translate: 0 -50%; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--quiet); cursor: pointer; }
@@ -1849,6 +1861,13 @@ html[data-theme="night"] .tour-backdrop-full { background: rgba(0,0,0,.7); }
 .configuration-import-toolbar > .provider-text-action { gap: 8px; color: var(--quiet); }
 .configuration-import-refresh { grid-column: 4; }
 .configuration-import-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.configuration-import-clients { padding: 8px 0 16px; margin-bottom: 12px; border-bottom: 1px solid var(--hairline); }
+.configuration-import-clients h2 { margin: 0 0 12px; color: var(--quiet); font-size: 12px; font-weight: 500; }
+.configuration-import-clients ul { display: flex; flex-wrap: wrap; gap: 12px 24px; list-style: none; padding: 0; margin: 0; }
+.configuration-import-clients li { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 13px; }
+.configuration-import-clients .provider-brand-icon { width: 18px; height: 18px; flex-shrink: 0; }
+.configuration-import-clients .configuration-import-status { padding: 0; margin: 8px 0 0; }
+.configuration-import-clients .provider-field-error span { display: block; margin-top: 4px; }
 .configuration-import-list { display: flex; flex-direction: column; gap: 4px; }
 .configuration-import-item { display: flex; align-items: center; gap: 12px; padding: 12px 8px; border-radius: 8px; cursor: pointer; }
 .configuration-import-item:not(.configuration-import-item-disabled):hover { background: var(--hover); }

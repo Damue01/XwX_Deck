@@ -7,8 +7,10 @@ import { Popover } from '@base-ui/react/popover';
 import { useBridge } from '@/bridge/store';
 import { showErrorToast, showToast } from '@/lib/toast';
 import type { AppliedConfigurationImport, ConfigurationImportPreview, ConfigurationImportSpec } from '../../../shared/configImport';
+import { MODEL_CLIENT_CATALOG, clientCatalogLabel, normalizeModelClients, type ClientInstallationSnapshot } from '../../../shared/clientDownloads';
+import { ProviderIcon } from './ProviderIcon';
 
-export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding = false, onImported, actionsContainer, onDetected }: { visible: boolean; onBack: () => void; onBusyChange: (busy: boolean) => void; onboarding?: boolean; onImported?: (result: AppliedConfigurationImport) => void; actionsContainer?: HTMLElement | null; onDetected?: (count: number) => void }): React.ReactElement {
+export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding = false, onImported, actionsContainer, onDetected, clientDetection }: { visible: boolean; onBack: () => void; onBusyChange: (busy: boolean) => void; onboarding?: boolean; onImported?: (result: AppliedConfigurationImport) => void; actionsContainer?: HTMLElement | null; onDetected?: (count: number) => void; clientDetection?: { snapshot: ClientInstallationSnapshot | null; checking: boolean; error: string; refresh: () => Promise<unknown> } }): React.ReactElement {
   useLanguage();
   const { api, patch } = useBridge();
   const [preview, setPreview] = React.useState<ConfigurationImportPreview | null>(null);
@@ -21,10 +23,14 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
   const lock = React.useRef(false);
   const container = React.useRef<HTMLDivElement | null>(null);
   const seen = React.useRef(new Set<string>());
+  const refreshClients = clientDetection?.refresh;
   const scan = React.useCallback(async () => {
     if (lock.current) return;
     const current = ++generation.current;
     lock.current = true; setBusy(true); onBusyChange(true); setError('');
+    // Discovery is read-only and independent of configuration preview. A failed
+    // client check must not prevent the user from importing a valid file.
+    void refreshClients?.();
     try {
       if (!api.previewConfigurationImport) throw new Error(t('当前版本不支持配置导入'));
       const next = await api.previewConfigurationImport({ sources: specs.current });
@@ -37,7 +43,7 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
       seen.current = new Set([...previouslySeen, ...eligible.map(item => item.fingerprint)]);
     } catch (failure) { if (current === generation.current) setError(failure instanceof Error ? failure.message : String(failure)); }
     finally { lock.current = false; setBusy(false); onBusyChange(false); }
-  }, [api, onBusyChange, onDetected]);
+  }, [api, onBusyChange, onDetected, refreshClients]);
   React.useEffect(() => () => { generation.current++; }, []);
   React.useEffect(() => { if (visible) void scan(); }, [visible, scan]);
   React.useEffect(() => { if (visible && !onboarding) container.current?.focus(); }, [visible, onboarding]);
@@ -68,6 +74,8 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
   const sources = preview?.sources.filter(source => source.found) ?? [];
   const items = sources.flatMap(source => source.items.filter(item => item.status !== 'duplicate').map(item => ({ ...item, sourceName: source.name, sourcePath: source.path })));
   const problems = sources.filter(source => source.error);
+  const installedIds = normalizeModelClients(clientDetection?.snapshot?.clients.filter(client => client.installed).map(client => client.id) ?? []);
+  const installedClients = MODEL_CLIENT_CATALOG.filter(client => installedIds.includes(client.id));
   const actions = <div className="configuration-import-actions">
     {(!onboarding || picked.length > 0) && <button type="button" className="btn" disabled={busy} onClick={onBack}>{onboarding ? t('跳过') : t('取消')}</button>}
     <button type="button" className="btn primary" disabled={busy || (!onboarding && !picked.length) || (picked.length > 0 && !api.importConfigurations)} onClick={() => { if (onboarding && !picked.length) onBack(); else void apply(); }}>{busy ? t('处理中') : onboarding ? picked.length ? t('导入并继续') : t('继续') : t('导入')}</button>
@@ -95,9 +103,17 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
           </Popover.Popup>
         </Popover.Positioner></Popover.Portal>
       </Popover.Root>
-      <RefreshButton className="configuration-close configuration-import-refresh" label={t("重新检测")} busy={busy} onClick={() => void scan()} />
+      <RefreshButton className="configuration-close configuration-import-refresh" label={t("重新检测")} busy={busy || !!clientDetection?.checking} onClick={() => void scan()} />
     </div>
     <div className="configuration-import-body">
+      {clientDetection && <section className="configuration-import-clients" aria-label={t('本机客户端')} aria-busy={clientDetection.checking}>
+        <h2>{t('本机客户端')}</h2>
+        {!!installedClients.length && <ul>{installedClients.map(client => <li key={client.id} data-detected-client={client.id}><ProviderIcon kind={client.icon} /><span>{clientCatalogLabel(client)}</span></li>)}</ul>}
+        {clientDetection.error ? <p className="provider-field-error" role="alert">{t('客户端检测失败，可继续导入配置')}<span>{clientDetection.error}</span></p>
+          : clientDetection.checking ? <p className="configuration-import-status" role="status">{t('正在检测客户端…')}</p>
+          : clientDetection.snapshot?.available === false ? <p className="configuration-import-status">{t('当前环境暂不支持客户端检测')}</p>
+          : clientDetection.snapshot && !installedClients.length ? <p className="configuration-import-status">{t('未检测到已安装客户端')}</p> : null}
+      </section>}
       {busy && !preview && <p className="configuration-import-status" role="status">{t("正在读取本地配置…")}</p>}
       {error && <p className="provider-field-error" role="alert">{error}</p>}
       {problems.map(source => <p className="provider-field-error" role="alert" key={`${source.source}:${source.path}`}>{t(source.name)}: {source.error}</p>)}

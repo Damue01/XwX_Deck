@@ -1,4 +1,11 @@
 {
+  "本机客户端": "Clientes neste computador",
+  "客户端检测失败，可继续导入配置": "Falha ao detectar clientes. Você ainda pode importar configurações.",
+  "正在检测客户端…": "Detectando clientes…",
+  "当前环境暂不支持客户端检测": "A detecção de clientes não está disponível neste ambiente",
+  "未检测到已安装客户端": "Nenhum cliente instalado detectado",
+  "此连接由 Deck 提供认证，授权凭证保留在本机。": "O Deck gerencia a autenticação desta conexão. As credenciais permanecem neste dispositivo.",
+  "选择已保存；此连接需要 Deck 提供认证，请开启 Trace。": "Seleção salva. Ative o Trace para que o Deck autentique esta conexão.",
   "退出": "Sair",
   "语言": "Idioma",
   "简体中文": "简体中文",

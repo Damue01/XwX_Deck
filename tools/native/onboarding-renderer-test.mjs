@@ -16,7 +16,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 dom.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 const require = createRequire(resolve(base, 'package.json'));
 const React = require('react'), { act } = React, { createRoot } = require('react-dom/client');
-let snapshot, failure = false, importItems = [], done = 0, imports = 0;
+let snapshot, failure = false, importItems = [], done = 0, imports = 0, detections = 0, previews = 0;
 const opened = [];
 const { setupWebsitesFor } = await (async () => {
   const result = await esbuild.build({ entryPoints: [resolve(base, 'src/shared/setupWebsites.ts')], bundle: true, platform: 'node', format: 'cjs', write: false });
@@ -24,8 +24,8 @@ const { setupWebsitesFor } = await (async () => {
 })();
 const api = {
   setupWebsites: setupWebsitesFor('darwin', 'arm64'),
-  detectClientInstallations: async () => { if (failure) throw Error('检测失败，请重新检测'); return structuredClone(snapshot); },
-  previewConfigurationImport: async () => ({ targetDigest: 'fixture', sources: [{ source: 'magpie', path: '/isolated/providers.json', name: 'Magpie', found: true, error: '', items: importItems }] }),
+  detectClientInstallations: async () => { detections++; if (failure) throw Error('检测失败，请重新检测'); return structuredClone(snapshot); },
+  previewConfigurationImport: async () => { previews++; return { targetDigest: 'fixture', sources: [{ source: 'magpie', path: '/isolated/providers.json', name: 'Magpie', found: true, error: '', items: importItems }] }; },
   importConfigurations: async () => { imports++; return { providers: {}, added: [] }; },
   openSetupWebsite: async site => opened.push(site)
 };
@@ -68,6 +68,25 @@ try {
   importItems = [{ fingerprint: 'provider', name: 'Fixture', status: 'new', adapter: 'responses', baseUrl: 'https://example.test', reason: '' }];
   await click('开始使用'); assert.equal(heading(), '找到了您之前的配置'); assert.equal(imports, 0);
   console.log('PASS detected import candidates update the heading without importing or modifying configuration');
+  const detectedIds = () => [...document.querySelectorAll('[data-detected-client]')].map(client => client.dataset.detectedClient);
+  assert.deepEqual(detectedIds(), ['codex', 'claude', 'qwen-code', 'cursor', 'vscode']);
+  const beforeRefresh = { detections, previews };
+  snapshot.clients = [{ id: 'codex-cli', installed: true }, { id: 'codex', installed: true }, { id: 'opencode', installed: true }];
+  await act(async () => document.querySelector('.configuration-import-refresh').click());
+  assert.deepEqual(detectedIds(), ['codex', 'opencode']);
+  assert.equal(detections, beforeRefresh.detections + 1); assert.equal(previews, beforeRefresh.previews + 1);
+  failure = true;
+  await act(async () => document.querySelector('.configuration-import-refresh').click());
+  assert.deepEqual(detectedIds(), ['codex', 'opencode']);
+  assert.ok(document.querySelector('.configuration-import-clients [role=alert]').textContent.includes('可继续导入配置'));
+  assert.equal(document.querySelector('.configuration-import-actions .btn.primary').disabled, false);
+  assert.equal(heading(), '找到了您之前的配置'); assert.equal(imports, 0);
+  failure = false; snapshot = { available: false, clients: [] };
+  await act(async () => document.querySelector('.configuration-import-refresh').click());
+  assert.equal(detectedIds().length, 0);
+  assert.ok(document.querySelector('.configuration-import-clients').textContent.includes('暂不支持客户端检测'));
+  assert.ok(!document.querySelector('.configuration-import-clients').textContent.includes('未检测到已安装客户端'));
+  console.log('PASS import step refreshes client and configuration discovery together, merges CLI/Desktop, retains known clients on failure and permits configuration import');
   importItems = []; await render(['codex']); await click('开始使用'); assert.equal(current(), 1);
   snapshot.clients = snapshot.clients.map(client => ({ ...client, installed: true }));
   await act(async () => window.dispatchEvent(new Event('focus'))); assert.equal(current(), 2);

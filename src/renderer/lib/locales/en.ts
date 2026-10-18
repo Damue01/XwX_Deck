@@ -1,5 +1,12 @@
 /** Product copy only. User-entered values and model IDs are never translated. */
 export const english: Readonly<Record<string, string>> = {
+  "本机客户端": "Clients on this computer",
+  "此连接由 Deck 提供认证，授权凭证保留在本机。": "Deck handles authentication for this connection. Credentials stay on this device.",
+  "选择已保存；此连接需要 Deck 提供认证，请开启 Trace。": "Choice saved. Enable Trace so Deck can authenticate this connection.",
+  "客户端检测失败，可继续导入配置": "Client detection failed. You can still import configurations.",
+  "正在检测客户端…": "Detecting clients…",
+  "当前环境暂不支持客户端检测": "Client detection is unavailable in this environment",
+  "未检测到已安装客户端": "No installed clients detected",
   "官网入口": "Official site",
   "安装说明": "Installation guide",
   "复制连接信息失败": "Could not copy connection details",

@@ -127,7 +127,7 @@ export function OnboardingSetup({ onDone, onSkip, onDismiss = onSkip, initialSte
       <div className="onboarding-step" hidden={step !== 2}>
           <h1 tabIndex={-1}>{t(importCount === null ? '正在查找之前的配置' : importCount ? '找到了您之前的配置' : '没有找到之前的配置')}</h1>
           <div className="onboarding-body onboarding-import">
-            <ImportConfigurations visible={step === 2} onboarding onDetected={setImportCount} onBack={advance} onImported={advance} onBusyChange={setImportBusy} actionsContainer={importActions} />
+            <ImportConfigurations visible={step === 2} onboarding onDetected={setImportCount} onBack={advance} onImported={advance} onBusyChange={setImportBusy} actionsContainer={importActions} clientDetection={installs} />
           </div>
       </div>
 
