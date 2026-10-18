@@ -352,10 +352,18 @@ fn dsh_plan(path: &Path, base: &str, model: &str, api: &str, metadata: &Value) -
     {
         spec["maxTokens"] = json!(max);
     }
-    spec["input"] = metadata
-        .get("inputModalities")
+    let input: Vec<_> = metadata["inputModalities"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|value| *value == "text" || *value == "image")
         .cloned()
-        .unwrap_or(json!(["text"]));
+        .collect();
+    spec["input"] = if input.is_empty() {
+        json!(["text"])
+    } else {
+        json!(input)
+    };
     provider["config"]["providers"]["xwx-deck"] = encoded(
         &json!({"displayName":"XwX Deck","apiKeyEnv":"XWX_DECK_GATEWAY_KEY","api":api,"baseURL":base,"models":[spec]}),
     )?;
@@ -399,10 +407,54 @@ pub(super) fn restore_yaml_block(current: &str, plan: &Value) -> Result<String> 
     if current == text(plan, "before") {
         return Ok(current.into());
     }
-    if block.is_empty() || current.matches(block).count() != 1 {
-        return Err("Harness 接管配置被外部修改，原文件与恢复证据已保留".into());
+    if block.is_empty() {
+        return Err("Harness 恢复证据损坏".into());
     }
-    let mut restored = current.replacen(block, "", 1);
+    let expected = yaml(block)?;
+    let mut starts = vec![];
+    let mut offset = 0;
+    for line in current.split_inclusive('\n') {
+        if line.starts_with("- ") {
+            starts.push(offset);
+        }
+        offset += line.len();
+    }
+    let mut ranges = vec![];
+    for (i, start) in starts.iter().enumerate() {
+        let finish = starts.get(i + 1).copied().unwrap_or(current.len());
+        let row = yaml(&current[*start..finish])?;
+        let row = row
+            .as_sequence()
+            .and_then(|rows| rows.first())
+            .ok_or("Harness 恢复配置不是条目列表")?
+            .clone();
+        ranges.push((*start, finish, row));
+    }
+    let mut removals = vec![];
+    for row in expected.as_sequence().ok_or("Harness 恢复证据损坏")? {
+        let candidate = ranges
+            .iter()
+            .rfind(|(_, _, actual)| actual["id"] == row["id"])
+            .ok_or("Harness 接管条目被删除，恢复证据已保留")?;
+        if candidate.2 != *row {
+            return Err("Harness 接管配置被外部修改，原文件与恢复证据已保留".into());
+        }
+        removals.push((candidate.0, candidate.1));
+    }
+    removals.sort();
+    let mut restored = current.to_owned();
+    for (start, finish) in removals.into_iter().rev() {
+        let comments = current[start..finish]
+            .split_inclusive('\n')
+            .filter(|line| {
+                line.trim_start().starts_with('#') && !line.contains("XwX Deck managed models")
+            })
+            .collect::<String>();
+        restored.replace_range(start..finish, &comments);
+    }
+    restored = restored
+        .replace("# XwX Deck managed models begin\n", "")
+        .replace("# XwX Deck managed models end\n", "");
     if restored
         .lines()
         .all(|line| line.trim().is_empty() || line.trim().starts_with('#'))
@@ -481,7 +533,12 @@ pub(super) fn restore_yaml_mapping(current: &str, plan: &Value) -> Result<String
         .as_str()
         .map(|v| format!("${{1}}XWX_DECK_GATEWAY_KEY: {}\n", json!(v)))
         .unwrap_or_default();
-    Ok(re.replace(current, replacement.as_str()).into_owned())
+    let mut restored = re.replace(current, replacement.as_str()).into_owned();
+    if yaml(&restored)?["refs"].is_null() {
+        let header = regex::Regex::new(r"(?m)^refs:[ \t]*(#[^\r\n]*)?\r?$").unwrap();
+        restored = header.replace(&restored, "refs: {} $1").into_owned();
+    }
+    Ok(restored)
 }
 
 pub(super) fn plan(
@@ -751,7 +808,7 @@ mod tests {
             "http://127.0.0.1:1234/clients/deepseek-harness/v1",
             "new",
             "openai-responses",
-            &json!({"contextWindow":500000}),
+            &json!({"contextWindow":500000,"inputModalities":["text","image","pdf"]}),
         )
         .unwrap();
         assert!(text(&plan, "content").starts_with(source));
@@ -765,6 +822,12 @@ mod tests {
             rows[rows.len() - 2]["config"]["providers"]["personal"]["baseURL"].as_str(),
             Some("https://example.invalid")
         );
+        let input = &rows[rows.len() - 2]["config"]["providers"]["xwx-deck"]["models"][0]["input"];
+        assert_eq!(input.as_sequence().unwrap().len(), 2);
+        let inserted=text(&plan,"content").replace("# XwX Deck managed models end", "- id: ui-settings-general\n  config:\n    welcomeNoticeVersion: accepted\n# XwX Deck managed models end");
+        assert!(restore_yaml_block(&inserted, &plan)
+            .unwrap()
+            .contains("welcomeNoticeVersion: accepted"));
         let changed = format!("{}# external preference\n", text(&plan, "content"));
         assert!(restore_yaml_block(&changed, &plan)
             .unwrap()
@@ -789,6 +852,18 @@ mod tests {
         assert!(restored.contains("PERSONAL_KEY: external"));
         assert!(!restored.contains("XWX_DECK_GATEWAY_KEY"));
         assert!(restore_yaml_mapping(&changed.replace("xwx-deck", "external"), &plan).is_err());
+        fs::remove_file(&path).unwrap();
+        let fresh = credential_plan(&path).unwrap();
+        let with_grant = format!(
+            "{}records: {{browser: {{kind: grant}}}}\n",
+            text(&fresh, "content")
+        );
+        let restored = restore_yaml_mapping(&with_grant, &fresh).unwrap();
+        assert!(yaml(&restored).unwrap()["refs"].is_mapping());
+        assert_eq!(
+            yaml(&restored).unwrap()["records"]["browser"]["kind"].as_str(),
+            Some("grant")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
