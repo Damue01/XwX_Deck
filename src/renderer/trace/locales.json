@@ -31,7 +31,9 @@
     "没有匹配的请求": "沒有符合的請求",
     "总计": "總計",
     "打开所在文件夹": "開啟所在資料夾",
-    "暂无模型用量。": "暫無模型用量。"
+    "暂无模型用量。": "暫無模型用量。",
+    "未知": "未知",
+    "尚未记录会话。请在 XwX Deck 中开始捕获，然后发起一次客户端请求。": "尚未記錄會話。請在 XwX Deck 中開始擷取，然後發起一次用戶端請求。"
   },
   "ja": {
     "返回": "戻る",
@@ -65,7 +67,9 @@
     "没有匹配的请求": "一致するリクエストなし",
     "总计": "合計",
     "打开所在文件夹": "フォルダーを開く",
-    "暂无模型用量。": "モデルの使用量はまだありません。"
+    "暂无模型用量。": "モデルの使用量はまだありません。",
+    "未知": "不明",
+    "尚未记录会话。请在 XwX Deck 中开始捕获，然后发起一次客户端请求。": "セッションはまだありません。XwX Deck でキャプチャを開始して、クライアントからリクエストを送信してください。"
   },
   "ko": {
     "返回": "뒤로",
@@ -99,7 +103,9 @@
     "没有匹配的请求": "일치하는 요청 없음",
     "总计": "합계",
     "打开所在文件夹": "폴더 열기",
-    "暂无模型用量。": "아직 모델 사용량이 없습니다."
+    "暂无模型用量。": "아직 모델 사용량이 없습니다.",
+    "未知": "알 수 없음",
+    "尚未记录会话。请在 XwX Deck 中开始捕获，然后发起一次客户端请求。": "기록된 세션이 없습니다. XwX Deck에서 캡처를 시작한 다음 클라이언트 요청을 보내세요。"
   },
   "fr": {
     "返回": "Retour",
@@ -133,7 +139,9 @@
     "没有匹配的请求": "Aucune requête correspondante",
     "总计": "Total",
     "打开所在文件夹": "Ouvrir le dossier",
-    "暂无模型用量。": "Aucune utilisation de modèle pour le moment."
+    "暂无模型用量。": "Aucune utilisation de modèle pour le moment.",
+    "未知": "Inconnu",
+    "尚未记录会话。请在 XwX Deck 中开始捕获，然后发起一次客户端请求。": "Aucune session enregistrée. Démarrez la capture dans XwX Deck, puis envoyez une requête depuis un client."
   },
   "de": {
     "返回": "Zurück",
@@ -167,7 +175,9 @@
     "没有匹配的请求": "Keine passenden Anfragen",
     "总计": "Gesamt",
     "打开所在文件夹": "Ordner öffnen",
-    "暂无模型用量。": "Noch keine Modellnutzung."
+    "暂无模型用量。": "Noch keine Modellnutzung.",
+    "未知": "Unbekannt",
+    "尚未记录会话。请在 XwX Deck 中开始捕获，然后发起一次客户端请求。": "Noch keine Sitzungen. Starten Sie die Aufzeichnung in XwX Deck und senden Sie dann eine Client-Anfrage."
   },
   "es": {
     "返回": "Volver",
@@ -201,7 +211,9 @@
     "没有匹配的请求": "No hay solicitudes coincidentes",
     "总计": "Total",
     "打开所在文件夹": "Abrir carpeta",
-    "暂无模型用量。": "Todavía no hay uso del modelo."
+    "暂无模型用量。": "Todavía no hay uso del modelo.",
+    "未知": "Desconocido",
+    "尚未记录会话。请在 XwX Deck 中开始捕获，然后发起一次客户端请求。": "Aún no hay sesiones. Inicia la captura en XwX Deck y envía una solicitud desde un cliente."
   },
   "pt-BR": {
     "返回": "Voltar",
@@ -235,6 +247,8 @@
     "没有匹配的请求": "Nenhuma solicitação correspondente",
     "总计": "Total",
     "打开所在文件夹": "Abrir pasta",
-    "暂无模型用量。": "Ainda não há uso do modelo."
+    "暂无模型用量。": "Ainda não há uso do modelo.",
+    "未知": "Desconhecido",
+    "尚未记录会话。请在 XwX Deck 中开始捕获，然后发起一次客户端请求。": "Nenhuma sessão registrada. Inicie a captura no XwX Deck e envie uma solicitação de um cliente."
   }
 }

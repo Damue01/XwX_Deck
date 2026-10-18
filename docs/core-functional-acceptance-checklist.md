@@ -118,7 +118,7 @@
 | RE02 | 更新来源、版本、平台、通道和哈希一致，不混源、不擅自选最高版本 | [脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/source-fingerprint-test.mjs)<br>[脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/update-test.mjs)<br>[脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/portable-update-test.mjs) | 核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。 |
 | RE03 | 更新前排空/恢复，替换后新包真正启动；保留授权、设置、历史，真实新对话成功 | [脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/source-fingerprint-test.mjs)<br>[脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/update-test.mjs)<br>[脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/portable-update-test.mjs) | 核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。 |
 | RE04 | 下载/替换/重启失败保留可用文件与明确恢复入口；不因启动确认超时杀掉新版或自动回滚 | [脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/source-fingerprint-test.mjs)<br>[脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/update-test.mjs)<br>[脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/portable-update-test.mjs) | 核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。 |
-| RE05 | Windows 便携与 Mac 安装、升级体验各自验收；完整性、签名、公证、发布分别记录 | [脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/update-test.mjs)<br>[脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/portable-update-test.mjs) | 核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。 |
+| RE05 | Windows 按用户安装、便携与 Mac 安装、升级体验各自验收；完整性、签名、公证、发布分别记录 | [脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/update-test.mjs)<br>[脚本](https://github.com/Damue01/XwX_Deck/blob/main/tools/native/portable-update-test.mjs) | 核对候选源码、资源和二进制摘要。更新须在隔离安装副本实测；Windows 替换重启和 macOS 手动 DMG 分开验收。 |
 
 ## 额度耗尽自动服务切换
 

@@ -15,6 +15,7 @@ let completeWebSocket;
 const requests=[];const server=createServer(async(req,res)=>{
  let body='';for await(const b of req)body+=b;
  requests.push({path:req.url,headers:req.headers,body:body?JSON.parse(body):null});
+ if(req.url.includes('/backend-api/codex/responses') && body && JSON.parse(body).truncation!==undefined){res.writeHead(400,{'content-type':'application/json'});res.end('{"detail":"Unsupported parameter: truncation"}');return;}
  res.setHeader('content-type','application/json');
  res.end(JSON.stringify(req.url.includes('wham')?{account:'local fixture'}:req.url.includes('models')?{data:[{id:'fixture-model'}]}:{id:'official-fixture',object:'response',status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'OK'}]}],usage:{input_tokens:2,output_tokens:3,total_tokens:5}}));
 });
@@ -34,6 +35,10 @@ try {
  const runningConfig=await readFile(config,'utf8');assert.equal(runningConfig.match(/openai_base_url\s*=\s*"([^"]+)"/)[1],url);assert.ok(runningConfig.includes(base+'/backend-api'));
  const response=await fetch(url+'/responses?x=1',{method:'POST',headers:{'content-type':'application/json',version:'0.147.0','user-agent':'fixture-codex/0.147.0',authorization:'Bearer refreshed-local-token','chatgpt-account-id':'fixture-account'},body:JSON.stringify({model:'fixture-model',input:'local only'})});assert.equal(response.status,200);await response.json();
  assert.equal(requests.at(-1).path,'/backend-api/codex/responses?x=1');assert.equal(requests.at(-1).headers.authorization,'Bearer refreshed-local-token');assert.equal(requests.at(-1).headers.version,'0.147.0');assert.equal(requests.at(-1).headers['user-agent'],'fixture-codex/0.147.0');assert.equal(requests.at(-1).headers['chatgpt-account-id'],'fixture-account');pass('OAuth model URL, incoming refreshed credential and account header');
+ const vscodeBody={model:'fixture-model',input:[{role:'user',content:'isolated VS Code request'}],truncation:'disabled',store:false,stream:false,tools:[{type:'function',name:'fixture_tool',parameters:{type:'object'}}]};
+ const vscodeResponse=await fetch(url+'/responses',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(vscodeBody)});assert.equal(vscodeResponse.status,200);await vscodeResponse.json();assert.equal(requests.at(-1).body.truncation,undefined);assert.deepEqual(requests.at(-1).body.input,vscodeBody.input);assert.deepEqual(requests.at(-1).body.tools,vscodeBody.tools);
+ const beforeAutomatic=requests.length;const automatic=await fetch(url+'/responses',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...vscodeBody,truncation:'auto'})});assert.equal(automatic.status,400);await automatic.text();assert.equal(requests.length,beforeAutomatic,'unsupported automatic truncation never silently changes context or retries');
+ pass('VS Code default truncation is normalized only for subscription Responses, preserving input and tools');
  const count=(await call('getState')).traces;
  const quota=await fetch(url+'/backend-api/wham/usage',{headers:{authorization:'Bearer account-local-token'}});assert.equal(quota.status,200);await quota.json();assert.equal(requests.at(-1).path,'/backend-api/wham/usage');assert.equal((await call('getState')).traces,count);
  const models=await fetch(url+'/models?client_version=1');assert.equal(models.status,200);await models.json();assert.equal(requests.at(-1).path,'/backend-api/codex/models?client_version=1');assert.equal((await call('getState')).traces,count);pass('account and catalog routes bypass Trace capture');
@@ -107,6 +112,14 @@ try {
  assert.equal(subscriptionDirect.model_providers.xwx_deck.experimental_bearer_token,undefined);
  await call('updateCodexConfig',{expectedProviderId:officialConnection.id,compatibleModel:'fixture-model'});
  const subscriptionRuntime=await call('toggleTracing',true);
+ const codeSnapshot=await call('getClientRoute','vscode');
+ await call('setClientRoute',{client:'vscode',providerId:officialConnection.id,model:'fixture-model',configDigest:codeSnapshot.configDigest,takeoverConfirmed:true});
+ const codeResponse=await fetch(subscriptionRuntime.localBaseUrl+'/clients/vscode/v1/responses',{method:'POST',headers:{'content-type':'application/json','x-session-id':'vscode-truncation-fixture'},body:JSON.stringify(vscodeBody)});
+ assert.equal(codeResponse.status,200,await codeResponse.clone().text());await codeResponse.json();assert.equal(requests.at(-1).body.truncation,undefined);
+ const codeDashboard=await call('getDashboardUrl'),codeState=await(await fetch(codeDashboard+'api/state')).json();const codeSession=codeState.sessions.find(row=>row.source==='vscode');assert.ok(codeSession);
+ const codeRecords=await(await fetch(codeDashboard+'api/session/'+encodeURIComponent(codeSession.id))).json();const codeRecord=codeRecords.traces.find(row=>row.request.body.truncation==='disabled');assert.ok(codeRecord,'Trace keeps the original VS Code parameter');assert.equal(codeRecord.upstream.requestBody.truncation,undefined);assert.deepEqual(codeRecord.request.body.input,vscodeBody.input);
+ await call('toggleClient','vscode');
+ pass('VS Code client-scoped subscription route completes against a strict backend and preserves original Trace while omitting the equivalent upstream default');
  const subscriptionAlias=parseToml(await readFile(config,'utf8')).model_providers.xwx_deck.base_url;
  assert.ok(subscriptionAlias.startsWith(subscriptionRuntime.localBaseUrl));
  const subscriptionResponse=await fetch(subscriptionAlias+'/responses',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'fixture-model',input:'configured official subscription resume'})});
@@ -164,7 +177,7 @@ try {
  pass('API takeover clears proven stale roots, repairs mixed aliases, preserves independent overrides and login, completes a request and stays clean after stop/restart/official restore');
 
  await writeFile(config,`openai_base_url="${base}/v1"\nchatgpt_base_url="${base}/unused-account-root"\n[model_providers.xwx_deck]\nbase_url="${base}/inactive-compatible/v1"\n`);await writeFile(auth,JSON.stringify({OPENAI_API_KEY:'file-local-key'}));
- const api=await call('toggleTracing',true);const apiResponse=await fetch(api.localBaseUrl+'/v1/responses',{method:'POST',headers:{'content-type':'application/json'},body:'{"input":"API fixture"}'});assert.equal(apiResponse.status,200);await apiResponse.json();assert.equal(requests.at(-1).path,'/v1/responses');assert.equal(requests.at(-1).headers.authorization,'Bearer file-local-key');await call('toggleTracing',false);pass('API-key official route works with missing TOML model/provider fields');
+ const api=await call('toggleTracing',true);const apiResponse=await fetch(api.localBaseUrl+'/v1/responses',{method:'POST',headers:{'content-type':'application/json'},body:'{"input":"API fixture","truncation":"disabled"}'});assert.equal(apiResponse.status,200);await apiResponse.json();assert.equal(requests.at(-1).path,'/v1/responses');assert.equal(requests.at(-1).headers.authorization,'Bearer file-local-key');assert.equal(requests.at(-1).body.truncation,'disabled','public Responses API keeps its native truncation field');await call('toggleTracing',false);pass('API-key official route works with missing TOML model/provider fields');
  await call('toggleClient','codex-cli');await writeFile(claude,JSON.stringify({env:{ANTHROPIC_BASE_URL:base,OTHER:'preserve'},preferences:{theme:'dark'}}));
  const officialClaude=await call('toggleTracing',true);const claudeResponse=await fetch(officialClaude.localBaseUrl+'/v1/messages',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer claude-oauth','x-api-key':'claude-api-key','anthropic-beta':'oauth-fixture'},body:'{"model":"claude-sonnet","messages":[],"max_tokens":1}'});assert.equal(claudeResponse.status,200);await claudeResponse.json();assert.equal(requests.at(-1).headers.authorization,'Bearer claude-oauth');assert.equal(requests.at(-1).headers['x-api-key'],'claude-api-key');assert.equal(requests.at(-1).headers['anthropic-beta'],'oauth-fixture');await call('toggleTracing',false);assert.equal(JSON.parse(await readFile(claude,'utf8')).env.ANTHROPIC_BASE_URL,base);pass('official Claude incoming auth/beta headers and field-safe restoration');
  await end();console.log(JSON.stringify({root,passed:true,checks}));

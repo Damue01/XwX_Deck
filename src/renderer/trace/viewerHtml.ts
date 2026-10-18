@@ -1,5 +1,5 @@
 import { TapTraceRecord, TapSessionSummary } from '../../shared/trace-types';
-import { CLIENT_DOWNLOADS } from '../../shared/clientDownloads';
+import { CLIENT_DOWNLOADS, traceClientLabel } from '../../shared/clientDownloads';
 import { getPriceRules } from '../../shared/trace-pricing';
 import {
   LOCAL_COMMAND_CAVEAT_TAG,
@@ -50,6 +50,7 @@ export function renderTapViewerHtml(input: {
     ['copilot', 'Copilot'], ['claude-cli', 'Claude'], ['claude-vscode', 'Claude'],
     ['codex-cli', 'ChatGPT'], ['codex-vscode', 'ChatGPT'], ['api-client', 'API'], ['unknown', 'Unknown']
   ])).replace(/</g, '\\u003c');
+  const sourceNavigationLabels = JSON.stringify(Object.fromEntries(CLIENT_DOWNLOADS.map(client => [client.id, traceClientLabel(client.id, client.label)]))).replace(/</g, '\\u003c');
   const priceRules = JSON.stringify(getPriceRules()).replace(/</g, '\\u003c');
   const promptNoiseTags = JSON.stringify(NOISE_TAGS).replace(/</g, '\\u003c');
   const localCommandCaveatTag = JSON.stringify(LOCAL_COMMAND_CAVEAT_TAG);
@@ -702,6 +703,7 @@ summary.diff-section-header::-webkit-details-marker{display:none}
 const LIVE_MODE = ${liveMode ? 'true' : 'false'};
 const PRICE_RULES = ${priceRules};
 const SOURCE_LABELS = ${sourceLabels};
+const SOURCE_NAVIGATION_LABELS = ${sourceNavigationLabels};
 let state = ${bootstrap};
 const systemTheme = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 function applyViewerTheme(preference){
@@ -2522,7 +2524,10 @@ function renderTokenMatrix(sessions){
 function renderDashboard(){
   const allLogicalSessions = logicalConversationSessions(state.sessions || []);
   const allSessions = allLogicalSessions.filter(s => !s.internalOnly);
-  const activeSource = state.dashSourceFilter || 'all';
+  const sources = [...new Set(allSessions.concat(state.usageSummaries || []).map(s => sourceFamily(sessionSource(s))))];
+  const requestedSource = state.dashSourceFilter || 'all';
+  const activeSource = sources.includes(requestedSource) ? requestedSource : 'all';
+  state.dashSourceFilter = activeSource;
   const sessions = activeSource === 'all' ? allSessions : allSessions.filter(s => sourceFamily(sessionSource(s)) === activeSource);
   const retainedUsage = (state.usageSummaries || []).filter(s => activeSource === 'all' || sourceFamily(sessionSource(s)) === activeSource);
   const accounting = sessions.concat(retainedUsage);
@@ -2539,9 +2544,7 @@ function renderDashboard(){
   const cacheRatio = cacheStats.rate;
   const cacheRate = cacheRatio === null ? '—' : (cacheRatio * 100).toFixed(1) + '%';
   const cacheHint = L('缓存读取 Token ÷ 输入 Token（含缓存读取和写入）','Cache read tokens / input tokens (including cache reads and writes)');
-  const sources = [...new Set(allSessions.concat(state.usageSummaries || []).map(s => sourceFamily(sessionSource(s))))];
-  if(activeSource !== 'all' && !sources.includes(activeSource)) sources.push(activeSource);
-  const filters = [{ id:'all', label:L('全部','All') }, ...sources.map(id => ({id, label:sourceLabel(id)}))]
+  const filters = [{ id:'all', label:L('全部','All') }, ...sources.map(id => ({id, label:SOURCE_NAVIGATION_LABELS[id] || sourceLabel(id)}))]
     .map(f => '<button class="dash-filter'+(f.id===activeSource?' active':'')+'" data-sfilter="'+esc(f.id)+'">'+esc(f.label)+'</button>').join('');
   const hero = common.tokenCostPresentation({
     showCost: tokenMatrixOpen,
@@ -2573,7 +2576,7 @@ function renderDashboard(){
       ? L('当前筛选下没有会话。','No sessions match this filter.')+' <button class="note-link" data-sfilter="all">'+L('查看全部','Show all')+'</button>'
       : state.active
         ? L('捕获已开启，正在等待 Claude 或 ChatGPT 的第一个请求。','Capture is on and waiting for the first Claude or ChatGPT request.')
-        : L('尚未记录会话。请在 XwX Deck 中开始捕获，然后发起一次 Claude 或 ChatGPT 请求。','No sessions recorded yet. Start capture in XwX Deck, then send a Claude or ChatGPT request.');
+        : L('尚未记录会话。请在 XwX Deck 中开始捕获，然后发起一次客户端请求。','No sessions recorded yet. Start capture in XwX Deck, then send a client request.');
     html += '<div class="dash-empty">'+emptyCopy+'</div></div>';
     el('dashboard').innerHTML = html;
     positionSegThumbs(el('dashboard'));
@@ -2644,6 +2647,7 @@ function sessionFirstModelFromCache(sess){
 }
 
 function sourceLabel(src){
+  if(!src || src === 'unknown') return L('未知','Unknown');
   return Object.prototype.hasOwnProperty.call(SOURCE_LABELS, src) ? SOURCE_LABELS[src] : (src || 'Unknown');
 }
 function sourceFamily(src){

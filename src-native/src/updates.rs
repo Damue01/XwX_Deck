@@ -40,7 +40,20 @@ fn validate_url(value: &str) -> Result<reqwest::Url> {
 }
 impl Updates {
     pub fn new(root: PathBuf) -> Self {
-        let state = json!({"status":"idle","currentVersion":env!("CARGO_PKG_VERSION"),"channel":"release","portable":cfg!(target_os="windows"),"installMode":if cfg!(target_os="macos"){"manual-dmg"}else{"automatic"},"supported":cfg!(any(target_os="macos",target_os="windows")),"updateAvailable":false});
+        #[cfg(target_os = "windows")]
+        let portable = crate::windows_msi::installation().is_none();
+        #[cfg(not(target_os = "windows"))]
+        let portable = false;
+        let state = json!({"status":"idle","currentVersion":env!("CARGO_PKG_VERSION"),"channel":"release","portable":portable,"installMode":if cfg!(target_os="macos"){"manual-dmg"}else{"automatic"},"supported":cfg!(any(target_os="macos",target_os="windows")),"updateAvailable":false});
+        #[cfg(target_os = "windows")]
+        let state = {
+            let mut state = state;
+            if let Some(error) = crate::windows_msi::previous_error(&root) {
+                state["status"] = json!("error");
+                state["error"] = json!(error);
+            }
+            state
+        };
         Self {
             root,
             inner: Arc::new(std::sync::Mutex::new(Update {
@@ -155,9 +168,16 @@ impl Updates {
         let artifact = manifest["files"]
             .as_array()
             .and_then(|files| {
-                files
-                    .iter()
-                    .find(|f| f["platform"] == platform && f["arch"] == arch)
+                files.iter().find(|f| {
+                    f["platform"] == platform
+                        && f["arch"] == arch
+                        && (platform != "windows"
+                            || text(f, "name").ends_with(if inner.state["portable"] == true {
+                                ".exe"
+                            } else {
+                                ".msi"
+                            }))
+                })
             })
             .cloned()
             .unwrap_or(Value::Null);
@@ -174,7 +194,11 @@ impl Updates {
                 || !text(&artifact, "name").ends_with(if cfg!(target_os = "macos") {
                     ".dmg"
                 } else {
-                    ".exe"
+                    if inner.state["portable"] == true {
+                        ".exe"
+                    } else {
+                        ".msi"
+                    }
                 })
                 || text(&artifact, "name").contains(['/', '\\']))
         {
@@ -188,6 +212,7 @@ impl Updates {
         inner.state["releaseNotes"] = manifest["changelog"].clone();
         inner.state["releaseDate"] = manifest["publishedAt"].clone();
         inner.state["size"] = artifact["size"].clone();
+        inner.state["sha256"] = artifact["sha256"].clone();
         inner.state.as_object_mut().unwrap().remove("error");
         inner.artifact = artifact;
         inner.manifest = manifest;
@@ -310,7 +335,11 @@ impl Updates {
                     if cfg!(target_os = "macos") {
                         ".dmg"
                     } else {
-                        ".exe"
+                        if text(&artifact, "name").ends_with(".msi") {
+                            ".msi"
+                        } else {
+                            ".exe"
+                        }
                     }
                 ));
                 let mut inner = this.inner.lock().unwrap();
@@ -373,6 +402,10 @@ impl Updates {
             || metadata.len() != artifact["size"].as_u64().unwrap_or(0)
         {
             return Err("安装包已被修改，未打开".into());
+        }
+        #[cfg(target_os = "windows")]
+        if path.extension().and_then(|s| s.to_str()) == Some("msi") {
+            crate::windows_msi::validate(&path, text(&selected, "version"))?;
         }
         Ok(path)
     }

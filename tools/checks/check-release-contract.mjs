@@ -26,7 +26,7 @@ check(updates.includes(contract.updates.defaultServer)&&updates.includes('XWX_DE
 check(contract.platforms.macosArm64.installMode==='manual-dmg'&&!contract.platforms.macosArm64.automaticInstall&&main.includes('open_path'),'Mac manual DMG');
 const identities = new Set();
 for (const [key, platform, arch, artifact] of [
-  ['windows', 'windows', 'x64', 'XwX-Deck-windows-x64.exe'],
+  ['windows', 'windows', 'x64', 'XwX-Deck-windows-x64.msi'],
   ['macosArm64', 'darwin', 'arm64', 'XwX-Deck-mac-arm64.dmg'],
   ['macosX64', 'darwin', 'x64', 'XwX-Deck-mac-x64.dmg']
 ]) {
@@ -38,6 +38,7 @@ for (const [key, platform, arch, artifact] of [
   if (platform === 'darwin') check(target.installMode === 'manual-dmg' && target.automaticInstall === false, `${key}: manual DMG installation`);
 }
 check(contract.platforms.windows.installMode==='automatic'&&main.includes('portable_update::spawn'),'Windows native portable replacement');
+check(contract.platforms.windows.installScope==='per-user'&&/^[0-9A-F-]{36}$/.test(contract.platforms.windows.upgradeCode)&&contract.platforms.windows.portableArtifactName==='XwX-Deck-windows-x64.exe'&&build.includes('buildWindowsMsi')&&main.includes('windows_msi::spawn'),'Windows per-user MSI and separate portable updates');
 check(workflows.includes('npm run docs:build')&&workflows.includes('write-release-manifest.mjs')&&workflows.includes('--draft')&&workflows.includes('npm run check:test-plan'),'documentation, regression and draft release gates');
 check(workflows.includes('npm run test:rust:backend')&&workflows.includes('Set up Rust'),'CI must compile and regress native backend');
 if(failures.length){console.error(failures.map(f=>`- ${f}`).join('\n'));process.exit(1);}console.log('PASS standalone native XwX Deck release contract');

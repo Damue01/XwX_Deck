@@ -10,10 +10,12 @@ const repository = requiredEnv('GITHUB_REPOSITORY');
 if (tag !== `v${version}`) throw new Error(`Release tag ${tag} does not match version ${version}.`);
 
 const contract = JSON.parse(await readFile(new URL('../../release-contract.json', import.meta.url), 'utf8'));
-const artifactDefinitions = Object.values(contract.platforms).map(({ publishedArtifactName: name, platform, arch }) => ({ name, platform, arch }));
+const artifactDefinitions = Object.values(contract.platforms).flatMap(({ publishedArtifactName: name, portableArtifactName, platform, arch }) => [
+  {name,platform,arch},...(portableArtifactName?[{name:portableArtifactName,platform,arch}]:[])
+]);
 if (artifactDefinitions.some(file => !file.name || !file.platform || !file.arch)
   || new Set(artifactDefinitions.map(file => file.name)).size !== artifactDefinitions.length
-  || new Set(artifactDefinitions.map(file => `${file.platform}/${file.arch}`)).size !== artifactDefinitions.length) {
+  || new Set(artifactDefinitions.map(file => `${file.platform}/${file.arch}/${path.extname(file.name)}`)).size !== artifactDefinitions.length) {
   throw Error('Release contract has missing or duplicate artifact identities.');
 }
 
@@ -39,7 +41,7 @@ for (const definition of artifactDefinitions) {
   });
   checksumLines.push(`${sha256}  ${definition.name}`);
   await writeFile(path.join(directory, `${definition.name}.sha256`), `${sha256}  ${definition.name}\n`, 'utf8');
-  if (definition.platform === 'windows') {
+  if (definition.platform === 'windows' && definition.name.endsWith('.msi')) {
     await writeFile(path.join(directory, 'latest.yml'), [
       `version: ${version}`,
       'files:',
@@ -77,11 +79,12 @@ await writeFile(path.join(directory, 'release-notes.md'), [
   '',
   releaseChanges,
   '',
-  '本版本提供 Windows x64 便携版，以及 Apple Silicon 和 Intel Mac 安装包。',
+  '本版本提供 Windows x64 按用户安装包和便携版，以及 Apple Silicon 和 Intel Mac 安装包。',
   '',
   '## 下载与更新',
   '',
-  '- Windows：下载 `XwX-Deck-windows-x64.exe`，放在可写目录后双击运行。后续更新会校验安装包、替换原路径 EXE 并重新启动。',
+  '- Windows：下载 `XwX-Deck-windows-x64.msi`，安装到当前用户。后续更新会校验 MSI，通过 Windows Installer 升级并重新启动；卸载保留配置与数据。',
+  '- Windows 便携版：下载 `XwX-Deck-windows-x64.exe`，放在可写目录运行。后续更新继续校验并替换原路径 EXE。',
   '- Apple Silicon Mac：下载 `XwX-Deck-mac-arm64.dmg`，将应用拖入“应用程序”。后续在应用内下载并校验新版 DMG，再手动拖拽替换。',
   '- Intel Mac：下载 `XwX-Deck-mac-x64.dmg`，安装与更新方式同 Apple Silicon Mac。',
   '- 当前没有 Windows ARM64 或 Linux 制品。',

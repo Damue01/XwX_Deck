@@ -30,6 +30,8 @@ mod configuration_removal;
 mod imported_subscriptions;
 #[path = "official_usage_cache.rs"]
 mod official_usage_cache;
+#[path = "official_responses.rs"]
+mod official_responses;
 pub(crate) fn is_imported_subscription(id: &str) -> bool {
     imported_subscriptions::is_imported(id)
 }
@@ -3424,6 +3426,11 @@ async fn forward_once(
     }
     if wire == "responses" && !metadata && !account {
         if let Some(ref mut body) = payload {
+            if provider.oauth {
+                if let Err(error) = official_responses::normalize(body) {
+                    return protocol_error(400, incoming, &error);
+                }
+            }
             reasoning::responses(body, provider);
         }
     }

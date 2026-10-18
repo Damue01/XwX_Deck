@@ -9,6 +9,8 @@ import { rustToolchain } from './toolchain.mjs';
 import { buildMacDmg } from './macos-dmg.mjs';
 import { appleReleaseConfig, appleTool, signMac, notarizeMac, notarizeApp } from './macos-signing.mjs';
 import { assertPublicBinary } from './public-binary-boundary.mjs';
+import { buildWindowsMsi } from './windows-msi.mjs';
+import { standardWindowsArtifact } from './windows-execution-level.mjs';
 
 const pilot = import.meta.dirname;
 const requiredPlatform = process.argv.find(a => a.startsWith('--require-platform='))?.split('=')[1];
@@ -75,6 +77,8 @@ if (process.platform !== 'darwin') {
     const destination = resolve(root, isolated ? 'test-results/native-package' : 'release', 'XwX Deck.exe');
     await mkdir(resolve(destination, '..'), { recursive:true });
     await cp(resolve(env.CARGO_TARGET_DIR, 'release/xwx-deck-native.exe'), destination);
+    await standardWindowsArtifact(destination);
+    const installer = isolated ? null : await buildWindowsMsi({ root, binary: destination, output: resolve(root,'release/XwX Deck.msi'), version });
     const finalSource = await sourceFingerprint(root);
     const commit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
     if (commit.status !== 0 || initialSource.sha256 !== finalSource.sha256 || initialGit.stdout.trim() !== commit.stdout.trim()) {
@@ -95,8 +99,8 @@ if (process.platform !== 'darwin') {
       buildTime: new Date().toISOString(), sourceFingerprint: finalSource.sha256, sourceFileCount: finalSource.fileCount,
       embeddedFrontendSha256, embeddedAssetsSha256,
       candidate: { binary: destination, binaryBytes: bytes.length, binarySha256: createHash('sha256').update(bytes).digest('hex'), architecture: 'x86_64', bundleId: appId,
-        signature: signature.stdout.trim(), externalRuntime: 'Microsoft Edge WebView2 (system installed)' },
-      buildMode, productionReady: readiness.productionReady, installed: false, published: false, scope
+        signature: signature.stdout.trim(), integrityLabel: 'medium', externalRuntime: 'Microsoft Edge WebView2 (system installed)' },
+      installer, buildMode, productionReady: readiness.productionReady, installed: false, published: false, scope
     };
     await writeFile(resolve(destination, '..', 'native-build-report.json'), JSON.stringify(report, null, 2) + '\n');
     await writeFile(destination + '.sha256', report.candidate.binarySha256 + '  XwX Deck.exe\n');

@@ -1532,7 +1532,8 @@
           "tools/native/source-fingerprint-test.mjs",
           "tools/native/update-test.mjs",
           "tools/native/portable-update-test.mjs",
-          "tools/tests/release-manifest-test.mjs"
+          "tools/tests/release-manifest-test.mjs",
+          "tools/native/windows-msi-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1553,7 +1554,8 @@
         "scripts": [
           "tools/native/source-fingerprint-test.mjs",
           "tools/native/update-test.mjs",
-          "tools/native/portable-update-test.mjs"
+          "tools/native/portable-update-test.mjs",
+          "tools/native/windows-msi-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "只验收本版持久配置和未来原生更新。旧发行版本的兼容不在 XwX Deck 范围；实际平台安装、系统授权和重启仍需 U/H。"
@@ -1589,12 +1591,13 @@
     {
       "id": "RE05",
       "priority": "P1",
-      "requirement": "Windows 便携与 Mac 安装、升级体验各自验收；完整性、签名、公证、发布分别记录",
+      "requirement": "Windows 按用户安装、便携与 Mac 安装、升级体验各自验收；完整性、签名、公证、发布分别记录",
       "moduleId": "RE",
       "automation": {
         "scripts": [
           "tools/native/update-test.mjs",
-          "tools/native/portable-update-test.mjs"
+          "tools/native/portable-update-test.mjs",
+          "tools/native/windows-msi-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "只验收本版持久配置和未来原生更新。旧发行版本的兼容不在 XwX Deck 范围；实际平台安装、系统授权和重启仍需 U/H。"

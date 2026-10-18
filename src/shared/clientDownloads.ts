@@ -47,6 +47,14 @@ export function clientCatalogLabel(client: typeof CLIENT_DOWNLOADS[number]): str
   return client.id === 'codex' ? 'ChatGPT / Codex' : client.label;
 }
 
+/** Short product names in Trace navigation; configuration pages keep full names. */
+export function traceClientLabel(id: string, fallback: string): string {
+  if (id === 'deepseek-harness') return 'DeepSeek';
+  if (['codex', 'codex-cli', 'codex-vscode'].includes(id)) return 'ChatGPT';
+  if (['claude', 'claude-code', 'claude-cli', 'claude-vscode'].includes(id)) return 'Claude';
+  return CLIENT_DOWNLOADS.find(client => client.id === id)?.label ?? fallback;
+}
+
 export const MODEL_CLIENT_ADDED_EVENT = 'xwxdeck:model-client-added';
 
 export function modelClientRoute(id: DownloadClientId): 'claude' | 'codex' | null {

@@ -14,6 +14,8 @@ mod webview_cache;
 #[cfg(target_os = "windows")]
 mod windows_menus;
 #[cfg(target_os = "windows")]
+mod windows_msi;
+#[cfg(target_os = "windows")]
 mod windows_recovery;
 #[cfg(target_os = "windows")]
 mod windows_reveal;
@@ -29,6 +31,17 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+#[cfg(target_os = "windows")]
+fn spawn_windows_update(path: &std::path::Path, state: &Value) -> Result<(), String> {
+    if path.extension().and_then(|s|s.to_str()) == Some("msi") {
+        windows_msi::spawn(path, state["sha256"].as_str().ok_or("缺少 MSI 校验值")?, state["targetVersion"].as_str().ok_or("缺少 MSI 版本")?)
+    } else if windows_msi::installation().is_some() {
+        Err("MSI 安装必须通过 Windows Installer 更新，不能替换为便携版文件".into())
+    } else {
+        portable_update::spawn(path)
+    }
+}
 
 // Menu IDs carry a direction: a stale Stop click must never start Trace.
 fn request_trace_from_tray(app: &tauri::AppHandle, enabled: bool) {
@@ -443,7 +456,7 @@ async fn pilot_rpc(
             #[cfg(target_os = "windows")]
             {
                 pilot.lock().await.stop().await?;
-                portable_update::spawn(std::path::Path::new(path))?;
+                spawn_windows_update(std::path::Path::new(path), &result)?;
                 app.exit(0);
                 Ok(Value::Null)
             }
@@ -552,6 +565,9 @@ async fn pilot_rpc(
             app.emit("pilot-notice", notice)
                 .map_err(|e| e.to_string())?;
             Ok(Value::Null)
+        }
+        "smokeMsiContext" if argument("--pilot-root").is_some() && std::env::args().any(|arg| arg == "--smoke") => {
+            Ok(json!({"update":std::env::args().any(|arg|arg=="--smoke-msi-update")}))
         }
         "smokeContext" if std::env::args().any(|arg| arg == "--smoke") => {
             let base = argument("--smoke-upstream");
@@ -1286,6 +1302,10 @@ fn main() {
         std::process::exit(if result.is_ok() { 0 } else { 1 });
     }
     #[cfg(target_os = "windows")]
+    if let Some(code) = windows_msi::worker() {
+        std::process::exit(code);
+    }
+    #[cfg(target_os = "windows")]
     if let Some(code) = portable_update::worker() {
         std::process::exit(code);
     }
@@ -1626,7 +1646,7 @@ fn main() {
                         #[cfg(target_os="windows")]if portable_update::idle_for_nightly(){
                             let mut p=shared.lock().await;if !p.active()&&p.nightly_eligible(){
                                 if state["status"]=="available"{let _=p.call("downloadAutomaticUpdate",&[]).await;}
-                                if state["status"]=="ready"{if let Ok(installer)=p.call("restartAndInstall",&[]).await{if let Some(path)=installer["path"].as_str(){if portable_update::spawn(std::path::Path::new(path)).is_ok(){handle.exit(0);}}}}
+                                if state["status"]=="ready"{if let Ok(installer)=p.call("restartAndInstall",&[]).await{if let Some(path)=installer["path"].as_str(){if spawn_windows_update(std::path::Path::new(path),&installer).is_ok(){handle.exit(0);}}}}
                             }
                         }
                     }
@@ -1640,7 +1660,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![pilot_rpc,pilot_tray,pilot_smoke_report,pilot_smoke_progress])
         .on_page_load(move |window,payload| {
             if smoke && payload.event()==tauri::webview::PageLoadEvent::Finished
-                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-reminders"){include_str!("../../tools/native/reminders-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-tray"){include_str!("../../tools/native/tray-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
+                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-msi-update" || arg=="--smoke-msi-restart"){include_str!("../../tools/native/msi-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-reminders"){include_str!("../../tools/native/reminders-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-tray"){include_str!("../../tools/native/tray-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
         })
         .on_window_event(move |window,event| {
             #[cfg(target_os="windows")]

@@ -116,7 +116,7 @@ jobs:
             test-results/native-target
           key: ${{ runner.os }}-${{ runner.arch }}-native-rust-${{ hashFiles('src-native/Cargo.lock') }}
 
-      - name: Build Windows portable package
+      - name: Build Windows per-user MSI and portable package
         run: npm run build:win
 
       - name: Verify Windows Rust unit tests
@@ -154,6 +154,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release-upload | Out-Null
           Copy-Item "release/XwX Deck.exe" "release-upload/XwX-Deck-windows-x64.exe"
+          Copy-Item "release/XwX Deck.msi" "release-upload/XwX-Deck-windows-x64.msi"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

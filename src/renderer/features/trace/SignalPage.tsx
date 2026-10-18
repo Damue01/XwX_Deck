@@ -6,7 +6,7 @@ import { clearLifecycleNotice, showLifecycleNotice, showToast } from '@/lib/toas
 import { claudeDesktopRestartNote, isTraceStopBusyError, lifecycleFailure, traceStoppedNotice } from '../../../shared/lifecycleNotice';
 import { normalizeErrorMessage } from '../../../shared/errors';
 import { tokenCostPresentation, readoutRange } from '@/lib/format';
-import { isConfiguredModelClient } from '../../../shared/clientDownloads';
+import { isConfiguredModelClient, traceClientLabel } from '../../../shared/clientDownloads';
 import { Tabs, TabsList, TabsTab } from '@/components/ui/tabs';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ParticleField, emitFieldRipple } from './ParticleField';
@@ -79,7 +79,7 @@ interface ClientToggleProps {
 function ClientToggle({ client, onToggle, variant, busy }: ClientToggleProps): React.ReactElement {
   useLanguage();
   const uiId = client.id === 'claude-cli' ? 'claude' : client.id === 'codex-cli' ? 'codex' : client.id;
-  const label = client.label;
+  const label = traceClientLabel(client.id, client.label);
   return (
     <button
       type="button"

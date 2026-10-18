@@ -28,22 +28,26 @@ const trace = body => ({ request: { method: 'POST', path: '/v1/responses', body 
 const messages = body => dom.window.getMessages(trace(body));
 const text = list => list.map(m => m.content.map(b => b.text ?? '').join('')).join('\n');
 try {
-  const sourceCases = [['deepseek-harness','DeepSeek Harness'],['cline','Cline'],['vscode','VS Code'],['copilot-cli','GitHub Copilot CLI'],['copilot','Copilot'],['future-client','future-client'],['unknown','Unknown']];
+  const sourceCases = [['deepseek-harness','DeepSeek Harness'],['cline','Cline'],['vscode','VS Code'],['copilot-cli','GitHub Copilot CLI'],['copilot','Copilot'],['future-client','future-client'],['unknown','未知']];
   const sourceSessions = sourceCases.map(([source],i) => ({id:'source-'+i,source,firstPrompt:'Synthetic source '+i,traceCount:1,startedAt:'2026-10-18T00:00:00Z'}));
   sourceSessions.push({id:'missing-source',firstPrompt:'Synthetic missing source',traceCount:1,startedAt:'2026-10-18T00:00:00Z'});
   dom.window.applyState({sessions:sourceSessions,traces:[],theme:'day'});
   dom.window.renderDashboard();
   for(const [i,[source,label]] of sourceCases.entries()) {
     assert.equal(dom.window.document.querySelector(`[data-sid="source-${i}"] .src-tag`).textContent,label);
-    assert.equal(dom.window.document.querySelector(`[data-sfilter="${source}"]`).textContent,label);
+    assert.equal(dom.window.document.querySelector(`[data-sfilter="${source}"]`).textContent,source==='deepseek-harness'?'DeepSeek':label);
     assert.equal(dom.window.sourceLabel(source),label);
   }
-  assert.equal(dom.window.document.querySelector('[data-sid="missing-source"] .src-tag').textContent,'Unknown');
+  assert.equal(dom.window.document.querySelector('[data-sid="missing-source"] .src-tag').textContent,'未知');
   dom.window.document.querySelector('[data-sfilter="deepseek-harness"]').click();
   assert.deepEqual(Array.from(dom.window.document.querySelectorAll('.dash-table tbody tr'),row=>row.dataset.sid),['source-0']);
   dom.window.eval("state.dashSourceFilter='all'");
   const harnessTrace={id:'source-detail',sessionId:'source-0',source:'deepseek-harness',turn:1,startedAt:'2026-10-18T00:00:00Z',request:{method:'POST',path:'/clients/deepseek-harness/v1/responses',model:'fixture',body:{input:'Synthetic request'}},response:{statusCode:200}};
   dom.window.applyState({sessions:[sourceSessions[0]],sessionTraces:{'source-0':[harnessTrace]},traces:[harnessTrace],theme:'day'});
+  dom.window.eval("state.dashSourceFilter='claude-cli';renderDashboard()");
+  assert.equal(dom.window.document.querySelector('[data-sfilter="claude-cli"]'),null);
+  assert.equal(dom.window.document.querySelector('[data-sfilter="codex-cli"]'),null);
+  assert.equal(dom.window.document.querySelector('[data-sfilter="deepseek-harness"]').textContent,'DeepSeek');
   dom.window.gotoSession('source-0');
   assert.equal(dom.window.document.querySelector('#detail .src-tag').textContent,'DeepSeek Harness');
   assert.ok(!dom.window.document.querySelector('#detail').textContent.includes('Copilot'));
@@ -74,7 +78,8 @@ try {
   assert.match(dom.window.document.querySelector('.dash-matrix').textContent,/retained-fixture/);
   assert.equal(dom.window.document.querySelectorAll('.dash-table tbody tr').length,0);
   dom.window.eval("state.dashSourceFilter='claude-cli';renderDashboard()");
-  assert.equal(dom.window.document.querySelector('.dash-hero-num').textContent,'$0.0000');
+  assert.equal(dom.window.document.querySelector('[data-sfilter="claude-cli"]'),null);
+  assert.equal(dom.window.document.querySelector('.dash-hero-num').textContent,'$0.003','an unavailable source resets to All');
   dom.window.eval("state.dashSourceFilter='all';tokenMatrixOpen=false");
   dom.window.applyState({sessions:[],usageSummaries:[],traces:[],theme:'day'});
   const firstDelete = dom.window.confirmDeleteSession('fixture');
