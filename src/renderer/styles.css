@@ -1312,6 +1312,7 @@ html[data-theme="night"] .setup-card-backdrop { background: rgba(0,0,0,.5); }
 .configuration-choice > span { min-width: 0; overflow-wrap: anywhere; }
 .configuration-choice[data-unconfigured="true"] { color: var(--quiet); }
 .configuration-choice[data-unconfigured="true"] .provider-brand-icon { opacity: .7; }
+.configuration-choice[data-client-download][data-unconfigured="true"] .provider-brand-icon { filter: grayscale(1); }
 .configuration-choice:hover, .configuration-choice[aria-pressed="true"] { background: var(--hover); }
 .configuration-choice:disabled { opacity: .5; cursor: default; }
 .configuration-dialog:focus { outline: none; }

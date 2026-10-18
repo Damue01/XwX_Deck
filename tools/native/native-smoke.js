@@ -117,6 +117,7 @@
     check('merged desktop and CLI have no duplicate manager entries', !document.querySelector('#configuration-clients [data-client-download="codex-cli"]') && !document.querySelector('#configuration-clients [data-client-download="claude-code"]'));
     check('unverified clients and editor plugins are absent from management', ['cursor','vscode','trae','cline','antigravity-cli','openchamber','t3-code'].every(id=>!document.querySelector(`#configuration-clients [data-client-download="${id}"]`)));
     check('installed but unmanaged OpenCode stays muted while saved ChatGPT enrollment is normal', document.querySelector('[data-client-download="opencode"]').dataset.unconfigured==='true'&&!document.querySelector('[data-client-download="codex"]').dataset.unconfigured);
+    check('unmanaged client icons are grayscale and saved clients retain their brand color',getComputedStyle(document.querySelector('[data-client-download="opencode"] .provider-brand-icon')).filter==='grayscale(1)'&&getComputedStyle(document.querySelector('[data-client-download="codex"] .provider-brand-icon')).filter==='none');
     document.querySelector('#configuration-clients [data-client-download="opencode"]').click();
     await wait(() => document.querySelector('.configuration-client-actions .btn.primary')?.disabled === false, 'isolated installed client');
     check('client details offer the explicit add action', document.querySelector('.configuration-client-actions .btn.primary').textContent === '添加到模型页');
