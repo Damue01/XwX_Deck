@@ -26,6 +26,11 @@ on:
         description: Resume exact Windows binary acceptance with unchanged compiled sources
         required: false
         type: string
+      diagnose_windows_startup:
+        description: Run only the exact-byte Windows startup path and integrity matrix
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - "v*.*.*"
@@ -47,6 +52,7 @@ jobs:
     uses: ./.github/workflows/windows-package-recovery.yml
     with:
       prior_run_id: ${{ inputs.recover_windows_run_id }}
+      startup_matrix_only: ${{ inputs.diagnose_windows_startup || false }}
 
   packaged-windows-clients:
     if: github.event_name == 'workflow_dispatch' && inputs.verify_build_run_id != ''

@@ -6,13 +6,63 @@ on:
       prior_run_id:
         required: true
         type: string
+      startup_matrix_only:
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   actions: read
 
 jobs:
+  startup-matrix:
+    if: inputs.startup_matrix_only
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test-results/native-target
+          key: ${{ runner.os }}-${{ runner.arch }}-native-rust-v3-${{ hashFiles('src-native/Cargo.lock') }}-${{ inputs.prior_run_id }}
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-verification
+          path: build-evidence
+          run-id: ${{ inputs.prior_run_id }}
+          github-token: ${{ github.token }}
+      - name: Recover the exact compiled executable without rebuilding
+        shell: pwsh
+        run: |
+          node tools/native/recover-windows-package.mjs --binary-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "XWX_NATIVE_TEST_BINARY=$((Resolve-Path 'release/XwX Deck.exe').Path)" >> $env:GITHUB_ENV
+      - name: Compare actual startup with identical bytes and controlled file labels
+        shell: pwsh
+        run: |
+          ./tools/native/ensure-windows-webview2.ps1
+          node tools/native/windows-window-probe.mjs --matrix-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-startup-matrix
+          path: test-results/windows-window-probe.json
+          if-no-files-found: error
   recover:
+    if: ${{ !inputs.startup_matrix_only }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -55,12 +105,15 @@ jobs:
       - name: Repeat strict private-file permissions three times
         shell: pwsh
         run: |
-          foreach ($round in 1..3) {
-            $env:XWX_NATIVE_TEST_REPORT = "test-results/private-files-round-$round.json"
-            node tools/native/run-backend-tests.mjs --suite=credential-private-files-test.mjs
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $prior = Get-Content build-evidence/test-results/native-backend-summary.json -Raw | ConvertFrom-Json
+          if (!$prior.passed) {
+            foreach ($round in 1..3) {
+              $env:XWX_NATIVE_TEST_REPORT = "test-results/private-files-round-$round.json"
+              node tools/native/run-backend-tests.mjs --suite=credential-private-files-test.mjs
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+            Remove-Item Env:XWX_NATIVE_TEST_REPORT
           }
-          Remove-Item Env:XWX_NATIVE_TEST_REPORT
           node tools/native/recover-windows-package.mjs --aggregate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare only the older executable fixture resources
@@ -74,6 +127,7 @@ jobs:
           node tools/native/windows-setup-test.mjs --old-binary=test-results/setup-old-debug.exe --new-binary="release/XwX Deck.exe" --new-setup="release/XwX Deck Setup.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify actual native WebView interactions
+        id: native-ui
         if: ${{ !cancelled() && env.XWX_NATIVE_TEST_BINARY != '' }}
         shell: pwsh
         run: |
@@ -81,7 +135,7 @@ jobs:
           node tools/native/native-test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Diagnose window setup without modifying the candidate
-        if: failure()
+        if: failure() && steps.native-ui.conclusion == 'failure'
         run: node tools/native/windows-window-probe.mjs
       - uses: actions/upload-artifact@v4
         if: always()
