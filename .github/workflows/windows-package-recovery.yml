@@ -61,14 +61,17 @@ jobs:
           Remove-Item Env:XWX_NATIVE_TEST_REPORT
           node tools/native/recover-windows-package.mjs --aggregate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare only the older executable fixture resources
+        run: node tools/native/prepare.mjs
       - name: Verify actual native WebView interactions
         shell: pwsh
         run: |
           ./tools/native/ensure-windows-webview2.ps1
           node tools/native/native-test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Prepare only the older executable fixture resources
-        run: node tools/native/prepare.mjs
+      - name: Diagnose window setup without modifying the candidate
+        if: failure()
+        run: node tools/native/windows-window-probe.mjs
       - name: Verify actual Setup installation, upgrade and uninstall
         shell: pwsh
         run: |
