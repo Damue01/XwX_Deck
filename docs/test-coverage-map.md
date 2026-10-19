@@ -87,6 +87,7 @@
 | [client-config-merge-test.mjs](../tools/native/client-config-merge-test.mjs) | 后端默认入口 | CL01、CL03、CL04、CL05、CL07、CL08 |
 | [client-management-test.mjs](../tools/native/client-management-test.mjs) | 后端默认入口 | CL07 |
 | [client-models-renderer-test.mjs](../tools/native/client-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |
+| [client-switch-live-test.mjs](../tools/native/client-switch-live-test.mjs) | 独立专题入口 | CL01 |
 | [client-trace-defaults-test.mjs](../tools/native/client-trace-defaults-test.mjs) | 后端默认入口 | TR01、CL01 |
 | [codex-client-compatibility-test.mjs](../tools/native/codex-client-compatibility-test.mjs) | 后端默认入口 | TR05、MO01、CL01、CL02 |
 | [codex-models-renderer-test.mjs](../tools/native/codex-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |
@@ -102,9 +103,11 @@
 | [model-metadata-consumption-test.mjs](../tools/native/model-metadata-consumption-test.mjs) | 后端默认入口 | MO01、MO03、CL01 |
 | [official-test.mjs](../tools/native/official-test.mjs) | 后端默认入口 | CL04 |
 | [portability-test.mjs](../tools/native/portability-test.mjs) | 后端默认入口 | TR01、TR02、TR03、TR04、TR05、TR06、TR07、TR09、CL01、CL02、CL03、CL04、CL05、CL07、CL08 |
+| [provider-switch-native-ui-test.mjs](../tools/native/provider-switch-native-ui-test.mjs) | 独立专题入口 | CL01 |
 | [regressions.mjs](../tools/native/regressions.mjs) | 后端默认入口 | CL01 |
 | [routing-consumption-test.mjs](../tools/native/routing-consumption-test.mjs) | 后端默认入口 | TR01、TR02、TR07、MO03、MO06、CL01、CL02、CL05、CL06、LF03 |
 | [universal-gateway-test.mjs](../tools/native/universal-gateway-test.mjs) | 后端默认入口 | CL07 |
+| [vscode-client-switch-live-test.mjs](../tools/native/vscode-client-switch-live-test.mjs) | 独立专题入口 | CL01 |
 
 ## SE 设置、配置读写与 Trace 存储
 

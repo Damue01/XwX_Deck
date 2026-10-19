@@ -671,7 +671,10 @@
           "tools/native/model-metadata-consumption-test.mjs",
           "tools/native/routing-consumption-test.mjs",
           "tools/native/installed-clients-test.mjs",
-          "tools/native/client-trace-defaults-test.mjs"
+          "tools/native/client-switch-live-test.mjs",
+          "tools/native/client-trace-defaults-test.mjs",
+          "tools/native/vscode-client-switch-live-test.mjs",
+          "tools/native/provider-switch-native-ui-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"

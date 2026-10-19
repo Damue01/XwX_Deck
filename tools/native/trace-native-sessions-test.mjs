@@ -96,7 +96,11 @@ try {
   const httpPrevious=JSON.parse(terminalRaw.trim().split('data: ').at(-1)).response.id;
   const httpResult=await fetch(gateway+'/responses',{method:'POST',headers:{'content-type':'application/json','x-codex-thread-id':'terminal-eof-thread'},body:JSON.stringify({model:'fixture-model',previous_response_id:httpPrevious,input:[{type:'custom_tool_call_output',call_id:'http-stream-call',output:'fixture result'}]})});assert.equal(httpResult.status,200);await httpResult.json();assert.equal((await app.rpc('getState')).waitingTools,0);
   const jsonTerminal=await fetch(gateway+'/responses',{method:'POST',headers:{'content-type':'application/json','x-codex-thread-id':'json-eof-thread'},body:JSON.stringify({model:'fixture-model',input:'json-without-eof'})});const jsonReader=jsonTerminal.body.getReader();assert.equal(JSON.parse(new TextDecoder().decode((await jsonReader.read()).value)).status,'completed');await jsonReader.cancel();
-  const jsonState=await(await fetch(url+'api/state')).json();const jsonSession=jsonState.sessions.find(s=>s.clientConversationKey==='codex-cli:json-eof-thread');assert.ok(jsonSession);const jsonTrace=(await(await fetch(url+'api/session/'+jsonSession.id)).json()).traces[0];assert.equal(jsonTrace.error,undefined);assert.equal(jsonTrace.response.protocolEnded,true);
+  let jsonSession;
+  // The response terminal precedes asynchronous Trace index publication.
+  // Apply the same bounded observation used for the SSE terminal above.
+  for(let tries=0;tries<50&&!jsonSession;tries++){const state=await(await fetch(url+'api/state')).json();jsonSession=state.sessions.find(s=>s.clientConversationKey==='codex-cli:json-eof-thread');if(!jsonSession)await new Promise(r=>setTimeout(r,20));}
+  assert.ok(jsonSession);const jsonTrace=(await(await fetch(url+'api/session/'+jsonSession.id)).json()).traces[0];assert.equal(jsonTrace.error,undefined);assert.equal(jsonTrace.response.protocolEnded,true);
   console.log('PASS headerless split SSE/JSON terminal, HTTP client close and streamed tool-result continuation retain completion and stop safety');
   const failed=await fetch(gateway+'/responses',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'fixture-model',input:'fixture-failure',prompt_cache_key:ids[0]})});assert.equal(failed.status,400);await failed.json();
   let failureState=await(await fetch(url+'api/state')).json();assert.equal(failureState.sessions.find(s=>s.id===main.id).lastTurnError,true);

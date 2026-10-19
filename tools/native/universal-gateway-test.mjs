@@ -50,8 +50,8 @@ const upstream = createServer(async (req, res) => {
   if (!body.stream) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(result)); return; }
   res.writeHead(200, { 'content-type': 'text/event-stream' });
   if (req.url === '/v1/chat/completions') {
-    res.write('data: ' + JSON.stringify({ id: 'chat-fixture', model: body.model, choices: [{ index: 0, delta: { role: 'assistant', content: 'fixture ' }, finish_reason: null }] }) + '\n\n');
-    setTimeout(() => { delayedFinish++; res.end('data: ' + JSON.stringify({ id: 'chat-fixture', model: body.model, choices: [{ index: 0, delta: { content: 'reply', ...(body.tools?.length ? { tool_calls: result.choices[0].message.tool_calls.map((call, index) => ({ index, ...call })) } : {}) }, finish_reason: result.choices[0].finish_reason }], usage: result.usage }) + '\n\ndata: [DONE]\n\n'); }, 300);
+    res.write('data: ' + JSON.stringify({ id: 'chat-fixture', object:'chat.completion.chunk', created:1, model: body.model, choices: [{ index: 0, delta: { role: 'assistant', content: 'fixture ' }, finish_reason: null }] }) + '\n\n');
+    setTimeout(() => { delayedFinish++; res.end('data: ' + JSON.stringify({ id: 'chat-fixture', object:'chat.completion.chunk', created:1, model: body.model, choices: [{ index: 0, delta: { content: 'reply', ...(body.tools?.length ? { tool_calls: result.choices[0].message.tool_calls.map((call, index) => ({ index, ...call })) } : {}) }, finish_reason: result.choices[0].finish_reason }], usage: result.usage }) + '\n\ndata: [DONE]\n\n'); }, 300);
   } else if (req.url === '/v1/responses') {
     res.write('event: response.created\ndata: ' + JSON.stringify({ type: 'response.created', error: null, response: { ...v, output: [], usage: null } }) + '\n\n');
     res.write('event: response.output_text.delta\ndata: ' + JSON.stringify({ type: 'response.output_text.delta', response_id: v.id, delta: 'fixture ' }) + '\n\n');
@@ -102,6 +102,7 @@ try {
   const managed = await readFile(paths.opencode, 'utf8');
   assert.match(managed, /preserve this comment/); assert.match(managed, /trailing comma and comment/); assert.match(managed, /\/clients\/opencode\/v1/);
   assert.equal(JSON.parse(await readFile(paths['qwen-code'], 'utf8')).modelProviders.xwx_deck[0].baseUrl, state.localBaseUrl + '/clients/qwen-code/v1');
+  assert.equal(JSON.parse(await readFile(paths['qwen-code'], 'utf8')).security.auth.selectedType, 'openai', 'Qwen auth selects the protocol, not the custom provider bucket');
   assert.match(await readFile(envPath, 'utf8'), /GOOGLE_GEMINI_BASE_URL=http/);
   pass('explicit client takeover preserves JSONC and writes independent OpenCode, Gemini and Qwen endpoints');
   let expectedTokens = 0; let pricedRequests = 0;
@@ -115,6 +116,7 @@ try {
         if (adapter !== 'anthropic-messages') assert.equal(delayedFinish, before, 'first chunk must arrive before upstream completion');
         let text = new TextDecoder().decode(first.value); for (;;) { const next = await reader.read(); if (next.done) break; text += new TextDecoder().decode(next.value); }
         assert.match(text, /\[DONE\]/); const events = text.split('\n').filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6)));
+        assert.ok(events.every(event=>Number.isInteger(event.created)), 'every Chat SSE frame, including finish and usage, supplies created');
         assert.equal(events.flatMap(e => e.choices ?? []).map(c => c.delta?.content ?? '').join(''), reply);
         assert.equal(events.flatMap(e => e.choices ?? []).flatMap(c => c.delta?.tool_calls ?? []).filter(c => c.id === 'call-fixture').length, 1);
         assert.equal(events.at(-1).usage.prompt_tokens, adapter === 'anthropic-messages' ? 15 : 13);
@@ -196,7 +198,10 @@ try {
   assert.equal((await rpc('getState')).waitingTools,17);
   await assert.rejects(rpc('toggleTracing',false),/工具调用仍在等待/);
   const liveConfig = await readFile(paths.opencode, 'utf8');
-  await writeFile(paths.opencode, liveConfig.replace('xwx_deck/gpt-4.1', 'external/new-model'));
+  assert.match(liveConfig, /xwx_deck\/selected/);
+  const conflictingConfig = liveConfig.replace('xwx_deck/selected', 'external/new-model');
+  assert.notEqual(conflictingConfig, liveConfig, 'the external edit fixture must change the managed default');
+  await writeFile(paths.opencode, conflictingConfig);
   const failed = await rawRpc('toggleTracing', false, true); assert.equal(failed.ok, false); assert.match(failed.error, /外部修改/); assert.equal((await rpc('getState')).backgroundGatewayActive, true);
   await writeFile(paths.opencode, liveConfig.replace('"theme": "system"', '"theme": "dark"'));
   await rpc('toggleTracing', false, true); assert.match(await readFile(paths.opencode, 'utf8'), /"theme": "dark"/); assert.doesNotMatch(await readFile(paths.opencode, 'utf8'), /xwx_deck/);

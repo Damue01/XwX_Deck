@@ -355,7 +355,7 @@ fn dsh_plan(path: &Path, base: &str, model: &str, api: &str, metadata: &Value) -
     if provider["config"]["providers"].is_null() {
         provider["config"]["providers"] = encoded(&json!({}))?;
     }
-    let mut spec = json!({"id":model,"name":model});
+    let mut spec = json!({"id":DSH_DEFAULT_MODEL,"name":model});
     if let Some(context) = metadata
         .get("contextWindow")
         .and_then(Value::as_u64)
@@ -389,7 +389,7 @@ fn dsh_plan(path: &Path, base: &str, model: &str, api: &str, metadata: &Value) -
         selection["config"] = encoded(&json!({}))?;
     }
     selection["config"]["provider"] = Yaml::String("xwx-deck".into());
-    selection["config"]["model"] = Yaml::String(model.into());
+    selection["config"]["model"] = Yaml::String(DSH_DEFAULT_MODEL.into());
     // Effort belongs to the old model. Do not carry it into a different one.
     if let Some(config) = selection["config"].as_mapping_mut() {
         config.remove(Yaml::String("reasoningEffort".into()));
@@ -620,7 +620,14 @@ pub(super) fn plan(
     };
     let mut plans = vec![];
     if id == "kimi-code" || id == "grok-build" {
-        let key = format!("xwx_deck/{model}");
+        // Native sessions retain this catalog alias across route/model changes.
+        // The model field below remains the precise selected upstream model.
+        let key = if id == "grok-build" {
+            "xwx_deck_default"
+        } else {
+            "xwx_deck/default"
+        }
+        .to_owned();
         let string = |s: &str| toml_edit::value(s);
         let mut edits = if id == "kimi-code" {
             vec![
@@ -676,18 +683,6 @@ pub(super) fn plan(
         if !pilot.client_discovery().management_supported(id) {
             return Err("当前 Cline 版本不支持此配置方式，请更新后重试".into());
         }
-        let mut cline_model = json!({"id":model,"name":model,"capabilities":["streaming","tools"]});
-        for (from, to) in [
-            ("contextWindow", "contextWindow"),
-            ("maxOutputTokens", "maxTokens"),
-        ] {
-            if let Some(value) = metadata
-                .get(from)
-                .filter(|value| value.as_u64().is_some_and(|n| n > 0))
-            {
-                cline_model[to] = value.clone();
-            }
-        }
         plans.push(json_plan(
             &paths[0],
             vec![
@@ -709,13 +704,40 @@ pub(super) fn plan(
                     vec!["providers", "openai-compatible", "settings", "apiKey"],
                     json!("xwx-deck"),
                 ),
+            ],
+        )?);
+        // Cline refreshes model capabilities and tokenSource at startup. Own
+        // only the route and selection, so those refreshes remain untouched.
+        plans.push(json_plan(
+            &paths[1],
+            vec![
                 (
-                    vec!["providers", "openai-compatible", "tokenSource"],
-                    json!("manual"),
+                    vec!["providers", "openai-compatible", "provider", "name"],
+                    json!("OpenAI Compatible"),
+                ),
+                (
+                    vec!["providers", "openai-compatible", "provider", "baseUrl"],
+                    json!(base),
+                ),
+                (
+                    vec![
+                        "providers",
+                        "openai-compatible",
+                        "provider",
+                        "defaultModelId",
+                    ],
+                    json!(model),
+                ),
+                (
+                    vec!["providers", "openai-compatible", "models", model, "id"],
+                    json!(model),
+                ),
+                (
+                    vec!["providers", "openai-compatible", "models", model, "name"],
+                    json!(model),
                 ),
             ],
         )?);
-        plans.push(json_plan(&paths[1], vec![(vec!["providers","openai-compatible"],json!({"provider":{"name":"XwX Deck","baseUrl":base,"defaultModelId":model},"models":{model:cline_model}}))])?);
         plans.push(json_plan(
             &paths[2],
             vec![
@@ -851,7 +873,32 @@ mod tests {
         let rows = value.as_sequence().unwrap();
         assert_eq!(
             rows.last().unwrap()["config"]["model"].as_str(),
-            Some("new")
+            Some(DSH_DEFAULT_MODEL)
+        );
+        let catalog = &rows[rows.len() - 2]["config"]["providers"]["xwx-deck"]["models"][0];
+        assert_eq!(catalog["id"].as_str(), Some(DSH_DEFAULT_MODEL));
+        assert_eq!(catalog["name"].as_str(), Some("new"));
+        let next = dsh_plan(
+            &path,
+            "http://127.0.0.1:1234/clients/deepseek-harness/v1",
+            "other",
+            "openai-responses",
+            &json!({}),
+        )
+        .unwrap();
+        let next = yaml(text(&next, "content")).unwrap();
+        let next = next.as_sequence().unwrap();
+        assert_eq!(
+            next.last().unwrap()["config"]["model"].as_str(),
+            Some(DSH_DEFAULT_MODEL)
+        );
+        assert_eq!(
+            next[next.len() - 2]["config"]["providers"]["xwx-deck"]["models"][0]["id"].as_str(),
+            Some(DSH_DEFAULT_MODEL)
+        );
+        assert_eq!(
+            next[next.len() - 2]["config"]["providers"]["xwx-deck"]["models"][0]["name"].as_str(),
+            Some("other")
         );
         assert_eq!(
             rows[rows.len() - 2]["config"]["providers"]["personal"]["baseURL"].as_str(),
@@ -867,9 +914,11 @@ mod tests {
         assert!(restore_yaml_block(&changed, &plan)
             .unwrap()
             .contains("# external preference"));
-        assert!(
-            restore_yaml_block(&changed.replace("model: new", "model: external"), &plan).is_err()
-        );
+        assert!(restore_yaml_block(
+            &changed.replace(&format!("model: {DSH_DEFAULT_MODEL}"), "model: external"),
+            &plan
+        )
+        .is_err());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

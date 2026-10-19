@@ -819,20 +819,7 @@ impl Pilot {
             .truncate(false)
             .open(lock_path)
             .map_err(err)?;
-        let deadline = std::time::Instant::now() + Duration::from_secs(40);
-        let settling = std::time::Instant::now() + Duration::from_millis(100);
-        loop {
-            if lock.try_lock().is_ok() {
-                break;
-            }
-            if std::time::Instant::now() >= deadline
-                || (std::time::Instant::now() >= settling
-                    && read(&root.join(native_auth::LEASE))?.is_none())
-            {
-                return Err("试验目录已被另一个运行中的进程占用".into());
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
+        native_auth::acquire_root_lock(&root, &lock)?;
         lock.set_len(0).map_err(err)?;
         use std::io::Write;
         lock.write_all(std::process::id().to_string().as_bytes())

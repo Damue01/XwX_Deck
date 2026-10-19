@@ -7,6 +7,38 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWrite
 
 const SESSION: &str = "native-auth-session.json";
 pub(super) const LEASE: &str = "native-auth-lease";
+pub(super) fn lease_pending(root: &Path) -> Result<bool> {
+    match fs::symlink_metadata(root.join(LEASE)) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err("认证目录锁标记不能经过符号链接".into())
+        }
+        Ok(metadata) if metadata.is_file() => Ok(true),
+        Ok(_) => Err("认证目录锁标记不是普通文件".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(err(error)),
+    }
+}
+
+pub(super) fn acquire_root_lock(root: &Path, lock: &fs::File) -> Result<()> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let settling = std::time::Instant::now() + Duration::from_millis(100);
+    let mut auth_seen = false;
+    loop {
+        if lock.try_lock().is_ok() {
+            return Ok(());
+        }
+        // Several credential commands can hand the lease to one another.
+        // Once observed, absence of the short-lived marker is not proof that
+        // another application owns the lock. Keep the original bounded wait.
+        auth_seen |= lease_pending(root)?;
+        if std::time::Instant::now() >= deadline
+            || (!auth_seen && std::time::Instant::now() >= settling)
+        {
+            return Err("试验目录已被另一个运行中的进程占用".into());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
 const BINDING: &str = "nativeAuthBinding";
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -514,4 +546,60 @@ pub async fn print_token(root: PathBuf, raw: &str, isolated: bool) -> Result<()>
     std::io::stdout()
         .write_all((token + "\n").as_bytes())
         .map_err(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> (PathBuf, fs::File, fs::File) {
+        let root = std::env::temp_dir().join(format!(
+            "xwx-auth-lock-{}-{}",
+            std::process::id(),
+            random().unwrap()
+        ));
+        fs::create_dir(&root).unwrap();
+        let open = || {
+            fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(root.join("pilot.lock"))
+                .unwrap()
+        };
+        let owner = open();
+        let waiting = open();
+        owner.lock().unwrap();
+        (root, owner, waiting)
+    }
+
+    #[test]
+    fn startup_waits_through_credential_lease_handoff() {
+        let (root, owner, waiting) = fixture();
+        fs::write(root.join(LEASE), "first-helper").unwrap();
+        let cleanup_root = root.clone();
+        let handoff = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            fs::remove_file(cleanup_root.join(LEASE)).unwrap();
+            // The old startup check rejects this observed handoff after 100 ms.
+            std::thread::sleep(Duration::from_millis(150));
+            drop(owner);
+        });
+        acquire_root_lock(&root, &waiting).unwrap();
+        handoff.join().unwrap();
+        drop(waiting);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_running_application_without_a_credential_lease_still_blocks_startup() {
+        let (root, owner, waiting) = fixture();
+        assert!(acquire_root_lock(&root, &waiting).is_err());
+        assert!(waiting.try_lock().is_err());
+        drop(owner);
+        acquire_root_lock(&root, &waiting).unwrap();
+        drop(waiting);
+        fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -579,6 +579,36 @@ async fn pilot_rpc(
         {
             Ok(json!({"update":std::env::args().any(|arg|arg=="--smoke-setup-update")}))
         }
+        "smokeClientRequest"
+            if argument("--pilot-root").is_some()
+                && std::env::args().any(|arg| arg == "--smoke-provider-switch")
+                && std::env::args().any(|arg| arg == "--smoke") =>
+        {
+            let client = args
+                .first()
+                .and_then(Value::as_str)
+                .ok_or("缺少测试客户端")?;
+            let expected = args.get(1).and_then(Value::as_str).ok_or("缺少测试服务")?;
+            if !matches!(client, "codex" | "claude") || !matches!(expected, "a" | "b") {
+                return Err("无效的本地客户端测试".into());
+            }
+            let base = argument("--smoke-upstream").ok_or("缺少本地测试服务")?;
+            let url = reqwest::Url::parse(&base).map_err(|error| error.to_string())?;
+            if url.scheme() != "http" || url.host_str() != Some("127.0.0.1") {
+                return Err("客户端验收只允许本地服务".into());
+            }
+            reqwest::Client::new()
+                .post(format!("{base}/control/run/{client}/{expected}"))
+                .timeout(std::time::Duration::from_secs(60))
+                .send()
+                .await
+                .map_err(|error| error.to_string())?
+                .error_for_status()
+                .map_err(|error| error.to_string())?
+                .json::<Value>()
+                .await
+                .map_err(|error| error.to_string())
+        }
         "smokeContext" if std::env::args().any(|arg| arg == "--smoke") => {
             let base = argument("--smoke-upstream");
             if let Some(ref base) = base {
@@ -1674,7 +1704,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![pilot_rpc,pilot_tray,pilot_smoke_report,pilot_smoke_progress])
         .on_page_load(move |window,payload| {
             if smoke && payload.event()==tauri::webview::PageLoadEvent::Finished
-                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-setup-update" || arg=="--smoke-setup-restart"){include_str!("../../tools/native/setup-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-reminders"){include_str!("../../tools/native/reminders-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-tray"){include_str!("../../tools/native/tray-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
+                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-setup-update" || arg=="--smoke-setup-restart"){include_str!("../../tools/native/setup-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-reminders"){include_str!("../../tools/native/reminders-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-tray"){include_str!("../../tools/native/tray-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-provider-switch"){include_str!("../../tools/native/provider-switch-native-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
         })
         .on_window_event(move |window,event| {
             #[cfg(target_os="windows")]

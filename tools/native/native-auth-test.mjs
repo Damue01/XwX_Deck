@@ -40,8 +40,9 @@ const server=createServer(async(req,res)=>{
  res.writeHead(404);res.end('{}');
 });server.listen(0,'127.0.0.1');await once(server,'listening');base='http://127.0.0.1:'+server.address().port;
 const pass=s=>{checks.push(s);console.log('PASS '+s);};
-const start=()=>{child=spawn(nativeTestBinary,['--rpc','--pilot-root',root,'--subscription-test-endpoint',base],{stdio:['pipe','pipe','pipe']});child.stderr.resume();lines=createInterface({input:child.stdout})[Symbol.asyncIterator]();};
-const rpc=async(method,...args)=>{child.stdin.write(JSON.stringify({method,args})+'\n');const r=JSON.parse((await lines.next()).value);assert.equal(r.ok,true,r.error);return r.result;};
+let hostError='';
+const start=()=>{hostError='';child=spawn(nativeTestBinary,['--rpc','--pilot-root',root,'--subscription-test-endpoint',base],{stdio:['pipe','pipe','pipe']});child.stderr.on('data',bytes=>{hostError=(hostError+bytes).slice(-2000)});lines=createInterface({input:child.stdout})[Symbol.asyncIterator]();};
+const rpc=async(method,...args)=>{child.stdin.write(JSON.stringify({method,args})+'\n');const next=await lines.next();assert.equal(next.done,false,`${method}: native host exited before replying: ${hostError}`);const r=JSON.parse(next.value);assert.equal(r.ok,true,r.error);return r.result;};
 const run=async(exe,args,env=process.env,cwd=root)=>{
  const p=spawn(exe,args,{env,cwd,stdio:['ignore','pipe','pipe']});let stdout='',stderr='';p.stdout.on('data',b=>stdout+=b);p.stderr.on('data',b=>stderr+=b);const timer=setTimeout(()=>p.kill(),60000);try{const[code]=await once(p,'exit');return{code,stdout,stderr};}finally{clearTimeout(timer);}
 };
@@ -82,16 +83,18 @@ try{
  pass('altered account, endpoint and header bindings fail without returning a token');
  await rpc('toggleTracing',true);let live=await config();assert.equal(live.model_providers.xwx_deck.auth,undefined);await rpc('toggleTracing',false);assert.deepEqual(await config(),cb);
  pass('optional Trace temporarily replaces the credential command and restores the exact native authentication configuration');
- await rpc('signOutSubscriptionAccount',a.subscriptionAccountId);const signedOut=await helper(ca);assert.notEqual(signedOut.code,0);assert.equal(signedOut.stdout,'');assert.equal((await helper(cb)).stdout.trim(),'access-b-1');
+ await rpc('signOutSubscriptionAccount',a.subscriptionAccountId);const signedOut=await helper(ca);assert.notEqual(signedOut.code,0);assert.equal(signedOut.stdout,'');assert.match((await helper(cb)).stdout.trim(),/^access-b-\d+$/);
  pass('signing out an account rejects its old command without substituting another account or breaking the selected connection');
- await stop();const beforeSettings=await readFile(join(root,'settings.json'),'utf8'),beforeConfig=await readFile(join(root,'codex/config.toml'),'utf8');
- await new Promise(r=>setTimeout(r,3100));lifetime=3600;
- const refreshing=new Promise(resolve=>refreshStarted=resolve),offline=Array.from({length:4},()=>helper(cb));await refreshing;
- start();const reopened=rpc('getState');await new Promise(r=>setTimeout(r,200));refreshRelease();
- for(const result of await Promise.all(offline)){assert.equal(result.code,0,result.stderr);assert.equal(result.stdout.trim(),'access-b-2');}
- await reopened;assert.equal(rotations.get('b'),2);assert.equal(await readFile(join(root,'settings.json'),'utf8'),beforeSettings);assert.equal(await readFile(join(root,'codex/config.toml'),'utf8'),beforeConfig);assert.equal(await readFile(join(root,'codex/auth.json'),'utf8'),auth);
- pass('closed Deck serializes concurrent one-shot refresh; application startup waits without changing client settings or the original login');
- const restarted=await helper(cb);assert.equal(restarted.stdout.trim(),'access-b-2');state=await rpc('getState');assert.equal(state.tracingEnabled,false);assert.equal(state.backgroundGatewayActive,false);
+ const beforeSettings=await readFile(join(root,'settings.json'),'utf8'),beforeConfig=await readFile(join(root,'codex/config.toml'),'utf8');
+ for(let round=0;round<6;round++){
+  await stop();await new Promise(r=>setTimeout(r,3100));lifetime=round===5?3600:62;const expectedRotation=(rotations.get('b')??0)+1;
+  const refreshing=new Promise(resolve=>refreshStarted=resolve),offline=Array.from({length:4},()=>helper(cb));await refreshing;
+  start();const reopened=rpc('getState');await new Promise(r=>setTimeout(r,200));refreshRelease();
+  for(const result of await Promise.all(offline)){assert.equal(result.code,0,result.stderr);assert.equal(result.stdout.trim(),'access-b-'+expectedRotation);}
+  await reopened;assert.equal(rotations.get('b'),expectedRotation);assert.equal(await readFile(join(root,'settings.json'),'utf8'),beforeSettings);assert.equal(await readFile(join(root,'codex/config.toml'),'utf8'),beforeConfig);assert.equal(await readFile(join(root,'codex/auth.json'),'utf8'),auth);
+ }
+ pass('six closed-host restart rounds serialize four credential commands each, preserving client settings and original login through lease handoffs');
+ const restarted=await helper(cb);assert.equal(restarted.stdout.trim(),'access-b-'+rotations.get('b'));state=await rpc('getState');assert.equal(state.tracingEnabled,false);assert.equal(state.backgroundGatewayActive,false);
  pass('application restart retains the selected native binding and renews credentials independently of Trace');
  const snapshots=[];for(const id of ['c','d']){const p=providers.connections.find(p=>p.subscriptionAccountId==='native-'+id);await rpc('switchClientProvider',{client:'codex',providerId:p.id});await rpc('updateCodexConfig',{expectedProviderId:p.id,compatibleModel:'native-response-model'});snapshots.push(await config());}
  const held=id=>{let started,release;const entered=new Promise(resolve=>started=resolve),wait=new Promise(resolve=>release=resolve);heldRefreshes.set(id,{started,wait});return{entered,release};};

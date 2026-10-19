@@ -429,7 +429,7 @@ async fn output(mut response: Response, api: String, streaming: bool) -> Respons
                        for call in chat_final["choices"][0]["message"]["tool_calls"].as_array().into_iter().flatten(){if sent_tools.insert(text(call,"id").into()){if api=="gemini"{yield Ok(stream_frame(json!({"candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"id":call["id"],"name":call["function"]["name"],"args":serde_json::from_str::<Value>(text(&call["function"],"arguments")).unwrap_or(Value::Null)}}]}}]})));}else{let mut tool=call.clone();tool["index"]=json!(tools.len());yield Ok(stream_frame(json!({"id":response_id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[{"index":0,"delta":{"tool_calls":[tool]},"finish_reason":null}]})));}}}
                        let final_value=response_json(&v["response"],&api);
                        if api=="gemini"{let mut tail=final_value;tail["candidates"][0]["content"]["parts"]=json!([]);yield Ok(stream_frame(tail));}
-                       else{yield Ok(stream_frame(json!({"id":v["response"]["id"],"object":"chat.completion.chunk","model":v["response"]["model"],"choices":[{"index":0,"delta":{},"finish_reason":final_value["choices"][0]["finish_reason"]}]})));yield Ok(stream_frame(json!({"id":v["response"]["id"],"object":"chat.completion.chunk","model":v["response"]["model"],"choices":[],"usage":final_value["usage"]})));yield Ok(axum::body::Bytes::from_static(b"data: [DONE]\n\n"));}
+                       else{yield Ok(stream_frame(json!({"id":v["response"]["id"],"object":"chat.completion.chunk","created":created,"model":v["response"]["model"],"choices":[{"index":0,"delta":{},"finish_reason":final_value["choices"][0]["finish_reason"]}]})));yield Ok(stream_frame(json!({"id":v["response"]["id"],"object":"chat.completion.chunk","created":created,"model":v["response"]["model"],"choices":[],"usage":final_value["usage"]})));yield Ok(axum::body::Bytes::from_static(b"data: [DONE]\n\n"));}
                        done=true;continue;
                    }
                    if kind=="response.output_text.delta"{sent_text.push_str(text(&v,"delta"));}
@@ -641,19 +641,43 @@ async fn forward_inner(
         .nth(1)
         .and_then(|s| s.split(':').next())
         .unwrap_or("");
+    let mut consumed = original.clone();
+    if id == "deepseek-harness" && text(&consumed, "model") == client_wiring::DSH_DEFAULT_MODEL {
+        if let Some(provider) = route
+            .provider
+            .as_ref()
+            .filter(|p| !p.codex_model.is_empty())
+        {
+            // Only the exact Deck-owned Harness catalog ID follows selection.
+            // Preserve the native request in Origin and all explicit model IDs.
+            consumed["model"] = json!(provider.codex_model);
+        }
+    }
+    if matches!(id.as_str(), "codebuddy-code" | "workbuddy")
+        && text(&consumed, "model").starts_with("xwx_deck/")
+    {
+        if let Some(provider) = route.provider.as_ref().filter(|p| {
+            !p.codex_model.is_empty()
+                && text(&consumed, "model") == format!("xwx_deck/{}", p.codex_model)
+        }) {
+            // The consumer's generated catalog ID is local to that client.
+            // Keep it in Origin; send the saved upstream model on the wire.
+            consumed["model"] = json!(provider.codex_model);
+        }
+    }
     let native_chat = chat
         && route.provider.as_ref().is_some_and(|p| {
-            resolve_wire(&route.root, p, original["model"].as_str(), "responses")
+            resolve_wire(&route.root, p, consumed["model"].as_str(), "responses")
                 == "chat-completions"
         });
     let normalized = if native_chat {
-        Ok(original.clone())
+        Ok(consumed.clone())
     } else if chat {
-        chat_input(&original)
+        chat_input(&consumed)
     } else if gemini {
-        gemini_input(&original, model, streaming)
+        gemini_input(&consumed, model, streaming)
     } else {
-        Ok(original.clone())
+        Ok(consumed)
     };
     let normalized = match normalized {
         Ok(v) => v,

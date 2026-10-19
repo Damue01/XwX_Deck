@@ -1,5 +1,14 @@
 # 整合验收
 
+## Provider 切换修复
+
+2026-10-19 在 `c6496fe` 上修复 Claude 旧配置残留与认证启动竞争。
+原生桌面补测还修复 Harness 不同型号的旧会话引用失效。
+Mac 21 个客户端、Windows 20 个客户端完成实际切换。
+Cline、Grok 的续接限制及 Qoder、Windows Zed 的受阻项分别保留。
+实际客户端矩阵与未通过项见 [切换修复验收](provider-switch-repair-acceptance.md)。
+该记录不替代正式安装包和真实厂商授权验收。
+
 ## 当前源码整合
 
 2026-10-19 按用户确认合入 Trace 正文压缩和网站语言改动。

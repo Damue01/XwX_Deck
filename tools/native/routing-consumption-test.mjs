@@ -49,7 +49,7 @@ async function send(ws, body) {
 }
 async function test(name, run) {
   if (process.env.XWX_ROUTING_CASE && process.env.XWX_ROUTING_CASE !== name) return;
-  const app = startNativeRpc(join(root, name));
+  const app = startNativeRpc(join(root, name), ['--subscription-test-endpoint', base.replace(/\/v1$/, '')]);
   try { await app.rpc('getState'); await run(app); checks.push(name); console.log('PASS ' + name); }
   catch (error) { failures.push({ name, error: error.message }); console.error('FAIL ' + name + ': ' + error.message); }
   finally { for (const ws of sockets) await close(ws); sockets.clear(); await app.stop(); }
@@ -64,6 +64,105 @@ async function post(app, state, input, previous, model = 'launch-model', extra =
   assert.equal(result.status, 200, await result.clone().text()); return result.json();
 }
 try {
+  await test('harness-stable-session-model-id', async app => {
+    const state = await select(app);
+    const url = state.localBaseUrl + '/clients/deepseek-harness/v1/responses';
+    const sendModel = async model => {
+      const reply = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, input: 'same Harness model reference' }) });
+      assert.equal(reply.status, 200, await reply.clone().text());
+    };
+    for (const model of ['launch-model', 'new-model', 'launch-model']) {
+      const route = await app.rpc('getClientRoute', 'deepseek-harness');
+      await app.rpc('setClientRoute', { client: 'deepseek-harness', providerId: 'route', model, configDigest: route.configDigest, takeoverConfirmed: true });
+      await sendModel('xwx_deck/default');
+      assert.equal(calls.at(-1).body.model, model);
+    }
+    for (const explicit of ['user-explicit-model', 'xwx_deck/user-explicit-model']) {
+      await sendModel(explicit);
+      assert.equal(calls.at(-1).body.model, explicit, 'only the exact owned Harness ID is consumed');
+    }
+    const otherRoute = await app.rpc('getClientRoute', 'opencode');
+    await app.rpc('setClientRoute', { client: 'opencode', providerId: 'route', model: 'launch-model', configDigest: otherRoute.configDigest, takeoverConfirmed: true });
+    const unrelated = await fetch(state.localBaseUrl + '/clients/opencode/v1/responses', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'xwx_deck/default', input: 'another client explicit model' }) });
+    assert.equal(unrelated.status, 200, await unrelated.clone().text());
+    assert.equal(calls.at(-1).body.model, 'xwx_deck/default', 'Harness alias mapping is client-scoped');
+    const dashboard = await app.rpc('getDashboardUrl');
+    const summary = await (await fetch(dashboard + 'api/state')).json();
+    const sessions = summary.sessions.filter(session => session.source === 'deepseek-harness');
+    const traces = (await Promise.all(sessions.map(async session => (await (await fetch(dashboard + 'api/session/' + session.id)).json()).traces))).flat();
+    const managed = traces.filter(trace => trace.request.body.model === 'xwx_deck/default');
+    assert.equal(managed.length, 3);
+    assert.deepEqual(managed.map(trace => trace.upstream.requestBody.model).sort(), ['launch-model', 'launch-model', 'new-model']);
+    await app.rpc('toggleTracing', false);
+  });
+  await test('consumer-local-model-id', async app => {
+    const state = await select(app);
+    for (const client of ['workbuddy', 'codebuddy-code', 'opencode']) {
+      const route = await app.rpc('getClientRoute', client);
+      await app.rpc('setClientRoute', { client, providerId: 'route', model: 'launch-model', configDigest: route.configDigest, takeoverConfirmed: true });
+      const localId = 'xwx_deck/launch-model';
+      const reply = await fetch(state.localBaseUrl + '/clients/' + client + '/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: localId, messages: [{ role: 'user', content: 'local catalog identifier' }] }) });
+      assert.equal(reply.status, 200, await reply.clone().text());
+      assert.equal(calls.at(-1).body.model, client === 'opencode' ? localId : 'launch-model');
+    }
+    const dashboard = await app.rpc('getDashboardUrl');
+    const summary = await (await fetch(dashboard + 'api/state')).json();
+    const sessions = summary.sessions.filter(s => ['workbuddy', 'codebuddy-code'].includes(s.source));
+    assert.deepEqual(new Set(sessions.map(session => session.source)), new Set(['workbuddy', 'codebuddy-code']));
+    for (const session of sessions) {
+      const detail = await (await fetch(dashboard + 'api/session/' + session.id)).json();
+      assert.ok(detail.traces.length > 0);
+      assert.ok(detail.traces.every(trace => trace.request.body.model === 'xwx_deck/launch-model' && trace.upstream.requestBody.model === 'launch-model'));
+    }
+    for (const client of ['workbuddy', 'codebuddy-code']) {
+      const explicit = 'xwx_deck/user-explicit-model';
+      const reply = await fetch(state.localBaseUrl + '/clients/' + client + '/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: explicit, messages: [{ role: 'user', content: 'keep my explicit choice' }] }) });
+      assert.equal(reply.status, 200, await reply.clone().text());
+      assert.equal(calls.at(-1).body.model, explicit, 'only the generated default ID is an alias; arbitrary client model text remains exact');
+    }
+    await app.rpc('toggleTracing', false);
+  });
+  await test('claude-subscription-releases-api-route', async app => {
+    const fixture = join(root, 'claude-subscription-releases-api-route');
+    const configPath = join(fixture, 'claude/settings.json');
+    const original = { env: { KEEP: 'user-value' }, permissions: { allow: ['Read'] } };
+    await writeFile(configPath, JSON.stringify(original));
+    const auth = JSON.stringify({ tokens: { access_token: 'synthetic-official-switch-token' }, account_id: 'fixture' });
+    await writeFile(join(fixture, 'codex/auth.json'), auth);
+    const registry = await app.rpc('connectSubscriptionAccount', 'official-chatgpt');
+    const official = registry.connections.find(provider => provider.subscriptionAccountId === 'official-chatgpt');
+    await app.rpc('saveProvider', { id: 'deepseek', displayName: 'DeepSeek fixture', adapter: 'anthropic-messages', baseUrl: base, bearerToken: 'synthetic-old-api-key' });
+    for (const tracing of [false, true, false]) {
+      await app.rpc('switchClientProvider', { client: 'claude', providerId: 'deepseek' });
+      await app.rpc('updateClaudeModels', { sonnet: 'launch-model' });
+      assert.equal(JSON.parse(await readFile(configPath, 'utf8')).env.ANTHROPIC_AUTH_TOKEN, 'synthetic-old-api-key');
+      if (tracing) await app.rpc('toggleTracing', true);
+      const selected = await app.rpc('switchClientProvider', { client: 'claude', providerId: official.id });
+      assert.equal(selected.selected.claude, official.id);
+      if (!tracing) {
+        assert.match(selected.warning, /开启 Trace/);
+        assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), original, 'pending subscription cannot retain the old API endpoint, key or model aliases');
+        await app.rpc('toggleTracing', true);
+      }
+      await app.rpc('updateClaudeModels', { sonnet: 'launch-model' });
+      const managed = JSON.parse(await readFile(configPath, 'utf8'));
+      const reply = await fetch(managed.env.ANTHROPIC_BASE_URL + '/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'sonnet', max_tokens: 32, messages: [{ role: 'user', content: 'continue selected official subscription' }] }) });
+      assert.equal(reply.status, 200, await reply.clone().text());
+      assert.equal((await reply.json()).content[0].text, 'routing fixture');
+      assert.equal(calls.at(-1).path, '/backend-api/codex/responses');
+      assert.equal(calls.at(-1).auth, 'Bearer synthetic-official-switch-token');
+      await app.rpc('toggleTracing', false);
+      assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), original, 'stopping Trace cannot resurrect the old API');
+      assert.equal(await readFile(join(fixture, 'codex/auth.json'), 'utf8'), auth);
+    }
+    await app.rpc('switchClientProvider', { client: 'claude', providerId: 'deepseek' });
+    const external = JSON.parse(await readFile(configPath, 'utf8'));
+    external.env.ANTHROPIC_AUTH_TOKEN = 'external-newer-key';
+    const externalText = JSON.stringify(external);
+    await writeFile(configPath, externalText);
+    await assert.rejects(app.rpc('switchClientProvider', { client: 'claude', providerId: official.id }), /外部/);
+    assert.equal(await readFile(configPath, 'utf8'), externalText);
+  });
   await test('model-change-active-websocket', async app => {
     const state = await select(app), ws = await open(state, 'model-thread');
     await send(ws, { model: 'launch-model', input: 'record launch default' });

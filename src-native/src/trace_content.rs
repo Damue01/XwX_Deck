@@ -251,8 +251,9 @@ mod tests {
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
-            let root =
-                std::env::temp_dir().join(format!("xwx-content-{}-{}", std::process::id(), uuid()));
+            let root = fs::canonicalize(std::env::temp_dir())
+                .unwrap()
+                .join(format!("xwx-content-{}-{}", std::process::id(), uuid()));
             fs::create_dir_all(&root).unwrap();
             Self(root.join("session.jsonl"))
         }

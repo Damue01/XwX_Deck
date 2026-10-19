@@ -3,6 +3,8 @@ use super::*;
 use sha2::{Digest, Sha256};
 #[path = "client_adapters.rs"]
 mod adapters;
+// Harness sessions retain this catalog ID while the selected upstream changes.
+pub(super) const DSH_DEFAULT_MODEL: &str = "xwx_deck/default";
 pub(super) const CLIENTS: &[&str] = &[
     "opencode",
     "gemini-cli",
@@ -550,14 +552,19 @@ impl Pilot {
                 let dir = self.wiring_directory("CODEBUDDY_CONFIG_DIR", home.join(".codebuddy"));
                 vec![dir.join("models.json"), dir.join("settings.json")]
             }
-            "workbuddy" => vec![workbuddy_directory(
-                &home,
-                self.isolated,
-                std::env::var_os("WORKBUDDY_CONFIG_DIR"),
-                std::env::var_os("CODEBUDDY_CONFIG_DIR"),
-                std::env::current_dir().ok().as_deref(),
-            )?
-            .join("models.json")],
+            "workbuddy" => {
+                let directory = workbuddy_directory(
+                    &home,
+                    self.isolated,
+                    std::env::var_os("WORKBUDDY_CONFIG_DIR"),
+                    std::env::var_os("CODEBUDDY_CONFIG_DIR"),
+                    std::env::current_dir().ok().as_deref(),
+                )?;
+                vec![
+                    directory.join("models.json"),
+                    directory.join("settings.json"),
+                ]
+            }
             "crush" => {
                 let config = self
                     .wiring_directory(
@@ -598,8 +605,32 @@ impl Pilot {
             let source = read(path)?;
             hash.update(path.to_string_lossy().as_bytes());
             hash.update([0]);
-            hash.update(if source.is_some() { [1] } else { [0] });
-            hash.update(source.as_deref().unwrap_or("").as_bytes());
+            // VS Code creates an empty model/settings file when its watcher
+            // observes restoration of a previously absent file. This carries
+            // no user configuration, but can happen between route snapshots.
+            // Keep real fields and their source bytes in the conflict digest.
+            let empty_vscode_file = id == "vscode"
+                && match path.file_name().and_then(|name| name.to_str()) {
+                    Some("chatLanguageModels.json") => source
+                        .as_deref()
+                        .map(parsed)
+                        .transpose()?
+                        .is_none_or(|value| value == json!([])),
+                    Some("settings.json") => source
+                        .as_deref()
+                        .map(parsed)
+                        .transpose()?
+                        .is_none_or(|value| value == json!({})),
+                    _ => false,
+                };
+            hash.update(if source.is_some() && !empty_vscode_file {
+                [1]
+            } else {
+                [0]
+            });
+            if !empty_vscode_file {
+                hash.update(source.as_deref().unwrap_or("").as_bytes());
+            }
             if let Some(source) = source {
                 if path
                     .extension()
@@ -715,9 +746,11 @@ impl Pilot {
                     vec![
                         (
                             vec!["provider", "xwx_deck"],
-                            json!({"name":"XwX Deck","npm":"@ai-sdk/openai-compatible","options":{"baseURL":format!("{base}/v1"),"apiKey":"xwx-deck"},"models":{model:{"name":model}}}),
+                            json!({"name":"XwX Deck","npm":"@ai-sdk/openai-compatible","options":{"baseURL":format!("{base}/v1"),"apiKey":"xwx-deck"},"models":{"selected":{"id":model,"name":model}}}),
                         ),
-                        (vec!["model"], json!(format!("xwx_deck/{model}"))),
+                        // Native sessions retain this catalog key. The id
+                        // remains the exact upstream model selected in Deck.
+                        (vec!["model"], json!("xwx_deck/selected")),
                     ]
                 }
             }
@@ -735,7 +768,8 @@ impl Pilot {
                 ),
                 (vec!["providerProtocol", "xwx_deck"], json!("openai")),
                 (vec!["env", "XWX_DECK_GATEWAY_KEY"], json!("xwx-deck")),
-                (vec!["security", "auth", "selectedType"], json!("xwx_deck")),
+                // Qwen stores the protocol here, not the custom registry ID.
+                (vec!["security", "auth", "selectedType"], json!("openai")),
                 (vec!["model", "name"], json!(model)),
             ],
             "pi" => vec![(
@@ -752,12 +786,14 @@ impl Pilot {
                     None => vec![],
                 };
                 models.retain(|m| !text(m, "id").starts_with("custom:xwx_deck/"));
-                models.push(json!({"id":format!("custom:xwx_deck/{model}"),"model":model,"displayName":format!("XwX Deck {model}"),"baseUrl":format!("{base}/v1"),"apiKey":"xwx-deck","provider":"generic-chat-completion-api"}));
+                // Droid resumes the saved model ID before reading the new default.
+                // A stable owned ID keeps the same session on the selected route.
+                models.push(json!({"id":"custom:xwx_deck/default","model":model,"displayName":format!("XwX Deck {model}"),"baseUrl":format!("{base}/v1"),"apiKey":"xwx-deck","provider":"generic-chat-completion-api"}));
                 vec![
                     (vec!["customModels"], json!(models)),
                     (
                         vec!["sessionDefaultSettings", "model"],
-                        json!(format!("custom:xwx_deck/{model}")),
+                        json!("custom:xwx_deck/default"),
                     ),
                 ]
             }
@@ -819,7 +855,7 @@ impl Pilot {
             }
             plans.push(json_plan(&paths[1], options)?);
         }
-        if id == "codebuddy-code" {
+        if matches!(id, "codebuddy-code" | "workbuddy") {
             plans.push(json_plan(
                 &paths[1],
                 vec![(vec!["model"], json!(format!("xwx_deck/{model}")))],

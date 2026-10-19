@@ -91,10 +91,12 @@ try {
   const generated=JSON.parse(await readFile(modelsPath,'utf8'));
   assert.equal(isPi ? generated.providers.xwx_deck.api : generated.provider.xwx_deck.npm,isPi ? 'openai-completions' : '@ai-sdk/openai-compatible');
   assert.ok((isPi ? generated.providers.xwx_deck.baseUrl : generated.provider.xwx_deck.options.baseURL).includes(`/clients/${client}/`));
+  if(!isPi){assert.equal(generated.model,'xwx_deck/selected');assert.equal(generated.provider.xwx_deck.models.selected.id,'fixture-a');}
   pass(client+' consumes native generated models/settings and calls the selected Gateway route');
-  await choose('b','fixture-b');assert.match(await cli(args),/isolated client fixture-b/);assert.equal(calls.at(-1).path,'/b/v1/responses');assert.equal(calls.at(-1).auth,'Bearer SYNTHETIC-b');
+  await choose('b','fixture-b');if(!isPi){const next=JSON.parse(await readFile(modelsPath,'utf8'));assert.equal(next.model,generated.model);assert.equal(next.provider.xwx_deck.models.selected.id,'fixture-b');}assert.match(await cli(args),/isolated client fixture-b/);assert.equal(calls.at(-1).path,'/b/v1/responses');assert.equal(calls.at(-1).auth,'Bearer SYNTHETIC-b');
+  await choose('a','fixture-a');assert.match(await cli(args),/isolated client fixture-a/);assert.equal(calls.at(-1).path,'/a/v1/chat/completions');assert.equal(calls.at(-1).auth,'Bearer SYNTHETIC-a');
   await choose('b','second-explicit-model');assert.match(await cli(args),/isolated client second-explicit-model/);assert.equal(calls.at(-1).model,'second-explicit-model');
-  assert.equal((await rpc('getTraceStats')).total.tokens,42);
+  assert.equal((await rpc('getTraceStats')).total.tokens,56);
   pass('provider and model switches use the latest selection, including Chat to Responses conversion with single-counted usage');
   await rpc('toggleTracing',false);assert.equal(await readFile(modelsPath,'utf8'),originalModels);assert.equal(await readFile(settingsPath,'utf8'),originalSettings);
   await assert.rejects(fetch(state.localBaseUrl+`/clients/${client}/v1/models`));assert.match(await cli(args),/isolated client direct-model/);

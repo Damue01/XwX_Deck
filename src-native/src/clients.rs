@@ -835,12 +835,9 @@ impl Pilot {
         if takeover {
             self.backup_client_repair("claude", &expected)?;
         }
-        if self
+        let subscription = self
             .selected_for("claude")
-            .is_some_and(|p| !p.subscription_account_id.is_empty())
-        {
-            return self.remember_subscription_route("claude", &current.to_string());
-        }
+            .is_some_and(|p| !p.subscription_account_id.is_empty());
         if let Some(p) = self
             .selected_for("claude")
             .filter(|p| !self.needs_gateway(p, "claude"))
@@ -896,6 +893,11 @@ impl Pilot {
                 &serde_json::to_string_pretty(&current).map_err(err)?,
             )?;
             fs::remove_file(journal).map_err(err)?;
+        }
+        if subscription {
+            // A Gateway-only choice must first release the previous managed
+            // API route. Otherwise stopping Trace silently reconnects to it.
+            self.remember_subscription_route("claude", &current.to_string())?;
         }
         Ok(())
     }

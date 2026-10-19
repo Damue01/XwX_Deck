@@ -163,7 +163,9 @@ try {for (const suite of activeSuites) {
 const failed = results.filter(result => result.code !== 0 || result.error);
 const passed = failed.length === 0 && !cleanupError;
 await mkdir('test-results', { recursive: true });
-await writeFile('test-results/native-backend-summary.json', JSON.stringify({ platform: process.platform, binarySha256, isolatedFixtures:true, fixturesCleaned:passed, ...!passed ? {retainedFixtures:temporaryRoot} : {}, ...cleanupError ? {cleanupError} : {}, installedClientsAvailable:Boolean(installedClientsAvailable), passed, results }, null, 2) + '\n');
+const reportPath=process.env.XWX_NATIVE_TEST_REPORT ?? 'test-results/native-backend-summary.json';
+await mkdir(dirname(resolve(reportPath)),{recursive:true});
+await writeFile(reportPath, JSON.stringify({ platform: process.platform, binarySha256, isolatedFixtures:true, fixturesCleaned:passed, ...!passed ? {retainedFixtures:temporaryRoot} : {}, ...cleanupError ? {cleanupError} : {}, installedClientsAvailable:Boolean(installedClientsAvailable), passed, results }, null, 2) + '\n');
 console.log(`Native backend: ${results.length - failed.length}/${results.length} suites returned successfully; ${results.filter(result => result.skipped).length} platform-specific skips`);
 if (failed.length) { console.error('Failed suites:', failed.map(result => result.suite).join(', ')); process.exitCode = 1; }
 if (cleanupError) { console.error('Fixture cleanup failed:',cleanupError.message); process.exitCode = 1; }
