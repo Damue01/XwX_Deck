@@ -49,7 +49,9 @@ jobs:
       - name: Use only the exact staged executable for remaining checks
         shell: pwsh
         run: |
-          "XWX_NATIVE_TEST_BINARY=$((Resolve-Path 'release/XwX Deck.exe').Path)" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force release-upload | Out-Null
+          Copy-Item 'release/XwX Deck.exe' release-upload/XwX-Deck-windows-x64.exe
+          "XWX_NATIVE_TEST_BINARY=$((Resolve-Path 'release-upload/XwX-Deck-windows-x64.exe').Path)" >> $env:GITHUB_ENV
       - name: Repeat strict private-file permissions three times
         shell: pwsh
         run: |
@@ -63,7 +65,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare only the older executable fixture resources
         run: node tools/native/prepare.mjs
+      - name: Verify actual Setup installation, upgrade and uninstall
+        shell: pwsh
+        run: |
+          ./tools/native/ensure-windows-webview2.ps1
+          node tools/native/windows-setup-fixture.mjs --output=test-results/setup-old-debug.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/native/windows-setup-test.mjs --old-binary=test-results/setup-old-debug.exe --new-binary="release/XwX Deck.exe" --new-setup="release/XwX Deck Setup.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify actual native WebView interactions
+        if: ${{ !cancelled() && env.XWX_NATIVE_TEST_BINARY != '' }}
         shell: pwsh
         run: |
           ./tools/native/ensure-windows-webview2.ps1
@@ -72,13 +83,6 @@ jobs:
       - name: Diagnose window setup without modifying the candidate
         if: failure()
         run: node tools/native/windows-window-probe.mjs
-      - name: Verify actual Setup installation, upgrade and uninstall
-        shell: pwsh
-        run: |
-          node tools/native/windows-setup-fixture.mjs --output=test-results/setup-old-debug.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tools/native/windows-setup-test.mjs --old-binary=test-results/setup-old-debug.exe --new-binary="release/XwX Deck.exe" --new-setup="release/XwX Deck Setup.exe"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
