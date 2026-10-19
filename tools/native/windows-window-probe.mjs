@@ -10,6 +10,11 @@ import {rustToolchain} from './toolchain.mjs';
 import {standardWindowsArtifact} from './windows-execution-level.mjs';
 assert.equal(process.platform,'win32');assert.equal(process.env.GITHUB_ACTIONS,'true');
 const root=process.cwd(),original=resolve(process.env.XWX_NATIVE_TEST_BINARY),report={diagnosticOnly:true,originalSha256:createHash('sha256').update(await readFile(original)).digest('hex'),runs:[]};
+await mkdir(resolve('test-results'),{recursive:true});
+function explicitMedium(path){
+ const result=spawnSync('icacls.exe',[path,'/setintegritylevel','M'],{encoding:'utf8'});
+ assert.equal(result.status,0,result.stderr);
+}
 const temporary=await realpath(tmpdir());
 report.filePermissions=spawnSync('icacls.exe',[original],{encoding:'utf8'}).stdout;
 async function probe(binary,args,label,extra={}){
@@ -33,14 +38,18 @@ await probe(original,home=>['--data-root',home],'original executable, ordinary w
 const freshDirectory=await mkdtemp(join(temporary,'xwx-fresh-image-'));
 const freshImage=join(freshDirectory,'XwX Deck.exe');await writeFile(freshImage,await readFile(original),{flag:'wx'});
 await probe(freshImage,home=>['--data-root',home],'identical bytes, Temp folder, spaces, inherited integrity');
-await standardWindowsArtifact(freshImage);
+explicitMedium(freshImage);
 await probe(freshImage,home=>['--data-root',home],'identical bytes, same path, explicit Medium file label');
+await standardWindowsArtifact(freshImage);
+await probe(freshImage,home=>['--data-root',home],'identical bytes, same path, restored normal file label');
 const noSpaces=join(freshDirectory,'XwX-Deck.exe');await writeFile(noSpaces,await readFile(original),{flag:'wx'});
 await probe(noSpaces,home=>['--data-root',home],'identical bytes, Temp folder, no spaces, inherited integrity');
 const repositoryImage=resolve('release-upload','XwX Deck.exe');await mkdir(resolve(repositoryImage,'..'),{recursive:true});await writeFile(repositoryImage,await readFile(original),{flag:'wx'});
 await probe(repositoryImage,home=>['--data-root',home],'identical bytes, repository folder, spaces, inherited integrity');
-await standardWindowsArtifact(repositoryImage);
+explicitMedium(repositoryImage);
 await probe(repositoryImage,home=>['--data-root',home],'identical bytes, same repository path, explicit Medium file label');
+await standardWindowsArtifact(repositoryImage);
+await probe(repositoryImage,home=>['--data-root',home],'identical bytes, same repository path, restored normal file label');
 if(process.argv.includes('--matrix-only')){
   assert.equal(createHash('sha256').update(await readFile(original)).digest('hex'),report.originalSha256);
   process.exit(0);

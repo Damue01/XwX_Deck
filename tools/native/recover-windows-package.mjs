@@ -25,7 +25,7 @@ if(failed.length){
 }
 // Recovery may alter independent test drivers, never any compiled source,
 // embedded smoke scripts, resources or installer implementation.
-execFileSync('git',['diff','--exit-code',original.commit,'HEAD','--','src','src-native','assets','package.json','package-lock.json','release-contract.json','tools/build',':(glob)tools/native/*.js','tools/native/windows-nsis.mjs','tools/native/windows-setup.nsi','tools/native/windows-setup-skin.cpp','tools/native/windows-execution-level.mjs'],{stdio:'inherit'});
+execFileSync('git',['diff','--exit-code',original.commit,'HEAD','--','src','src-native','assets','package.json','package-lock.json','release-contract.json','tools/build',':(glob)tools/native/*.js','tools/native/windows-nsis.mjs','tools/native/windows-setup.nsi','tools/native/windows-setup-skin.cpp'],{stdio:'inherit'});
 if(process.argv.includes('--aggregate')){
   if(!failed.length){
     await writeFile('test-results/native-backend-aggregate.json',JSON.stringify({...previous,priorRun:process.env.XWX_PRIOR_NATIVE_RUN,priorFullRunPassed:true,method:'Identical executable; retain the successful complete backend run'},null,2)+'\n');

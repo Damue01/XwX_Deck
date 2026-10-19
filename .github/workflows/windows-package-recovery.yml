@@ -55,11 +55,15 @@ jobs:
           ./tools/native/ensure-windows-webview2.ps1
           node tools/native/windows-window-probe.mjs --matrix-only
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tools/native/windows-medium-launch.ps1 -Script tools/native/windows-window-probe.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-startup-matrix
-          path: test-results/windows-window-probe.json
+          path: |
+            test-results/windows-window-probe.json
+            test-results/windows-medium-token.json
+            test-results/windows-startup-matrix-medium.json
           if-no-files-found: error
   recover:
     if: ${{ !inputs.startup_matrix_only }}
