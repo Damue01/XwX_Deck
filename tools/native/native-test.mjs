@@ -15,6 +15,14 @@ const folderWindows = await trackWindowsFolderWindows(root);
 const installations=join(root,'installations');
 let binary = process.env.XWX_NATIVE_TEST_BINARY ? resolve(process.env.XWX_NATIVE_TEST_BINARY) : resolve(import.meta.dirname, process.platform==='darwin'?'../../test-results/rust-pilot-package/XwXDeck Rust Validation.app/Contents/MacOS/xwx-deck-native':'../../test-results/native-target/release/xwx-deck-native.exe');
 const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
+// The application selects updates for its own architecture, including Rosetta.
+let candidateArch=process.arch;
+if(process.platform==='darwin'){
+  const arch=spawnSync('/usr/bin/lipo',['-archs',binary],{encoding:'utf8'});
+  assert.equal(arch.status,0,arch.stderr);
+  const value=arch.stdout.trim();assert.ok(['arm64','x86_64'].includes(value),value);
+  candidateArch=value==='x86_64'?'x64':'arm64';
+}
 let stagedAppDirectory;
 if (process.platform === 'darwin' && binary.includes('.app/Contents/MacOS/')) {
   stagedAppDirectory = await mkdtemp(join(await realpath(tmpdir()), 'xwx-webview-bundle-'));
@@ -32,7 +40,7 @@ const fixtureUpdateVersion=`${updateParts[0]}.${updateParts[1]}.${updateParts[2]
 const updatePayload=Buffer.from('isolated update download fixture');let updateDownloads=0;
 const upstream = createServer(async (req, res) => {
   if(nativeOfficialFixture&&req.url.startsWith('/backend-api/codex/models')){res.setHeader('content-type','application/json');res.end(JSON.stringify({models:['gpt-6.1-sol','gpt-6-luna'].map(slug=>({slug,visibility:'list',display_name:slug}))}));return;}
-  if(req.url==='/release.json'){res.setHeader('content-type','application/json');res.end(JSON.stringify({schemaVersion:1,channel:'release',releaseSeries:'native-v1',version:fixtureUpdateVersion,tag:'v'+fixtureUpdateVersion,changelog:'Isolated update notification',files:[{platform:process.platform==='darwin'?'darwin':'windows',arch:process.arch,name:process.platform==='darwin'?'fixture.dmg':'fixture.exe',url:base.replace('/v1','')+'/update-fixture',size:updatePayload.length,sha256:createHash('sha256').update(updatePayload).digest('hex')}]}));return;}
+  if(req.url==='/release.json'){res.setHeader('content-type','application/json');res.end(JSON.stringify({schemaVersion:1,channel:'release',releaseSeries:'native-v1',version:fixtureUpdateVersion,tag:'v'+fixtureUpdateVersion,changelog:'Isolated update notification',files:[{platform:process.platform==='darwin'?'darwin':'windows',arch:candidateArch,name:process.platform==='darwin'?'fixture.dmg':'fixture.exe',url:base.replace('/v1','')+'/update-fixture',size:updatePayload.length,sha256:createHash('sha256').update(updatePayload).digest('hex')}]}));return;}
   if(req.url==='/update-fixture'){updateDownloads++;res.end(updatePayload);return;}
   if (req.url === '/v1/models') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'pilot-model' }], ...(nativeOfficialFixture?{models:['gpt-6.1-sol','gpt-6-luna'].map(slug=>({slug,visibility:'list',display_name:slug}))}:{}) })); return; }
   if(req.method==='GET'){res.writeHead(404,{'content-type':'application/json'});res.end('{}');return;}

@@ -1,0 +1,81 @@
+name: Verify packaged Windows clients
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful desktop package run providing the Windows artifacts
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    name: Actual Windows client requests
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install verification dependencies
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x64
+          path: release-candidate
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-verification
+          path: build-evidence
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify downloaded executable identity
+        shell: pwsh
+        run: |
+          $report = Get-Content build-evidence/release/native-build-report.json -Raw | ConvertFrom-Json
+          $binary = (Resolve-Path release-candidate/XwX-Deck-windows-x64.exe).Path
+          $sha = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne $report.candidate.binarySha256) { throw 'Downloaded binary differs from its native build report' }
+          "XWX_NATIVE_TEST_BINARY=$binary" >> $env:GITHUB_ENV
+      - name: Install pinned official clients in the disposable runner
+        run: npm install --prefix test-results/official-clients --no-save @openai/codex@0.163.0-alpha.10.2 @anthropic-ai/claude-code@2.1.303
+      - name: Locate native client executables
+        shell: pwsh
+        run: |
+          $codex = Get-ChildItem test-results/official-clients/node_modules/@openai -Recurse -Filter codex.exe | Select-Object -First 1
+          $claude = Get-ChildItem test-results/official-clients/node_modules/@anthropic-ai -Recurse -Filter claude.exe | Select-Object -First 1
+          if (!$codex -or !$claude) { throw 'Official native client executable is missing' }
+          "XWX_NATIVE_TEST_CODEX=$($codex.FullName)" >> $env:GITHUB_ENV
+          "XWX_DECK_INSTALLED_CLAUDE=$($claude.FullName)" >> $env:GITHUB_ENV
+      - name: Switch providers through native UI and continue the original sessions
+        shell: pwsh
+        run: |
+          node tools/native/provider-switch-native-ui-test.mjs "$env:XWX_NATIVE_TEST_CODEX" "$env:XWX_DECK_INSTALLED_CLAUDE"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify Claude OAuth cleanup, restart and original-session requests
+        shell: pwsh
+        run: |
+          node tools/native/claude-oauth-live-test.mjs claude "$env:XWX_DECK_INSTALLED_CLAUDE"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify actual Codex authentication and concurrent helper restarts
+        run: node tools/native/native-auth-test.mjs
+      - name: Preserve exact package verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installed-client-verification
+          path: |
+            test-results/native-provider-switch*.json
+            test-results/native-auth-summary.json
+            test-results/live-client-switch-claude-oauth.json
+          if-no-files-found: warn
