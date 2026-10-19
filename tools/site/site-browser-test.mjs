@@ -73,7 +73,7 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     const primary = page.locator('#recommended-download');
     await primary.getByText('下载 Windows 版').waitFor();
-    assert.match(await primary.getAttribute('href'), /windows-x64\.exe$/);
+    assert.match(await primary.getAttribute('href'), /windows-x64-setup\.exe$/);
     const primaryBox = await primary.boundingBox();
     const otherBox = await page.locator('#download-options > summary').boundingBox();
     assert.ok(Math.abs(primaryBox.x + primaryBox.width / 2 - width / 2) < 1, 'primary download aligns with the page center independently of other versions');

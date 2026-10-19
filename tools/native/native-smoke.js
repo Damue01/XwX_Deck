@@ -370,7 +370,8 @@
       await wait(() => !document.querySelector('#configuration-accounts [data-account-id="official-chatgpt"]'), 'native account snapshot restored after UI fixture');
 
       document.querySelector('[data-subscription-service="grok"]').click(); await delay(150);
-      check('Grok requires the actual official CLI before account login', document.querySelector('.subscription-login-button').textContent.includes('安装 Grok Build'));
+      const grokInstalled = (await window.xwxDeck.getSubscriptionAccounts()).grokInstalled !== false;
+      check('Grok account action matches actual official CLI discovery', document.querySelector('.subscription-login-button').textContent.trim() === (grokInstalled ? '添加账号' : '安装 Grok Build'));
       check('subscription directory contains only implemented account sign-ins, never API presets', document.querySelectorAll('[data-subscription-service]').length === 5 && [...document.querySelectorAll('[data-subscription-service]')].every(button => ['chatgpt', 'grok', 'copilot', 'claude', 'cursor'].includes(button.dataset.subscriptionService)) && !document.querySelector('#configuration-accounts input[type=password]'));
       for (const platform of ['grok', 'copilot', 'claude', 'cursor']) {
         document.querySelector(`[data-subscription-service="${platform}"]`).click();
