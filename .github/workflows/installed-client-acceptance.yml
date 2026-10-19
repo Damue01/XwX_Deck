@@ -6,6 +6,10 @@ on:
       build_run_id:
         required: true
         type: string
+      use_cached_binary:
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       build_run_id:
@@ -33,6 +37,7 @@ jobs:
       - name: Install verification dependencies
         run: npm ci
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.use_cached_binary }}
         with:
           name: windows-x64
           path: release-candidate
@@ -44,6 +49,23 @@ jobs:
           path: build-evidence
           run-id: ${{ inputs.build_run_id }}
           github-token: ${{ github.token }}
+      - uses: actions/cache/restore@v4
+        if: inputs.use_cached_binary
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            test-results/native-target
+          key: ${{ runner.os }}-${{ runner.arch }}-native-rust-v2-${{ hashFiles('src-native/Cargo.lock') }}
+          fail-on-cache-miss: true
+      - name: Recover only the exact previously tested binary
+        if: inputs.use_cached_binary
+        shell: pwsh
+        run: |
+          node tools/native/recover-windows-package.mjs --binary-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force release-candidate | Out-Null
+          Copy-Item 'release/XwX Deck.exe' release-candidate/XwX-Deck-windows-x64.exe
       - name: Verify downloaded executable identity
         shell: pwsh
         run: |
@@ -62,12 +84,6 @@ jobs:
           if (!$codex -or !$claude) { throw 'Official native client executable is missing' }
           "XWX_NATIVE_TEST_CODEX=$($codex.FullName)" >> $env:GITHUB_ENV
           "XWX_DECK_INSTALLED_CLAUDE=$($claude.FullName)" >> $env:GITHUB_ENV
-      - name: Switch providers through native UI and continue the original sessions
-        shell: pwsh
-        run: |
-          ./tools/native/ensure-windows-webview2.ps1
-          node tools/native/provider-switch-native-ui-test.mjs "$env:XWX_NATIVE_TEST_CODEX" "$env:XWX_DECK_INSTALLED_CLAUDE"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify Claude OAuth cleanup, restart and original-session requests
         shell: pwsh
         run: |
@@ -75,6 +91,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify actual Codex authentication and concurrent helper restarts
         run: node tools/native/native-auth-test.mjs
+      - name: Verify actual Codex and Claude CLI switching and original sessions
+        shell: pwsh
+        run: |
+          node tools/native/client-switch-live-test.mjs codex "$env:XWX_NATIVE_TEST_CODEX"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/native/client-switch-live-test.mjs claude "$env:XWX_DECK_INSTALLED_CLAUDE"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Switch providers through native UI and continue the original sessions
+        shell: pwsh
+        run: |
+          ./tools/native/ensure-windows-webview2.ps1
+          node tools/native/provider-switch-native-ui-test.mjs "$env:XWX_NATIVE_TEST_CODEX" "$env:XWX_DECK_INSTALLED_CLAUDE"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Preserve exact package verification evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -83,5 +112,5 @@ jobs:
           path: |
             test-results/native-provider-switch*.json
             test-results/native-auth-summary.json
-            test-results/live-client-switch-claude-oauth.json
+            test-results/live-client-switch-*.json
           if-no-files-found: warn

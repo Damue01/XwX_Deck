@@ -17,6 +17,11 @@ on:
         description: Verify official Windows clients against an existing successful package run
         required: false
         type: string
+      use_cached_windows_binary:
+        description: Verify the exact cached executable when package UI acceptance is still incomplete
+        required: false
+        type: boolean
+        default: false
       recover_windows_run_id:
         description: Resume exact Windows binary acceptance after the sole ACL inspection timeout
         required: false
@@ -51,6 +56,7 @@ jobs:
     uses: ./.github/workflows/installed-client-acceptance.yml
     with:
       build_run_id: ${{ inputs.verify_build_run_id }}
+      use_cached_binary: ${{ inputs.use_cached_windows_binary || false }}
 
   validate:
     if: ${{ !inputs.verify_build_run_id && !inputs.recover_windows_run_id }}

@@ -39,6 +39,10 @@ const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 assert.equal(sha(await readFile(cached)),original.candidate.binarySha256,'Cached executable differs from the previously tested exact binary');
 await assertPublicBinary(cached,root);await mkdir('release',{recursive:true});
 const binary=resolve('release/XwX Deck.exe');await copyFile(cached,binary);await standardWindowsArtifact(binary);
+if(process.argv.includes('--binary-only')){
+  await writeFile('release/native-build-report.json',JSON.stringify({...original,candidate:{...original.candidate,binary},reusedNativeBinary:true},null,2)+'\n');
+  process.exit(0);
+}
 const installer=await buildWindowsSetup({root,binary,output:resolve('release/XwX Deck Setup.exe'),version:original.version});
 const packagingCommit=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
 const report={...original,candidate:{...original.candidate,binary},installer,reusedNativeBinary:true,packagedAt:new Date().toISOString(),packagingCommit,packagingSourceFingerprint:(await sourceFingerprint(root)).sha256,priorNativeRun:process.env.XWX_PRIOR_NATIVE_RUN};
