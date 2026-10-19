@@ -15,7 +15,7 @@ function invoke(root,requests=[request('getProviders')],env=plainEnv){return spa
 function ok(result){assert.equal(result.status,0,result.stderr);const replies=result.stdout.trim().split('\n').filter(Boolean).map(JSON.parse);assert.ok(replies.every(r=>r.ok),JSON.stringify(replies));return replies.map(r=>r.result);}
 const pass=s=>{checks.push(s);console.log('PASS '+s);};
 function windowsAcl(path){
- const script='$ErrorActionPreference="Stop"; $acl=Get-Acl -LiteralPath $env:XWX_TEST_PRIVATE_PATH; $rules=@($acl.Access | ForEach-Object { @{sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value; rights=[int]$_.FileSystemRights; type=[int]$_.AccessControlType} }); @{protected=$acl.AreAccessRulesProtected; rules=$rules; sddl=$acl.Sddl} | ConvertTo-Json -Compress -Depth 5';
+ const script='$ErrorActionPreference="Stop"; $acl=Get-Acl -LiteralPath $env:XWX_TEST_PRIVATE_PATH; $rules=@($acl.Access | ForEach-Object { @{sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value; rights=[int]$_.FileSystemRights; type=[int]$_.AccessControlType} }); @{protected=$acl.AreAccessRulesProtected; rules=$rules; sddl=$acl.Sddl; owner=$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value; currentUser=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value} | ConvertTo-Json -Compress -Depth 5';
  const env={...plainEnv,XWX_TEST_PRIVATE_PATH:path};
  // Windows PowerShell must load its own modules when launched from PowerShell 7.
  delete env.PSModulePath;
@@ -24,7 +24,7 @@ function windowsAcl(path){
 }
 async function privateMode(path,directory=false){
  if(process.platform!=='win32'){assert.equal((await stat(path)).mode&0o777,directory?0o700:0o600);return;}
- const acl=windowsAcl(path);assert.equal(acl.protected,true);assert.equal(acl.rules.length,1);assert.equal(acl.rules[0].sid,'S-1-3-4');assert.equal(acl.rules[0].rights,2032127);assert.equal(acl.rules[0].type,0);
+ const acl=windowsAcl(path);assert.equal(acl.protected,true);assert.equal(acl.owner,acl.currentUser,'private paths must belong to the account, not an elevated parent group');assert.equal(acl.rules.length,1);assert.equal(acl.rules[0].sid,acl.currentUser);assert.equal(acl.rules[0].rights,2032127);assert.equal(acl.rules[0].type,0);
 }
 try{
  const fresh=join(parent,'fresh');await mkdir(fresh);ok(invoke(fresh,[request('getState'),request('saveProvider',{displayName:'Fixture_84ea73a2',providerPreset:'custom',baseUrl:'https://example.test/v1',adapter:'responses',bearerToken:secret,codexModel:'explicit-model'})]));

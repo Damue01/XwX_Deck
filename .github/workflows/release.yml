@@ -149,8 +149,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             test-results/native-target
-          key: ${{ runner.os }}-${{ runner.arch }}-native-rust-v2-${{ hashFiles('src-native/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-native-rust-v3-${{ hashFiles('src-native/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-native-rust-v3-${{ hashFiles('src-native/Cargo.lock') }}-
             ${{ runner.os }}-${{ runner.arch }}-native-rust-
 
       - name: Build Windows per-user Setup and portable package
@@ -252,8 +253,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             test-results/native-target
-          key: ${{ runner.os }}-${{ runner.arch }}-native-rust-v2-${{ hashFiles('src-native/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-native-rust-v3-${{ hashFiles('src-native/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-native-rust-v3-${{ hashFiles('src-native/Cargo.lock') }}-
             ${{ runner.os }}-${{ runner.arch }}-native-rust-
 
       - name: Build macOS candidate
@@ -303,6 +305,16 @@ jobs:
           path: release-upload/*
           if-no-files-found: error
 
+  verify-built-windows-clients:
+    if: ${{ always() && needs.windows.result == 'success' }}
+    needs: windows
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/installed-client-acceptance.yml
+    with:
+      build_run_id: ${{ github.run_id }}
+
   release-draft:
     if: github.event_name == 'push'
     name: Assemble draft release
@@ -310,6 +322,7 @@ jobs:
       - validate
       - windows
       - macos
+      - verify-built-windows-clients
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: release

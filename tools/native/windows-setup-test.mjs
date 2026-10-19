@@ -143,7 +143,7 @@ try {
  await wait(async()=>{try{const r=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));assert.ok(r.passed,r.error);return r.stage==='restarted'&&r.version===oldVersion;}catch(e){if(e.code==='ENOENT')return false;throw e;}},'Old app recovery did not render');
  await wait(()=>!spawnSync('tasklist.exe',['/FI','PID eq '+failure.recoveryPid,'/FO','CSV','/NH'],{encoding:'utf8',windowsHide:true}).stdout.includes('"'+failure.recoveryPid+'"'),'Recovered test app did not exit');
  pass('detached update helper rejects tampering and renders the unchanged old application again');
- ui=spawn(executable,['--pilot-root',data,'--smoke','--smoke-setup-update','--smoke-setup-restart'],{windowsHide:true,env:{...process.env,WEBVIEW2_USER_DATA_FOLDER:join(work,'browser-profile'),XWX_DECK_UPDATE_SERVER_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:'ignore'});
+ ui=spawn(executable,['--pilot-root',data,'--smoke','--smoke-setup-update','--smoke-setup-restart'],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:'ignore'});
  await wait(async()=>{try{const r=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));if(!r.passed)throw Error(r.error);return r.stage==='downloaded';}catch(e){if(e.code==='ENOENT')return false;throw e;}},'Rendered updater did not download');
  await wait(()=>ui.exitCode!==null,'Old app did not exit');assert.equal(ui.exitCode,0);
  await wait(async()=>{try{const r=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));if(!r.passed)throw Error(r.error);return r.stage==='restarted'&&r.version===newVersion;}catch(e){if(e.code==='ENOENT')return false;throw e;}},'Updated app did not render');
@@ -166,7 +166,7 @@ try {
  pass('uninstall removes owned application files and registration, retaining user files, configuration and Trace');
  assert.equal(setup(artifacts.new.path,['/D='+install],'reinstall'),0);await rpcSession(executable,async rpc=>{assert.deepEqual(await rpc('getProviders'),providersBefore);});assert.equal(await uninstall('uninstall-reinstalled'),0);
  pass('reinstallation restores the retained choices and a second uninstall succeeds');
- await writeFile(join(work,'summary.json'),JSON.stringify({passed:true,checks,artifacts,modelRequests,work,binarySha256:hash(await readFile(newBinary)),scope:'isolated per-user system and work-drive installation, recovery, repair, native rendered update, uninstall and retention; loopback requests; no MSI engine',browserProfileOutsideCredentials:true},null,2)+'\n');console.log(JSON.stringify({passed:true,checks:checks.length,work}));
+ await writeFile(join(work,'summary.json'),JSON.stringify({passed:true,checks,artifacts,modelRequests,work,binarySha256:hash(await readFile(newBinary)),scope:'isolated per-user system and work-drive installation, recovery, repair, native rendered update, uninstall and retention; loopback requests; no MSI engine'},null,2)+'\n');console.log(JSON.stringify({passed:true,checks:checks.length,work}));
 }catch(error){await writeFile(join(work,'summary.json'),JSON.stringify({passed:false,checks,work,error:String(error)},null,2)+'\n');throw error;}
 finally {
  if(ui?.exitCode===null){const ended=once(ui,'exit');ui.kill();await ended;}

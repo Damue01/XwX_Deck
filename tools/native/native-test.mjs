@@ -10,10 +10,6 @@ import { trackWindowsFolderWindows } from './windows-folder-windows.mjs';
 
 
 const root = await mkdtemp(join(await realpath(tmpdir()), 'xwx-rust-pilot-native-'));
-// Normal installations keep browser data beside the private credential root.
-// Let WebView2 manage its own disposable profile ACLs without placing browser
-// sandbox files inside a directory restricted to credential-owner access.
-const browserProfile=process.platform==='win32'?await mkdtemp(join(await realpath(tmpdir()),'xwx-native-browser-')):null;
 await writeFile(join(root, '.xwx-rust-pilot'), 'isolated-rust-pilot-v1\n');
 const folderWindows = await trackWindowsFolderWindows(root);
 const installations=join(root,'installations');
@@ -68,7 +64,7 @@ for (const name of ['claude', 'codex', 'qwen']) {
   await mkdir(resolve(path, '..'), {recursive:true});
   await writeFile(path, 'isolated installed-client fixture', {mode:0o755});
 }
-const child = spawn(binary, ['--pilot-root', root, '--smoke', '--smoke-upstream', base, ...(nativeOfficialFixture?['--smoke-native-official','--subscription-test-endpoint',base.replace('/v1','')]:[]), ...(!keepOpen ? ['--smoke-exit'] : [])], { env: {...process.env, ...(browserProfile?{WEBVIEW2_USER_DATA_FOLDER:browserProfile}:{}),XWX_DECK_UPDATE_SERVER_URL:base.replace('/v1',''), XWX_SYSTEM_LANGUAGE_TEST:'zh-CN', XWX_CLIENT_INSTALLATIONS_TEST_HOME:installations}, stdio: ['ignore', 'inherit', 'inherit'] });
+const child = spawn(binary, ['--pilot-root', root, '--smoke', '--smoke-upstream', base, ...(nativeOfficialFixture?['--smoke-native-official','--subscription-test-endpoint',base.replace('/v1','')]:[]), ...(!keepOpen ? ['--smoke-exit'] : [])], { env: {...process.env, XWX_DECK_UPDATE_SERVER_URL:base.replace('/v1',''), XWX_SYSTEM_LANGUAGE_TEST:'zh-CN', XWX_CLIENT_INSTALLATIONS_TEST_HOME:installations}, stdio: ['ignore', 'inherit', 'inherit'] });
 try {
   // The fresh isolated root is validated before installing test-only discovery fixtures.
   for(let i=0;i<100;i++){try{await readFile(join(root,'.xwx-rust-pilot'));break;}catch{await new Promise(resolve=>setTimeout(resolve,50));}}
@@ -141,13 +137,13 @@ try {
   upstream.closeAllConnections();
   if (upstream.listening) await new Promise(resolve => upstream.close(resolve));
   let cleanup, cleanupError;
-  try { cleanup = await folderWindows.close(); if (cleanup.passed === false) throw Error('Test folder windows remain open'); if(browserProfile)await rm(browserProfile,{recursive:true,force:true,maxRetries:30,retryDelay:100}); }
+  try { cleanup = await folderWindows.close(); if (cleanup.passed === false) throw Error('Test folder windows remain open'); }
   catch (error) { cleanupError = error; cleanup = { ...cleanup, applicable: process.platform === 'win32', passed: false, error: String(error) }; }
   await mkdir(resolve('test-results'), { recursive: true });
   for (const name of ['native-webview-summary.json', 'native-viewer-summary.json']) {
     const report = reportsWritten ? JSON.parse(await readFile(resolve('test-results',name),'utf8')) : { passed:false, binarySha256 };
     await writeFile(resolve('test-results',name),JSON.stringify({...report,sandbox:root,passed:report.passed&&!runFailure&&!cleanupError,
-      ...(runFailure||cleanupError?{error:[runFailure,cleanupError].filter(Boolean).map(String).join('; ')}:{}),...(browserProfile?{browserProfileOutsideCredentials:true,browserProfileCleaned:!cleanupError}:{}),folderWindows:cleanup},null,2)+'\n');
+      ...(runFailure||cleanupError?{error:[runFailure,cleanupError].filter(Boolean).map(String).join('; ')}:{}),folderWindows:cleanup},null,2)+'\n');
   }
   if (cleanupError) throw new AggregateError([runFailure,cleanupError].filter(Boolean),'Native test failed to clean its folder windows');
 }

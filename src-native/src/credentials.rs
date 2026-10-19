@@ -249,8 +249,9 @@ pub(super) fn private_permissions(path: &Path, directory: bool) -> Result<()> {
 
 #[cfg(windows)]
 fn windows_private_permissions(path: &Path) -> Result<()> {
-    // Owner Rights grants the file owner full access, including for inherited
-    // children. A protected DACL removes broader inherited profile/portable ACLs.
+    // Elevated parents can create paths owned by the Administrators group.
+    // Bind both ownership and the protected DACL to TokenUser, so a browser or
+    // credential helper using this account's ordinary token retains access.
     // https://learn.microsoft.com/en-us/windows/win32/secauthz/sid-strings
     // https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setnamedsecurityinfow
     use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr::null_mut};
@@ -277,12 +278,60 @@ fn windows_private_permissions(path: &Path) -> Result<()> {
             dacl: *mut c_void,
             sacl: *mut c_void,
         ) -> u32;
+        fn OpenProcessToken(process: *mut c_void, access: u32, token: *mut *mut c_void) -> i32;
+        fn GetTokenInformation(
+            token: *mut c_void,
+            kind: u32,
+            buffer: *mut c_void,
+            size: u32,
+            required: *mut u32,
+        ) -> i32;
+        fn ConvertSidToStringSidW(sid: *const c_void, text: *mut *mut u16) -> i32;
     }
     #[link(name = "Kernel32")]
     extern "system" {
         fn LocalFree(memory: *mut c_void) -> *mut c_void;
+        fn GetCurrentProcess() -> *mut c_void;
+        fn CloseHandle(handle: *mut c_void) -> i32;
     }
-    let sddl: Vec<u16> = "D:P(A;OICI;FA;;;OW)"
+    let mut token = null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), 8, &mut token) } == 0 {
+        return Err("无法确认当前 Windows 用户，未修改私有权限".into());
+    }
+    let mut required = 0;
+    unsafe {
+        GetTokenInformation(token, 1, null_mut(), 0, &mut required);
+    }
+    if required == 0 {
+        unsafe {
+            CloseHandle(token);
+        }
+        return Err("无法读取当前 Windows 用户，未修改私有权限".into());
+    }
+    let mut user = vec![0usize; (required as usize).div_ceil(std::mem::size_of::<usize>())];
+    let loaded =
+        unsafe { GetTokenInformation(token, 1, user.as_mut_ptr().cast(), required, &mut required) };
+    unsafe {
+        CloseHandle(token);
+    }
+    if loaded == 0 {
+        return Err("无法读取当前 Windows 用户，未修改私有权限".into());
+    }
+    let user_sid = unsafe { *(user.as_ptr() as *const *mut c_void) };
+    let mut sid_text = null_mut();
+    if user_sid.is_null() || unsafe { ConvertSidToStringSidW(user_sid, &mut sid_text) } == 0 {
+        return Err("无法解析当前 Windows 用户，未修改私有权限".into());
+    }
+    let sid = unsafe {
+        let mut length = 0;
+        while *sid_text.add(length) != 0 {
+            length += 1;
+        }
+        let value = String::from_utf16_lossy(std::slice::from_raw_parts(sid_text, length));
+        LocalFree(sid_text.cast());
+        value
+    };
+    let sddl: Vec<u16> = format!("D:P(A;OICI;FA;;;{sid})")
         .encode_utf16()
         .chain(Some(0))
         .collect();
@@ -312,8 +361,8 @@ fn windows_private_permissions(path: &Path) -> Result<()> {
             SetNamedSecurityInfoW(
                 name.as_ptr(),
                 1,
-                0x80000004,
-                null_mut(),
+                0x80000005,
+                user_sid,
                 null_mut(),
                 dacl,
                 null_mut(),
