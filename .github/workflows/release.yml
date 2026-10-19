@@ -35,7 +35,7 @@ permissions:
   attestations: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref }}${{ inputs.verify_build_run_id && '-client-acceptance' || inputs.recover_windows_run_id && '-window-recovery' || '' }}
   cancel-in-progress: false
 
 jobs:
