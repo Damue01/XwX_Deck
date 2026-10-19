@@ -34,6 +34,7 @@ public static class MediumLaunch {
  [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr handle,uint timeout);
  [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr handle,out uint code);
  [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr handle,uint code);
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetLongPathName(string shortPath,StringBuilder longPath,uint capacity);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessWithTokenW(IntPtr token,uint logon,string app,StringBuilder command,uint flags,IntPtr environment,string directory,ref Startup startup,out ProcessInfo process);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessAsUserW(IntPtr token,string app,StringBuilder command,IntPtr processSecurity,IntPtr threadSecurity,bool inherit,uint flags,IntPtr environment,string directory,ref Startup startup,out ProcessInfo process);
  static void Require(bool value,string label) { if(!value) throw new Exception(label+": "+Marshal.GetLastWin32Error()); }
@@ -66,6 +67,7 @@ public static class MediumLaunch {
   finally{Marshal.FreeHGlobal(data);}
  }
  public static string[] Run(string node,string script,string directory,bool direct) {
+  var longPath=new StringBuilder(32768);uint pathLength=GetLongPathName(directory,longPath,32768);Require(pathLength>0&&pathLength<32768,"Expand owned diagnostic path");directory=longPath.ToString();
   IntPtr parent; Require(OpenProcessToken(GetCurrentProcess(),0x8B,out parent),"Open parent token");
   IntPtr linked=IntPtr.Zero; var info=Marshal.AllocHGlobal(IntPtr.Size);
   try {
@@ -104,6 +106,6 @@ if ($result[3] -ne '0') { throw "Ordinary-user diagnostic failed with $($result[
 if ($DirectExecutable) {
  $report = Get-Content (Join-Path $data 'native-smoke.json') -Raw | ConvertFrom-Json
  if (!$report.passed) { throw ($report | ConvertTo-Json -Depth 20) }
- $report | Add-Member binarySha256 (Get-FileHash $scriptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+ $report | Add-Member -NotePropertyName binarySha256 -NotePropertyValue ((Get-FileHash $scriptPath -Algorithm SHA256).Hash.ToLowerInvariant())
  $report | ConvertTo-Json -Depth 30 | Set-Content test-results/windows-startup-medium-native.json
 } else { Copy-Item (Join-Path $work 'test-results/windows-window-probe.json') test-results/windows-startup-matrix-medium.json }
