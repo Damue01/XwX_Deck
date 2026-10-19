@@ -115,6 +115,8 @@ jobs:
             ~/.cargo/git
             test-results/native-target
           key: ${{ runner.os }}-${{ runner.arch }}-native-rust-${{ hashFiles('src-native/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-native-rust-
 
       - name: Build Windows per-user Setup and portable package
         run: npm run build:win
@@ -211,6 +213,8 @@ jobs:
             ~/.cargo/git
             test-results/native-target
           key: ${{ runner.os }}-${{ runner.arch }}-native-rust-${{ hashFiles('src-native/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-native-rust-
 
       - name: Build macOS candidate
         run: npm run build:mac:${{ matrix.arch }}
