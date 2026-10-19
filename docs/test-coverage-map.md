@@ -84,6 +84,7 @@
 | 脚本 | 执行入口 | 关联编号 |
 | --- | --- | --- |
 | [claude-config-path-test.mjs](../tools/native/claude-config-path-test.mjs) | 后端默认入口 | CL07 |
+| [claude-oauth-live-test.mjs](../tools/native/claude-oauth-live-test.mjs) | 独立专题入口 | CL01 |
 | [client-config-merge-test.mjs](../tools/native/client-config-merge-test.mjs) | 后端默认入口 | CL01、CL03、CL04、CL05、CL07、CL08 |
 | [client-management-test.mjs](../tools/native/client-management-test.mjs) | 后端默认入口 | CL07 |
 | [client-models-renderer-test.mjs](../tools/native/client-models-renderer-test.mjs) | 后端默认入口 | MO04、CL01、CL03、CL04、CL05、CL07、CL08 |

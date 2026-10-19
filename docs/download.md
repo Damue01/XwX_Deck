@@ -10,13 +10,14 @@
 | 系统 | 安装包 |
 | --- | --- |
 | macOS，Apple Silicon | `XwX-Deck-mac-arm64.dmg`。 |
-| Windows，x64 | `XwX-Deck-windows-x64.exe`。 |
+| macOS，Intel | `XwX-Deck-mac-x64.dmg`。 |
+| Windows，x64 | `XwX-Deck-windows-x64-setup.exe`。 |
 
 未列出的系统与架构，请先查看对应 Release 的说明。
 
 ## 在 macOS 安装
 
-1. 下载 Apple Silicon 对应的 DMG。
+1. 按芯片选择 Apple Silicon 或 Intel 对应的 DMG。
 2. 打开 DMG，将 `XwX Deck.app` 拖入“应用程序”。
 3. 从“应用程序”启动 XwX Deck。
 4. 完成首次引导，或跳过后在设置中添加连接。
@@ -28,9 +29,11 @@
 
 ## 在 Windows 安装
 
-1. 下载 x64 对应的 EXE。
-2. 按发布页说明运行程序。
+1. 下载 x64 对应的 Setup EXE。
+2. 运行安装器，选择安装位置并完成当前用户安装。
 3. 首次启动后，添加服务或导入已有配置。
+
+需要便携版时，另行下载 `XwX-Deck-windows-x64.exe`，放在可写目录运行。
 
 更新时，按应用提示下载并完成重启更新。
 已下载更新且应用保持运行时，可在空闲时段自动安装。

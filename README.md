@@ -37,7 +37,7 @@ XwX Deck 配合已有 AI 客户端使用。配置模型连接，按需开启 Tra
 | 平台 | 安装包 | 安装方式 |
 | --- | --- | --- |
 | macOS Apple Silicon | [下载 DMG](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-mac-arm64.dmg) | 打开后拖入“应用程序”。 |
-| Windows x64 | [下载 EXE](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64.exe) | 下载后即可运行。 |
+| Windows x64 | [下载 EXE](https://github.com/Damue01/XwX_Deck/releases/latest/download/XwX-Deck-windows-x64-setup.exe) | 下载后即可运行。 |
 
 [安装与更新说明](https://xwxdeck.com/docs/download)　[GitHub Releases 与更新记录](https://github.com/Damue01/XwX_Deck/releases)
 

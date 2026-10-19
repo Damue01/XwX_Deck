@@ -26,7 +26,7 @@ Viewer 与价格资源由当前共享模块生成。
 
 | 系统 | 架构 | 下载 artifact | 文件 |
 | --- | --- | --- | --- |
-| Windows | x64 | `windows-x64` | `XwX-Deck-windows-x64.exe` |
+| Windows | x64 | `windows-x64` | `XwX-Deck-windows-x64-setup.exe`，另附便携版 `XwX-Deck-windows-x64.exe`。 |
 | Mac | Apple Silicon | `macos-arm64` | `XwX-Deck-mac-arm64.dmg` |
 | Mac | Intel | `macos-x64` | `XwX-Deck-mac-x64.dmg` |
 
@@ -45,6 +45,9 @@ Mac 额外校验 Mach-O 架构、应用签名和 DMG 完整性。
 Mac 候选使用 ad-hoc 签名，未完成 Developer ID 签名和公证。
 此操作不创建标签、Release 或更新清单。
 下载入口在正式发布和制品验收后另行调整。
+
+正式分发前，Apple Silicon 与 Intel Mac 制品均需完成 Developer ID 签名、公证和票据装订。
+验收记录绑定签名后的可执行文件与最终 DMG。
 
 ## Release
 

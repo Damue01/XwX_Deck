@@ -9,8 +9,9 @@
 3. 从“应用程序”启动，完成首次设置。
 
 在苹果菜单的“关于本机”中查看芯片。Apple M 系列选择 Apple Silicon，Intel 处理器选择 Intel。
-Apple Silicon 包已完成 Developer ID 签名和 Apple 公证。
-Intel 包使用 ad-hoc 签名，尚未完成 Apple 公证，首次打开可能需要在系统安全设置中允许。
+正式分发包使用 Developer ID 签名和 Apple 公证。
+具体制品的签名、装订与 Gatekeeper 结果见对应 Release 的验收记录。
+镜像内仅提供应用与“应用程序”入口。
 
 ## 更新
 
