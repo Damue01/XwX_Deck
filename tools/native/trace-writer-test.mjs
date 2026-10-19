@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, mkdir, readFile, writeFile, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, realpath, mkdir, readFile, writeFile, rm, readdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -38,8 +39,8 @@ async function snapshot() {
   const files = (await readdir(shared)).filter(name => name === 'index.json' || name.endsWith('.jsonl')).sort();
   return Object.fromEntries(await Promise.all(files.map(async name => [name, await readFile(join(shared, name), 'utf8')])));
 }
-async function request(state, thread) {
-  const response = await fetch(state.localBaseUrl + '/v1/responses', { method: 'POST', headers: { 'content-type': 'application/json', 'x-codex-thread-id': thread }, body: JSON.stringify({ model: 'writer-model', input: thread }) });
+async function request(state, thread, input = thread) {
+  const response = await fetch(state.localBaseUrl + '/v1/responses', { method: 'POST', headers: { 'content-type': 'application/json', 'x-codex-thread-id': thread }, body: JSON.stringify({ model: 'writer-model', input }) });
   assert.equal(response.status, 200); assert.equal((await response.json()).output[0].content[0].text, 'shared writer reply');
 }
 async function count(expected) {
@@ -126,7 +127,58 @@ try {
   assert.equal((await a.rpc('getState')).lastError, null);
   live = await a.rpc('toggleTracing', true); await request(live, 'after-repair'); await count(4); await a.rpc('toggleTracing', false);
   pass('external index changes are not overwritten; an explicit backed-up repair clears the warning and recording resumes without losing earlier history');
-  for (const c of clients) { const done = once(c.child, 'exit'); c.child.stdin.end(); assert.equal((await done)[0], 0); }
+
+  // Real local requests, repeated history, process restart and the actual Viewer
+  // detail endpoint. Compare expanded evidence with the complete physical pair.
+  const context = Array.from({length:2000}, (_, i) => createHash('sha256').update('writer-context-' + i).digest('hex')).join('');
+  const history = [{role:'system',content:context}];
+  let active = a, expandedBytes = 0, session;
+  const inputs = [];
+  for (let turn = 0; turn < 8; turn++) {
+    if (turn === 4) {
+      await active.rpc('toggleTracing', false);
+      const done = once(active.child, 'exit'); active.child.stdin.end(); assert.equal((await done)[0], 0);
+      active = client(root); await active.rpc('getState');
+    }
+    if (turn === 0 || turn === 4) live = await active.rpc('toggleTracing', true);
+    history.push({role:'user',content:'storage round ' + turn});
+    inputs.push(structuredClone(history));
+    await request(live, 'compressed-thread', history);
+    const index = await count(5 + turn);
+    session = index.sessions.find(s => s.clientConversationKey.endsWith(':compressed-thread'));
+    assert.ok(session);
+    const dashboard = await active.rpc('getDashboardUrl');
+    const response = await fetch(dashboard + 'api/session/' + session.id);
+    assert.equal(response.status, 200);
+    const page = await response.json();
+    assert.equal(page.traces.length, turn + 1);
+    for (let i = 0; i <= turn; i++) {
+      assert.deepEqual(page.traces[i].request.body.input, inputs[i]);
+      assert.deepEqual(page.traces[i].upstream.requestBody.input, inputs[i]);
+      assert.equal(page.traces[i]._traceContent, undefined);
+    }
+    expandedBytes += Buffer.byteLength(JSON.stringify(page.traces.at(-1)));
+  }
+  await active.rpc('toggleTracing', false);
+  const contentPath = session.jsonlPath.replace(/\.jsonl$/, '.content.sqlite');
+  const physicalBytes = (await stat(session.jsonlPath)).size + (await stat(contentPath)).size;
+  assert.ok(physicalBytes * 10 < expandedBytes, 'repeated history is stored once instead of per request and side');
+  const storedRows = (await readFile(session.jsonlPath, 'utf8')).trim().split('\n').map(JSON.parse);
+  const refs = storedRows.map(row => row._traceContent.refs['/request/body/input/0']);
+  assert.ok(refs[0] && refs.every(hash => hash === refs[0]));
+  const filesBefore = await Promise.all([session.jsonlPath, contentPath].map(path => readFile(path)));
+  const contentPlan = await active.rpc('inspectTraceIndexRepair');
+  assert.deepEqual(contentPlan.contentErrors, []);
+  await active.rpc('applyTraceIndexRepair', contentPlan.indexSha256);
+  assert.deepEqual(await Promise.all([session.jsonlPath, contentPath].map(path => readFile(path))), filesBefore);
+  pass('compressed history is exact on both request sides across process restart; backed-up repair leaves both files byte-identical');
+  console.log(JSON.stringify({traceContentFixture:{expandedBytes,physicalBytes,reductionPercent:100*(1-physicalBytes/expandedBytes)}}));
+  const tokensBefore = (await active.rpc('getTraceStats')).total.tokens;
+  await active.rpc('setTraceStoragePolicy', {limitGB:0,autoCleanup:true});
+  assert.equal((await active.rpc('getTraceStats')).total.tokens,tokensBefore);
+  assert.equal((await readdir(shared)).filter(name => /\.(jsonl|sqlite)(-journal|-wal|-shm)?$/.test(name)).length,0);
+  pass('0 GB clears every completed log and content database while retaining accumulated usage');
+  for (const c of clients) if (c.child.exitCode === null) { const done = once(c.child, 'exit'); c.child.stdin.end(); assert.equal((await done)[0], 0); }
   console.log(JSON.stringify({ passed: true, checks, upstreamRequests: requests, scope: 'two actual Rust processes, isolated configuration and shared history, local upstream; no normal clients or accounts' }));
 } finally {
   for (const c of clients) if (c.child.exitCode === null) { c.child.kill('SIGKILL'); await once(c.child, 'exit'); }

@@ -1,6 +1,6 @@
 //! Account routing metadata contains no credentials. Leases live through the response stream.
-use super::*;
 use super::routing_errors::quota_error;
+use super::*;
 use std::collections::{HashMap, HashSet};
 pub(super) fn group(id: &str) -> &'static str {
     if id.starts_with("official-chatgpt") {
@@ -620,7 +620,10 @@ mod tests {
         }
         assert!(!pool.quota_exhausted("a", &accounts()));
         let runtime = pool.runtime.lock().unwrap();
-        assert!(runtime.blocked.values().all(|(_, reason)| reason == "暂时限流"));
+        assert!(runtime
+            .blocked
+            .values()
+            .all(|(_, reason)| reason == "暂时限流"));
     }
 
     #[test]
@@ -641,7 +644,10 @@ mod tests {
         );
         let runtime = pool.runtime.lock().unwrap();
         assert!(!runtime.blocked.contains_key("b"));
-        assert_eq!(runtime.affinity["chatgpt:response:completed-response"].0, "b");
+        assert_eq!(
+            runtime.affinity["chatgpt:response:completed-response"].0,
+            "b"
+        );
     }
 
     #[test]

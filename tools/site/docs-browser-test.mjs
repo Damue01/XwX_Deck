@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, readdir, mkdir } from 'node:fs/promises';
-import { resolve, join, extname } from 'node:path';
+import { resolve, join, extname, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { once } from 'node:events';
 import { createMarkdownRenderer } from 'vitepress';
@@ -35,7 +35,7 @@ const server = createServer(async (request, response) => {
   }
   const relative = pathname.endsWith('/') ? pathname + 'index.html' : extname(pathname) ? pathname : pathname + '.html';
   const file = resolve(site, '.' + relative);
-  if (!file.startsWith(site + '/')) { response.writeHead(403); response.end(); return; }
+  if (!file.startsWith(site + sep)) { response.writeHead(403); response.end(); return; }
   try {
     const body = await readFile(file);
     response.writeHead(200, { 'content-type': mime[extname(file)] ?? 'application/octet-stream' });
@@ -47,7 +47,7 @@ await once(server, 'listening');
 const origin = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({ ...(process.env.XWX_PLAYWRIGHT_CHANNEL === 'chromium' ? {} : { channel: 'chrome' }), headless: true });
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', locale: 'zh-CN' });
   page.on('pageerror', error => errors.push(String(error)));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`); });

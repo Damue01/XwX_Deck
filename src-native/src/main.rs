@@ -14,11 +14,11 @@ mod webview_cache;
 #[cfg(target_os = "windows")]
 mod windows_menus;
 #[cfg(target_os = "windows")]
-mod windows_setup;
-#[cfg(target_os = "windows")]
 mod windows_recovery;
 #[cfg(target_os = "windows")]
 mod windows_reveal;
+#[cfg(target_os = "windows")]
+mod windows_setup;
 #[cfg(target_os = "windows")]
 mod windows_tray;
 use core::{Pilot, Shared};
@@ -34,8 +34,16 @@ use tauri_plugin_opener::OpenerExt;
 
 #[cfg(target_os = "windows")]
 fn spawn_windows_update(path: &std::path::Path, state: &Value) -> Result<(), String> {
-    if path.file_name().and_then(|s|s.to_str()).is_some_and(|s|s.ends_with("-setup.exe")) {
-        windows_setup::spawn(path, state["sha256"].as_str().ok_or("缺少 Setup 校验值")?, state["targetVersion"].as_str().ok_or("缺少 Setup 版本")?)
+    if path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.ends_with("-setup.exe"))
+    {
+        windows_setup::spawn(
+            path,
+            state["sha256"].as_str().ok_or("缺少 Setup 校验值")?,
+            state["targetVersion"].as_str().ok_or("缺少 Setup 版本")?,
+        )
     } else if windows_setup::is_registered() {
         Err("安装版必须通过 Setup 更新，不能替换为便携版文件".into())
     } else {
@@ -565,7 +573,10 @@ async fn pilot_rpc(
                 .map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }
-        "smokeSetupContext" if argument("--pilot-root").is_some() && std::env::args().any(|arg| arg == "--smoke") => {
+        "smokeSetupContext"
+            if argument("--pilot-root").is_some()
+                && std::env::args().any(|arg| arg == "--smoke") =>
+        {
             Ok(json!({"update":std::env::args().any(|arg|arg=="--smoke-setup-update")}))
         }
         "smokeContext" if std::env::args().any(|arg| arg == "--smoke") => {
@@ -668,7 +679,11 @@ async fn pilot_rpc(
             Ok(json!(path))
         }
         "chooseDirectory" => {
-            let title = if args.first().is_some_and(|input| input["kind"] == "client") { "选择客户端安装位置" } else { "选择目录" };
+            let title = if args.first().is_some_and(|input| input["kind"] == "client") {
+                "选择客户端安装位置"
+            } else {
+                "选择目录"
+            };
             let path = app
                 .dialog()
                 .file()

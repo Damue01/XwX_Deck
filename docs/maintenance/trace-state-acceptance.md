@@ -67,7 +67,7 @@ Trace 开关、Gateway、活动回答、工具等待和 Viewer 是不同状态�
 | 工具和多模态 | call ID、结果、顺序和图片位置完整 | tool-wait、protocol、portability |
 | 结束状态 | 完整结束、取消、不完整和失败分开 | native-sessions、writer、portability |
 | 用量和金额 | 来源可核对；缓存不重复；价格按捕获冻结 | cache-usage、billing、price-catalog |
-| 存储 | JSONL、索引、摘要与统计一致；读取不改原文 | writer、index-repair、dashboard-api |
+| 存储 | JSONL、正文库、索引与统计一致；重启后去重有效；读取和修复不改原文 | writer、index-repair、dashboard-api |
 | 0 GB | 完成请求不留正文；统计跨重启稳定 | usage-only、writer |
 | 事件重放 | 不重复累计请求或费用，不插乱阅读序列 | Viewer、session-reading |
 | 隐私 | 普通诊断无 Key、完整请求头与私人正文 | diagnostics、private-files |

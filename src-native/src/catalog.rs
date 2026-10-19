@@ -964,18 +964,15 @@ mod client_contract_tests {
     use super::*;
     #[test]
     fn protocol_order_matches_both_client_contracts() {
-        let cases: Value = serde_json::from_str(include_str!(
-            "../../src/shared/protocol-routing-cases.json"
-        ))
-        .unwrap();
+        let cases: Value =
+            serde_json::from_str(include_str!("../../src/shared/protocol-routing-cases.json"))
+                .unwrap();
         for case in cases.as_array().unwrap() {
             let mut protocols = case["protocols"].as_array().unwrap().clone();
             for _ in 0..2 {
                 let entry = json!({"protocolsDeclared":true,"protocols":protocols});
-                for (client, incoming) in [
-                    ("codex", "responses"),
-                    ("claude", "anthropic-messages"),
-                ] {
+                for (client, incoming) in [("codex", "responses"), ("claude", "anthropic-messages")]
+                {
                     assert_eq!(
                         entry_wire(&Provider::default(), Some(&entry), incoming),
                         case[client].as_str().unwrap(),

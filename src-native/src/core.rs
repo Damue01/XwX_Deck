@@ -28,10 +28,10 @@ mod config_import;
 mod configuration_removal;
 #[path = "imported_subscriptions.rs"]
 mod imported_subscriptions;
-#[path = "official_usage_cache.rs"]
-mod official_usage_cache;
 #[path = "official_responses.rs"]
 mod official_responses;
+#[path = "official_usage_cache.rs"]
+mod official_usage_cache;
 pub(crate) fn is_imported_subscription(id: &str) -> bool {
     imported_subscriptions::is_imported(id)
 }
@@ -91,10 +91,10 @@ mod request_activity;
 mod request_encoding;
 #[path = "retired_models.rs"]
 mod retired_models;
-#[path = "service_switching.rs"]
-mod service_switching;
 #[path = "routing_errors.rs"]
 mod routing_errors;
+#[path = "service_switching.rs"]
+mod service_switching;
 #[path = "storage.rs"]
 mod storage;
 #[path = "subscription_routing.rs"]

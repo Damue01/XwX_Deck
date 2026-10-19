@@ -142,6 +142,7 @@ if(!Buffer.from(await readFile(original)).equals(await readFile(binary)))throw E
 const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
 await mkdir('test-results', { recursive: true });
 const logs = join(temporaryRoot, 'logs'); await mkdir(logs, {recursive:true});
+let cleanupError;
 try {for (const suite of activeSuites) {
   console.log(`\nNative suite: ${suite}`);
   const started = Date.now();
@@ -153,9 +154,16 @@ try {for (const suite of activeSuites) {
   results.push({ suite, code: result.status, signal: result.signal, error: result.error?.message,
     ...(result.status !== 0 || result.error ? {log} : {}),
     skipped: (suite === 'portable-update-test.mjs' && process.platform !== 'win32') || (suite === 'cli-home-lifecycle-test.mjs' && process.platform === 'win32'), elapsedMs: Date.now() - started });
-}}finally{if (results.length === activeSuites.length && results.every(result => result.code === 0 && !result.error)) await rm(temporaryRoot,{recursive:true,force:true});}
+}}finally{if (results.length === activeSuites.length && results.every(result => result.code === 0 && !result.error)) {
+  // Windows may briefly retain an exited updater's executable mapping.
+  // Retry only this owned fixture root; a lasting lock remains a failed run.
+  try { await rm(temporaryRoot,{recursive:true,force:true,maxRetries:20,retryDelay:100}); }
+  catch (error) { cleanupError = {code:error.code,message:error.message}; }
+}}
 const failed = results.filter(result => result.code !== 0 || result.error);
+const passed = failed.length === 0 && !cleanupError;
 await mkdir('test-results', { recursive: true });
-await writeFile('test-results/native-backend-summary.json', JSON.stringify({ platform: process.platform, binarySha256, isolatedFixtures:true, fixturesCleaned:failed.length === 0, ...failed.length ? {retainedFixtures:temporaryRoot} : {}, installedClientsAvailable:Boolean(installedClientsAvailable), passed: failed.length === 0, results }, null, 2) + '\n');
+await writeFile('test-results/native-backend-summary.json', JSON.stringify({ platform: process.platform, binarySha256, isolatedFixtures:true, fixturesCleaned:passed, ...!passed ? {retainedFixtures:temporaryRoot} : {}, ...cleanupError ? {cleanupError} : {}, installedClientsAvailable:Boolean(installedClientsAvailable), passed, results }, null, 2) + '\n');
 console.log(`Native backend: ${results.length - failed.length}/${results.length} suites returned successfully; ${results.filter(result => result.skipped).length} platform-specific skips`);
 if (failed.length) { console.error('Failed suites:', failed.map(result => result.suite).join(', ')); process.exitCode = 1; }
+if (cleanupError) { console.error('Fixture cleanup failed:',cleanupError.message); process.exitCode = 1; }

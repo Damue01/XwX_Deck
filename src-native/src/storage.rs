@@ -5,6 +5,8 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 #[path = "trace_classification.rs"]
 mod trace_classification;
+#[path = "trace_content.rs"]
+mod trace_content;
 #[path = "trace_pricing.rs"]
 mod trace_pricing;
 #[cfg(target_os = "windows")]
@@ -90,7 +92,7 @@ fn records(path: &Path) -> Result<Vec<Value>> {
     source
         .lines()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| serde_json::from_str(l).map_err(err))
+        .map(|l| trace_content::decode(path, serde_json::from_str(l).map_err(err)?))
         .collect()
 }
 fn usage(value: &Value, wire: &str) -> Value {
@@ -441,11 +443,24 @@ impl TracePageReader {
             }
             if !line.trim().is_empty() {
                 let mut record: Value = serde_json::from_str(&line).map_err(err)?;
-                let annotation = trace_classification::annotations(&record);
+                let annotation = if record["_traceContent"]["version"] == 1 {
+                    // Current captures already carry their classification.
+                    json!({})
+                } else {
+                    trace_classification::annotations(&record)
+                };
                 if let Some(kind) = annotation.get("auxiliary") {
                     record["auxiliary"] = kind.clone();
                 }
-                let record = display_record(&self.prices, record);
+                let record = if record.get("_traceContent").is_some()
+                    && (record["costSnapshot"]["version"] != 1
+                        || record["costSnapshot"]["costComplete"] == false
+                        || needs_ark_cost_repair(&record["costSnapshot"]))
+                {
+                    display_record(&self.prices, trace_content::decode(path, record)?)
+                } else {
+                    display_record(&self.prices, record)
+                };
                 rows.push(TraceFileRow {
                     summary: trace_row_summary(&record),
                     offset,
@@ -564,8 +579,10 @@ impl TracePageReader {
                 file.seek(SeekFrom::Start(row.offset)).map_err(err)?;
                 let mut data = vec![0; row.length];
                 file.read_exact(&mut data).map_err(err)?;
-                let mut record =
-                    display_record(&self.prices, serde_json::from_slice(&data).map_err(err)?);
+                let mut record = display_record(
+                    &self.prices,
+                    trace_content::decode(path, serde_json::from_slice(&data).map_err(err)?)?,
+                );
                 // Reuse classification and logical ordinals from the index.
                 for key in [
                     "auxiliary",
@@ -580,11 +597,8 @@ impl TracePageReader {
                 }
                 record
             };
-            let size = if summary_only {
-                record.to_string().len()
-            } else {
-                row.length
-            };
+            // The budget applies to expanded API data, not compressed disk bytes.
+            let size = record.to_string().len();
             if !traces.is_empty() && bytes + size > 24 * 1024 * 1024 {
                 break;
             }
@@ -654,7 +668,10 @@ impl TraceStore {
                 use std::io::{BufRead, BufReader};
                 let mut line = String::new();
                 if BufReader::new(file).read_line(&mut line).is_ok() {
-                    if let Ok(record) = serde_json::from_str::<Value>(&line) {
+                    if let Ok(record) = serde_json::from_str::<Value>(&line)
+                        .map_err(err)
+                        .and_then(|record| trace_content::decode(&path, record))
+                    {
                         legacy_annotations.insert(
                             text(session, "id").into(),
                             trace_classification::annotations(&record),
@@ -1081,8 +1098,9 @@ impl TraceStore {
         }
         for file in paths {
             if file.exists() {
-                fs::remove_file(file).map_err(err)?;
+                fs::remove_file(&file).map_err(err)?;
             }
+            trace_content::remove(&file)?;
         }
         let before = self.index.clone();
         if !clear_usage {
@@ -1126,6 +1144,7 @@ impl TraceStore {
             .flatten()
             .collect();
         let mut candidates = vec![];
+        let mut content_errors = vec![];
         let mut total = 0;
         for entry in fs::read_dir(&self.root)
             .map_err(err)?
@@ -1141,7 +1160,13 @@ impl TraceStore {
             let mut malformed = 0;
             let mut id = String::new();
             for line in source.lines().filter(|l| !l.is_empty()) {
-                match serde_json::from_str::<Value>(line) {
+                let parsed = serde_json::from_str::<Value>(line).map_err(err);
+                let decoded = parsed.and_then(|record| {
+                    trace_content::decode(&entry.path(), record).inspect_err(|error| {
+                        content_errors.push(json!({"jsonlPath":entry.path(),"error":error}));
+                    })
+                });
+                match decoded {
                     Ok(v)
                         if v["id"].is_string()
                             && v["request"].is_object()
@@ -1204,12 +1229,13 @@ impl TraceStore {
             .map(|s| s["jsonlPath"].clone())
             .collect();
         let needs_repair = !usage_refresh.is_empty()
+            || !content_errors.is_empty()
             || index_status == "invalid"
             || !unindexed.is_empty()
             || !missing.is_empty()
             || !stale.is_empty();
         Ok(
-            json!({"rootPath":self.root,"indexPath":index_path,"indexStatus":index_status,"indexSha256":index_sha,"indexedSessions":indexed.len(),"jsonlFiles":total,"missingIndexedFiles":missing,"unindexedFiles":unindexed,"staleIndexedFiles":stale,"usageRefreshFiles":usage_refresh,"needsRepair":needs_repair,"candidates":candidates}),
+            json!({"rootPath":self.root,"indexPath":index_path,"indexStatus":index_status,"indexSha256":index_sha,"indexedSessions":indexed.len(),"jsonlFiles":total,"missingIndexedFiles":missing,"unindexedFiles":unindexed,"staleIndexedFiles":stale,"usageRefreshFiles":usage_refresh,"contentErrors":content_errors,"needsRepair":needs_repair,"candidates":candidates}),
         )
     }
 
@@ -1218,6 +1244,14 @@ impl TraceStore {
     }
     fn apply_repair_owned(&mut self, expected: Option<&str>) -> Result<Value> {
         let plan = self.inspect_repair()?;
+        if plan["contentErrors"]
+            .as_array()
+            .is_some_and(|errors| !errors.is_empty())
+        {
+            return Err(
+                "Trace 正文库缺失或损坏，未修改索引；请保留会话日志与正文库一起检查".into(),
+            );
+        }
         if expected.is_some_and(|e| plan["indexSha256"] != e) {
             return Err("索引已被外部修改，请重新检查".into());
         }
@@ -1238,6 +1272,9 @@ impl TraceStore {
             let rows: Vec<Value> = source
                 .lines()
                 .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .map(|record| trace_content::decode(&path, record))
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
                 .filter(|v| {
                     v["id"].is_string() && v["request"].is_object() && v["response"].is_object()
                 })
@@ -1499,12 +1536,16 @@ impl TraceStore {
                 return Err(error);
             }
             if path.exists() {
-                fs::remove_file(path).map_err(err)?;
+                fs::remove_file(&path).map_err(err)?;
             }
+            trace_content::remove(&path)?;
         }
         for entry in fs::read_dir(&self.root).map_err(err)?.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let Some(id) = name.strip_suffix(".jsonl") else {
+            let Some(id) = name
+                .strip_suffix(".jsonl")
+                .or_else(|| name.strip_suffix(".content.sqlite"))
+            else {
                 continue;
             };
             if id
@@ -1512,8 +1553,12 @@ impl TraceStore {
                 .is_some_and(|hash| hash.len() == 24 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
                 && !self.recording.contains_key(id)
             {
-                read(&entry.path())?;
-                fs::remove_file(entry.path()).map_err(err)?;
+                let log = self.root.join(format!("{id}.jsonl"));
+                if log.exists() {
+                    read(&log)?;
+                    fs::remove_file(&log).map_err(err)?;
+                }
+                trace_content::remove(&log)?;
             }
         }
         Ok(())
@@ -1688,7 +1733,8 @@ impl TraceStore {
                 .map_err(err)?;
         }
         use std::io::Write;
-        writeln!(&mut output, "{record}").map_err(err)?;
+        let stored = trace_content::encode(&file, &record)?;
+        writeln!(&mut output, "{stored}").map_err(err)?;
         output.sync_all().map_err(err)?;
         if self.legacy_costs.contains_key(&id) {
             self.refresh_legacy_costs();

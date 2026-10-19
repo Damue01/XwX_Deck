@@ -177,7 +177,9 @@ impl Updates {
                             } else {
                                 "-setup.exe"
                             }))
-                        && (platform != "windows" || inner.state["portable"] != true || !text(f, "name").ends_with("-setup.exe"))
+                        && (platform != "windows"
+                            || inner.state["portable"] != true
+                            || !text(f, "name").ends_with("-setup.exe"))
                 })
             })
             .cloned()

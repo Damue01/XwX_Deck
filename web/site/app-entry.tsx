@@ -274,7 +274,13 @@ const publicPages = new Set(['models', 'settings', 'signal']);
 const go = (page: string) => { if (publicPages.has(page)) window.dispatchEvent(new CustomEvent('xwxdeck:navigate', { detail: page })); };
 addEventListener('hashchange', () => go(location.hash.slice(1)));
 // Parent page can switch views without reloading the frame.
-addEventListener('message', event => { if (event.source === window.parent && event.origin === location.origin && typeof event.data?.deckPage === 'string') go(event.data.deckPage); });
+addEventListener('message', event => {
+  if (event.source !== window.parent || event.origin !== location.origin) return;
+  if (typeof event.data?.deckPage === 'string') go(event.data.deckPage);
+  if (event.data?.deckLanguage === 'zh-CN' || event.data?.deckLanguage === 'en') {
+    void changeLanguage(event.data.deckLanguage, async () => {});
+  }
+});
 import('../../src/renderer/main').then(() => { const p = location.hash.slice(1); if (p) setTimeout(() => go(p), 60); });
 
 api.openDashboard = async () => {
