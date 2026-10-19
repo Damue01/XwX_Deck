@@ -6,86 +6,13 @@ on:
       prior_run_id:
         required: true
         type: string
-      startup_matrix_only:
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
   actions: read
 
 jobs:
-  startup-matrix:
-    if: inputs.startup_matrix_only
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-x64
-          path: release-candidate
-          run-id: ${{ inputs.prior_run_id }}
-          github-token: ${{ github.token }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-verification
-          path: build-evidence
-          run-id: ${{ inputs.prior_run_id }}
-          github-token: ${{ github.token }}
-      - name: Verify the exact downloaded executable and unchanged product sources
-        shell: pwsh
-        run: |
-          $report = Get-Content build-evidence/release/native-build-report.json -Raw | ConvertFrom-Json
-          if ($report.dirty) { throw 'Original build was dirty' }
-          git diff --exit-code $report.commit HEAD -- src src-native assets package.json package-lock.json release-contract.json tools/build ':(glob)tools/native/*.js' tools/native/windows-nsis.mjs tools/native/windows-setup.nsi tools/native/windows-setup-skin.cpp
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $binary = (Resolve-Path release-candidate/XwX-Deck-windows-x64.exe).Path
-          if ((Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant() -ne $report.candidate.binarySha256) { throw 'Downloaded executable hash mismatch' }
-          "XWX_NATIVE_TEST_BINARY=$binary" >> $env:GITHUB_ENV
-      - name: Render as an ordinary user before any elevated browser instance
-        id: medium-pilot
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          ./tools/native/ensure-windows-webview2.ps1
-          ./tools/native/windows-medium-launch.ps1 -Script "$env:XWX_NATIVE_TEST_BINARY" -DirectExecutable
-      - name: Verify ordinary bootstrap with disposable home and data
-        id: medium-ordinary
-        continue-on-error: true
-        shell: pwsh
-        run: ./tools/native/windows-medium-launch.ps1 -Script "$env:XWX_NATIVE_TEST_BINARY" -DirectExecutable -OrdinaryDataRoot
-      - name: Compare actual startup with identical bytes and controlled file labels
-        shell: pwsh
-        run: |
-          ./tools/native/ensure-windows-webview2.ps1
-          node tools/native/windows-window-probe.mjs --matrix-only
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Require both ordinary-user render checks
-        if: steps.medium-pilot.outcome != 'success' || steps.medium-ordinary.outcome != 'success'
-        run: throw 'Ordinary-user rendered acceptance did not pass in both modes'
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: windows-startup-matrix
-          path: |
-            test-results/windows-window-probe.json
-            test-results/windows-medium-token.json
-            test-results/windows-startup-matrix-medium.json
-            test-results/windows-startup-medium-native.json
-            test-results/windows-medium-*.json
-            test-results/windows-medium-*.log
-          if-no-files-found: error
   recover:
-    if: ${{ !inputs.startup_matrix_only }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
