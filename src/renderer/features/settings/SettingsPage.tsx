@@ -283,7 +283,7 @@ export function SettingsPage({ active }: Props): React.ReactElement {
     const proceed = await confirm({
       title: t("XwX Deck {0} 已准备好", version),
       body: manual
-        ? t('将打开已校验的 DMG，并安全退出当前 XwX Deck。退出完成后，把新版拖入“应用程序”并选择替换。如果 macOS 再次阻止打开，请参照安装包中的“首次打开说明”。')
+        ? t('将打开已校验的 DMG，并安全退出当前 XwX Deck。退出完成后，把新版拖入“应用程序”并选择替换。')
         : t('重启后将自动完成更新，无需执行其他安装操作。'),
       cancelText: t('稍后'),
       confirmText: manual ? t('打开安装包') : t('重启更新')

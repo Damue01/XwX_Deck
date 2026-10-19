@@ -588,7 +588,6 @@
   "隔离验证不注册系统登录项": "La verificación aislada no registra elementos de inicio de sesión",
   "ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。": "ChatGPT no está conectado. Reinicie XwX Deck, luego reinicie Trace y vuelva a intentarlo.",
   "新增右下角版本更新提醒\n展示本次更新内容并支持立即下载\n优化 Windows 原地更新体验": "Notificaciones de actualización \n Notas de la versión y descarga inmediata \n Actualizaciones locales mejoradas de Windows",
-  "将打开已校验的 DMG，并安全退出当前 XwX Deck。退出完成后，把新版拖入“应用程序”并选择替换。如果 macOS 再次阻止打开，请参照安装包中的“首次打开说明”。": "Abra el DMG verificado y salga de XwX Deck de forma segura. Después de que salga, arrastre la nueva versión a Aplicaciones y reemplace la anterior. Consulte las instrucciones de primer inicio si macOS lo bloquea.",
   "勾选下面选项后，还会删除 Claude、ChatGPT／Codex 的核心配置。若客户端仍在运行，将弹窗询问是否强制关闭；未保存的工作会丢失。Skills、Agents 不受影响。": "La siguiente opción también elimina la configuración principal de Claude y ChatGPT/Codex. Los clientes en ejecución requieren confirmación antes de forzar el cierre; El trabajo no guardado se perderá. Se mantienen las habilidades y los agentes.",
   "这段时间使用的模型都没有可信价格可用，因此不给出金额。按输入长度分档或分时段计费的模型需要落盘时记录的分桶才能计算，升级前抓取的用量没有这份分桶；清空 Trace 记录后重新抓取即可恢复完整计费。": "No hay precios verificados disponibles para estos modelos. Los precios escalonados requieren segmentos de uso que no se encuentran en los registros más antiguos. Los registros recién capturados incluyen los depósitos necesarios para completar el precio.",
   "部分模型缺少可信价格或缺少缓存写 TTL 分档，未计入合计；显示的是已核验模型的下限。升级前记录的用量无法拆分缓存，清空 Trace 记录后重新抓取即可恢复完整计费。": "Se excluyen los modelos sin precios verificados o depósitos TTL de caché. Este total es un límite inferior de los modelos verificados. Los registros recién capturados incluyen los depósitos necesarios para completar el precio.",
@@ -769,5 +768,6 @@
   "已导入 {0} 个配置与账号，已添加 {1} 个客户端": "Se importaron {0} configuraciones y cuentas y se añadieron {1} clientes",
   "手动选择安装路径": "Elegir ruta de instalación manualmente",
   "更换安装路径": "Cambiar ruta de instalación",
-  "恢复自动检测": "Restaurar detección automática"
+  "恢复自动检测": "Restaurar detección automática",
+  "将打开已校验的 DMG，并安全退出当前 XwX Deck。退出完成后，把新版拖入“应用程序”并选择替换。": "Abra el DMG verificado y salga de XwX Deck de forma segura. Después de que salga, arrastre la nueva versión a Aplicaciones y reemplace la anterior."
 }

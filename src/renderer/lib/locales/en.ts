@@ -670,7 +670,7 @@ export const english: Readonly<Record<string, string>> = {
   "隔离验证不注册系统登录项": "Isolated verification does not register login items",
   "ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。": "ChatGPT is not connected. Restart XwX Deck, then restart Trace and retry.",
   "新增右下角版本更新提醒\n展示本次更新内容并支持立即下载\n优化 Windows 原地更新体验": "Update notifications\nRelease notes and immediate download\nImproved Windows in-place updates",
-  "将打开已校验的 DMG，并安全退出当前 XwX Deck。退出完成后，把新版拖入“应用程序”并选择替换。如果 macOS 再次阻止打开，请参照安装包中的“首次打开说明”。": "Open the verified DMG and safely quit XwX Deck. After it exits, drag the new version to Applications and replace the old one. See the first-launch instructions if macOS blocks it.",
+  "将打开已校验的 DMG，并安全退出当前 XwX Deck。退出完成后，把新版拖入“应用程序”并选择替换。": "Open the verified DMG and safely quit XwX Deck. After it exits, drag the new version to Applications and replace the old one.",
   "勾选下面选项后，还会删除 Claude、ChatGPT／Codex 的核心配置。若客户端仍在运行，将弹窗询问是否强制关闭；未保存的工作会丢失。Skills、Agents 不受影响。": "The option below also deletes core Claude and ChatGPT/Codex settings. Running clients require confirmation before force-closing; unsaved work will be lost. Skills and Agents are kept.",
   "这段时间使用的模型都没有可信价格可用，因此不给出金额。按输入长度分档或分时段计费的模型需要落盘时记录的分桶才能计算，升级前抓取的用量没有这份分桶；清空 Trace 记录后重新抓取即可恢复完整计费。": "No verified prices are available for these models. Tiered pricing requires usage buckets absent from older records. Newly captured records include the buckets needed for complete pricing.",
   "部分模型缺少可信价格或缺少缓存写 TTL 分档，未计入合计；显示的是已核验模型的下限。升级前记录的用量无法拆分缓存，清空 Trace 记录后重新抓取即可恢复完整计费。": "Models without verified prices or cache TTL buckets are excluded. This total is a lower bound from verified models. Newly captured records include the buckets needed for complete pricing.",
