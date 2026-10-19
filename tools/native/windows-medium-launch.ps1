@@ -30,6 +30,7 @@ public static class MediumLaunch {
  [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr handle,out uint code);
  [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr handle,uint code);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessWithTokenW(IntPtr token,uint logon,string app,StringBuilder command,uint flags,IntPtr environment,string directory,ref Startup startup,out ProcessInfo process);
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessAsUserW(IntPtr token,string app,StringBuilder command,IntPtr processSecurity,IntPtr threadSecurity,bool inherit,uint flags,IntPtr environment,string directory,ref Startup startup,out ProcessInfo process);
  static void Require(bool value,string label) { if(!value) throw new Exception(label+": "+Marshal.GetLastWin32Error()); }
  static IntPtr RestrictedMedium(IntPtr parent) {
   IntPtr admin=IntPtr.Zero,medium=IntPtr.Zero,token=IntPtr.Zero;
@@ -73,7 +74,12 @@ public static class MediumLaunch {
    foreach(DictionaryEntry item in Environment.GetEnvironmentVariables()) variables[(string)item.Key]=(string)item.Value;
    var environment=new StringBuilder(); foreach(var item in variables) environment.Append(item.Key).Append('=').Append(item.Value).Append('\0'); environment.Append('\0');
    var block=Marshal.StringToHGlobalUni(environment.ToString());
-   try { Require(CreateProcessWithTokenW(linked,0,node,command,0x08000400,block,directory,ref startup,out process),"Launch ordinary user process"); }
+   try {
+    bool created;
+    if(mechanism.StartsWith("restricted")) created=CreateProcessAsUserW(linked,node,command,IntPtr.Zero,IntPtr.Zero,false,0x08000400,block,directory,ref startup,out process);
+    else created=CreateProcessWithTokenW(linked,0,node,command,0x08000400,block,directory,ref startup,out process);
+    Require(created,"Launch ordinary user process; parent="+Integrity(parent)+"; child="+integrity+"; "+mechanism);
+   }
    finally{Marshal.FreeHGlobal(block);}
    try {
     if(WaitForSingleObject(process.process,240000)!=0) { TerminateProcess(process.process,2); throw new Exception("Ordinary-user diagnostic timed out"); }
