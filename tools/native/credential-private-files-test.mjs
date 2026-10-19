@@ -19,8 +19,8 @@ function windowsAcl(path){
  const env={...plainEnv,XWX_TEST_PRIVATE_PATH:path};
  // Windows PowerShell must load its own modules when launched from PowerShell 7.
  delete env.PSModulePath;
- const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{env,encoding:'utf8',windowsHide:true,timeout:10000});
- assert.equal(result.status,0,result.stderr||'private ACL inspection failed');return JSON.parse(result.stdout);
+ const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{env,encoding:'utf8',windowsHide:true,timeout:30000});
+ assert.equal(result.status,0,result.stderr||`private ACL inspection failed: ${result.error?.code??result.signal??'no diagnostic'}`);return JSON.parse(result.stdout);
 }
 async function privateMode(path,directory=false){
  if(process.platform!=='win32'){assert.equal((await stat(path)).mode&0o777,directory?0o700:0o600);return;}

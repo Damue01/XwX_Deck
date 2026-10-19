@@ -17,6 +17,10 @@ on:
         description: Verify official Windows clients against an existing successful package run
         required: false
         type: string
+      recover_windows_run_id:
+        description: Resume exact Windows binary acceptance after the sole ACL inspection timeout
+        required: false
+        type: string
   push:
     tags:
       - "v*.*.*"
@@ -30,6 +34,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  recover-windows-package:
+    if: github.event_name == 'workflow_dispatch' && inputs.recover_windows_run_id != ''
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/windows-package-recovery.yml
+    with:
+      prior_run_id: ${{ inputs.recover_windows_run_id }}
+
   packaged-windows-clients:
     if: github.event_name == 'workflow_dispatch' && inputs.verify_build_run_id != ''
     permissions:
@@ -40,7 +53,7 @@ jobs:
       build_run_id: ${{ inputs.verify_build_run_id }}
 
   validate:
-    if: ${{ !inputs.verify_build_run_id }}
+    if: ${{ !inputs.verify_build_run_id && !inputs.recover_windows_run_id }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:

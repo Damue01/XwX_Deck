@@ -75,4 +75,9 @@ Apple 证书不用于 Windows 签名，Windows 安装器与便携版仍需如实
 官方 CLI 的执行、配置写入、原会话续接与重启均有实际请求记录。
 没有验证真实厂商在线授权续期、收费推理、最低系统版本或任意用户的日常安装升级。
 WorkBuddy 内置 CLI 与其桌面聊天窗口分别记录，桌面验收仍未完成。
+本机桌面版本另已更新为 5.8.3，内置引擎为 2.161.0。
+其通用 `cli/bin/codebuddy` 包装入口在本机缺少完整 bundle，未发出模型请求；该失败记录保留。
+使用应用随附的 `cli/dist/codebuddy-lite-wb.mjs` 入口，在最终 Apple Silicon 签名程序上完成
+A→B→A、停止恢复及 Deck 重启后的原会话续接，4 轮实际请求通过。
+本轮没有修改 WorkBuddy 应用文件、日常自定义模型或登录状态。
 完整客户端范围与受阻项见 [Provider 切换修复验收](provider-switch-repair-acceptance.md)。
