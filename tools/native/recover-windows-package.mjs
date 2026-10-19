@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {readFile,writeFile,copyFile,mkdir} from 'node:fs/promises';
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -38,7 +38,10 @@ const cached=resolve('test-results/native-target/release/xwx-deck-native.exe');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 assert.equal(sha(await readFile(cached)),original.candidate.binarySha256,'Cached executable differs from the previously tested exact binary');
 await assertPublicBinary(cached,root);await mkdir('release',{recursive:true});
-const binary=resolve('release/XwX Deck.exe');await copyFile(cached,binary);await standardWindowsArtifact(binary);
+// Cache-file security metadata must not follow the executable into a new
+// runner. Create an ordinary fresh file, just as a download/extraction does.
+await standardWindowsArtifact(resolve('release'));
+const binary=resolve('release/XwX Deck.exe');await writeFile(binary,await readFile(cached),{flag:'wx'});await standardWindowsArtifact(binary);
 if(process.argv.includes('--binary-only')){
   await writeFile('release/native-build-report.json',JSON.stringify({...original,candidate:{...original.candidate,binary},reusedNativeBinary:true},null,2)+'\n');
   process.exit(0);

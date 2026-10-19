@@ -7,9 +7,11 @@ import {spawn,spawnSync} from 'node:child_process';
 import {once} from 'node:events';
 import {createHash} from 'node:crypto';
 import {rustToolchain} from './toolchain.mjs';
+import {standardWindowsArtifact} from './windows-execution-level.mjs';
 assert.equal(process.platform,'win32');assert.equal(process.env.GITHUB_ACTIONS,'true');
 const root=process.cwd(),original=resolve(process.env.XWX_NATIVE_TEST_BINARY),report={diagnosticOnly:true,originalSha256:createHash('sha256').update(await readFile(original)).digest('hex'),runs:[]};
 const temporary=await realpath(tmpdir());
+report.filePermissions=spawnSync('icacls.exe',[original],{encoding:'utf8'}).stdout;
 async function probe(binary,args,label,extra={}){
   const home=await mkdtemp(join(temporary,'xwx-window-probe-'));
   const data=join(home,'deck-data');await mkdir(data);
@@ -28,6 +30,9 @@ async function probe(binary,args,label,extra={}){
   await writeFile('test-results/windows-window-probe.json',JSON.stringify(report,null,2)+'\n');
 }
 await probe(original,home=>['--data-root',home],'original executable, ordinary window, disposable app data');
+const freshDirectory=await mkdtemp(join(temporary,'xwx-fresh-image-'));await standardWindowsArtifact(freshDirectory);
+const freshImage=join(freshDirectory,'XwX Deck.exe');await writeFile(freshImage,await readFile(original),{flag:'wx'});await standardWindowsArtifact(freshImage);
+await probe(freshImage,home=>['--data-root',home],'identical bytes in a fresh ordinary file');
 const profile=await mkdtemp(join(temporary,'xwx-browser-probe-'));
 await probe(original,home=>['--pilot-root',home,'--smoke','--smoke-provider-switch','--smoke-physical','--smoke-upstream','http://127.0.0.1:1'],'original executable, isolated window, separate disposable browser profile',{WEBVIEW2_USER_DATA_FOLDER:profile});
 const fixture=await mkdtemp(join(root,'test-results/window-probe-source-'));
