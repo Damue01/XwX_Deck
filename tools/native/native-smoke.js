@@ -483,9 +483,20 @@
       const keyCanvas=document.createElement('canvas').getContext('2d');
       keyCanvas.font=`${keyStyle.fontWeight} ${keyStyle.fontSize} ${keyStyle.fontFamily}`;
       const maskMetrics=keyCanvas.measureText('\u2022'), digitMetrics=keyCanvas.measureText('0');
-      const maskHeight=maskMetrics.actualBoundingBoxAscent+maskMetrics.actualBoundingBoxDescent;
+      const reportedMaskHeight=maskMetrics.actualBoundingBoxAscent+maskMetrics.actualBoundingBoxDescent;
+      // WebKit may clamp a glyph's negative descent. Inspect its painted ink
+      // rather than treating that baseline-relative metric as the disc height.
+      const inkScale=Math.max(1,Math.min(3,devicePixelRatio));
+      keyCanvas.canvas.width=keyCanvas.canvas.height=64*inkScale;
+      keyCanvas.scale(inkScale,inkScale);
+      keyCanvas.font=`${keyStyle.fontWeight} ${keyStyle.fontSize} ${keyStyle.fontFamily}`;
+      keyCanvas.fillText('\u2022',10,32);
+      const ink=keyCanvas.getImageData(0,0,keyCanvas.canvas.width,keyCanvas.canvas.height);
+      let firstInk=ink.height,lastInk=-1;
+      for(let y=0;y<ink.height;y++)for(let x=0;x<ink.width;x++)if(ink.data[(y*ink.width+x)*4+3]){firstInk=Math.min(firstInk,y);lastInk=y;}
+      const maskHeight=lastInk<0?0:(lastInk-firstInk+1)/inkScale;
       const nominalMaskHeight=parseFloat(keyStyle.fontSize)*.3;
-      keyMetrics={fontSize:keyStyle.fontSize,fontFamily:keyStyle.fontFamily,nominalMaskHeight,maskHeight,maskAdvance:maskMetrics.width,digitAdvance:digitMetrics.width,devicePixelRatio};
+      keyMetrics={fontSize:keyStyle.fontSize,fontFamily:keyStyle.fontFamily,nominalMaskHeight,maskHeight,reportedMaskHeight,maskAdvance:maskMetrics.width,digitAdvance:digitMetrics.width,devicePixelRatio};
       // Windows can round ascent and descent independently to ink pixels.
       // Retain bounds that reject both the former tiny and oversized glyphs.
       check('bundled Key mask paints a readable glyph with the same advance as the revealed digit',keyStyle.fontFamily.includes('Deck Secret Mask')&&maskHeight>=Math.floor(nominalMaskHeight)&&maskHeight<=Math.ceil(nominalMaskHeight)+1&&Math.abs(maskMetrics.width-digitMetrics.width)<.1);
