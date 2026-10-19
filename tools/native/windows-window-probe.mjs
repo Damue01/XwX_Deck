@@ -12,10 +12,11 @@ const root=process.cwd(),original=resolve(process.env.XWX_NATIVE_TEST_BINARY),re
 const temporary=await realpath(tmpdir());
 async function probe(binary,args,label,extra={}){
   const home=await mkdtemp(join(temporary,'xwx-window-probe-'));
-  await writeFile(join(home,'.xwx-rust-pilot'),'isolated-rust-pilot-v1\n');
+  const data=join(home,'deck-data');await mkdir(data);
+  await writeFile(join(data,'.xwx-rust-pilot'),'isolated-rust-pilot-v1\n');
   const env={...process.env,HOME:home,USERPROFILE:home,APPDATA:join(home,'roaming'),LOCALAPPDATA:join(home,'local'),XWX_DECK_UPDATE_SERVER_URL:'http://127.0.0.1:1',HTTP_PROXY:'http://127.0.0.1:1',HTTPS_PROXY:'http://127.0.0.1:1',ALL_PROXY:'http://127.0.0.1:1',XWX_CLIENT_INSTALLATIONS_TEST_HOME:home,...extra};
   await mkdir(env.APPDATA,{recursive:true});await mkdir(env.LOCALAPPDATA,{recursive:true});
-  const child=spawn(binary,args(home),{env,stdio:['ignore','pipe','pipe'],windowsHide:false});
+  const child=spawn(binary,args(data),{env,stdio:['ignore','pipe','pipe'],windowsHide:false});
   let stdout='',stderr='';child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);
   const ended=once(child,'exit');await Promise.race([ended,new Promise(r=>setTimeout(r,10000))]);
   let window;
@@ -23,7 +24,7 @@ async function probe(binary,args,label,extra={}){
     const state=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',`$p=Get-Process -Id ${child.pid}; @{id=$p.Id;handle=$p.MainWindowHandle.ToInt64();title=$p.MainWindowTitle;session=$p.SessionId}|ConvertTo-Json -Compress`],{encoding:'utf8',timeout:30000});
     window={status:state.status,stdout:state.stdout,stderr:state.stderr};child.kill();await ended;
   }
-  const result={label,stdout,stderr,window,exitCode:child.exitCode,signal:child.signalCode,home};report.runs.push(result);console.log(JSON.stringify(result));
+  const result={label,stdout,stderr,window,exitCode:child.exitCode,signal:child.signalCode,home,data};report.runs.push(result);console.log(JSON.stringify(result));
   await writeFile('test-results/windows-window-probe.json',JSON.stringify(report,null,2)+'\n');
 }
 await probe(original,home=>['--data-root',home],'original executable, ordinary window, disposable app data');
