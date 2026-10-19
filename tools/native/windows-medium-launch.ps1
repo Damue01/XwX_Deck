@@ -15,9 +15,14 @@ public static class MediumLaunch {
  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
  public struct Startup { public int cb; public string reserved; public string desktop; public string title; public int x,y,w,h,cx,cy,fill,flags; public short show,reserved2; public IntPtr reservedPointer,input,output,error; }
  [StructLayout(LayoutKind.Sequential)] public struct ProcessInfo { public IntPtr process,thread; public uint pid,tid; }
+ [StructLayout(LayoutKind.Sequential)] public struct SidAttributes { public IntPtr sid; public uint attributes; }
  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetTokenInformation(IntPtr token,int kind,IntPtr info,int size,out int required);
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertStringSidToSid(string text,out IntPtr sid);
+ [DllImport("advapi32.dll",SetLastError=true)] static extern bool CreateRestrictedToken(IntPtr token,uint flags,uint disableCount,ref SidAttributes disabled,uint deleteCount,IntPtr deleted,uint restrictCount,IntPtr restricted,out IntPtr result);
+ [DllImport("advapi32.dll",SetLastError=true)] static extern bool SetTokenInformation(IntPtr token,int kind,ref SidAttributes info,int size);
+ [DllImport("advapi32.dll")] static extern uint GetLengthSid(IntPtr sid);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertSidToStringSid(IntPtr sid,out IntPtr text);
  [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr value);
  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
@@ -26,16 +31,41 @@ public static class MediumLaunch {
  [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr handle,uint code);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessWithTokenW(IntPtr token,uint logon,string app,StringBuilder command,uint flags,IntPtr environment,string directory,ref Startup startup,out ProcessInfo process);
  static void Require(bool value,string label) { if(!value) throw new Exception(label+": "+Marshal.GetLastWin32Error()); }
+ static IntPtr RestrictedMedium(IntPtr parent) {
+  IntPtr admin=IntPtr.Zero,medium=IntPtr.Zero,token=IntPtr.Zero;
+  try {
+   Require(ConvertStringSidToSid("S-1-5-32-544",out admin),"Read administrator SID");
+   var disabled=new SidAttributes{sid=admin,attributes=0};
+   Require(CreateRestrictedToken(parent,1,1,ref disabled,0,IntPtr.Zero,0,IntPtr.Zero,out token),"Disable administrator group and privileges");
+   Require(ConvertStringSidToSid("S-1-16-8192",out medium),"Read Medium SID");
+   var integrity=new SidAttributes{sid=medium,attributes=0x20};
+   Require(SetTokenInformation(token,25,ref integrity,Marshal.SizeOf(integrity)+(int)GetLengthSid(medium)),"Set ordinary Medium integrity");
+   int size; GetTokenInformation(token,2,IntPtr.Zero,0,out size); var groups=Marshal.AllocHGlobal(size);
+   try {
+    Require(GetTokenInformation(token,2,groups,size,out size),"Read filtered groups");
+    int count=Marshal.ReadInt32(groups),offset=IntPtr.Size==8?8:4,stride=Marshal.SizeOf(disabled); bool denied=false;
+    for(int i=0;i<count;i++){
+     var group=(SidAttributes)Marshal.PtrToStructure(IntPtr.Add(groups,offset+i*stride),typeof(SidAttributes)); IntPtr text;
+     Require(ConvertSidToStringSid(group.sid,out text),"Read group SID"); string name;try{name=Marshal.PtrToStringUni(text);}finally{LocalFree(text);}
+     if(name=="S-1-5-32-544") denied=(group.attributes&0x10)!=0&&(group.attributes&4)==0;
+    }
+    if(!denied)throw new Exception("Administrator SID was not made deny-only");
+   }finally{Marshal.FreeHGlobal(groups);}
+   var result=token;token=IntPtr.Zero;return result;
+  }finally{if(token!=IntPtr.Zero)CloseHandle(token);if(admin!=IntPtr.Zero)LocalFree(admin);if(medium!=IntPtr.Zero)LocalFree(medium);}
+ }
  public static string Integrity(IntPtr token) {
   int size; GetTokenInformation(token,25,IntPtr.Zero,0,out size); var data=Marshal.AllocHGlobal(size);
   try { Require(GetTokenInformation(token,25,data,size,out size),"Read integrity"); IntPtr text; Require(ConvertSidToStringSid(Marshal.ReadIntPtr(data),out text),"Read integrity SID"); try{return Marshal.PtrToStringUni(text);}finally{LocalFree(text);} }
   finally{Marshal.FreeHGlobal(data);}
  }
  public static string[] Run(string node,string script,string directory) {
-  IntPtr parent; Require(OpenProcessToken(GetCurrentProcess(),8,out parent),"Open parent token");
+  IntPtr parent; Require(OpenProcessToken(GetCurrentProcess(),0x8B,out parent),"Open parent token");
   IntPtr linked=IntPtr.Zero; var info=Marshal.AllocHGlobal(IntPtr.Size);
   try {
-   int size; Require(GetTokenInformation(parent,19,info,IntPtr.Size,out size),"Read actual linked user token"); linked=Marshal.ReadIntPtr(info);
+   int size; string mechanism="actual linked ordinary-user token";
+   if(GetTokenInformation(parent,19,info,IntPtr.Size,out size)) linked=Marshal.ReadIntPtr(info);
+   else {int error=Marshal.GetLastWin32Error();if(error!=1312)throw new Exception("Read actual linked user token: "+error);linked=RestrictedMedium(parent);mechanism="restricted same-user token; administrator group deny-only; maximum privileges disabled";}
    var integrity=Integrity(linked); if(integrity!="S-1-16-8192") throw new Exception("Expected ordinary Medium token, got "+integrity);
    var startup=new Startup(); startup.cb=Marshal.SizeOf(startup); startup.desktop="winsta0\\default";
    ProcessInfo process; var command=new StringBuilder("\""+node+"\" \""+script+"\" --matrix-only");
@@ -48,7 +78,7 @@ public static class MediumLaunch {
    try {
     if(WaitForSingleObject(process.process,240000)!=0) { TerminateProcess(process.process,2); throw new Exception("Ordinary-user diagnostic timed out"); }
     uint code; Require(GetExitCodeProcess(process.process,out code),"Read child exit");
-    return new string[]{Integrity(parent),integrity,process.pid.ToString(),code.ToString()};
+    return new string[]{Integrity(parent),integrity,process.pid.ToString(),code.ToString(),mechanism};
    } finally{CloseHandle(process.thread);CloseHandle(process.process);}
   } finally{if(linked!=IntPtr.Zero)CloseHandle(linked);Marshal.FreeHGlobal(info);CloseHandle(parent);}
  }
@@ -56,6 +86,6 @@ public static class MediumLaunch {
 '@
 try { $result = [MediumLaunch]::Run($nodePath,$scriptPath,$work) }
 catch { @{blocked=$true;error=$_.Exception.Message;isolatedWork=$work} | ConvertTo-Json | Set-Content test-results/windows-medium-token.json; throw }
-@{ parentIntegrity=$result[0]; childIntegrity=$result[1]; pid=$result[2]; exitCode=$result[3]; isolatedWork=$work; mechanism='actual linked ordinary-user token; same interactive desktop' } | ConvertTo-Json | Set-Content test-results/windows-medium-token.json
+@{ parentIntegrity=$result[0]; childIntegrity=$result[1]; pid=$result[2]; exitCode=$result[3]; isolatedWork=$work; mechanism=$result[4]; desktop='same interactive desktop' } | ConvertTo-Json | Set-Content test-results/windows-medium-token.json
 if ($result[3] -ne '0') { throw "Ordinary-user diagnostic failed with $($result[3])" }
 Copy-Item (Join-Path $work 'test-results/windows-window-probe.json') test-results/windows-startup-matrix-medium.json
