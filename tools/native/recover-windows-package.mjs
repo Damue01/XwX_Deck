@@ -16,12 +16,21 @@ const failed=previous.results.filter(result=>result.code!==0||result.error);
 assert.match(original.commit,/^[a-f0-9]{40}$/);assert.ok(!previous.cleanupError);
 assert.equal(original.dirty,false);assert.equal(original.version,JSON.parse(await readFile('package.json')).version);
 assert.equal(previous.binarySha256,original.candidate.binarySha256);
-assert.equal(failed.length,1);assert.equal(failed[0].suite,'credential-private-files-test.mjs');
-assert.ok(previous.results.every(result=>result.code===0||result===failed[0]));
+if(failed.length){
+  assert.equal(failed.length,1);assert.equal(failed[0].suite,'credential-private-files-test.mjs');
+  assert.ok(previous.results.every(result=>result.code===0||result===failed[0]));
+}else{
+  assert.equal(previous.passed,true);assert.equal(previous.fixturesCleaned,true);
+  assert.ok(previous.results.length>100);assert.ok(previous.results.every(result=>result.code===0));
+}
 // Recovery may alter independent test drivers, never any compiled source,
 // embedded smoke scripts, resources or installer implementation.
 execFileSync('git',['diff','--exit-code',original.commit,'HEAD','--','src','src-native','assets','package.json','package-lock.json','release-contract.json','tools/build',':(glob)tools/native/*.js','tools/native/windows-nsis.mjs','tools/native/windows-setup.nsi','tools/native/windows-setup-skin.cpp','tools/native/windows-execution-level.mjs'],{stdio:'inherit'});
 if(process.argv.includes('--aggregate')){
+  if(!failed.length){
+    await writeFile('test-results/native-backend-aggregate.json',JSON.stringify({...previous,priorRun:process.env.XWX_PRIOR_NATIVE_RUN,priorFullRunPassed:true,method:'Identical executable; retain the successful complete backend run'},null,2)+'\n');
+    process.exit(0);
+  }
   const report=await read('release/native-build-report.json'),rounds=[];
   for(let round=1;round<=3;round++){
     const result=await read(`test-results/private-files-round-${round}.json`);
@@ -51,4 +60,4 @@ const packagingCommit=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'})
 const report={...original,candidate:{...original.candidate,binary},installer,reusedNativeBinary:true,packagedAt:new Date().toISOString(),packagingCommit,packagingSourceFingerprint:(await sourceFingerprint(root)).sha256,priorNativeRun:process.env.XWX_PRIOR_NATIVE_RUN};
 await writeFile('release/native-build-report.json',JSON.stringify(report,null,2)+'\n');
 await writeFile('test-results/prior-native-backend-summary.json',JSON.stringify(previous,null,2)+'\n');
-console.log(JSON.stringify({binarySha256:report.candidate.binarySha256,installerSha256:installer.sha256,priorFailedSuite:failed[0].suite,productSourcesUnchanged:true}));
+console.log(JSON.stringify({binarySha256:report.candidate.binarySha256,installerSha256:installer.sha256,priorFailedSuite:failed[0]?.suite??null,productSourcesUnchanged:true}));

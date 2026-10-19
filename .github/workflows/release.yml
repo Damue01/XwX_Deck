@@ -23,7 +23,7 @@ on:
         type: boolean
         default: false
       recover_windows_run_id:
-        description: Resume exact Windows binary acceptance after the sole ACL inspection timeout
+        description: Resume exact Windows binary acceptance with unchanged compiled sources
         required: false
         type: string
   push:
@@ -196,6 +196,7 @@ jobs:
             test-results/*.json
             test-results/*.log
             test-results/windows-setup-acceptance-*/summary.json
+            test-results/windows-setup-acceptance-*/recovery-diagnostics.json
             test-results/windows-setup-acceptance-*/*.log
             release/native-build-report.json
           if-no-files-found: warn

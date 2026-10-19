@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
-import { mkdtemp, mkdir, readFile, writeFile, access, copyFile, unlink, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, access, copyFile, unlink, readdir, open } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
 import { buildWindowsSetup } from './windows-nsis.mjs';
 import { standardWindowsArtifact } from './windows-execution-level.mjs';
@@ -138,9 +138,16 @@ try {
  await rpcSession(executable,async(rpc,child)=>{finishedPid=child.pid;assert.equal((await rpc('checkForAutomaticUpdates')).status,'available');await rpc('downloadAutomaticUpdate');await wait(async()=>{const s=await rpc('getUpdateState');if(s.status==='error')throw Error(s.error);if(s.status==='ready'){installerPath=s.downloadPath;return true;}return false;},'Setup download failed');assert.ok(installerPath.endsWith('-setup.exe'));const bytes=await readFile(installerPath);await writeFile(installerPath,'modified fixture');await assert.rejects(rpc('restartAndInstall'),/已被修改/);await writeFile(installerPath,bytes);});
  pass('automatic update selects Setup over portable EXE and rejects modified bytes');
  const helper=join(data,'updates/xwx-setup-update-failure.exe');await copyFile(executable,helper);await standardWindowsArtifact(helper);
- const child=spawn(helper,['--install-setup-update',installerPath,'--replace-executable',executable,'--expected-sha256','0'.repeat(64),'--expected-version',newVersion,'--parent-pid',String(finishedPid),'--pilot-root',data,'--smoke-setup-restart'],{windowsHide:true,stdio:'ignore'});
+ const recoveryLog=await open(join(work,'recovery-startup.log'),'a');
+ const child=spawn(helper,['--install-setup-update',installerPath,'--replace-executable',executable,'--expected-sha256','0'.repeat(64),'--expected-version',newVersion,'--parent-pid',String(finishedPid),'--pilot-root',data,'--smoke-setup-restart'],{windowsHide:true,stdio:['ignore',recoveryLog.fd,recoveryLog.fd]});
  assert.equal((await once(child,'exit'))[0],1);const failure=JSON.parse(await readFile(helper.replace(/\.exe$/,'.result.json'),'utf8'));assert.equal(failure.status,'error');assert.ok(failure.recoveryPid);
- await wait(async()=>{try{const r=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));assert.ok(r.passed,r.error);return r.stage==='restarted'&&r.version===oldVersion;}catch(e){if(e.code==='ENOENT')return false;throw e;}},'Old app recovery did not render');
+ try {
+  await wait(async()=>{try{const r=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));assert.ok(r.passed,r.error);return r.stage==='restarted'&&r.version===oldVersion;}catch(e){if(e.code==='ENOENT')return false;throw e;}},'Old app recovery did not render');
+ }catch(error){
+  const state=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',`$p=Get-Process -Id ${failure.recoveryPid} -ErrorAction SilentlyContinue; if($p){@{id=$p.Id;handle=$p.MainWindowHandle.ToInt64();title=$p.MainWindowTitle;session=$p.SessionId}|ConvertTo-Json -Compress}`],{encoding:'utf8',windowsHide:true,timeout:30000});
+  await writeFile(join(work,'recovery-diagnostics.json'),JSON.stringify({failure,process:state.stdout,processError:state.stderr,rootFiles:await readdir(data),startup:await readFile(join(work,'recovery-startup.log'),'utf8')},null,2)+'\n');
+  console.error(await readFile(join(work,'recovery-diagnostics.json'),'utf8'));throw error;
+ }finally{await recoveryLog.close();}
  await wait(()=>!spawnSync('tasklist.exe',['/FI','PID eq '+failure.recoveryPid,'/FO','CSV','/NH'],{encoding:'utf8',windowsHide:true}).stdout.includes('"'+failure.recoveryPid+'"'),'Recovered test app did not exit');
  pass('detached update helper rejects tampering and renders the unchanged old application again');
  ui=spawn(executable,['--pilot-root',data,'--smoke','--smoke-setup-update','--smoke-setup-restart'],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:'ignore'});

@@ -91,6 +91,7 @@ jobs:
             test-results/*.json
             test-results/*.log
             test-results/windows-setup-acceptance-*/summary.json
+            test-results/windows-setup-acceptance-*/recovery-diagnostics.json
             test-results/windows-setup-acceptance-*/*.log
             release/native-build-report.json
           if-no-files-found: warn
