@@ -65,6 +65,7 @@ jobs:
       - name: Switch providers through native UI and continue the original sessions
         shell: pwsh
         run: |
+          ./tools/native/ensure-windows-webview2.ps1
           node tools/native/provider-switch-native-ui-test.mjs "$env:XWX_NATIVE_TEST_CODEX" "$env:XWX_DECK_INSTALLED_CLAUDE"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify Claude OAuth cleanup, restart and original-session requests
