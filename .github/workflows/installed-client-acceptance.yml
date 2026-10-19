@@ -1,6 +1,11 @@
 name: Verify packaged Windows clients
 
 on:
+  workflow_call:
+    inputs:
+      build_run_id:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       build_run_id:

@@ -13,6 +13,10 @@ on:
           - windows-x64
           - macos-arm64
           - macos-x64
+      verify_build_run_id:
+        description: Verify official Windows clients against an existing successful package run
+        required: false
+        type: string
   push:
     tags:
       - "v*.*.*"
@@ -26,7 +30,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  packaged-windows-clients:
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_build_run_id != ''
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/installed-client-acceptance.yml
+    with:
+      build_run_id: ${{ inputs.verify_build_run_id }}
+
   validate:
+    if: ${{ !inputs.verify_build_run_id }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
