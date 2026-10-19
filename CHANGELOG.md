@@ -15,7 +15,7 @@
 
 ### 安装与下载
 
-- Apple Silicon 安装包使用 Developer ID 签名和 Apple 公证，镜像只保留应用与“应用程序”入口。
+- Apple Silicon 和 Intel Mac 安装包使用 Developer ID 签名和 Apple 公证，镜像只保留应用与“应用程序”入口。
 - 官网 Windows 下载使用按用户安装器，便携版单独提供。
 - 下载文件名不包含提交哈希；版本、来源和哈希记录在发布清单及校验文件中。
 

@@ -73,9 +73,9 @@
     "macosX64": {
       "buildScript": "build:mac:x64",
       "artifactName": "XwX-Deck-mac-x64.dmg",
-      "distribution": "unsigned-manual-dmg",
-      "developerId": false,
-      "notarized": false,
+      "distribution": "developer-id-notarized-dmg",
+      "developerId": true,
+      "notarized": true,
       "installMode": "manual-dmg",
       "updateMetadata": "release.json",
       "automaticInstall": false,
