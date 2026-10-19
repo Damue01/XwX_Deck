@@ -942,7 +942,6 @@ async fn pilot_rpc(
         }
         "moveWindow" | "moveWindowEnd" | "resizeWindowMove" | "resizeWindowEnd" => Ok(Value::Null),
         "closeWindow" => {
-            #[cfg(target_os = "windows")]
             if window.label() == "main" {
                 window.hide().map_err(|e| e.to_string())?;
                 return Ok(Value::Null);
@@ -1576,8 +1575,6 @@ fn main() {
     };
     #[cfg(target_os = "windows")]
     let isolated_root = argument("--pilot-root").map(|_| root.clone());
-    #[cfg(not(target_os = "windows"))]
-    let shared = pilot.clone();
     let builder = embedded_fonts::builder();
     #[cfg(target_os = "macos")]
     let builder = builder
@@ -1723,10 +1720,7 @@ fn main() {
                 // Main-window Close is separate from explicit tray Exit.
                 // Hiding a fullscreen dashboard leaves a blank macOS Space.
                 if window.label()=="main" {
-                    #[cfg(target_os="windows")]
                     {api.prevent_close();let _=window.hide();}
-                    #[cfg(not(target_os="windows"))]
-                    if tauri::async_runtime::block_on(async{shared.lock().await.active()}) {api.prevent_close();let _=window.hide();}
                 }
             }
             if let tauri::WindowEvent::Resized(_)=event {

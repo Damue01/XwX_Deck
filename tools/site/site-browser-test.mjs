@@ -158,7 +158,7 @@ try {
     await page.frameLocator('#app-demo').getByRole('heading', { name: 'Settings', exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     assert.match(await page.locator('#recommended-download').innerText(), /Download for Windows/);
-    assert.match(await page.locator('#recommended-download').getAttribute('href'), /windows-x64\.exe$/);
+    assert.match(await page.locator('#recommended-download').getAttribute('href'), /windows-x64-setup\.exe$/);
     await page.locator('#download-options > summary').click();
     assert.equal(await page.getByRole('link', { name: 'All releases', exact: true }).isVisible(), true);
     const downloadBox = await page.locator('.download-choices').boundingBox();
@@ -221,7 +221,7 @@ try {
   assert.deepEqual(blockedErrors, []);
   await blockedStorage.close();
   checks.push('WE01/WE03: bilingual copy, download links, live previews, 4 responsive widths, persistence, browser-language override, keyboard/focus, outside dismissal and unavailable storage');
-  for (const [platform, file] of [['windows', 'XwX-Deck-windows-x64.exe'], ['mac', 'XwX-Deck-mac-arm64.dmg'], ['macIntel', 'XwX-Deck-mac-x64.dmg']]) {
+  for (const [platform, file] of [['windows', 'XwX-Deck-windows-x64-setup.exe'], ['mac', 'XwX-Deck-mac-arm64.dmg'], ['macIntel', 'XwX-Deck-mac-x64.dmg']]) {
     const hrefs = await page.locator(`[data-download="${platform}"]`).evaluateAll(nodes => nodes.map(node => node.href));
     assert.equal(hrefs.length, 1);
     assert.ok(hrefs.every(href => href === 'https://github.com/Damue01/XwX_Deck/releases/latest/download/' + file));

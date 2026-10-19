@@ -52,7 +52,7 @@ macOS 使用 `npm run build:native:mac:signed` 构建签名候选。
 
 ## 独立运行边界
 
-- 当前源码版本：`1.0.0`。
+- 当前源码版本：`1.0.1`。
 - 应用 ID：`app.xwxdeck.desktop`。
 - 数据目录命名空间：`xwx-deck`。
 - Gateway 固定地址：`127.0.0.1:45233`；隔离验收使用临时端口。
