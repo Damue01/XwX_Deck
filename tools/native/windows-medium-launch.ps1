@@ -1,10 +1,11 @@
-param([Parameter(Mandatory=$true)][string]$Script,[switch]$DirectExecutable)
+param([Parameter(Mandatory=$true)][string]$Script,[switch]$DirectExecutable,[switch]$OrdinaryDataRoot)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Medium-token diagnostics are restricted to the disposable runner.' }
 $scriptPath = (Resolve-Path $Script).Path
 $nodePath = (Get-Command node.exe).Source
 $work = Join-Path $env:TEMP ('xwx-medium-startup-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $work | Out-Null
+$prefix = if ($OrdinaryDataRoot) { 'ordinary' } else { 'pilot' }
 if ($DirectExecutable) {
  $data = Join-Path $work 'deck-data'
  New-Item -ItemType Directory $data | Out-Null
@@ -21,6 +22,7 @@ public static class MediumLaunch {
  public struct Startup { public int cb; public string reserved; public string desktop; public string title; public int x,y,w,h,cx,cy,fill,flags; public short show,reserved2; public IntPtr reservedPointer,input,output,error; }
  [StructLayout(LayoutKind.Sequential)] public struct ProcessInfo { public IntPtr process,thread; public uint pid,tid; }
  [StructLayout(LayoutKind.Sequential)] public struct SidAttributes { public IntPtr sid; public uint attributes; }
+ [StructLayout(LayoutKind.Sequential)] public struct SecurityAttributes { public int length; public IntPtr descriptor; [MarshalAs(UnmanagedType.Bool)] public bool inherit; }
  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetTokenInformation(IntPtr token,int kind,IntPtr info,int size,out int required);
@@ -35,6 +37,7 @@ public static class MediumLaunch {
  [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr handle,out uint code);
  [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr handle,uint code);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetLongPathName(string shortPath,StringBuilder longPath,uint capacity);
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,ExactSpelling=true,SetLastError=true)] static extern IntPtr CreateFileW(string path,uint access,uint share,ref SecurityAttributes security,uint creation,uint flags,IntPtr template);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessWithTokenW(IntPtr token,uint logon,string app,StringBuilder command,uint flags,IntPtr environment,string directory,ref Startup startup,out ProcessInfo process);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessAsUserW(IntPtr token,string app,StringBuilder command,IntPtr processSecurity,IntPtr threadSecurity,bool inherit,uint flags,IntPtr environment,string directory,ref Startup startup,out ProcessInfo process);
  static void Require(bool value,string label) { if(!value) throw new Exception(label+": "+Marshal.GetLastWin32Error()); }
@@ -66,7 +69,7 @@ public static class MediumLaunch {
   try { Require(GetTokenInformation(token,25,data,size,out size),"Read integrity"); IntPtr text; Require(ConvertSidToStringSid(Marshal.ReadIntPtr(data),out text),"Read integrity SID"); try{return Marshal.PtrToStringUni(text);}finally{LocalFree(text);} }
   finally{Marshal.FreeHGlobal(data);}
  }
- public static string[] Run(string node,string script,string directory,bool direct) {
+ public static string[] Run(string node,string script,string directory,bool direct,bool ordinary) {
   var longPath=new StringBuilder(32768);uint pathLength=GetLongPathName(directory,longPath,32768);Require(pathLength>0&&pathLength<32768,"Expand owned diagnostic path");directory=longPath.ToString();
   IntPtr parent; Require(OpenProcessToken(GetCurrentProcess(),0x8B,out parent),"Open parent token");
   IntPtr linked=IntPtr.Zero; var info=Marshal.AllocHGlobal(IntPtr.Size);
@@ -77,35 +80,41 @@ public static class MediumLaunch {
    var integrity=Integrity(linked); if(integrity!="S-1-16-8192") throw new Exception("Expected ordinary Medium token, got "+integrity);
    var startup=new Startup(); startup.cb=Marshal.SizeOf(startup); startup.desktop="winsta0\\default";
    string executable=direct?script:node;
-   ProcessInfo process; var command=new StringBuilder(direct?"\""+script+"\" --pilot-root \""+System.IO.Path.Combine(directory,"deck-data")+"\" --smoke --smoke-theme --smoke-exit":"\""+node+"\" \""+script+"\" --matrix-only");
+   ProcessInfo process; var command=new StringBuilder(direct?"\""+script+"\" "+(ordinary?"--data-root":"--pilot-root")+" \""+System.IO.Path.Combine(directory,"deck-data")+"\" --smoke --smoke-theme --smoke-exit":"\""+node+"\" \""+script+"\" --matrix-only");
    var variables=new SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
    foreach(DictionaryEntry item in Environment.GetEnvironmentVariables()) variables[(string)item.Key]=(string)item.Value;
-   if(direct){variables["XWX_SYSTEM_LANGUAGE_TEST"]="zh-CN";variables["XWX_CLIENT_INSTALLATIONS_TEST_HOME"]=directory;variables["APPDATA"]=directory;variables["LOCALAPPDATA"]=directory;variables["HOME"]=directory;variables["USERPROFILE"]=directory;variables["XWX_DECK_UPDATE_SERVER_URL"]="http://127.0.0.1:1";}
+   if(direct){variables["XWX_SYSTEM_LANGUAGE_TEST"]="zh-CN";variables["XWX_CLIENT_INSTALLATIONS_TEST_HOME"]=directory;variables["APPDATA"]=directory;variables["LOCALAPPDATA"]=directory;variables["HOME"]=directory;variables["USERPROFILE"]=directory;variables["XWX_DECK_UPDATE_SERVER_URL"]="http://127.0.0.1:1";variables["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"]="--enable-logging --v=1 --log-file=\""+System.IO.Path.Combine(directory,"webview-startup.log")+"\"";}
    var environment=new StringBuilder(); foreach(var item in variables) environment.Append(item.Key).Append('=').Append(item.Value).Append('\0'); environment.Append('\0');
    var block=Marshal.StringToHGlobalUni(environment.ToString());
+   var logSecurity=new SecurityAttributes{length=Marshal.SizeOf(typeof(SecurityAttributes)),descriptor=IntPtr.Zero,inherit=true};
+   var log=CreateFileW(System.IO.Path.Combine(directory,"startup.log"),0x40000000,3,ref logSecurity,2,0x80,IntPtr.Zero);
+   Require(log!=new IntPtr(-1),"Open owned startup log");startup.flags|=0x100;startup.output=log;startup.error=log;
    try {
     bool created;
-    if(mechanism.StartsWith("restricted")) created=CreateProcessAsUserW(linked,executable,command,IntPtr.Zero,IntPtr.Zero,false,0x08000400,block,directory,ref startup,out process);
+    if(mechanism.StartsWith("restricted")) created=CreateProcessAsUserW(linked,executable,command,IntPtr.Zero,IntPtr.Zero,true,0x08000400,block,directory,ref startup,out process);
     else created=CreateProcessWithTokenW(linked,0,executable,command,0x08000400,block,directory,ref startup,out process);
     Require(created,"Launch ordinary user process; parent="+Integrity(parent)+"; child="+integrity+"; "+mechanism);
-   }
+   }catch{CloseHandle(log);throw;}
    finally{Marshal.FreeHGlobal(block);}
    try {
     if(WaitForSingleObject(process.process,240000)!=0) { TerminateProcess(process.process,2); throw new Exception("Ordinary-user diagnostic timed out"); }
     uint code; Require(GetExitCodeProcess(process.process,out code),"Read child exit");
     return new string[]{Integrity(parent),integrity,process.pid.ToString(),code.ToString(),mechanism};
-   } finally{CloseHandle(process.thread);CloseHandle(process.process);}
+   } finally{CloseHandle(process.thread);CloseHandle(process.process);CloseHandle(log);}
   } finally{if(linked!=IntPtr.Zero)CloseHandle(linked);Marshal.FreeHGlobal(info);CloseHandle(parent);}
  }
 }
 '@
-try { $result = [MediumLaunch]::Run($nodePath,$scriptPath,$work,[bool]$DirectExecutable) }
-catch { @{blocked=$true;error=$_.Exception.Message;isolatedWork=$work} | ConvertTo-Json | Set-Content test-results/windows-medium-token.json; throw }
-@{ parentIntegrity=$result[0]; childIntegrity=$result[1]; pid=$result[2]; exitCode=$result[3]; isolatedWork=$work; mechanism=$result[4]; desktop='same interactive desktop' } | ConvertTo-Json | Set-Content test-results/windows-medium-token.json
+try { $result = [MediumLaunch]::Run($nodePath,$scriptPath,$work,[bool]$DirectExecutable,[bool]$OrdinaryDataRoot) }
+catch { @{blocked=$true;error=$_.Exception.Message;isolatedWork=$work} | ConvertTo-Json | Set-Content "test-results/windows-medium-$prefix-token.json"; throw }
+finally {
+ foreach($name in @('startup.log','webview-startup.log')) { if(Test-Path (Join-Path $work $name)) {Copy-Item (Join-Path $work $name) "test-results/windows-medium-$prefix-$name"} }
+}
+@{ parentIntegrity=$result[0]; childIntegrity=$result[1]; pid=$result[2]; exitCode=$result[3]; isolatedWork=$work; mechanism=$result[4]; desktop='same interactive desktop' } | ConvertTo-Json | Set-Content "test-results/windows-medium-$prefix-token.json"
 if ($result[3] -ne '0') { throw "Ordinary-user diagnostic failed with $($result[3])" }
 if ($DirectExecutable) {
  $report = Get-Content (Join-Path $data 'native-smoke.json') -Raw | ConvertFrom-Json
  if (!$report.passed) { throw ($report | ConvertTo-Json -Depth 20) }
  $report | Add-Member -NotePropertyName binarySha256 -NotePropertyValue ((Get-FileHash $scriptPath -Algorithm SHA256).Hash.ToLowerInvariant())
- $report | ConvertTo-Json -Depth 30 | Set-Content test-results/windows-startup-medium-native.json
+ $report | ConvertTo-Json -Depth 30 | Set-Content "test-results/windows-medium-$prefix-native.json"
 } else { Copy-Item (Join-Path $work 'test-results/windows-window-probe.json') test-results/windows-startup-matrix-medium.json }
