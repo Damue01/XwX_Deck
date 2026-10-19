@@ -17,7 +17,7 @@ const auth=JSON.stringify({auth_mode:'chatgpt',tokens:{access_token:'unrelated-o
 await writeFile(join(root,'codex/auth.json'),auth);
 const accounts=['a','b','c','d'].map(id=>({id:'native-'+id,label:'Native '+id,subject:id,email:id+'@example.test',clientId:'client-'+id,access:'expired-'+id,refresh:'refresh-'+id+'-0',idToken:'',scopes:['resource.invoke','chatgpt.tokens.use.direct','offline_access'],expires:0}));
 await writeFile(join(root,'subscription-accounts.json'),JSON.stringify({hostId:'native-auth-fixture',accounts}));
-const rotations=new Map(),calls=[],checks=[],heldRefreshes=new Map();let lifetime=62,child,lines,base,refreshStarted,refreshRelease;
+const rotations=new Map(),calls=[],checks=[],heldRefreshes=new Map();let lifetime=3600,child,lines,base,refreshStarted,refreshRelease;
 const server=createServer(async(req,res)=>{
  let raw='';for await(const b of req)raw+=b;
  if(req.url==='/api/accounts/oauth/token'){
@@ -49,6 +49,9 @@ const run=async(exe,args,env=process.env,cwd=root)=>{
 const config=async()=>parse(await readFile(join(root,'codex/config.toml'),'utf8'));
 const helper=async(snapshot)=>run(snapshot.model_providers[snapshot.model_provider].auth.command,snapshot.model_providers[snapshot.model_provider].auth.args);
 const stop=async()=>{const ended=once(child,'exit');child.stdin.end();assert.equal((await ended)[0],0);};
+// Change only the owned synthetic vault while its host is stopped. A two-second
+// freshness window can expire between helper startups on a busy native runner.
+const setFixtureExpiry=async(id,expires=0)=>{const path=join(root,'subscription-accounts.json'),vault=JSON.parse(await readFile(path,'utf8')),account=vault.accounts.find(account=>account.id==='native-'+id);assert.ok(account);account.expires=expires;await writeFile(path,JSON.stringify(vault));};
 let installedClient=false;
 try{
  start();for(const a of accounts)await rpc('connectSubscriptionAccount',a.id);
@@ -61,7 +64,7 @@ try{
  pass('selecting a native subscription writes a credential command and direct endpoint without Trace or persisted tokens');
  const concurrent=await Promise.all(Array.from({length:4},()=>helper(ca)));assert.ok(concurrent.every(r=>r.code===0&&r.stdout.trim()==='access-a-1'));assert.equal(rotations.get('a'),1);
  pass('concurrent native credential commands share one serialized refresh and return the same account token');
- await new Promise(r=>setTimeout(r,3100));lifetime=3600;const renewed=await helper(ca);assert.equal(renewed.code,0,renewed.stderr);assert.equal(renewed.stdout.trim(),'access-a-2');assert.equal(rotations.get('a'),2);
+ await stop();await setFixtureExpiry('a',Math.floor(Date.now()/1000)+62);start();await rpc('getState');await new Promise(r=>setTimeout(r,3100));const renewed=await helper(ca);assert.equal(renewed.code,0,renewed.stderr);assert.equal(renewed.stdout.trim(),'access-a-2');assert.equal(rotations.get('a'),2);
  pass('expiry refresh rotates access and refresh credentials without activating Trace');
  const cli=process.env.XWX_NATIVE_TEST_CODEX;
  if(cli){
@@ -73,7 +76,7 @@ try{
   const direct=await fetch(base+'/v1/responses',{method:'POST',headers:{authorization:'Bearer '+renewed.stdout.trim(),'content-type':'application/json'},body:JSON.stringify({model:'native-response-model',input:'local fixture',store:false,stream:true})});assert.equal(direct.status,200);await direct.text();
   pass('credential command authenticates a direct native Responses stream against the isolated upstream');
  }
- lifetime=62;const switched=await rpc('switchClientProvider',{client:'codex',providerId:b.id});assert.match(switched.warning,/重启 Codex/);assert.ok(!switched.warning.includes('开启 Trace'));await rpc('updateCodexConfig',{expectedProviderId:b.id,compatibleModel:'native-response-model'});
+ const switched=await rpc('switchClientProvider',{client:'codex',providerId:b.id});assert.match(switched.warning,/重启 Codex/);assert.ok(!switched.warning.includes('开启 Trace'));await rpc('updateCodexConfig',{expectedProviderId:b.id,compatibleModel:'native-response-model'});
  const cb=await config(),current=await helper(cb),old=await helper(ca);assert.equal(current.stdout.trim(),'access-b-1');assert.equal(old.stdout.trim(),'access-a-2');assert.equal((await rpc('getProviders')).selected.codex,b.id);
  pass('account switch publishes the new binding while an old client snapshot can only retrieve its original account');
  for(const change of [{accountId:'native-b'},{baseUrl:'https://other.example.test/v1'},{headers:{'ChatGPT-Account-Id':'other'}}]){
@@ -87,7 +90,7 @@ try{
  pass('signing out an account rejects its old command without substituting another account or breaking the selected connection');
  const beforeSettings=await readFile(join(root,'settings.json'),'utf8'),beforeConfig=await readFile(join(root,'codex/config.toml'),'utf8');
  for(let round=0;round<6;round++){
-  await stop();await new Promise(r=>setTimeout(r,3100));lifetime=round===5?3600:62;const expectedRotation=(rotations.get('b')??0)+1;
+  await stop();await setFixtureExpiry('b');const expectedRotation=(rotations.get('b')??0)+1;
   const refreshing=new Promise(resolve=>refreshStarted=resolve),offline=Array.from({length:4},()=>helper(cb));await refreshing;
   start();const reopened=rpc('getState');await new Promise(r=>setTimeout(r,200));refreshRelease();
   for(const result of await Promise.all(offline)){assert.equal(result.code,0,result.stderr);assert.equal(result.stdout.trim(),'access-b-'+expectedRotation);}
