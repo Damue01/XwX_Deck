@@ -79,7 +79,10 @@ async function legacyMsi() {
  const permissions=spawnSync('icacls.exe',[msi,'/grant','*S-1-5-18:(R)'],{encoding:'utf8',windowsHide:true});assert.equal(permissions.status,0,permissions.stderr);
  return {product,msi};
 }
-function windowsInstaller(args){const result=spawnSync(join(process.env.WINDIR,'System32/msiexec.exe'),args,{windowsHide:true,timeout:60000,stdio:'ignore'});if(result.error)throw result.error;return result.status;}
+function windowsInstaller(args){
+ const command=args.map(value=>value.startsWith('INSTALLDIR=')?'INSTALLDIR="'+value.slice(11)+'"':/\s/.test(value)?'"'+value+'"':value);
+ const result=spawnSync(join(process.env.WINDIR,'System32/msiexec.exe'),command,{windowsVerbatimArguments:true,windowsHide:true,timeout:60000,stdio:'ignore'});if(result.error)throw result.error;return result.status;
+}
 function legacyRegistration(product,remove=false){
  const script=remove
   ?"$p=Get-ItemProperty -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation' -ErrorAction SilentlyContinue;if($p.ProductCode -eq $env:XWX_TEST_MSI_PRODUCT -and $p.Path.TrimEnd('\\') -eq $env:XWX_TEST_MSI_PATH){Remove-Item -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation'}"
