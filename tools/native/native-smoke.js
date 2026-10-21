@@ -284,7 +284,7 @@
       document.querySelector('.configuration-import-actions .btn:not(.primary)').click();
       await wait(()=>document.querySelector('#configuration-saved-tab')&&!document.querySelector('.configuration-import'),'close initial import');
       document.querySelector('#configuration-saved-tab').click();
-      await wait(()=>document.querySelector('.configuration-import-entry')?.getBoundingClientRect().height>0,'saved-tab import entry');
+      await wait(()=>document.querySelector('#configuration-saved-tab')?.getAttribute('aria-selected')==='true'&&document.querySelector('.configuration-import-entry')?.getBoundingClientRect().height>0,'saved-tab import entry');
       const shortImportItems=importFixture.sources[0].items;
       importFixture.sources[0].items=Array.from({length:36},(_,index)=>({...shortImportItems[0],fingerprint:'layout-'+index,name:'Layout fixture '+index}));
       document.querySelector('.configuration-import-entry').click();
@@ -308,7 +308,7 @@
       await wait(()=>!document.querySelector('.configuration-import'),'close saved-tab import');
       importFixture.sources[0].items=shortImportItems;
       document.querySelector('#configuration-services-tab').click();
-      await wait(()=>document.querySelector('.configuration-import-entry')?.getBoundingClientRect().height>0,'restore service import entry');
+      await wait(()=>document.querySelector('#configuration-services-tab')?.getAttribute('aria-selected')==='true'&&document.querySelector('.configuration-import-entry')?.getBoundingClientRect().height>0,'restore service import entry');
       document.querySelector('.configuration-import-entry').click();
       await wait(()=>document.querySelectorAll('.configuration-import-item').length===2&&!document.querySelector('.configuration-import-refresh').disabled,'restore short import');
       const cancelImport = document.querySelector('.configuration-import-actions .btn:not(.primary)'), primaryImport = document.querySelector('.configuration-import-actions .primary');
