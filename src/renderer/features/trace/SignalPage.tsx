@@ -241,24 +241,10 @@ export function SignalPage({ active }: Props): React.ReactElement {
     }
   }, [capturing, bridge.api, bridge.patch, bridge.runtime?.traceTransition, confirm]);
 
-  // Native capture reaches rail actions and tabs before their actions run.
-  // The appearance panel keeps its controls independent of the dot field.
-  React.useEffect(() => {
-    if (!active) return;
-    const onClick = (event: MouseEvent) => {
-      if (!(event.target instanceof Element)) return;
-      if (event.target.closest('#appearanceDrawer, .appearance-dismiss')) return;
-      const button = event.target.closest<HTMLElement>('button, [role="button"], [role="tab"], [role="switch"], [role="checkbox"], [role="radio"], [role="menuitem"], a[href]');
-      if (!button || button.closest(':disabled, [aria-disabled="true"], [data-disabled], [inert]')) return;
-      const rect = button.getBoundingClientRect();
-      emitFieldRipple(event.detail ? event.clientX : rect.left + rect.width / 2,
-        event.detail ? event.clientY : rect.top + rect.height / 2);
-    };
-    document.addEventListener('click', onClick, true);
-    return () => document.removeEventListener('click', onClick, true);
-  }, [active]);
-
-  const handleDialClick = React.useCallback(() => {
+  const handleDialClick = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    emitFieldRipple(event.detail ? event.clientX : rect.left + rect.width / 2,
+      event.detail ? event.clientY : rect.top + rect.height / 2);
     void handleToggle();
   }, [handleToggle]);
 

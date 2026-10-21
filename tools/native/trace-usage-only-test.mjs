@@ -45,7 +45,7 @@ try {
   await app.rpc('saveProvider', { id: 'usage-fixture', displayName: 'usage-fixture', adapter: 'responses',
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`, bearerToken: 'SYNTHETIC', codexModel: 'usage-fixture' });
   await app.rpc('switchClientProvider', { client: 'codex', providerId: 'usage-fixture' });
-  await app.rpc('setTraceStoragePolicy', { autoCleanup: false });
+  await app.rpc('setTraceStoragePolicy', { limitGB: 8, autoCleanup: false });
   const state = await app.rpc('toggleTracing', true); const base = state.localBaseUrl;
   for (const id of ['old-a', 'active-b', 'old-c']) assert.match(await (await send(base, id, id + '-private-marker')).text(), /response.completed/);
   await wait(async () => (await index()).sessions.length === 3, 'seed detailed sessions');
@@ -59,6 +59,7 @@ try {
   await began;
   const saved = await app.rpc('setTraceStoragePolicy', { limitGB: 0 });
   assert.equal(saved.traceWarningGB, 0); assert.equal(saved.traceAutoCleanup, false);
+  assert.equal(saved.traceDetailLimitGB, 8);
   assert.equal(saved.localBaseUrl, base); assert.equal(saved.tracingEnabled, true);
   assert.equal((await index()).sessions.length, 1);
   assert.deepEqual(await readFile(active.jsonlPath), activeBytes);
@@ -85,12 +86,17 @@ try {
   pass('last active completion purges retained details, keeps exact accounting, leaves unrelated files and repeated 0 GB does not double-count');
 
   await app.rpc('toggleTracing', false); await app.stop(); app = startNativeRpc(root);
-  assert.equal((await app.rpc('getState')).traceWarningGB, 0);
+  const restoredPolicy = await app.rpc('getState');
+  assert.equal(restoredPolicy.traceWarningGB, 0);
+  assert.equal(restoredPolicy.traceDetailLimitGB, 8);
+  assert.equal(restoredPolicy.traceAutoCleanup, false);
   assert.deepEqual(await app.rpc('getTraceStats'), finalStats);
   assert.equal((await files()).length, 0);
   pass('restart preserves usage-only choice and exact token/cost history without resurrecting details');
 
-  await app.rpc('setTraceStoragePolicy', { limitGB: 1 });
+  const restoredDetails = await app.rpc('setTraceStoragePolicy', { limitGB: restoredPolicy.traceDetailLimitGB });
+  assert.equal(restoredDetails.traceWarningGB, 8);
+  assert.equal(restoredDetails.traceAutoCleanup, false);
   const next = await app.rpc('toggleTracing', true);
   assert.match(await (await send(next.localBaseUrl, 'new-e', 'restored-private-marker')).text(), /response.completed/);
   await wait(async () => (await files()).length === 1, 'restore detail recording');

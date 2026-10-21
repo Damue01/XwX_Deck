@@ -59,6 +59,7 @@ export function createPreviewApi(): XwXDeckApi {
     traces: number;
     storageText: string;
     traceWarningGB: number;
+    traceDetailLimitGB: number;
     traceAutoCleanup: boolean;
     clients: Array<{
       id: ClientId; label: string; enabled: boolean;
@@ -83,6 +84,7 @@ export function createPreviewApi(): XwXDeckApi {
     traces: 0,
     storageText: '0 B',
     traceWarningGB: DEFAULT_TRACE_LIMIT_GB,
+    traceDetailLimitGB: DEFAULT_TRACE_LIMIT_GB,
     traceAutoCleanup: DEFAULT_TRACE_AUTO_CLEANUP,
     clients: [
       { id: 'claude-cli', label: 'Claude', enabled: true, status: 'idle', statusText: t('待命'), detail: t('追踪未开启') },
@@ -113,7 +115,7 @@ export function createPreviewApi(): XwXDeckApi {
   const buildState = (): XwXDeckRuntimeState => ({
     ...state,
     missingCodexHistoryProviders: [],
-    traceStorageBytes: 0, traceWarningGB: state.traceWarningGB, traceAutoCleanup: state.traceAutoCleanup,
+    traceStorageBytes: 0, traceWarningGB: state.traceWarningGB, traceDetailLimitGB: state.traceDetailLimitGB, traceAutoCleanup: state.traceAutoCleanup,
     backgroundGatewayActive: state.tracingEnabled,
     backgroundGatewayAction: state.tracingEnabled ? 'close' : undefined,
     chatGptRestartRecommended,
@@ -495,7 +497,11 @@ export function createPreviewApi(): XwXDeckApi {
     openLogFolder: async () => undefined,
     clearHistory: async () => buildState(),
     setTraceStoragePolicy: async (input) => {
-      if (typeof input?.limitGB === 'number') state.traceWarningGB = input.limitGB;
+      if (typeof input?.limitGB === 'number') {
+        if (input.limitGB > 0) state.traceDetailLimitGB = input.limitGB;
+        else if (state.traceWarningGB > 0) state.traceDetailLimitGB = state.traceWarningGB;
+        state.traceWarningGB = input.limitGB;
+      }
       if (typeof input?.autoCleanup === 'boolean') state.traceAutoCleanup = input.autoCleanup;
       return buildState();
     },

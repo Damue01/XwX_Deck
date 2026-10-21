@@ -2,7 +2,7 @@ import { GatewayClientModels } from './GatewayClientModels';
 import { t, getLanguage, useLanguage } from '@/lib/i18n';
 import { ProviderPicker } from './ProviderPicker';
 import { OfficialChatgptAccount } from './OfficialChatgptAccount';
-import { SlidersHorizontal } from 'lucide-react';
+import { LayoutGrid, SlidersHorizontal } from 'lucide-react';
 import { ProviderIcon } from '../settings/ProviderIcon';
 import { ClientDownloads } from '../settings/ProviderSetupShortcuts';
 import { CLIENT_DOWNLOADS, MODEL_CLIENT_ADDED_EVENT, canonicalModelClient, modelClientRoute, normalizeModelClients, supportsModelManagement, type DownloadClientId } from '../../../shared/clientDownloads';
@@ -552,9 +552,9 @@ export function ModelsPage({ active }: Props): React.ReactElement {
   }, [bridge.api, bridge.patch, claudeProviderId, claudeDesktopSyncEnabled, claudeTraceEnabled, claudeBridgedIds]);
   const claudeModelNote = React.useCallback((modelId: string): ModelPickerNote | undefined => (
     claudeBridgedIds.has(modelId)
-      ? { label: t('需 Trace'), hint: t('需要协议转换：Claude CLI 和 Claude Desktop 都需要开启 Trace。') }
+      ? { label: t('需 Trace'), hint: t('此模型与 Claude 使用的协议不同，需要开启 Trace 在本地转换请求。') }
       : claudeDesktopSyncEnabled && !isClaudeDesktopCompatibleModelId(modelId)
-        ? { label: t('需 Trace'), hint: t('Claude CLI 可直接使用；Claude Desktop 需要开启 Trace。') }
+        ? { label: t('需 Trace'), hint: t('Claude CLI 可直接使用；Claude Desktop 需要开启 Trace 转换模型请求。') }
         : undefined
   ), [claudeDesktopSyncEnabled, claudeBridgedIds]);
 
@@ -775,13 +775,8 @@ export function ModelsPage({ active }: Props): React.ReactElement {
       };
     }
     if (!providerRequiresTrace(selectedCodexProvider ?? bridge.compatibleServiceConfig ?? undefined, modelId, activeCodexCatalog)) return undefined;
-    if (selectedCodexProvider?.subscriptionAccountId && !selectedCodexProvider.codexNativeAuth) return { label: t('需 Trace'), hint: traceEnabled ? t('此连接由 Deck 提供认证，授权凭证保留在本机。') : t('选择已保存；此连接需要 Deck 提供认证，请开启 Trace。') };
-    return traceEnabled
-      ? { label: t('需 Trace'), hint: t("{0} 需要协议转换。Trace 已开启，可直接使用。", modelId) }
-      : {
-        label: t('需 Trace'),
-        hint: t("{0} 需要协议转换。选择会直接保存；调用时请开启 Trace。", modelId)
-      };
+    if (selectedCodexProvider?.subscriptionAccountId && !selectedCodexProvider.codexNativeAuth) return { label: t('需 Trace'), hint: traceEnabled ? t('此连接由 Deck 提供认证，授权凭证保留在本机。') : t('此连接需要 Deck 提供认证，请开启 Trace 后使用。') };
+    return { label: t('需 Trace'), hint: t('此模型与 ChatGPT 使用的协议不同，需要开启 Trace 在本地转换请求。') };
   }, [codexProviderId, codexChoiceByLabel, selectedCodexProvider, bridge.compatibleServiceConfig, activeCodexCatalog, traceEnabled]);
   const codexModelValue = React.useMemo(() => {
     if (!codexModelId) return '';
@@ -808,7 +803,10 @@ export function ModelsPage({ active }: Props): React.ReactElement {
             {shownClients.length > 1 ? <TabsList ref={clientTabsList} aria-label={t("选择客户端")}>
               {shownClients.map(id => <TabsTab key={id} value={id} id={`client-tab-${id}`} data-client-tab={id}>{CLIENT_DOWNLOADS.find(client => client.id === id)?.label}</TabsTab>)}
             </TabsList> : singleClient ? <span className="model-client-name" id="models-single-client">{CLIENT_DOWNLOADS.find(client => client.id === shownClients[0])?.label}</span> : null}
-            <button type="button" className="txt-action models-manage-clients" onClick={event => openConfiguration(event.currentTarget, 'clients')}><SlidersHorizontal size={15} aria-hidden="true" />{t("客户端管理")}</button>
+            <div className="models-switch-actions">
+              <button type="button" className="txt-action models-my-configurations" onClick={event => openConfiguration(event.currentTarget, 'saved')}><SlidersHorizontal size={14} strokeWidth={1.6} aria-hidden="true" />{t('我的配置')}</button>
+              <button type="button" className="txt-action models-manage-clients" onClick={event => openConfiguration(event.currentTarget, 'clients')}><LayoutGrid size={14} strokeWidth={1.6} aria-hidden="true" />{t("客户端管理")}</button>
+            </div>
           </div>
           {!shownClients.length && <p className="model-client-status">{t("从「管理客户端」添加已安装的客户端")}</p>}
 

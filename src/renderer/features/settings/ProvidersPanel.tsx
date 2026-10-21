@@ -61,7 +61,8 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
       editorTrigger.current = trigger;
       setConfigurationTab(tab);
       setSubscriptionPlatform(null); setSubscriptionConnectionId(null);
-      setManagementOpen(false); setChecksOpen(false); returnProviderId.current = undefined;
+      setManagementOpen(tab === 'saved'); setChecksOpen(false); returnProviderId.current = undefined;
+      if (tab === 'saved') setDraftKey('new');
       setSetupProvider(null);
       setEditorOpen(false);
       setDialogOpen(true);

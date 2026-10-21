@@ -22,7 +22,7 @@ export const OPEN_CONFIGURATION_EVENT = 'xwxdeck:open-configuration';
 
 export interface ConfigurationEntry {
   trigger: HTMLButtonElement;
-  tab: 'services' | 'accounts' | 'clients';
+  tab: 'services' | 'accounts' | 'saved' | 'clients';
 }
 
 export function openConfiguration(trigger: HTMLButtonElement, tab: ConfigurationEntry['tab'] = 'services'): void {

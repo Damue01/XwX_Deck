@@ -1098,7 +1098,7 @@ impl Pilot {
           "applicationResetArchives":true,
           "localBaseUrl":self.gateway.as_ref().map(|g|format!("http://127.0.0.1:{}",g.port)),"traceRoot":self.trace_root(),"logRoot":self.log_root(),"claudeConfigDir":self.claude_dir(),"claudeConfigPath":self.claude_path(),
           "backgroundGatewayActive":active,"backgroundGatewayAction":if active {Some("close")} else {None},"chatGptRestartRecommended":false,
-          "sessions":sessions,"traces":count,"storageText":format_bytes(bytes),"traceStorageBytes":bytes,"traceWarningGB":self.settings.trace_warning_gb,"traceAutoCleanup":self.settings.trace_auto_cleanup,"traceStorageNotice":self.store.lock().unwrap().retention_notice,
+          "sessions":sessions,"traces":count,"storageText":format_bytes(bytes),"traceStorageBytes":bytes,"traceWarningGB":self.settings.trace_warning_gb,"traceDetailLimitGB":self.settings.trace_detail_limit_gb(),"traceAutoCleanup":self.settings.trace_auto_cleanup,"traceStorageNotice":self.store.lock().unwrap().retention_notice,
           "clients":[{"id":"claude-cli","label":"Claude","enabled":self.client_enabled("claude"),"status":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"taken"}else{"idle"},"statusText":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"追踪中"}else{"待命"},"detail":if self.gateway.as_ref().is_some_and(|g|g.claude.is_some()){"客户端请求正在追踪"}else{"客户端直连"}},{"id":"codex-cli","label":"ChatGPT","enabled":self.client_enabled("codex"),"status":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"taken"}else{"idle"},"statusText":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"追踪中"}else{"待命"},"detail":if self.gateway.as_ref().is_some_and(|g|g.codex_managed){"客户端请求正在追踪"}else{"客户端直连"}}],
           "metadata":self.metadata.state(),"lastError":self.settings_problem.clone().or_else(||self.recovery_problem.clone()).or_else(||self.renderer_preferences_problem.clone()).or_else(||self.settings.claude_desktop["syncWarning"].as_str().map(str::to_string)).or_else(||self.store.lock().unwrap().read_problem.clone()).or_else(||self.config().err()),"theme":self.settings.theme,"language":self.settings.language.clone().unwrap_or_else(crate::language::system_language),"automaticUpdates":self.settings.automatic_updates,"traceAppearance":self.trace_appearance(),"startup":{"enabled":self.settings.startup_enabled,"desiredEnabled":self.settings.startup_enabled,"supported":!self.isolated&&cfg!(any(target_os="macos",target_os="windows")),"launchHidden":true,"warning":if self.isolated {Some("隔离验证不注册系统登录项")}else{None}},"update":self.update_state()});
         if let Some(rows) = state["clients"].as_array_mut() {
@@ -2898,16 +2898,22 @@ impl Pilot {
                 if input["clearUsage"] == true && input["limitGB"].as_f64() != Some(0.0) {
                     return Err("仅在明确切换为 0 GB 时可同时清空用量".into());
                 }
+                let previous = self.settings.clone();
                 if let Some(limit) = input["limitGB"].as_f64() {
                     if !limit.is_finite() || limit < 0.0 {
                         return Err("无效容量".into());
                     }
+                    let detail_limit = if limit > 0.0 { limit } else { self.settings.trace_detail_limit_gb() };
+                    self.settings.other.insert("traceDetailLimitGB".into(), json!(detail_limit));
                     self.settings.trace_warning_gb = limit;
                 }
                 if let Some(auto) = input["autoCleanup"].as_bool() {
                     self.settings.trace_auto_cleanup = auto;
                 }
-                self.persist()?;
+                if let Err(error) = self.persist() {
+                    self.settings = previous;
+                    return Err(error);
+                }
                 {
                     let mut store = self.store.lock().map_err(err)?;
                     store.set_retention((self.settings.trace_warning_gb * 1024.0f64.powi(3)) as u64, self.settings.trace_auto_cleanup);

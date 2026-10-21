@@ -85,9 +85,13 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   React.useEffect(() => { if (bridge.runtime) setRuntime(bridge.runtime); }, [bridge.runtime]);
   React.useEffect(() => { if (bridge.runtime?.webCryptoStorage) setWebCryptoStorage(bridge.runtime.webCryptoStorage); }, [bridge.runtime?.webCryptoStorage]);
   React.useEffect(() => { if (bridge.updateState) setUpdateState(bridge.updateState); }, [bridge.updateState]);
+  const usageOnly = runtime?.traceWarningGB === 0;
+  const storageLimitGB = usageOnly
+    ? runtime?.traceDetailLimitGB ?? DEFAULT_TRACE_LIMIT_GB
+    : runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB;
   React.useEffect(() => {
-    if (!editingLimit && runtime?.traceWarningGB !== undefined) setLimitDraft(String(runtime.traceWarningGB));
-  }, [editingLimit, runtime?.traceWarningGB]);
+    if (!editingLimit) setLimitDraft(String(storageLimitGB));
+  }, [editingLimit, storageLimitGB]);
   React.useEffect(() => {
     if (!active) return;
     const showTraceSettings = () => setTraceOpen(true);
@@ -97,9 +101,9 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   React.useEffect(() => {
     if (!traceOpen && editingLimit) {
       setEditingLimit(false);
-      setLimitDraft(String(runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB));
+      setLimitDraft(String(storageLimitGB));
     }
-  }, [traceOpen, editingLimit, runtime?.traceWarningGB]);
+  }, [traceOpen, editingLimit, storageLimitGB]);
 
   const traceRoot = runtime?.traceRoot || '—';
   const logRoot = runtime?.logRoot || '—';
@@ -107,13 +111,12 @@ export function SettingsPage({ active }: Props): React.ReactElement {
   const startupEnabled = startupSupported && (runtime?.startup?.desiredEnabled ?? runtime?.startup?.enabled) === true;
   const limitValue = Number(limitDraft);
   const limitValid = /^\d+$/.test(limitDraft) && Number.isSafeInteger(limitValue)
-    && limitValue >= 0;
+    && limitValue > 0;
   const storageExceeded = (runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB) > 0
     && (runtime?.traceStorageBytes ?? 0) > (runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB) * 1024 ** 3;
   const needsManualCleanup = storageExceeded && !runtime?.traceAutoCleanup;
   const storageUsedText = runtime?.traceStorageBytes === undefined ? '—' : formatBytes(runtime.traceStorageBytes);
-  const storageLimitGB = runtime?.traceWarningGB ?? DEFAULT_TRACE_LIMIT_GB;
-  const storagePercent = storageLimitGB === 0 ? 0
+  const storagePercent = usageOnly ? 0
     : Math.min(100, Math.max(0, (runtime?.traceStorageBytes ?? 0) / (storageLimitGB * 1024 ** 3) * 100));
   const saveStorage = React.useCallback(async (input: { limitGB?: number; autoCleanup?: boolean; clearUsage?: boolean }) => {
     if (savingStorage) return;
@@ -137,12 +140,24 @@ export function SettingsPage({ active }: Props): React.ReactElement {
       setEditingLimit(false);
       if (!limitValid) {
         setLimitDraft(String(storageLimitGB));
-        showToast(t('请输入非负整数，单位 GB'), 'info');
+        showToast(t('请输入正整数，单位 GB'), 'info');
         return;
       }
       if (limitValue === runtime?.traceWarningGB && !runtime?.traceStorageNotice) return;
-      let clearUsage = false;
-      if (limitValue === 0 && runtime?.traceWarningGB !== 0) {
+      await saveStorage({ limitGB: limitValue });
+      await bridge.refreshStats();
+    } finally {
+      limitCommitPending.current = false;
+    }
+  }, [bridge.refreshStats, limitValid, limitValue, runtime?.traceWarningGB, runtime?.traceStorageNotice, saveStorage, storageLimitGB]);
+
+  const toggleUsageOnly = React.useCallback(async () => {
+    if (limitCommitPending.current || savingStorage) return;
+    limitCommitPending.current = true;
+    try {
+      if (usageOnly) {
+        await saveStorage({ limitGB: storageLimitGB });
+      } else {
         const proceed = await confirmChecked({
           title: t('切换为仅用量模式？'),
           body: t('现有 Trace 详细记录将被永久删除。之后不再保存请求和响应内容，只保留 token 用量与费用统计。Gateway 仍会正常转发。'),
@@ -152,30 +167,26 @@ export function SettingsPage({ active }: Props): React.ReactElement {
           checkboxLabel: t('同时删除已有 Token 用量和费用统计'),
           checkboxDefaultChecked: false
         });
-        if (!proceed.confirmed) {
-          setLimitDraft(String(storageLimitGB));
-          return;
-        }
-        clearUsage = proceed.checked;
+        if (!proceed.confirmed) return;
+        await saveStorage({ limitGB: 0, ...(proceed.checked ? { clearUsage: true } : {}) });
       }
-      await saveStorage({ limitGB: limitValue, ...(clearUsage ? { clearUsage: true } : {}) });
       await bridge.refreshStats();
     } finally {
       limitCommitPending.current = false;
     }
-  }, [confirmChecked, bridge.refreshStats, limitValid, limitValue, runtime?.traceWarningGB, saveStorage, storageLimitGB]);
+  }, [savingStorage, usageOnly, storageLimitGB, saveStorage, confirmChecked, bridge.refreshStats]);
 
   const limitControl = editingLimit ? (
     <span className="trace-storage-limit-editor">
       <input
         id="traceWarningGB"
         type="number"
-        min={0}
+        min={1}
         step={1}
         value={limitDraft}
         aria-label={t("Trace 存储上限，单位 GB")}
         aria-invalid={!limitValid}
-        disabled={savingStorage}
+        disabled={savingStorage || usageOnly}
         autoFocus
         onChange={event => setLimitDraft(event.target.value)}
         onBlur={commitLimit}
@@ -193,16 +204,17 @@ export function SettingsPage({ active }: Props): React.ReactElement {
     <button
       type="button"
       className="trace-storage-limit"
-      aria-label={t("修改 Trace 存储设置，当前 {0}", storageLimitGB === 0 ? '仅用量统计' : `${storageLimitGB} GB`)}
-      disabled={savingStorage}
+      aria-label={t("修改 Trace 存储设置，当前 {0}", `${storageLimitGB} GB`)}
+      disabled={savingStorage || usageOnly}
       onClick={() => setEditingLimit(true)}
     >
-      {storageLimitGB === 0 ? t('仅用量') : `${storageLimitGB} GB`}
+      {`${storageLimitGB} GB`}
     </button>
   );
   const autoCleanupControl = (
     <Toggle
       id="traceAutoCleanup"
+      disabled={usageOnly}
       checked={runtime?.traceAutoCleanup ?? DEFAULT_TRACE_AUTO_CLEANUP}
       busy={savingStorage}
       ariaLabel={t("超出上限时自动清理旧 Trace 记录")}
@@ -465,25 +477,35 @@ export function SettingsPage({ active }: Props): React.ReactElement {
               <span className="eyebrow">Trace</span>
               <ChevronRight size={15} className="trace-section-chevron" aria-hidden="true" />
             </button>
+            {usageOnly && !traceOpen && <span className="trace-mode-summary">{t("仅记录用量")}</span>}
             {needsManualCleanup && <Badge variant="secondary">{t("超出上限")}</Badge>}
           </div>
           <div className="trace-list" id="trace-settings-content" hidden={!traceOpen}>
             <div className="trace-storage">
-              <div className="trace-storage-heading">
-                <span className="trace-storage-heading-label">{t("Trace 记录")}</span>
-                <div className="trace-storage-inline-reading">
-                  <span>{storageUsedText}{storageLimitGB === 0 ? '' : ' /'}</span>
-                  {limitControl}
+              <div className="trace-storage-capacity" data-disabled={usageOnly || undefined}>
+                <div className="trace-storage-heading">
+                  <span className="trace-storage-heading-label">{t("Trace 记录")}</span>
+                  <div className="trace-storage-inline-reading">
+                    <span>{storageUsedText} /</span>
+                    {limitControl}
+                  </div>
                 </div>
+                <Meter value={storagePercent} min={0} max={100}
+                  aria-label={usageOnly ? t('仅用量模式，不保存详细 Trace') : t("Trace 记录占用 {0}，设置上限 {1} GB", storageUsedText, storageLimitGB)}
+                  className="trace-storage-meter" />
               </div>
-              {storageLimitGB > 0 && <Meter value={storagePercent} min={0} max={100}
-                aria-label={storageLimitGB === 0 ? t('仅用量模式，不保存详细 Trace') : t("Trace 记录占用 {0}，设置上限 {1} GB", storageUsedText, storageLimitGB)}
-                className="trace-storage-meter" />}
-              {storageLimitGB > 0 && <div className="trace-storage-controls">
+              <div className="trace-storage-controls trace-usage-only-row">
+                <label className="trace-storage-control-label" htmlFor="traceUsageOnly"
+                  title={t("只统计 Token 和费用，不保存请求与响应正文。")}>{t("仅记录用量")}</label>
+                <Toggle id="traceUsageOnly" checked={usageOnly} busy={savingStorage}
+                  ariaLabel={t("仅记录用量")} title={t("只统计 Token 和费用，不保存请求与响应正文。")}
+                  onToggle={toggleUsageOnly} />
+              </div>
+              <div className="trace-storage-controls" data-disabled={usageOnly || undefined}>
                 <label className="trace-storage-control-label" htmlFor="traceAutoCleanup"
                   title={t("开启后，超出上限时会从最旧的完整对话开始删除，保留正在记录的对话。")}>{t("超出上限时自动清理")}</label>
                 <div className="trace-storage-control-value">{autoCleanupControl}</div>
-              </div>}
+              </div>
             </div>
             <div className="trace-row">
               <button

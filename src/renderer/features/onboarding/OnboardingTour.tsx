@@ -32,7 +32,7 @@ function tourSteps(): readonly TourStep[] { return [
     page: 'signal',
     selector: '#captureBtn',
     title: '按需开启 Trace',
-    lead: '在本地转换协议，完整记录每一次请求',
+    lead: '记录已接入客户端的请求，需要时在本地转换协议',
     points: [
       <>{t('标为“需 Trace”的模型需要开启 Trace 才能使用')}</>
     ]
@@ -41,7 +41,7 @@ function tourSteps(): readonly TourStep[] { return [
     page: 'signal',
     selector: '#dashBtn',
     title: '在仪表盘查看详情',
-    lead: '打开仪表盘，查看已记录请求的模型、Token、耗时和详细内容'
+    lead: '开启 Trace 后，在客户端发送一条消息，再到仪表盘确认实际使用的模型和请求结果'
   }
 ]; }
 

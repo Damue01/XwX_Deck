@@ -1,4 +1,10 @@
 {
+  "此模型与 Claude 使用的协议不同，需要开启 Trace 在本地转换请求。": "Este modelo usa um protocolo diferente do Claude. Ative o Trace para converter as solicitações localmente.",
+  "此模型与 ChatGPT 使用的协议不同，需要开启 Trace 在本地转换请求。": "Este modelo usa um protocolo diferente do ChatGPT. Ative o Trace para converter as solicitações localmente.",
+  "Claude CLI 可直接使用；Claude Desktop 需要开启 Trace 转换模型请求。": "O Claude CLI funciona diretamente. O Claude Desktop precisa do Trace para adaptar as solicitações de modelos.",
+  "此连接需要 Deck 提供认证，请开启 Trace 后使用。": "Esta conexão precisa do Deck para autenticação. Ative o Trace antes de usá-la.",
+  "记录已接入客户端的请求，需要时在本地转换协议": "Registre solicitações dos clientes conectados e converta protocolos localmente quando necessário",
+  "开启 Trace 后，在客户端发送一条消息，再到仪表盘确认实际使用的模型和请求结果": "Ative o Trace, envie uma mensagem no seu cliente e abra o painel para conferir o modelo utilizado e o resultado da solicitação",
   "选择安装位置": "Escolher pasta de instalação",
   "保存安装位置": "Salvar pasta de instalação",
   "无法识别客户端安装位置": "Não foi possível identificar a instalação do cliente",
@@ -769,5 +775,8 @@
   "手动选择安装路径": "Escolher caminho de instalação manualmente",
   "更换安装路径": "Alterar caminho de instalação",
   "恢复自动检测": "Restaurar detecção automática",
-  "将打开已校验的 DMG，并安全退出当前 XwX Deck。退出完成后，把新版拖入“应用程序”并选择替换。": "Abra o DMG verificado e saia do XwX Deck com segurança. Depois de sair, arraste a nova versão para Aplicativos e substitua a antiga."
+  "将打开已校验的 DMG，并安全退出当前 XwX Deck。退出完成后，把新版拖入“应用程序”并选择替换。": "Abra o DMG verificado e saia do XwX Deck com segurança. Depois de sair, arraste a nova versão para Aplicativos e substitua a antiga.",
+  "仅记录用量": "Somente uso",
+  "只统计 Token 和费用，不保存请求与响应正文。": "Registra tokens e custos sem salvar o conteúdo das solicitações e respostas.",
+  "请输入正整数，单位 GB": "Insira um número inteiro positivo em GB"
 }

@@ -75,6 +75,14 @@ impl Default for Settings {
     }
 }
 impl Settings {
+    pub(super) fn trace_detail_limit_gb(&self) -> f64 {
+        if self.trace_warning_gb > 0.0 {
+            return self.trace_warning_gb;
+        }
+        self.other.get("traceDetailLimitGB").and_then(Value::as_f64)
+            .filter(|limit| limit.is_finite() && *limit > 0.0).unwrap_or(1.0)
+    }
+
     pub(super) fn fresh() -> Self {
         Self::default()
     }

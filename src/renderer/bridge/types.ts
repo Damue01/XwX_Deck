@@ -117,6 +117,7 @@ export interface XwXDeckRuntimeState {
   readonly storageText: string;
   readonly traceStorageBytes: number;
   readonly traceWarningGB: number;
+  readonly traceDetailLimitGB?: number;
   readonly traceAutoCleanup: boolean;
   readonly traceStorageNotice?: string;
   readonly clients: readonly ClientStateRow[];

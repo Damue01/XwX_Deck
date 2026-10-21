@@ -1,5 +1,11 @@
 /** Product copy only. User-entered values and model IDs are never translated. */
 export const english: Readonly<Record<string, string>> = {
+  "此模型与 Claude 使用的协议不同，需要开启 Trace 在本地转换请求。": "This model uses a different protocol from Claude. Enable Trace to convert requests locally.",
+  "此模型与 ChatGPT 使用的协议不同，需要开启 Trace 在本地转换请求。": "This model uses a different protocol from ChatGPT. Enable Trace to convert requests locally.",
+  "Claude CLI 可直接使用；Claude Desktop 需要开启 Trace 转换模型请求。": "Claude CLI works directly. Claude Desktop needs Trace enabled to translate model requests.",
+  "此连接需要 Deck 提供认证，请开启 Trace 后使用。": "This connection needs Deck for authentication. Enable Trace before using it.",
+  "记录已接入客户端的请求，需要时在本地转换协议": "Record requests from connected clients and convert protocols locally when needed",
+  "开启 Trace 后，在客户端发送一条消息，再到仪表盘确认实际使用的模型和请求结果": "Enable Trace, send a message in your client, then open the dashboard to check the model used and the request result",
   "手动选择安装路径": "Choose installation path manually",
   "更换安装路径": "Change installation path",
   "恢复自动检测": "Restore automatic detection",
@@ -774,4 +780,7 @@ export const english: Readonly<Record<string, string>> = {
   "移除账号失败": "Could not remove account",
   "XwX Deck 无法启动": "XwX Deck could not start",
   "无法启动，请检查应用数据和访问权限。": "Could not start. Check the application data and access permissions.",
+  "仅记录用量": "Usage only",
+  "只统计 Token 和费用，不保存请求与响应正文。": "Track Token usage and cost without saving request or response bodies.",
+  "请输入正整数，单位 GB": "Enter a positive integer in GB",
 };
