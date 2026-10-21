@@ -60,7 +60,7 @@ fn bounds(
     let margin = 4.0 * scale;
     let width = (WIDTH * scale).min((area[2] - margin * 2.0).max(1.0));
     let height = (HEIGHT * scale).min((area[3] - margin * 2.0).max(1.0));
-    let x = (point[0] - width).clamp(
+    let x = point[0].clamp(
         area[0] + margin,
         (area[0] + area[2] - width - margin).max(area[0] + margin),
     );
@@ -165,6 +165,18 @@ pub fn open(app: &tauri::AppHandle, point: PhysicalPosition<f64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn popup_opens_to_the_right_when_space_is_available() {
+        for scale in [1.0, 1.25, 1.5, 2.0, 3.5] {
+            for (point, area) in [
+                ([700.0, 1000.0], [0.0, 0.0, 1920.0, 1040.0]),
+                ([-1200.0, 1000.0], [-1920.0, 0.0, 1920.0, 1040.0]),
+            ] {
+                let (position, _) = bounds(point, area, scale);
+                assert_eq!(f64::from(position.x), point[0]);
+            }
+        }
+    }
     #[test]
     fn popup_stays_inside_scaled_work_area() {
         for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0, 3.5] {
