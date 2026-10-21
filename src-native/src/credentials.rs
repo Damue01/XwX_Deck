@@ -249,6 +249,10 @@ pub(super) fn private_permissions(path: &Path, directory: bool) -> Result<()> {
 
 #[cfg(windows)]
 fn windows_private_permissions(path: &Path) -> Result<()> {
+    windows_permissions(path, "").map(|_| ())
+}
+#[cfg(windows)]
+fn windows_permissions(path: &Path, extra_aces: &str) -> Result<bool> {
     // Elevated parents can create paths owned by the Administrators group.
     // Bind both ownership and the protected DACL to TokenUser, so a browser or
     // credential helper using this account's ordinary token retains access.
@@ -269,6 +273,28 @@ fn windows_private_permissions(path: &Path) -> Result<()> {
             dacl: *mut *mut c_void,
             defaulted: *mut i32,
         ) -> i32;
+        fn GetNamedSecurityInfoW(
+            name: *const u16,
+            kind: u32,
+            information: u32,
+            owner: *mut *mut c_void,
+            group: *mut *mut c_void,
+            dacl: *mut *mut c_void,
+            sacl: *mut *mut c_void,
+            descriptor: *mut *mut c_void,
+        ) -> u32;
+        fn GetSecurityDescriptorControl(
+            descriptor: *const c_void,
+            control: *mut u16,
+            revision: *mut u32,
+        ) -> i32;
+        fn GetAclInformation(
+            acl: *const c_void,
+            information: *mut c_void,
+            length: u32,
+            class: u32,
+        ) -> i32;
+        fn EqualSid(left: *const c_void, right: *const c_void) -> i32;
         fn SetNamedSecurityInfoW(
             name: *const u16,
             kind: u32,
@@ -331,7 +357,7 @@ fn windows_private_permissions(path: &Path) -> Result<()> {
         LocalFree(sid_text.cast());
         value
     };
-    let sddl: Vec<u16> = format!("D:P(A;OICI;FA;;;{sid})")
+    let sddl: Vec<u16> = format!("D:P(A;OICI;FA;;;{sid}){extra_aces}")
         .encode_utf16()
         .chain(Some(0))
         .collect();
@@ -357,6 +383,67 @@ fn windows_private_permissions(path: &Path) -> Result<()> {
             != 0
             && present != 0
             && !dacl.is_null();
+        #[repr(C)]
+        #[derive(Default)]
+        struct AclSize {
+            count: u32,
+            used: u32,
+            free: u32,
+        }
+        let mut current_descriptor = null_mut();
+        let mut current_owner = null_mut();
+        let mut current_dacl = null_mut();
+        let status = GetNamedSecurityInfoW(
+            name.as_ptr(),
+            1,
+            5,
+            &mut current_owner,
+            null_mut(),
+            &mut current_dacl,
+            null_mut(),
+            &mut current_descriptor,
+        );
+        let (mut control, mut revision) = (0u16, 0u32);
+        let (mut current_size, mut desired_size) = (AclSize::default(), AclSize::default());
+        // Setting an inherited DACL propagates through existing descendants.
+        // Compare the real descriptor every time; never cache a broader ACL.
+        let matches = status == 0
+            && valid
+            && !current_owner.is_null()
+            && EqualSid(current_owner, user_sid) != 0
+            && !current_dacl.is_null()
+            && GetSecurityDescriptorControl(current_descriptor, &mut control, &mut revision) != 0
+            && control & 0x1000 != 0
+            && GetAclInformation(
+                current_dacl,
+                (&mut current_size as *mut AclSize).cast(),
+                std::mem::size_of::<AclSize>() as u32,
+                2,
+            ) != 0
+            && GetAclInformation(
+                dacl,
+                (&mut desired_size as *mut AclSize).cast(),
+                std::mem::size_of::<AclSize>() as u32,
+                2,
+            ) != 0
+            && current_size.count == desired_size.count
+            && current_size.used == desired_size.used
+            && current_size.used >= 8
+            && current_size.used <= u16::MAX as u32
+            && std::slice::from_raw_parts(
+                current_dacl.cast::<u8>().add(8),
+                current_size.used as usize - 8,
+            ) == std::slice::from_raw_parts(
+                dacl.cast::<u8>().add(8),
+                desired_size.used as usize - 8,
+            );
+        if status == 0 {
+            LocalFree(current_descriptor);
+        }
+        if matches {
+            LocalFree(descriptor);
+            return Ok(false);
+        }
         let result = if valid {
             SetNamedSecurityInfoW(
                 name.as_ptr(),
@@ -378,7 +465,7 @@ fn windows_private_permissions(path: &Path) -> Result<()> {
             ));
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 fn private_parents(root: &Path, path: &Path) -> Result<()> {
@@ -1652,5 +1739,23 @@ mod tests {
         let mut corrupt: Value = serde_json::from_str(&first).unwrap();
         corrupt["ciphertext"] = json!("AAAAAAAAAAAAAAAAAAAAAAAA");
         assert!(decode(&path, corrupt.to_string()).is_err());
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_permission_tests {
+    use super::*;
+    #[test]
+    fn unchanged_owner_and_protected_acl_skip_propagation_but_broadening_is_repaired() {
+        let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root=std::env::temp_dir().join(format!("native-private-acl-{}-{stamp}",std::process::id()));
+        fs::create_dir(&root).unwrap();windows_permissions(&root, "").unwrap();
+        fs::write(root.join("child.json"),"synthetic retained child").unwrap();
+        assert!(!windows_permissions(&root, "").unwrap(),"correct ACL must not propagate again through every descendant");
+        assert!(windows_permissions(&root, "(A;OICI;FR;;;WD)").unwrap());
+        assert!(windows_permissions(&root, "").unwrap(),"an externally broadened ACL must be repaired");
+        assert!(!windows_permissions(&root, "").unwrap());
+        assert_eq!(fs::read_to_string(root.join("child.json")).unwrap(),"synthetic retained child");
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -235,6 +235,10 @@ async fn pilot_rpc(
         return result;
     }
     match method.as_str() {
+        "detectClientInstallations" => {
+            let job = pilot.lock().await.client_installations_job();
+            tauri::async_runtime::spawn_blocking(job).await.map_err(|e| e.to_string())?
+        }
         #[cfg(target_os = "macos")]
         "migrateWebCryptoKey" => {
             let root = pilot.lock().await.root.clone();

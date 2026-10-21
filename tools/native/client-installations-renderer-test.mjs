@@ -53,12 +53,19 @@ try {
   detect = async () => replacement;
   await act(async () => { await state.refresh(); });
   check('synchronous bridge failure also releases the lock', () => { assert.equal(state.error, ''); assert.deepEqual(state.snapshot, replacement); });
-  const stalled = deferred(), schedule = globalThis.setTimeout;
+  const schedule = globalThis.setTimeout, late = deferred();
+  detect = () => late.promise;
+  globalThis.setTimeout = (callback, delay, ...args) => schedule(callback, delay === 8000 ? 5 : delay, ...args);
+  try { await act(async () => { await state.refresh(); }); }
+  finally { globalThis.setTimeout = schedule; }
+  await act(async () => { late.resolve(detected); });
+  check('a delayed current native detection recovers automatically after timeout', () => { assert.deepEqual(state.snapshot, detected); assert.equal(state.error, ''); });
+  const stalled = deferred();
   detect = () => stalled.promise;
   globalThis.setTimeout = (callback, delay, ...args) => schedule(callback, delay === 8000 ? 5 : delay, ...args);
   try { await act(async () => { await state.refresh(); }); }
   finally { globalThis.setTimeout = schedule; }
-  check('timeout preserves detected clients and restores retry', () => { assert.equal(state.error, '检测超时，请重新检测'); assert.deepEqual(state.snapshot, replacement); assert.equal(state.checking, false); });
+  check('slow discovery retains clients, reports background work without a false error and restores retry', () => { assert.equal(state.error, ''); assert.equal(state.slow, true); assert.deepEqual(state.snapshot, detected); assert.equal(state.checking, false); });
   detect = async () => replacement;
   await act(async () => { await state.refresh(); stalled.resolve(detected); });
   check('timed-out bridge response cannot replace a successful retry', () => { assert.deepEqual(state.snapshot, replacement); assert.equal(state.error, ''); });

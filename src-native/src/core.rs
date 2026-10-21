@@ -693,7 +693,7 @@ impl Pilot {
         clients::validate_provider(job.0, job.1, job.2).await
     }
 
-    fn client_discovery(&self) -> client_installations::Discovery {
+    fn client_discovery_home(&self) -> Option<PathBuf> {
         let fixture_home =
             if self.isolated && std::env::args().any(|arg| arg == "--rpc" || arg == "--smoke") {
                 std::env::var_os("XWX_CLIENT_INSTALLATIONS_TEST_HOME")
@@ -702,18 +702,35 @@ impl Pilot {
             } else {
                 None
             };
-        let discovery = if self.isolated {
-            client_installations::Discovery::for_home(
-                &fixture_home.unwrap_or_else(|| self.root.join("installations")),
-            )
-        } else {
-            client_installations::Discovery::system()
-        };
+        self.isolated.then(|| fixture_home.unwrap_or_else(|| self.root.join("installations")))
+    }
+    fn client_discovery(&self) -> client_installations::Discovery {
+        let discovery = self.client_discovery_home()
+            .map(|home| client_installations::Discovery::for_home(&home))
+            .unwrap_or_else(client_installations::Discovery::system);
         let locations = client_installations::manual_locations(
             &self.settings.other,
             self.isolated.then_some(self.root.as_path()),
         );
         discovery.with_manual_locations(locations)
+    }
+    pub fn client_installations_job(&self) -> impl FnOnce() -> Result<Value> + Send + 'static {
+        let home = self.client_discovery_home();
+        let locations = client_installations::manual_locations(
+            &self.settings.other, self.isolated.then_some(self.root.as_path()),
+        );
+        let saved = self.settings.other.get("clientInstallationLocations").cloned();
+        move || {
+            let discovery = home.map(|home| client_installations::Discovery::for_home(&home))
+                .unwrap_or_else(client_installations::Discovery::system)
+                .with_manual_locations(locations);
+            let catalog: Value = serde_json::from_str(crate::embedded_assets::clients()?).map_err(err)?;
+            Ok(json!({"available":true,"clients":catalog.as_array().into_iter().flatten().map(|client|json!({
+                "id":client["id"],"installed":discovery.installed(text(client,"id")),
+                "modelManagement":client["modelManagement"]==true && discovery.management_supported(text(client,"id")),
+                "installationLocation":saved.as_ref().and_then(|locations|locations.get(client_installations::canonical_id(text(client,"id"))))
+            })).collect::<Vec<_>>()}))
+        }
     }
     fn inspect_client_installation(&self, id: &str, location: &str) -> Result<PathBuf> {
         let catalog: Value = serde_json::from_str(include_str!(
@@ -2330,9 +2347,7 @@ impl Pilot {
                 self.subscriptions.sign_out_input(&input).await
             }
             "detectClientInstallations" => {
-                let discovery = self.client_discovery();
-                let catalog: Value = serde_json::from_str(crate::embedded_assets::clients()?).map_err(err)?;
-                Ok(json!({"available":true,"clients":catalog.as_array().into_iter().flatten().map(|client|json!({"id":client["id"],"installed":discovery.installed(text(client,"id")),"modelManagement":client["modelManagement"]==true && discovery.management_supported(text(client,"id")),"installationLocation":self.settings.other.get("clientInstallationLocations").and_then(|locations|locations.get(client_installations::canonical_id(text(client,"id"))))})).collect::<Vec<_>>()}))
+                self.client_installations_job()()
             }
             "getModelClients" => Ok(json!(self.model_clients())),
             "inspectClientInstallation" => {

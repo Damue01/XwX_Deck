@@ -1,4 +1,6 @@
 import { createEditionPreviewApi } from '@/edition/preview';
+import type { ConfigurationImportPreview, ConfigurationImportSelection } from '../../shared/configImport';
+import type { ClientInstallationSnapshot, DownloadClientId } from '../../shared/clientDownloads';
 import { initialConnections, providerClients, automaticAdapters } from '../../shared/edition';
 import { formatBytes } from '../../shared/format-bytes.browser.js';
 import { setupWebsitesFor, setupWebsiteUrl } from '../../shared/setupWebsites';
@@ -268,6 +270,20 @@ export function createPreviewApi(): XwXDeckApi {
   let serviceSwitching: import('../../shared/serviceSwitching').ServiceSwitchingConfig = scenario === 'service-switching' ? {codex: {enabled:true,providerIds:['initial-provider','fixture-deepseek','fixture-ark']}} : {};
   const api: XwXDeckApi = {
     ...createEditionPreviewApi(previewQuery,()=>api),
+    ...(['import-layout', 'import-slow'].includes(scenario ?? '') ? {
+      // Visual regression fixtures never read client files or contact a model.
+      getModelClients: async (): Promise<DownloadClientId[]> => ['claude'],
+      detectClientInstallations: async (): Promise<ClientInstallationSnapshot> => {
+        if (scenario === 'import-slow') await new Promise(resolve => setTimeout(resolve, 9000));
+        return { available: true, clients: ['codex', 'claude', 'vscode', 'copilot-cli'].map(id => ({ id: id as DownloadClientId, installed: true, modelManagement: true })) };
+      },
+      chooseConfigurationImportFile: async () => '/demo/selected.json',
+      previewConfigurationImport: async (): Promise<ConfigurationImportPreview> => ({ targetDigest: 'synthetic-preview', sources: [{
+        source: 'claude', path: '/demo/settings.json', name: 'Claude', found: true, error: '',
+        items: Array.from({ length: 36 }, (_, index) => ({ fingerprint: `demo-${index}`, name: `示例配置 ${index + 1}`, adapter: 'responses', baseUrl: 'https://example.test/v1', status: 'new', reason: '' }))
+      }] }),
+      importConfigurations: async (selection: ConfigurationImportSelection) => ({ providers: structuredClone(providers), added: [...selection.fingerprints], modelClients: ['claude', ...(selection.clients ?? [])] as DownloadClientId[], addedClients: selection.clients ?? [] }),
+    } : {}),
     getServiceSwitching: async () => structuredClone(serviceSwitching),
     setServiceSwitching: async ({client, policy}) => {serviceSwitching = {...serviceSwitching, [client]: structuredClone(policy)};return structuredClone(serviceSwitching);},
     updateProviderClientModel: async ({providerId,client,model,role}) => {

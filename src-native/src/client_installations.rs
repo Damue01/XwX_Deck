@@ -350,9 +350,16 @@ fn codex_bundle_identity(path: &Path) -> bool {
 impl Discovery {
     #[cfg(all(test, windows))]
     fn real_system_summary() -> serde_json::Value {
-        let packages = windows_packages().map_err(|e| e.to_string());
+        let started = std::time::Instant::now();
         let discovery = Self::system();
-        serde_json::json!({"packages": packages, "codex": discovery.installed("codex"), "claude": discovery.installed("claude")})
+        let inventory_ms = started.elapsed().as_millis();
+        let catalog:serde_json::Value=serde_json::from_str(crate::embedded_assets::clients().unwrap()).unwrap();
+        let clients:Vec<_>=catalog.as_array().unwrap().iter().map(|row| {
+            let clock=std::time::Instant::now();let id=row["id"].as_str().unwrap();
+            let installed=discovery.installed(id);let manageable=row["modelManagement"]==true&&discovery.management_supported(id);
+            serde_json::json!({"id":id,"installed":installed,"modelManagement":manageable,"elapsedMs":clock.elapsed().as_millis()})
+        }).collect();
+        serde_json::json!({"inventoryMs":inventory_ms,"totalMs":started.elapsed().as_millis(),"codex":discovery.installed("codex"),"claude":discovery.installed("claude"),"clients":clients})
     }
     pub fn with_manual_locations(mut self, locations: BTreeMap<String, PathBuf>) -> Self {
         self.manual_locations = locations;

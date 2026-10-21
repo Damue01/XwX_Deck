@@ -1304,7 +1304,7 @@ html[data-theme="night"] .setup-card-backdrop { background: rgba(0,0,0,.5); }
 .configuration-header .configuration-tabs button { flex-shrink: 0; white-space: nowrap; }
 .configuration-tabs button { padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--quiet); font: inherit; font-size: 13px; cursor: pointer; }
 .configuration-tabs button[aria-selected="true"] { background: var(--hover); color: var(--ink); font-weight: 550; }
-.configuration-dialog > [role="tabpanel"], .configuration-dialog > #configuration-services, .configuration-dialog > #configuration-clients { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.configuration-dialog > [role="tabpanel"], .configuration-dialog > #configuration-services, .configuration-dialog > #configuration-saved, .configuration-dialog > #configuration-clients { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 .configuration-dialog > div > .configuration-content, .configuration-dialog > div > .configuration-import { flex: 1; min-height: 0; max-height: none; }
 .configuration-dialog [hidden] { display: none; }
 .configuration-content { padding: 20px 22px; max-height: min(560px, calc(100dvh - 150px)); overflow-y: auto; overscroll-behavior: contain; }
@@ -1868,12 +1868,13 @@ html[data-theme="night"] .tour-backdrop-full { background: rgba(0,0,0,.7); }
 /* Import is a task view: one flat list and a stable action footer. */
 .configuration-import { display: flex; flex-direction: column; min-height: 0; padding: 0 22px 22px; max-height: min(520px, calc(100dvh - 130px)); }
 .configuration-import:focus { outline: none; }
-.configuration-import-toolbar { display: grid; grid-template-columns: max-content 32px minmax(0, 1fr) 32px; align-items: center; flex-shrink: 0; gap: 4px; min-height: 32px; margin-bottom: 14px; }
+.configuration-import-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 32px 32px; align-items: center; flex-shrink: 0; gap: 4px; min-height: 32px; margin-bottom: 14px; }
 .configuration-import-toolbar > .configuration-close { width: 32px; height: 32px; transform: none; }
 .configuration-import-toolbar .configuration-import-help-trigger svg { transform: translateY(1px); }
-.configuration-import-toolbar > .provider-text-action { gap: 8px; color: var(--quiet); }
-.configuration-import-refresh { grid-column: 4; }
-.configuration-import-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.configuration-import-toolbar > .provider-text-action { justify-self: start; justify-content: flex-start; width: auto; gap: 8px; color: var(--quiet); }
+.configuration-import-help-trigger { grid-column: 2; }
+.configuration-import-refresh { grid-column: 3; }
+.configuration-import-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .configuration-import-clients { padding: 8px 0 16px; margin-bottom: 12px; border-bottom: 1px solid var(--hairline); }
 .configuration-import-clients h2 { margin: 0 0 12px; color: var(--quiet); font-size: 12px; font-weight: 500; }
 .configuration-import-clients ul { display: flex; flex-wrap: wrap; gap: 8px 16px; list-style: none; padding: 0; margin: 0; }
@@ -1882,6 +1883,9 @@ html[data-theme="night"] .tour-backdrop-full { background: rgba(0,0,0,.7); }
 .configuration-import-client:hover:not(:disabled) { background: var(--hover); }
 .configuration-import-client:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .configuration-import-client:disabled { opacity: 1; cursor: default; }
+.configuration-client-check { width: 16px; height: 16px; flex: 0 0 16px; display: grid; place-items: center; border: 1px solid var(--quiet); border-radius: 3px; }
+.configuration-import-client[aria-pressed="true"] .configuration-client-check { color: var(--surface); background: var(--ink); border-color: var(--ink); }
+.configuration-import-client small { font-size: 11px; white-space: nowrap; }
 .configuration-import-clients .provider-brand-icon { width: 18px; height: 18px; flex-shrink: 0; }
 .configuration-import-clients .configuration-import-status { padding: 0; margin: 8px 0 0; }
 .configuration-import-clients .provider-field-error span { display: block; margin-top: 4px; }
@@ -1898,7 +1902,7 @@ html[data-theme="night"] .tour-backdrop-full { background: rgba(0,0,0,.7); }
 .configuration-import-source-label { flex-shrink: 0; }
 .configuration-import-item-status { flex-shrink: 0; color: var(--quiet); font-size: 12px; }
 .configuration-import-status { color: var(--quiet); font-size: 13px; overflow-wrap: anywhere; padding: 12px 8px; }
-.configuration-import-actions { margin-top: 24px; flex-shrink: 0; display: flex; justify-content: flex-end; gap: 10px; }
+.configuration-import-actions { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hairline); flex-shrink: 0; display: flex; justify-content: flex-end; gap: 10px; }
 .configuration-import-actions .btn { min-width: 72px; }
 .configuration-import-help { width: min(360px, calc(100vw - 32px)); max-height: min(540px, calc(100dvh - 60px)); overflow-y: auto; padding: 18px; border-radius: 10px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow-raise); outline: none; font-size: 13px; line-height: 1.6; }
 .configuration-import-help h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
@@ -2024,7 +2028,5 @@ body { font-weight: 400; }
 #page-models .field-row>.fr-value{justify-content:flex-end}
 #page-models .field-row>.fr-value>.xwx-combobox{width:min(220px,100%);min-width:0}
 .chatgpt-policy{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}
-.configuration-import-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 32px 32px;align-items:center;gap:8px}
-.configuration-import-toolbar>.configuration-close{width:32px;height:32px;display:grid;place-items:center;margin:0}
 .routing-section-heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px}
 @media(max-width:780px){#page-models .field-row>.fr-value>.xwx-combobox{width:100%;max-width:220px}#page-models .field-row:has(>.fr-value>.xwx-combobox)>.fr-value{justify-content:flex-start}}

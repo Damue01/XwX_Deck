@@ -273,13 +273,44 @@
       document.querySelector('.configuration-import-entry').click();
       await wait(() => document.querySelector('.configuration-import input[type=checkbox]') && !document.querySelector('.configuration-import-refresh').disabled, 'flat import list');
       await wait(()=>document.querySelector('.configuration-import-clients')?.getAttribute('aria-busy')==='false','card import discovery');
-      check('configuration card import uses saved selection without status badges or plus signs',document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='true' && !document.querySelector('[data-detected-client="codex"] small,.configuration-import-client-check') && document.querySelector('[data-detected-client="codex"]').disabled && document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='false');
+      check('card import clearly marks already managed clients and leaves new clients selectable',document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='true' && document.querySelector('[data-detected-client="codex"] small')?.textContent==='已添加' && document.querySelector('[data-detected-client="codex"]').disabled && document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='false');
       check('import selected and unselected cards keep shared brand states without a selection border',getComputedStyle(document.querySelector('[data-detected-client="codex"]')).opacity==='1'&&getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='none'&&getComputedStyle(document.querySelector('[data-detected-client="qwen-code"] .provider-brand-icon')).filter==='grayscale(1)'&&getComputedStyle(document.querySelector('[data-detected-client="codex"]')).borderTopWidth==='0px');
       document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);
       check('card client selection is pending until confirmation',document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='true' && !(await window.xwxDeck.getModelClients()).includes('qwen-code'));
       document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);
       check('import is a single titled task without configuration tabs or a return link', document.querySelectorAll('[role=dialog]:not([data-position])').length === 1 && !document.querySelector('.configuration-header .configuration-tabs') && document.querySelector('.configuration-header').textContent.includes('导入配置') && !document.querySelector('.configuration-back'));
       check('import lists unique detected configurations with inline sources and no missing-source placeholders', document.querySelectorAll('.configuration-import-item').length === 2 && document.querySelectorAll('.configuration-import input[type=checkbox]').length === 1 && !document.querySelector('.configuration-import').textContent.includes('Claude CLI') && [...document.querySelectorAll('.configuration-import-source-label')].map(item=>item.textContent).join(',')==='Magpie,CC Switch');
+      // Exercise the saved-tab entry with enough rows to require scrolling.
+      document.querySelector('.configuration-import-actions .btn:not(.primary)').click();
+      await wait(()=>document.querySelector('#configuration-saved-tab')&&!document.querySelector('.configuration-import'),'close initial import');
+      document.querySelector('#configuration-saved-tab').click();
+      await wait(()=>document.querySelector('.configuration-import-entry')?.getBoundingClientRect().height>0,'saved-tab import entry');
+      const shortImportItems=importFixture.sources[0].items;
+      importFixture.sources[0].items=Array.from({length:36},(_,index)=>({...shortImportItems[0],fingerprint:'layout-'+index,name:'Layout fixture '+index}));
+      document.querySelector('.configuration-import-entry').click();
+      await wait(()=>document.querySelectorAll('.configuration-import-item').length===37&&!document.querySelector('.configuration-import-refresh').disabled,'long saved-tab import');
+      for(const [width,height] of [[1040,560],[780,480]]) {
+        await window.__TAURI__.core.invoke('pilot_rpc',{method:'smokeResizeWindow',args:[{width,height}]});
+        await wait(()=>window.innerWidth===width&&window.innerHeight===height,'import viewport '+width);
+        await delay(100);
+        const popup=document.querySelector('#add-configuration-dialog').getBoundingClientRect();
+        const actions=document.querySelector('.configuration-import-actions').getBoundingClientRect();
+        const body=document.querySelector('.configuration-import-body');
+        const toolbar=document.querySelector('.configuration-import-toolbar');
+        const file=toolbar.querySelector('.provider-text-action').getBoundingClientRect();
+        const help=toolbar.querySelector('.configuration-import-help-trigger').getBoundingClientRect();
+        const refresh=toolbar.querySelector('.configuration-import-refresh').getBoundingClientRect();
+        check('saved-tab import keeps long list scrollable and footer visible '+width,body.scrollHeight>body.clientHeight&&body.getBoundingClientRect().bottom<=actions.top&&actions.bottom<popup.bottom&&actions.height>30);
+        check('import file and icon actions share an aligned three-column toolbar '+width,file.left<help.left&&help.left<refresh.left&&Math.abs((file.top+file.height/2)-(refresh.top+refresh.height/2))<2);
+      }
+      await window.__TAURI__.core.invoke('pilot_rpc',{method:'smokeResizeWindow',args:[{width:1040,height:560}]});
+      document.querySelector('.configuration-import-actions .btn:not(.primary)').click();
+      await wait(()=>!document.querySelector('.configuration-import'),'close saved-tab import');
+      importFixture.sources[0].items=shortImportItems;
+      document.querySelector('#configuration-services-tab').click();
+      await wait(()=>document.querySelector('.configuration-import-entry')?.getBoundingClientRect().height>0,'restore service import entry');
+      document.querySelector('.configuration-import-entry').click();
+      await wait(()=>document.querySelectorAll('.configuration-import-item').length===2&&!document.querySelector('.configuration-import-refresh').disabled,'restore short import');
       const cancelImport = document.querySelector('.configuration-import-actions .btn:not(.primary)'), primaryImport = document.querySelector('.configuration-import-actions .primary');
       check('detected configurations start unchecked and require explicit selection', !document.querySelector('.configuration-import input[type=checkbox]').checked && primaryImport.disabled);
       document.querySelector('.configuration-import input[type=checkbox]').click(); await delay(50);

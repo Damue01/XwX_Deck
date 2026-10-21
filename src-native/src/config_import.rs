@@ -595,6 +595,12 @@ fn read_cc(path: &Path) -> Result<Vec<ImportItem>> {
         )
         .map_err(|_| "无法只读打开 CC Switch 数据库")?;
         db.busy_timeout(Duration::from_secs(1)).map_err(err)?;
+        db.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
+            .map_err(|failure| {
+                if failure.sqlite_error().is_some_and(|code| code.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK) {
+                    "CC Switch 数据库有未完成的事务，请先打开 CC Switch 完成恢复后重新检测；原库未修改".to_owned()
+                } else { "CC Switch 数据库暂不可读，请关闭占用后重新检测；原库未修改".to_owned() }
+            })?;
         let transaction = db
             .unchecked_transaction()
             .map_err(|_| "CC Switch 数据库暂不可读")?;

@@ -52,7 +52,7 @@ try{
  const client=id=>document.querySelector(`[data-detected-client="${id}"]`);
  const primary=()=>document.querySelector('.configuration-import-actions .primary');
  assert.equal(document.querySelectorAll('[data-detected-client="codex"]').length,1);
- assert.equal(client('codex').getAttribute('aria-pressed'),'false');assert.equal(client('qwen-code').getAttribute('aria-pressed'),'true');assert.equal(client('qwen-code').disabled,true);assert.equal(client('qwen-code').querySelector('small,.configuration-import-client-check'),null,'selection is conveyed by the shared card state without badges');
+ assert.equal(client('codex').getAttribute('aria-pressed'),'false');assert.equal(client('qwen-code').getAttribute('aria-pressed'),'true');assert.equal(client('qwen-code').disabled,true);assert.equal(client('qwen-code').querySelector('small').textContent,'已添加','already managed clients explain why they cannot be selected again');
  assert.equal(client('cursor'),null);assert.equal(primary().disabled,true);assert.ok(!document.body.textContent.includes('点击选择要纳入管理的客户端'));
  const writesBefore=writes.length;
  await act(async()=>client('codex').click());assert.equal(client('codex').getAttribute('aria-pressed'),'true');assert.equal(writes.length,writesBefore);assert.equal(primary().textContent,'确认');
@@ -60,14 +60,19 @@ try{
  await act(async()=>client('codex').click());assert.equal(primary().disabled,true);
  await act(async()=>document.querySelector('.configuration-import-refresh').click());assert.equal(client('codex').getAttribute('aria-pressed'),'false');
  console.log('PASS both import modes discover clients; selected, managed and unsupported states are distinct; detection and toggles never save and rescan preserves deselection');
- await act(async()=>client('codex').click());detectionFailure=true;await act(async()=>document.querySelector('.configuration-import-refresh').click());assert.equal(primary().disabled,true);assert.equal(client('codex').disabled,false);
+ await act(async()=>client('codex').click());detectionFailure=true;await act(async()=>document.querySelector('.configuration-import-refresh').click());assert.equal(primary().disabled,false);assert.equal(client('codex').disabled,false);
  await act(async()=>client('codex').click());assert.equal(client('codex').getAttribute('aria-pressed'),'false');detectionFailure=false;await act(async()=>document.querySelector('.configuration-import-refresh').click());
  await act(async()=>client('codex').click());fail=true;const beforeResults=results.length;
  await act(async()=>primary().click());assert.equal(results.length,beforeResults);assert.equal(client('codex').getAttribute('aria-pressed'),'true');fail=false;
  await act(async()=>primary().click());assert.deepEqual(writes.at(-1).clients,['codex']);assert.deepEqual(writes.at(-1).fingerprints,[]);assert.deepEqual(patches.at(-1).modelClients,['qwen-code','codex']);assert.equal(results.length,beforeResults+1);
- console.log('PASS detection failure blocks uncertain enrollment but permits deselection; failed confirmation retains choices; client-only confirmation patches model tabs before completing');
+ console.log('PASS failed refresh preserves usable cached choices; failed confirmation retains selection; client-only confirmation patches model tabs before completing');
  await renderImport('cancel-enrollment');await act(async()=>client('codex').click());const beforeCancel=writes.length;await act(async()=>document.querySelector('.configuration-import-actions .btn:not(.primary)').click());assert.equal(writes.length,beforeCancel);
  await renderImport('reopen-enrollment');assert.equal(client('codex').getAttribute('aria-pressed'),'false');
  await renderImport('onboarding-enrollment',{onboarding:true});await act(async()=>client('codex').click());assert.equal(primary().textContent,'确认并继续');await act(async()=>primary().click());assert.deepEqual(writes.at(-1).clients,['codex']);
  console.log('PASS cancel discards pending enrollment; onboarding uses the same explicit client-only confirmation');
+ preview.sources=[{source:'claude',path:'/fixture/strict.json',name:'Claude',found:true,error:'',items:[item('strict','Strict source','new')]}];
+ await act(async()=>root.render(React.createElement(React.StrictMode,null,React.createElement(mod.exports.ImportConfigurations,{key:'strict-first-open',visible:true,onBack:()=>{},onBusyChange:busy}))));
+ assert.ok(document.querySelector('input[aria-label="导入 Claude Strict source"]'),'Strict Mode initial effect must not lose its only valid scan');
+ assert.equal(document.querySelector('input[aria-label="导入 Claude Strict source"]').checked,false);
+ console.log('PASS first-open Strict Mode cleanup cannot discard the valid configuration preview or auto-select entries');
 }finally{await act(async()=>root.unmount());dom.window.close()}
