@@ -13,6 +13,30 @@
   const dismissToasts = async () => { for(let i=0; i<30; i++) { const titles=[...document.querySelectorAll('[data-slot=toast-title]')].filter(title=>!title.closest('[aria-hidden=true]')); if(!titles.length) return; for(const title of titles) title.closest('[data-position]')?.querySelector('[data-slot=toast-close]')?.click(); await delay(300); } };
   const publishNotice = notice => window.__TAURI__.core.invoke('pilot_rpc', {method:'smokeNotice',args:[notice]});
   const modelMenuReady = () => { const menu=document.querySelector('.model-choice-positioner:not([hidden])'); const popup=menu?.querySelector('.xwx-choice-popup'); return popup && getComputedStyle(menu).opacity === '1' && !popup.hasAttribute('data-starting-style') && popup.querySelector('[role=option]')?.getBoundingClientRect().height>0; };
+  async function checkEditorLayout(label) {
+    for (const [width, height] of [[1040, 560], [780, 480]]) {
+      await window.__TAURI__.core.invoke('pilot_rpc', { method: 'smokeResizeWindow', args: [{ width, height }] });
+      await delay(250);
+      const dialog = document.querySelector('#add-configuration-dialog').getBoundingClientRect();
+      const actions = [...document.querySelectorAll('#provider-editor .prov-save-bar button')];
+      check(`${label} actions are fully visible and clickable at ${width}x${height}`, actions.length >= 2 && actions.every(button => {
+        const r = button.getBoundingClientRect(); const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        return r.height >= 28 && r.top >= dialog.top && r.bottom <= dialog.bottom - 8 && r.bottom <= innerHeight && (hit === button || button.contains(hit));
+      }));
+      const fields = document.querySelector('.provider-editor-fields');
+      if(width===1040) {
+        fields.scrollTop=0;await delay(100);
+        check(`${label} all three basic fields fit the default window without a clipped Key`,document.querySelector('#provider-key').getBoundingClientRect().bottom<=fields.getBoundingClientRect().bottom);
+      }
+      fields.scrollTop = fields.scrollHeight; await delay(100);
+      const key = document.querySelector('#provider-key').getBoundingClientRect();
+      const actionsTop = document.querySelector('#provider-editor .prov-save-bar').getBoundingClientRect().top;
+      const layout = { key: key.toJSON(), actionsTop, fields: fields.getBoundingClientRect().toJSON(), scrollTop: fields.scrollTop, scrollHeight: fields.scrollHeight, clientHeight: fields.clientHeight };
+      check(`${label} Key can scroll fully above the fixed actions at ${width}x${height}: ${JSON.stringify(layout)}`, key.bottom <= actionsTop && key.height > 25);
+    }
+    await window.__TAURI__.core.invoke('pilot_rpc', { method: 'smokeResizeWindow', args: [{ width: 1040, height: 560 }] });
+    await delay(250);
+  }
   try {
     await wait(() => document.querySelector('#captureBtn') && window.xwxDeck, 'production renderer');
     for (const [family, sample] of [['Urbanist', 'Windows model'], ['Noto Sans SC', '模型请求']]) {
