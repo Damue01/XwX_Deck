@@ -257,6 +257,8 @@
       check('import is a single titled task without configuration tabs or a return link', document.querySelectorAll('[role=dialog]:not([data-position])').length === 1 && !document.querySelector('.configuration-header .configuration-tabs') && document.querySelector('.configuration-header').textContent.includes('导入配置') && !document.querySelector('.configuration-back'));
       check('import lists unique detected configurations with inline sources and no missing-source placeholders', document.querySelectorAll('.configuration-import-item').length === 2 && document.querySelectorAll('.configuration-import input[type=checkbox]').length === 1 && !document.querySelector('.configuration-import').textContent.includes('Claude CLI') && [...document.querySelectorAll('.configuration-import-source-label')].map(item=>item.textContent).join(',')==='Magpie,CC Switch');
       const cancelImport = document.querySelector('.configuration-import-actions .btn:not(.primary)'), primaryImport = document.querySelector('.configuration-import-actions .primary');
+      check('detected configurations start unchecked and require explicit selection', !document.querySelector('.configuration-import input[type=checkbox]').checked && primaryImport.disabled);
+      document.querySelector('.configuration-import input[type=checkbox]').click(); await delay(50);
       check('white Cancel and primary Import share one bottom action row', cancelImport.textContent==='取消' && primaryImport.textContent==='导入' && Math.abs(cancelImport.getBoundingClientRect().top-primaryImport.getBoundingClientRect().top)<1 && getComputedStyle(cancelImport).backgroundColor!==getComputedStyle(primaryImport).backgroundColor);
       document.querySelector('.configuration-import input[type=checkbox]').click();
       document.querySelector('.configuration-import-refresh').click();
@@ -276,7 +278,9 @@
       await wait(() => document.querySelector('.configuration-header .configuration-tabs') && document.activeElement===document.querySelector('.configuration-import-entry'), 'import Cancel restores the directory and focus');
       check('Cancel restores the configuration directory and keyboard focus without writing', !!document.querySelector('.configuration-header .configuration-tabs') && document.activeElement===document.querySelector('.configuration-import-entry') && importRequests.length===0 && (await window.xwxDeck.getProviders()).connections.length===0);
       document.querySelector('.configuration-import-entry').click();
-      await wait(() => document.querySelector('.configuration-import-actions .primary')?.disabled===false,'reopened import');
+      await wait(() => document.querySelector('.configuration-import input[type=checkbox]') && !document.querySelector('.configuration-import-refresh').disabled,'reopened import');
+      check('reopened import keeps every configuration unchecked', document.querySelector('.configuration-import-actions .primary').disabled && !document.querySelector('.configuration-import input[type=checkbox]').checked);
+      document.querySelector('.configuration-import input[type=checkbox]').click(); await delay(50);
       document.querySelector('.configuration-import-actions .primary').click();
       await wait(() => !document.querySelector('.configuration-import'),'confirmed import');
       check('confirmation sends only selected eligible fingerprints and the reviewed digest', importRequests.length===1 && importRequests[0].fingerprints.join(',')==='import-new' && importRequests[0].targetDigest==='ui-fixture-digest');
