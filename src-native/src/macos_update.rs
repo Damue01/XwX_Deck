@@ -79,7 +79,7 @@ fn verify(app: &Path, id: &str, notarized: bool) -> Result<()> {
         return Err("应用身份不匹配".into());
     }
     let executable = plist(app, "CFBundleExecutable")?;
-    if Path::new(&executable).components().count() != 1 || executable != "xwxdeck-native" {
+    if Path::new(&executable).components().count() != 1 || executable != env!("CARGO_PKG_NAME") {
         return Err("无效应用可执行文件".into());
     }
     let binary = app.join("Contents/MacOS").join(executable);
@@ -139,7 +139,7 @@ fn current_app() -> Result<PathBuf> {
         .and_then(Path::parent)
         .ok_or("无法定位应用")?;
     regular_app(app)?;
-    if exe != app.join("Contents/MacOS/xwxdeck-native") {
+    if exe != app.join("Contents/MacOS").join(env!("CARGO_PKG_NAME")) {
         return Err("需要从已安装应用运行更新".into());
     }
     Ok(app.into())

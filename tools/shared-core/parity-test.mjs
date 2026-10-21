@@ -35,5 +35,6 @@ try {
  await rm(join(peer,'src/shared/new.ts'));
  const altered=JSON.parse(await readFile(join(root,'docs/shared-core-sync.json'),'utf8'));altered.reviewedDifferences=[{path}];await write(root,'docs/shared-core-sync.json',JSON.stringify(altered));
  await assert.rejects(planSync({root,peer,direction:'export'}),/variant exceptions/);assert.equal(audit(root).status,1);
+ altered.reviewedDifferences=[];altered.schemaVersion=1;for(const repo of [root,peer])await write(repo,'docs/shared-core-sync.json',JSON.stringify(altered));assert.equal(audit(root).status,1);assert.equal(audit(peer).status,1);
  console.log('PASS strict common contract: both directions, both gates, edition isolation, baseline integrity, new files and rejected exceptions');
 } finally {await rm(directory,{recursive:true,force:true});}
