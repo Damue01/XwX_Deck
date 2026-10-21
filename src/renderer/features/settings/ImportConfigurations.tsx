@@ -2,14 +2,14 @@ import { RefreshButton } from '@/components/ui/refresh-button';
 import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
 import { createPortal } from 'react-dom';
-import { Check, CircleHelp, FileUp } from 'lucide-react';
+import { CircleHelp, FileUp } from 'lucide-react';
 import { Popover } from '@base-ui/react/popover';
 import { useBridge } from '@/bridge/store';
 import { showErrorToast, showToast } from '@/lib/toast';
 import type { AppliedConfigurationImport, ConfigurationImportPreview, ConfigurationImportSpec } from '../../../shared/configImport';
 import { MODEL_CLIENT_CATALOG, clientCatalogLabel, normalizeModelClients, supportsModelManagement, type ClientInstallationSnapshot, type DownloadClientId } from '../../../shared/clientDownloads';
 import { useClientInstallations } from '../models/useClientInstallations';
-import { ProviderIcon } from './ProviderIcon';
+import { ClientChoice } from './ClientChoice';
 
 export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding = false, onImported, actionsContainer, onDetected, clientDetection }: { visible: boolean; onBack: () => void; onBusyChange: (busy: boolean) => void; onboarding?: boolean; onImported?: (result: AppliedConfigurationImport) => void; actionsContainer?: HTMLElement | null; onDetected?: (count: number) => void; clientDetection?: { snapshot: ClientInstallationSnapshot | null; checking: boolean; slow?: boolean; error: string; refresh: () => Promise<unknown> } }): React.ReactElement {
   useLanguage();
@@ -120,15 +120,11 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
       <section className="configuration-import-clients" aria-label={t('本机客户端')} aria-busy={detection.checking}>
         <h2>{t('本机客户端')}</h2>
         {!!installedClients.length && <>
-          <ul>{installedClients.map(client => {
+          <div className="configuration-grid">{installedClients.map(client => {
             const managed = managedClients.includes(client.id);
             const supported = canUseClient(client.id);
-            const selected = managed || selectedClients.includes(client.id);
-            return <li key={client.id}><button type="button" className="configuration-choice configuration-import-client" data-detected-client={client.id} data-unconfigured={!selected || undefined} aria-pressed={selected} disabled={busy || managed || !supported} onClick={() => setPickedClients(current => current.includes(client.id) ? current.filter(id => id !== client.id) : [...current, client.id])}>
-              <span className="configuration-client-check" aria-hidden="true">{selected && <Check size={12} />}</span><ProviderIcon kind={client.icon} /><span>{clientCatalogLabel(client)}</span>
-              {managed ? <small>{t('已添加')}</small> : !supported ? <small>{t('暂不支持模型配置')}</small> : null}
-            </button></li>;
-          })}</ul>
+            return <ClientChoice key={client.id} client={client} configured={managed} selected={selectedClients.includes(client.id)} data-detected-client={client.id} disabled={busy || managed || !supported} title={managed ? t('已纳入客户端管理') : !supported ? t('暂不支持模型配置') : undefined} onClick={() => setPickedClients(current => current.includes(client.id) ? current.filter(id => id !== client.id) : [...current, client.id])} />;
+          })}</div>
         </>}
         {detection.error ? <p className="provider-field-error" role="alert">{t('客户端检测失败，可继续导入配置')}<span>{detection.error}</span></p>
           : detection.checking || detection.slow ? <p className="configuration-import-status" role="status">{t('正在检测客户端…')}</p>

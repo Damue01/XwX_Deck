@@ -190,7 +190,9 @@ extern "C" void __stdcall Field(HWND window,int kind) {
   if(kind==4){move(window,225,78,363,22);SetProp(window,L"heading",(HANDLE)1);SendMessage(window,WM_SETFONT,(WPARAM)headingFont,TRUE);}
   if(kind==5){move(window,225,111,363,28);SetWindowTheme(window,L"",L"");SetWindowSubclass(window,checkboxProc,5,0);}
   if(kind==6)move(window,225,106,363,44);
-  if(kind==2||kind==3||kind==4||kind==6)SetWindowSubclass(window,labelProc,4,0);
+  if(kind==7)move(window,225,140,363,18);
+  if(kind==8)move(window,225,158,363,20);
+  if(kind==2||kind==3||kind==4||kind==6||kind==7)SetWindowSubclass(window,labelProc,4,0);
   // Remove theme edges only from the editable path. Keep genuine edit/button controls.
   if(kind==0){SetWindowTheme(window,L"",L"");SetWindowLongPtr(window,GWL_STYLE,GetWindowLongPtr(window,GWL_STYLE)&~WS_BORDER);SetWindowLongPtr(window,GWL_EXSTYLE,GetWindowLongPtr(window,GWL_EXSTYLE)&~WS_EX_CLIENTEDGE);SendMessage(window,WM_SETFONT,(WPARAM)mono,TRUE);SetWindowSubclass(window,editProc,3,0);SetWindowPos(window,nullptr,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);}
   else if(kind==1)ownerButton(window);

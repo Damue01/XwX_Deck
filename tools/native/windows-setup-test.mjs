@@ -1,6 +1,6 @@
 // Explicit per-user Setup acceptance. Never replace a pre-existing installation.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
@@ -51,13 +51,48 @@ async function uninstall(name) {
  const result=spawnSync(runner,['/S','_?='+current.Path],{windowsVerbatimArguments:true,windowsHide:true,timeout:60000,stdio:'ignore'});
  if(result.error)throw result.error;return result.status;
 }
+async function legacyMsi() {
+ const wix=join(repo,'test-results/wix314'),archive=join(repo,'test-results/wix314-binaries.zip');
+ const expected='6ac824e1642d6f7277d0ed7ea09411a508f6116ba6fae0aa5f2c7daa2ff43d31';
+ if(!existsSync(archive)){
+  const response=await fetch('https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip');assert.ok(response.ok);
+  const bytes=Buffer.from(await response.arrayBuffer());assert.equal(hash(bytes),expected);await writeFile(archive,bytes);
+ }
+ assert.equal(hash(await readFile(archive)),expected);
+ if(!existsSync(join(wix,'light.exe'))){
+  const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','Expand-Archive -LiteralPath $env:XWX_TEST_WIX_ARCHIVE -DestinationPath $env:XWX_TEST_WIX_DIRECTORY -Force'],{env:{...process.env,XWX_TEST_WIX_ARCHIVE:archive,XWX_TEST_WIX_DIRECTORY:wix},windowsHide:true,encoding:'utf8'});assert.equal(result.status,0,result.stderr);
+ }
+ const product='{'+randomUUID().toUpperCase()+'}',upgrade='{'+randomUUID().toUpperCase()+'}',component='{'+randomUUID().toUpperCase()+'}';
+ const xml=value=>value.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;');
+ const source=join(work,'legacy.wxs'),object=join(work,'legacy.wixobj'),msi=join(work,'legacy.msi');
+ // Real per-user MSI with the historical registration schema; no custom uninstall action.
+ await writeFile(source,`<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"><Product Id="${product}" Name="XwX Deck" Language="1033" Version="0.9.9" Manufacturer="XwX Deck" UpgradeCode="${upgrade}">
+ <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" InstallPrivileges="limited" Platform="x64"/><MediaTemplate EmbedCab="yes"/>
+ <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLDIR]" After="CostFinalize"/>
+ <Directory Id="TARGETDIR" Name="SourceDir"><Directory Id="LocalAppDataFolder"><Directory Id="INSTALLDIR" Name="Deck Legacy Fixture">
+ <Component Id="Application" Guid="${component}" Win64="yes"><File Id="Executable" Name="XwX Deck.exe" Source="${xml(oldBinary)}"/><RemoveFolder Id="EmptyInstallDirectory" On="uninstall"/>
+ <RegistryKey Root="HKCU" Key="Software\\XwX Deck\\Installation"><RegistryValue Name="Path" Value="[INSTALLDIR]" Type="string" KeyPath="yes"/><RegistryValue Name="ProductCode" Value="[ProductCode]" Type="string"/><RegistryValue Name="UpgradeCode" Value="${upgrade}" Type="string"/><RegistryValue Name="Version" Value="[ProductVersion]" Type="string"/></RegistryKey>
+ </Component></Directory></Directory></Directory><Feature Id="Main" Level="1"><ComponentRef Id="Application"/></Feature></Product></Wix>`);
+ for(const[tool,args]of[['candle.exe',['-nologo','-arch','x64','-out',object,source]],['light.exe',['-nologo','-out',msi,object]]]){
+  const result=spawnSync(join(wix,tool),args,{encoding:'utf8',windowsHide:true});await writeFile(join(work,tool+'-legacy.log'),result.stdout+result.stderr);assert.equal(result.status,0,result.stdout+result.stderr);
+ }
+ const permissions=spawnSync('icacls.exe',[msi,'/grant','*S-1-5-18:(R)'],{encoding:'utf8',windowsHide:true});assert.equal(permissions.status,0,permissions.stderr);
+ return {product,msi};
+}
+function windowsInstaller(args){const result=spawnSync(join(process.env.WINDIR,'System32/msiexec.exe'),args,{windowsHide:true,timeout:60000,stdio:'ignore'});if(result.error)throw result.error;return result.status;}
+function legacyRegistration(product,remove=false){
+ const script=remove
+  ?"$p=Get-ItemProperty -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation' -ErrorAction SilentlyContinue;if($p.ProductCode -eq $env:XWX_TEST_MSI_PRODUCT -and $p.Path.TrimEnd('\\') -eq $env:XWX_TEST_MSI_PATH){Remove-Item -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation'}"
+  :"$p=Get-ItemProperty -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation' -ErrorAction SilentlyContinue;if($p){if($p.ProductCode -ne $env:XWX_TEST_MSI_PRODUCT -or $p.Path.TrimEnd('\\') -ne $env:XWX_TEST_MSI_PATH){throw 'Unrelated installation'}}else{New-Item -Path 'HKCU:\\Software\\XwX Deck\\Installation' -Force|Out-Null;Set-ItemProperty -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation' -Name Path -Value $env:XWX_TEST_MSI_PATH;Set-ItemProperty -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation' -Name ProductCode -Value $env:XWX_TEST_MSI_PRODUCT;Set-ItemProperty -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation' -Name Version -Value '0.9.9'}";
+ const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script+'; exit 0'],{env:{...process.env,XWX_TEST_MSI_PRODUCT:product,XWX_TEST_MSI_PATH:cInstall},windowsHide:true,encoding:'utf8'});assert.equal(result.status,0,result.stderr);
+}
 async function rpcSession(binary,task) {
- const child=spawn(binary,['--rpc','--pilot-root',data],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base},stdio:['pipe','pipe','pipe']});
+ const child=spawn(binary,['--rpc','--pilot-root',data],{windowsHide:true,env:{...process.env,XWX_DECK_TEST_UPDATE_FEED_URL:base},stdio:['pipe','pipe','pipe']});
  const queue=[];let errors='';createInterface({input:child.stdout}).on('line',line=>queue.shift()?.(JSON.parse(line)));child.stderr.on('data',d=>errors+=d);
  const rpc=(method,...args)=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('RPC timeout '+method+' '+errors)),25000);queue.push(value=>{clearTimeout(timer);value.ok?resolve(value.result):reject(Error(value.error));});child.stdin.write(JSON.stringify({method,args})+'\n');});
  try{return await task(rpc,child);}finally{if(child.exitCode===null){const exited=once(child,'exit');child.stdin.end();const [code]=await exited;assert.equal(code,0,errors);}}
 }
-let artifacts,modelRequests=0;
+let artifacts,modelRequests=0,legacyFixture;
 const server=createServer(async(req,res)=>{
  if(req.url==='/release.json'){res.setHeader('content-type','application/json');res.end(JSON.stringify({schemaVersion:1,channel:'release',releaseSeries:'native-v1',version:newVersion,tag:'v'+newVersion,files:[
   {platform:'windows',arch:'x64',name:'fixture.exe',kind:'portable',url:base+'/portable',size:3,sha256:hash(Buffer.from('exe'))},
@@ -90,6 +125,18 @@ try {
   assert.equal(await readFile(marker,'utf8'),'unrelated existing bytes');assert.equal(registration(),null);await assert.rejects(access(join(target,'XwX Deck.exe')));
  }
  pass('pre-existing staging and recovery files refuse installation and remain byte-for-byte intact');
+ legacyFixture=await legacyMsi();
+ assert.equal(windowsInstaller(['/i',legacyFixture.msi,'/qn','/norestart','INSTALLDIR='+cInstall,'/l*v',join(work,'legacy-install.log')]),0);
+ // Explicit historical HKCU input fixture; the guard independently verifies the real MSI registration.
+ legacyRegistration(legacyFixture.product);
+ assert.equal(registration().InstallerType,null);assert.equal(hash(await readFile(join(cInstall,'XwX Deck.exe'))),hash(await readFile(oldBinary)));
+ const legacyNote=join(data,'legacy-retained.txt');await writeFile(legacyNote,'synthetic retained configuration');
+ const blocker=join(cInstall,'.xwx-deck-old.exe');await writeFile(blocker,'foreign recovery bytes');
+ assert.equal(setup(artifacts.new.path,[],'legacy-staging-conflict'),2);assert.equal(registration().InstallerType,null);assert.equal(await readFile(blocker,'utf8'),'foreign recovery bytes');await unlink(blocker);
+ assert.equal(setup(artifacts.new.path,[],'legacy-msi-upgrade'),0);assert.equal(registration().InstallerType,'nsis-v1');assert.equal(registration().Path,cInstall);assert.equal(hash(await readFile(join(cInstall,'XwX Deck.exe'))),hash(await readFile(newBinary)));assert.equal(await readFile(legacyNote,'utf8'),'synthetic retained configuration');
+ assert.equal(windowsInstaller(['/x',legacyFixture.product,'/qn','/norestart']),1605,'the old MSI must already be removed, not left to remove the new executable later');
+ assert.equal(await uninstall('legacy-upgraded-uninstall'),0);assert.equal(registration(),null);legacyFixture=null;
+ pass('a real legacy per-user MSI upgrades in place to Setup without manual path discovery; recovery conflicts retain the old MSI and data');
  const unrelatedShortcut=previousShortcut||foreignShortcutMarker;
  if(!previousShortcut)await writeFile(shortcut,unrelatedShortcut);
  assert.equal(setup(artifacts.new.path,['/D='+cInstall],'c-drive-install'),0);
@@ -100,7 +147,6 @@ try {
  if(!previousShortcut)await unlink(shortcut);
  pass('per-user Setup installs exact files in a Unicode C-drive path and uninstalls without Windows Installer');
  await rpcSession(newBinary,async rpc=>{
-  assert.deepEqual((await rpc('getProviders')).connections,[]);
   const p=await rpc('saveProvider',{id:'setup-preserved',displayName:'Setup fixture',baseUrl:base+'/v1',bearerToken:'synthetic-setup-key',adapter:'responses',codexModel:'fixture-model'});
   await rpc('switchClientProvider',{client:'codex',providerId:p.connections[0].id});
   const state=await rpc('toggleTracing',true);const response=await fetch(state.localBaseUrl+'/responses',{method:'POST',headers:{'content-type':'application/json','x-session-id':'setup-preserved-session'},body:JSON.stringify({model:'fixture-model',input:'Synthetic preserved history'})});assert.equal(response.status,200);await response.json();await rpc('toggleTracing',false);providersBefore=await rpc('getProviders');
@@ -150,7 +196,7 @@ try {
  }finally{await recoveryLog.close();}
  await wait(()=>!spawnSync('tasklist.exe',['/FI','PID eq '+failure.recoveryPid,'/FO','CSV','/NH'],{encoding:'utf8',windowsHide:true}).stdout.includes('"'+failure.recoveryPid+'"'),'Recovered test app did not exit');
  pass('detached update helper rejects tampering and renders the unchanged old application again');
- ui=spawn(executable,['--pilot-root',data,'--smoke','--smoke-setup-update','--smoke-setup-restart'],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:'ignore'});
+ ui=spawn(executable,['--pilot-root',data,'--smoke','--smoke-setup-update','--smoke-setup-restart'],{windowsHide:true,env:{...process.env,XWX_DECK_TEST_UPDATE_FEED_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:'ignore'});
  await wait(async()=>{try{const r=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));if(!r.passed)throw Error(r.error);return r.stage==='downloaded';}catch(e){if(e.code==='ENOENT')return false;throw e;}},'Rendered updater did not download');
  await wait(()=>ui.exitCode!==null,'Old app did not exit');assert.equal(ui.exitCode,0);
  await wait(async()=>{try{const r=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));if(!r.passed)throw Error(r.error);return r.stage==='restarted'&&r.version===newVersion;}catch(e){if(e.code==='ENOENT')return false;throw e;}},'Updated app did not render');
@@ -173,10 +219,11 @@ try {
  pass('uninstall removes owned application files and registration, retaining user files, configuration and Trace');
  assert.equal(setup(artifacts.new.path,['/D='+install],'reinstall'),0);await rpcSession(executable,async rpc=>{assert.deepEqual(await rpc('getProviders'),providersBefore);});assert.equal(await uninstall('uninstall-reinstalled'),0);
  pass('reinstallation restores the retained choices and a second uninstall succeeds');
- await writeFile(join(work,'summary.json'),JSON.stringify({passed:true,checks,artifacts,modelRequests,work,binarySha256:hash(await readFile(newBinary)),scope:'isolated per-user system and work-drive installation, recovery, repair, native rendered update, uninstall and retention; loopback requests; no MSI engine'},null,2)+'\n');console.log(JSON.stringify({passed:true,checks:checks.length,work}));
+ await writeFile(join(work,'summary.json'),JSON.stringify({passed:true,checks,artifacts,modelRequests,work,binarySha256:hash(await readFile(newBinary)),scope:'isolated real per-user MSI migration, Setup system and work-drive installation, recovery, repair, native rendered update, uninstall and retention; loopback requests'},null,2)+'\n');console.log(JSON.stringify({passed:true,checks:checks.length,work}));
 }catch(error){await writeFile(join(work,'summary.json'),JSON.stringify({passed:false,checks,work,error:String(error)},null,2)+'\n');throw error;}
 finally {
  if(ui?.exitCode===null){const ended=once(ui,'exit');ui.kill();await ended;}
+ if(legacyFixture){const code=windowsInstaller(['/x',legacyFixture.product,'/qn','/norestart']);assert.ok([0,1605].includes(code));legacyRegistration(legacyFixture.product,true);}
  const current=registration();if(current&&[install,cInstall].includes(current.Path)){assert.equal(setup(artifacts.new.path,[],'cleanup-repair'),0,'Owned Setup recovery failed');const code=await uninstall('cleanup-owned-installation');assert.equal(code,0,'Owned Setup cleanup failed');}
  if(!previousShortcut&&!registration()&&(await readFile(shortcut).catch(()=>null))?.equals(foreignShortcutMarker))await unlink(shortcut);
  server.closeAllConnections();await new Promise(resolve=>server.close(resolve));

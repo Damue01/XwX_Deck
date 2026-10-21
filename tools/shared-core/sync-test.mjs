@@ -162,6 +162,21 @@ try {
     assert.equal(JSON.parse(await readFile(join(f.root,'docs/shared-core-sync.json'),'utf8')).shared[0].initiallyAbsent,undefined);
     await rm(join(f.peer,path));assert.ok(summarize(await planSync({...f,direction:'import'})).blocked.length,'later deletion remains review-only');
   });
+  await test('schema 2 new modules can refresh their baseline and accept the next repair',async()=>{
+    const f=await fixture(),path=await newModule(f);f.manifest.schemaVersion=2;delete f.manifest.mixed;
+    for(const repo of [f.root,f.peer]){
+      await mkdir(join(repo,'src-native/src/edition'),{recursive:true});
+      await rename(join(repo,'src-native/src/core.rs'),join(repo,'src-native/src/edition/core.rs'));
+      await write(repo,'docs/shared-core-sync.json',JSON.stringify(f.manifest));
+    }
+    await write(f.root,'tools/shared-core/export-policy.json',JSON.stringify({excludedPaths:[],forbiddenPackagedPatterns:[]}));
+    await applySync(await planSync({...f,direction:'export'}),join(f.parent,'recovery'));
+    for(const repo of [f.root,f.peer]){git(repo,['add','.']);git(repo,['commit','-qm','Committed common module']);}
+    assert.deepEqual((await acceptBaseline({...f,output:join(f.parent,'baseline')})).updated,[path]);
+    for(const repo of [f.root,f.peer])assert.equal(JSON.parse(await readFile(join(repo,'docs/shared-core-sync.json'),'utf8')).shared.find(entry=>entry.path===path).initiallyAbsent,undefined);
+    await write(f.root,path,'export const neutral = false;\n');
+    assert.deepEqual(summarize(await planSync({...f,direction:'export'})).updates,[path]);
+  });
   await test('a new target appearing after preview or during exclusive publication survives without overwrite',async()=>{
     for(const race of ['before','during']) {
       const f=await fixture(),path=await newModule(f),plan=await planSync({...f,direction:'export'});

@@ -52,7 +52,7 @@ try{
  const client=id=>document.querySelector(`[data-detected-client="${id}"]`);
  const primary=()=>document.querySelector('.configuration-import-actions .primary');
  assert.equal(document.querySelectorAll('[data-detected-client="codex"]').length,1);
- assert.equal(client('codex').getAttribute('aria-pressed'),'false');assert.equal(client('qwen-code').getAttribute('aria-pressed'),'true');assert.equal(client('qwen-code').disabled,true);assert.equal(client('qwen-code').querySelector('small').textContent,'已添加','already managed clients explain why they cannot be selected again');
+ assert.equal(client('codex').getAttribute('aria-pressed'),'false');assert.equal(client('qwen-code').getAttribute('aria-pressed'),'false');assert.equal(client('qwen-code').disabled,true);assert.equal(client('qwen-code').title,'已纳入客户端管理');assert.equal(client('qwen-code').querySelector('small'),null);assert.equal(client('codex').className,'configuration-choice');assert.equal(client('codex').querySelector('.configuration-client-check'),null);assert.equal(client('codex').getAttribute('data-unconfigured'),'true');assert.equal(client('qwen-code').hasAttribute('data-unconfigured'),false);
  assert.equal(client('cursor'),null);assert.equal(primary().disabled,true);assert.ok(!document.body.textContent.includes('点击选择要纳入管理的客户端'));
  const writesBefore=writes.length;
  await act(async()=>client('codex').click());assert.equal(client('codex').getAttribute('aria-pressed'),'true');assert.equal(writes.length,writesBefore);assert.equal(primary().textContent,'确认');

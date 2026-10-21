@@ -13,6 +13,7 @@ import type { ProviderConnection } from '../../../shared/providers';
 import { SubscriptionAccountsPanel } from './SubscriptionAccountsPanel';
 import { EnhancementsPanel } from './EnhancementsPanel';
 import { ImportConfigurations } from './ImportConfigurations';
+import { ClientChoice } from './ClientChoice';
 import { ClientDownloads } from './ProviderSetupShortcuts';
 import { useClientInstallations } from '../models/useClientInstallations';
 import { ConfigurationDeleteAction } from '@/components/ui/configuration-delete-action';
@@ -136,9 +137,7 @@ export function AddConfigurationDialog({ open, busy: providerBusy, selected, onO
   const catalogClients = CLIENT_DOWNLOADS.filter(item => !['codex-cli', 'claude-code', 'cursor-cli'].includes(item.id));
   const clients = catalogClients.map(item => {
     const managed = managedClients.includes(canonicalModelClient(item.id));
-    return <button key={item.id} type="button" className="configuration-choice" data-client-download={item.id} data-unconfigured={!managed || undefined} aria-pressed={client === item.id} disabled={addingClient} onClick={() => setClient(item.id)}>
-      <ProviderIcon kind={item.icon} /><span>{clientCatalogLabel(item)}</span>
-    </button>;
+    return <ClientChoice key={item.id} client={item} configured={managed} selected={client === item.id} data-client-download={item.id} disabled={addingClient} onClick={() => setClient(item.id)} />;
   });
   const importing = importOpen && (tab === 'services' || tab === 'saved') && !clientsOnly;
   const detail = tab === 'services' || tab === 'saved' ? selected !== null || maintenance : client !== null;

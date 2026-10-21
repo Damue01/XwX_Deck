@@ -16,6 +16,7 @@ const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const APP_FILE: &str = "XwX Deck.exe";
 #[link(name = "kernel32")]
 extern "system" {
+    fn GetSystemDirectoryW(path: *mut u16, length: u32) -> u32;
     fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
     fn CloseHandle(handle: *mut c_void) -> i32;
     fn WaitForSingleObject(handle: *mut c_void, timeout: u32) -> u32;
@@ -27,6 +28,17 @@ extern "system" {
         length: *mut u32,
     ) -> i32;
     fn K32EnumProcesses(processes: *mut u32, size: u32, needed: *mut u32) -> i32;
+}
+#[link(name = "msi")]
+extern "system" {
+    fn MsiGetProductInfoExW(
+        product: *const u16,
+        user: *const u16,
+        context: u32,
+        property: *const u16,
+        value: *mut u16,
+        length: *mut u32,
+    ) -> u32;
 }
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
@@ -190,12 +202,89 @@ fn registered_target(target: &Path) -> Result<()> {
     }
     Ok(())
 }
+fn valid_product_code(code: &str) -> bool {
+    code.len() == 38
+        && code.starts_with('{')
+        && code.ends_with('}')
+        && code.bytes().enumerate().all(|(index, byte)| match index {
+            0 => byte == b'{',
+            37 => byte == b'}',
+            9 | 14 | 19 | 24 => byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        })
+}
+fn legacy_product_info(product: &str, property: &str) -> Option<String> {
+    let mut value = vec![0u16; 32768];
+    let mut length = value.len() as u32;
+    // Only the current user's unmanaged MSI installation; never another user or machine scope.
+    if unsafe {
+        MsiGetProductInfoExW(
+            wide(product).as_ptr(),
+            std::ptr::null(),
+            2,
+            wide(property).as_ptr(),
+            value.as_mut_ptr(),
+            &mut length,
+        )
+    } != 0
+    {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&value[..length as usize]))
+}
+fn legacy_product(target: &Path) -> Result<String> {
+    let product = registry(INSTALL_KEY, "ProductCode")
+        .filter(|value| valid_product_code(value))
+        .ok_or("无法确认旧版产品编号")?;
+    let location = registry(INSTALL_KEY, "Path").ok_or("旧版安装路径不存在")?;
+    let msi_location = legacy_product_info(&product, "InstallLocation")
+        .ok_or("旧版 Windows Installer 登记不可用")?;
+    if legacy_product_info(&product, "InstalledProductName").as_deref() != Some("XwX Deck")
+        || !same_path(&PathBuf::from(location).join(APP_FILE), target)
+        || !same_path(&PathBuf::from(msi_location).join(APP_FILE), target)
+    {
+        return Err("旧版产品与安装路径不匹配".into());
+    }
+    Ok(product)
+}
+fn remove_legacy(target: &Path) -> Result<()> {
+    let product = legacy_product(target)?;
+    if other_instance(target) {
+        return Err("请先从托盘退出旧版 XwX Deck，再继续升级；配置和数据保留".into());
+    }
+    let mut directory = vec![0u16; 32768];
+    let length =
+        unsafe { GetSystemDirectoryW(directory.as_mut_ptr(), directory.len() as u32) } as usize;
+    if length == 0 || length >= directory.len() {
+        return Err("无法定位 Windows Installer".into());
+    }
+    let installer =
+        PathBuf::from(String::from_utf16_lossy(&directory[..length])).join("msiexec.exe");
+    let status = Command::new(installer)
+        .args(["/x", &product, "/passive", "/norestart"])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !matches!(status.code(), Some(0 | 3010)) {
+        return Err(format!(
+            "旧版卸载未完成（Windows Installer：{:?}），请重试升级",
+            status.code()
+        ));
+    }
+    if legacy_product_info(&product, "InstalledProductName").is_some() {
+        return Err("旧版仍在登记中，请重试升级".into());
+    }
+    Ok(())
+}
 fn check_target(target: &Path, uninstall: bool) -> Result<()> {
     if !target.is_absolute() || target.file_name().and_then(|s| s.to_str()) != Some(APP_FILE) {
         return Err("无效安装目标".into());
     }
     if registry(INSTALL_KEY, "Path").is_some() {
-        registered_target(target)?;
+        if uninstall || registry(INSTALL_KEY, "InstallerType").as_deref() == Some("nsis-v1") {
+            registered_target(target)?;
+        } else {
+            legacy_product(target)?;
+        }
     } else if uninstall
         || target.exists()
         || target
@@ -394,10 +483,16 @@ pub fn worker() -> Option<i32> {
         "--check-setup-uninstall",
         "--finish-setup-uninstall",
         "--check-setup-shortcut",
+        "--check-legacy-setup",
+        "--remove-legacy-setup",
     ] {
         if let Some(target) = crate::argument(flag) {
             let target = PathBuf::from(target);
-            let result = if flag == "--finish-setup-uninstall" {
+            let result = if flag == "--check-legacy-setup" {
+                legacy_product(&target).map(|_| ())
+            } else if flag == "--remove-legacy-setup" {
+                remove_legacy(&target)
+            } else if flag == "--finish-setup-uninstall" {
                 finish_uninstall(&target)
             } else if flag == "--check-setup-shortcut" {
                 owned_shortcut(&target, false).and_then(|owned| {
@@ -555,4 +650,22 @@ pub fn previous_error(root: &Path) -> Option<String> {
             .unwrap_or("Setup 更新失败，配置与数据保留")
             .into()
     })
+}
+
+#[cfg(test)]
+mod legacy_tests {
+    #[test]
+    fn legacy_product_codes_cannot_be_commands_or_partial_identifiers() {
+        assert!(super::valid_product_code(
+            "{2394B705-CBAE-43D9-8831-B9FB34AE4F24}"
+        ));
+        for code in [
+            "",
+            "/x OtherProduct",
+            "{2394B705-CBAE-43D9-8831-B9FB34AE4F24} /quiet",
+            "{2394B705-CBAE-43D9-8831-B9FB34AE4F2Z}",
+        ] {
+            assert!(!super::valid_product_code(code));
+        }
+    }
 }

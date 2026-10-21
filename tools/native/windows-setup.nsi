@@ -73,6 +73,8 @@ Var OwnNewUninstaller
 Var RollbackFailed
 Var UninstallMetadataTouched
 Var PreviousStartup
+Var LegacyInstall
+Var LegacyLink
 
 !macro Log Message
   FileWrite $LogHandle "${Message}$\r$\n"
@@ -110,7 +112,30 @@ Function .onInit
     StrCpy $LogPath $1
   ${EndIf}
   FileOpen $LogHandle $LogPath w
+  !insertmacro Log "准备检查已有安装"
   StrCpy $Stage 0
+  SetOutPath "$PLUGINSDIR"
+  File /oname=guard.exe "@@BINARY@@"
+  File /oname=XwXSetupSkin.dll "@@SKIN@@"
+  Call ReadInstallation
+  !insertmacro Log "安装检查：$OperationName；$INSTDIR；旧版=$LegacyInstall；$ErrorMessage"
+  ${IfNot} ${RunningX64}
+    StrCpy $ErrorMessage "本安装包需要 64 位 Windows。"
+  ${EndIf}
+  StrCpy $InitError $ErrorMessage
+  ${If} ${Silent}
+    Call ValidateTarget
+    ${If} $ErrorMessage != ""
+      !insertmacro Log "$ErrorMessage"
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+Function ReadInstallation
+  StrCpy $ErrorMessage ""
+  StrCpy $LegacyInstall 0
   StrCpy $OperationName "安装"
   ReadRegStr $PreviousPath HKCU "${KEY}" "Path"
   ReadRegStr $PreviousVersion HKCU "${KEY}" "Version"
@@ -121,7 +146,19 @@ Function .onInit
     ReadRegStr $1 HKCU "${KEY}" "AppId"
     ${If} $0 != "nsis-v1"
     ${OrIf} $1 != "app.xwxdeck.desktop"
-      StrCpy $ErrorMessage "请先卸载已有的其他安装形式，再运行本安装包。配置和数据保留。"
+      ExecWait '"$PLUGINSDIR\guard.exe" --check-legacy-setup "$PreviousPath\XwX Deck.exe"' $2
+      !insertmacro Log "旧版产品核对结果：$2"
+      StrCpy $INSTDIR $PreviousPath
+      ${If} $2 == 0
+        StrCpy $LegacyInstall 1
+        StrCpy $OperationName "升级安装"
+        ${VersionCompare} "@@VERSION@@" $PreviousVersion $2
+        ${If} $2 == 2
+          StrCpy $ErrorMessage "已安装更新版本，请使用已安装的 XwX Deck。"
+        ${EndIf}
+      ${Else}
+        StrCpy $ErrorMessage "旧版登记暂不可用，请点击下方管理旧版安装。"
+      ${EndIf}
     ${Else}
       StrCpy $INSTDIR $PreviousPath
       ${VersionCompare} "@@VERSION@@" $PreviousVersion $0
@@ -134,21 +171,7 @@ Function .onInit
       ${EndIf}
     ${EndIf}
   ${EndIf}
-  ${IfNot} ${RunningX64}
-    StrCpy $ErrorMessage "本安装包需要 64 位 Windows。"
-  ${EndIf}
   StrCpy $InitError $ErrorMessage
-  SetOutPath "$PLUGINSDIR"
-  File /oname=guard.exe "@@BINARY@@"
-  File /oname=XwXSetupSkin.dll "@@SKIN@@"
-  ${If} ${Silent}
-    Call ValidateTarget
-    ${If} $ErrorMessage != ""
-      !insertmacro Log "$ErrorMessage"
-      SetErrorLevel 2
-      Quit
-    ${EndIf}
-  ${EndIf}
 FunctionEnd
 
 Function ValidateTarget
@@ -164,6 +187,7 @@ Function ValidateTarget
   ${EndIf}
   ClearErrors
   ExecWait '"$PLUGINSDIR\guard.exe" --check-setup-target "$INSTDIR\XwX Deck.exe"' $0
+  !insertmacro Log "安装目标核对结果：$0"
   ${If} ${Errors}
   ${OrIf} $0 != 0
     StrCpy $ErrorMessage "无法安全安装。请从托盘退出已安装的 XwX Deck，或选择没有同名程序的文件夹。"
@@ -195,9 +219,23 @@ Function InstallPage
   ${If} $ErrorMessage == ""
     ShowWindow $ErrorLabel ${SW_HIDE}
   ${EndIf}
+  ${If} $LegacyInstall == 1
+    ${NSD_CreateLabel} 225 140 363 34 "已找到旧版程序，将保留配置和数据并完成升级。"
+    Pop $0
+    System::Call /NOUNLOAD '$PLUGINSDIR\XwXSetupSkin.dll::Field(p $0, i 7)'
+  ${ElseIf} $ErrorMessage != ""
+    ${NSD_CreateLink} 225 158 363 20 "打开系统应用管理"
+    Pop $LegacyLink
+    System::Call /NOUNLOAD '$PLUGINSDIR\XwXSetupSkin.dll::Field(p $LegacyLink, i 8)'
+    ${NSD_OnClick} $LegacyLink ManageLegacyInstallation
+  ${EndIf}
   GetDlgItem $0 $HWNDPARENT 1
   SendMessage $0 ${WM_SETTEXT} 0 "STR:$OperationName"
   nsDialogs::Show
+FunctionEnd
+
+Function ManageLegacyInstallation
+  ExecShell "open" "ms-settings:appsfeatures"
 FunctionEnd
 
 Function Browse
@@ -213,6 +251,10 @@ FunctionEnd
 
 Function InstallLeave
   ${NSD_GetText} $LocationField $INSTDIR
+  ${If} $InitError != ""
+    ; Re-read after the user handles an unknown installation in Windows Settings.
+    Call ReadInstallation
+  ${EndIf}
   StrCpy $ErrorMessage $InitError
   Call ValidateTarget
   ${If} $ErrorMessage != ""
@@ -330,6 +372,32 @@ Section "XwX Deck"
     !insertmacro Log "$ErrorMessage"
     SetErrorLevel 2
     Abort
+  ${EndIf}
+  ${If} $LegacyInstall == 1
+    IfFileExists "$INSTDIR\.xwx-deck-new.exe" legacy_prepare_failed
+    IfFileExists "$INSTDIR\.xwx-deck-old.exe" legacy_prepare_failed
+    IfFileExists "$INSTDIR\.xwx-deck-old-uninstall.exe" legacy_prepare_failed
+    !insertmacro Status "正在移除旧版程序，保留配置和数据…"
+    !insertmacro Log "升级旧版 Windows Installer：$PreviousPath"
+    ClearErrors
+    ExecWait '"$PLUGINSDIR\guard.exe" --remove-legacy-setup "$PreviousPath\XwX Deck.exe"' $0
+    ${If} ${Errors}
+    ${OrIf} $0 != 0
+      SetErrorLevel 2
+      Abort "旧版升级未完成，请重试。旧位置：$PreviousPath。也可在系统设置的已安装应用中管理 XwX Deck。"
+    ${EndIf}
+    ; MSI owns its own uninstall transaction. The following NSIS transaction is a fresh install.
+    DeleteRegKey HKCU "${KEY}"
+    StrCpy $PreviousPath ""
+    StrCpy $PreviousVersion ""
+    StrCpy $PreviousHash ""
+    StrCpy $PreviousSize 0
+    StrCpy $LegacyInstall 0
+    Goto legacy_prepared
+legacy_prepare_failed:
+    SetErrorLevel 2
+    Abort "旧目录存在未完成的恢复文件，请保留旧目录并重试。旧版程序和数据未变。"
+legacy_prepared:
   ${EndIf}
   StrCpy $OwnStaging 0
   StrCpy $OwnNewApp 0

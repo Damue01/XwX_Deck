@@ -245,6 +245,7 @@ async function acceptCommonBaseline(plan, manifest, output) {
     const record = manifest.shared.find(record => record.path === entry.path);
     if (record.sha256 === sha(normalized)) continue;
     Object.assign(record, {baseBlob: createHash('sha1').update('blob ' + normalized.length + '\0').update(normalized).digest('hex'), sha256: sha(normalized), baselineGzip: gzipSync(normalized).toString('base64')});
+    delete record.initiallyAbsent;
     updated.push(entry.path);
   }
   if (!updated.length) return {updated: []};
