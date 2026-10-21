@@ -3,9 +3,13 @@
     windows_subsystem = "windows"
 )]
 mod core;
+mod edition;
+mod embedded_assets;
 mod embedded_fonts;
 mod isolated_webview;
 mod language;
+#[cfg(target_os = "macos")]
+mod macos_update;
 mod portable_update;
 mod renderer_preferences;
 #[cfg(target_os = "macos")]
@@ -31,6 +35,48 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+#[cfg(target_os = "macos")]
+async fn install_macos_update(
+    app: &tauri::AppHandle,
+    pilot: Shared,
+    result: Value,
+    unattended: bool,
+) -> Result<(), String> {
+    let updates = pilot.lock().await.updates_context();
+    let _lease = updates.claim_install()?;
+    let root = pilot.lock().await.root.clone();
+    let path = PathBuf::from(result["path"].as_str().ok_or("无效安装包")?);
+    let version = result["targetVersion"]
+        .as_str()
+        .ok_or("无效更新版本")?
+        .to_owned();
+    let job =
+        tauri::async_runtime::spawn_blocking(move || macos_update::prepare(&path, &version, &root))
+            .await
+            .map_err(|e| e.to_string())??;
+    let mut state = pilot.lock().await;
+    // User input, opt-out or a newly started Trace during staging defers unattended installation.
+    if unattended
+        && (state.active() || !state.nightly_eligible() || !macos_update::idle_for_nightly())
+    {
+        macos_update::discard(job);
+        return Err("自动更新已延后，当前应用继续可用".into());
+    }
+    if let Err(error) = state.stop().await {
+        macos_update::discard(job);
+        return Err(error);
+    }
+    // Recheck control after staging and safe shutdown, before handing off.
+    if let Err(error) = state.call("restartAndInstall", &[]).await {
+        macos_update::discard(job);
+        return Err(error);
+    }
+    macos_update::launch(job)?;
+    drop(state);
+    app.exit(0);
+    Ok(())
+}
 
 #[cfg(target_os = "windows")]
 fn spawn_windows_update(path: &std::path::Path, state: &Value) -> Result<(), String> {
@@ -185,6 +231,9 @@ async fn pilot_rpc(
     }
     let _rpc = core::admit_rpc(&method)?;
     let window = app.get_webview_window("main").ok_or("主窗口不存在")?;
+    if let Some(result) = edition::rpc(&app, pilot.inner(), &method, &args).await {
+        return result;
+    }
     match method.as_str() {
         #[cfg(target_os = "macos")]
         "migrateWebCryptoKey" => {
@@ -215,6 +264,7 @@ async fn pilot_rpc(
                 )
                 .await
         }
+
         "fetchProviderModels" | "fetchModels" => {
             let job = pilot.lock().await.catalog_job(&method, &args)?;
             if let Some(job) = job {
@@ -224,6 +274,7 @@ async fn pilot_rpc(
                 pilot.lock().await.call(&method, &args).await
             }
         }
+
         "smokeResizeWindow" if std::env::args().any(|arg| arg == "--smoke") => {
             let input = args.first().ok_or("缺少测试窗口尺寸")?;
             let width = input["width"].as_f64().ok_or("缺少宽度")?;
@@ -234,6 +285,7 @@ async fn pilot_rpc(
                 .map_err(|_| "无法调整测试窗口")?;
             Ok(Value::Null)
         }
+
         "smokeManagerWindow" if std::env::args().any(|arg| arg == "--smoke") => {
             let main = app.get_webview_window("main").ok_or("主窗口不存在")?;
             match args.first().and_then(Value::as_str) {
@@ -416,6 +468,7 @@ async fn pilot_rpc(
                     }
                 }
             }
+            edition::manager_ready(&app);
             Ok(state)
         }
         "getWindowState" => Ok(
@@ -450,16 +503,20 @@ async fn pilot_rpc(
             let path = result["path"].as_str().ok_or("无效安装包")?;
             #[cfg(target_os = "macos")]
             {
-                core::finish_manual_update(
-                    || {
-                        app.opener().open_path(path, None::<&str>).map_err(|_| {
-                            "无法打开已校验的 DMG，当前应用继续运行；可再次尝试打开安装包"
-                                .to_string()
-                        })
-                    },
-                    || app.exit(0),
-                )?;
-                Ok(result)
+                if result["installMode"] == "automatic" {
+                    install_macos_update(&app, pilot.inner().clone(), result.clone(), false)
+                        .await?;
+                } else {
+                    core::finish_manual_update(
+                        || {
+                            app.opener()
+                                .open_path(path, None::<&str>)
+                                .map_err(|e| e.to_string())
+                        },
+                        || app.exit(0),
+                    )?;
+                }
+                Ok(Value::Null)
             }
             #[cfg(target_os = "windows")]
             {
@@ -490,6 +547,7 @@ async fn pilot_rpc(
             // drains a current writer without deadlocking its final state save.
             let metadata = pilot.lock().await.metadata_context();
             let _paused = metadata.pause().await;
+            let root = pilot.lock().await.data_root();
             let mut job = pilot.lock().await.prepare_reset(reset_clients).await?;
             job.clear_browser_stores = true;
             if argument("--pilot-root").is_none() {
@@ -497,6 +555,7 @@ async fn pilot_rpc(
                     .disable()
                     .map_err(|_| "无法取消开机启动，重置尚未执行")?;
             }
+            edition::clear_stores(&app, &root).await?;
             webview_cache::clear_all(&window).await?;
             let result = pilot.lock().await.launch_reset(job).await?;
             metadata.shutdown();
@@ -783,10 +842,8 @@ async fn pilot_rpc(
             }
         }
         "openSetupWebsite" | "openSubscriptionUsage" => {
-            let manifest: Value = serde_json::from_str(include_str!(
-                "../../test-results/native-assets/setup-websites.json"
-            ))
-            .map_err(|e| e.to_string())?;
+            let manifest: Value = serde_json::from_str(embedded_assets::setup_websites()?)
+                .map_err(|e| e.to_string())?;
             let platform = if cfg!(target_os = "macos") {
                 "darwin"
             } else if cfg!(target_os = "windows") {
@@ -1060,6 +1117,9 @@ async fn isolated_rpc(pilot: Shared, request: &Value) -> Result<Value, String> {
     let _rpc = core::admit_rpc(method)?;
     let args = request["args"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     let input = args.first().cloned().unwrap_or(Value::Null);
+    if let Some(result) = edition::isolated_rpc(&pilot, method, args).await {
+        return result;
+    }
     match method {
         "fetchProviderModels" | "fetchModels" => {
             let job = pilot.lock().await.catalog_job(method, args)?;
@@ -1157,6 +1217,7 @@ async fn isolated_rpc(pilot: Shared, request: &Value) -> Result<Value, String> {
                 )
                 .await
         }
+
         _ => pilot.lock().await.call(method, args).await,
     }
 }
@@ -1247,6 +1308,7 @@ fn show_startup_recovery(message: &str) {
         }
     }
 }
+
 fn main() {
     if let Some(path) = argument("--application-reset-worker") {
         match core::reset_worker(std::path::Path::new(&path)) {
@@ -1352,6 +1414,31 @@ fn main() {
     if let Some(code) = portable_update::worker() {
         std::process::exit(code);
     }
+    #[cfg(target_os = "macos")]
+    if let Some(code) = macos_update::worker() {
+        std::process::exit(code);
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(dmg) = argument("--verify-macos-update") {
+        let result = (|| -> Result<(), String> {
+            let root = PathBuf::from(argument("--pilot-root").ok_or("验证需要隔离目录")?);
+            if !root.join(".xwx-rust-pilot").is_file() {
+                return Err("验证需要已初始化的隔离目录".into());
+            }
+            let job = macos_update::prepare(
+                std::path::Path::new(&dmg),
+                &argument("--target-version").ok_or("缺少目标版本")?,
+                &root,
+            )?;
+            macos_update::discard(job);
+            Ok(())
+        })();
+        println!(
+            "{}",
+            json!({"verified":result.is_ok(),"error":result.as_ref().err()})
+        );
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
+    }
     let acceptance_rpc =
         cfg!(feature = "manual-acceptance") && std::env::args().any(|a| a == "--acceptance-rpc");
     let rpc_mode = acceptance_rpc || std::env::args().any(|a| a == "--rpc");
@@ -1378,24 +1465,21 @@ fn main() {
         show_startup_recovery(message);
         std::process::exit(2);
     }
-    let root = argument("--pilot-root")
+    let edition_startup = edition::Startup::prepare(rpc_mode);
+    let selected_root = argument("--pilot-root")
         .or_else(|| argument("--data-root"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            if cfg!(target_os = "macos") {
-                PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                    .join("Library/Application Support/xwx-deck")
-            } else if cfg!(target_os = "windows") {
-                PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default()).join("xwx-deck")
-            } else {
-                PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").unwrap_or_else(|| {
-                    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                        .join(".config")
-                        .into()
-                }))
-                .join("xwx-deck")
+        .map(|path| Ok((PathBuf::from(path), None)))
+        .unwrap_or_else(edition::default_data_root);
+    let (root, legacy_conflict) = match selected_root {
+        Ok(selected) => selected,
+        Err(error) => {
+            eprintln!("{error}");
+            if !rpc_mode {
+                show_startup_recovery(&error);
             }
-        });
+            std::process::exit(2);
+        }
+    };
     if let Some(binding) = argument("--native-auth-token") {
         let result = tauri::async_runtime::block_on(core::native_auth::print_token(
             root,
@@ -1433,6 +1517,7 @@ fn main() {
             std::process::exit(2);
         }
     }
+    edition::migrate_root(&root);
     let pilot = match Pilot::open(root.clone()) {
         Ok(p) => p,
         Err(e) => {
@@ -1576,6 +1661,7 @@ fn main() {
     #[cfg(target_os = "windows")]
     let isolated_root = argument("--pilot-root").map(|_| root.clone());
     let builder = embedded_fonts::builder();
+    let builder = edition_startup.builder(builder);
     #[cfg(target_os = "macos")]
     let builder = builder
         .manage(webcrypto_store::Store::new(
@@ -1683,6 +1769,13 @@ fn main() {
                         #[cfg(target_os="macos")]
                         {
                             if state["status"]=="available" {let _=shared.lock().await.call("downloadAutomaticUpdate",&[]).await;}
+                            if crate::edition::config::AUTOMATIC_MACOS_UPDATES && state["status"]=="ready" && state["installMode"]=="automatic" && macos_update::idle_for_nightly() {
+                                let installer={let mut p=shared.lock().await;if !p.active() && p.nightly_eligible(){p.call("restartAndInstall",&[]).await.ok()}else{None}};
+                                if let Some(installer)=installer {
+                                    if let Err(error)=install_macos_update(&handle,shared.clone(),installer,true).await {eprintln!("Mac 自动更新延后：{error}");}
+                                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                                }
+                            }
                         }
                         #[cfg(target_os="windows")]if portable_update::idle_for_nightly(){
                             let mut p=shared.lock().await;if !p.active()&&p.nightly_eligible(){
@@ -1701,7 +1794,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![pilot_rpc,pilot_tray,pilot_smoke_report,pilot_smoke_progress])
         .on_page_load(move |window,payload| {
             if smoke && payload.event()==tauri::webview::PageLoadEvent::Finished
-                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-setup-update" || arg=="--smoke-setup-restart"){include_str!("../../tools/native/setup-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-reminders"){include_str!("../../tools/native/reminders-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-tray"){include_str!("../../tools/native/tray-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-provider-switch"){include_str!("../../tools/native/provider-switch-native-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
+                && window.label() == "main" { let _=window.show(); let _=window.set_focus(); let script=if std::env::args().any(|arg|arg=="--smoke-setup-update" || arg=="--smoke-setup-restart"){include_str!("../../tools/native/setup-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-reminders"){include_str!("../../tools/native/reminders-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-tray"){include_str!("../../tools/native/tray-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-window-lifecycle"){include_str!("../../tools/native/window-lifecycle-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-theme"){include_str!("../../tools/native/theme-smoke.js")}else if let Some(script)=edition::smoke_script(){script}else if std::env::args().any(|arg|arg=="--smoke-application-reset"){include_str!("../../tools/native/application-reset-smoke.js")}else if argument("--smoke-renderer-restart").is_some(){include_str!("../../tools/native/renderer-restart-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-provider-switch"){include_str!("../../tools/native/provider-switch-native-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-routing"){include_str!("../../tools/native/subscription-routing-smoke.js")}else if std::env::args().any(|arg|arg=="--smoke-universal"){include_str!("../../tools/native/universal-native-smoke.js")}else{include_str!("../../tools/native/native-smoke.js")};let _=window.eval(script); }
         })
         .on_window_event(move |window,event| {
             #[cfg(target_os="windows")]
@@ -1754,7 +1847,7 @@ fn main() {
                 tauri::WebviewUrl::App("index.html?tour=1".into());
         }
     }
-    if std::env::args().any(|a| a == "--launch-hidden") {
+    if std::env::args().any(|a| a == "--launch-hidden" || cfg!(windows) && a == "--hidden") {
         context.config_mut().app.windows[0].visible = false;
     }
     let app = builder
@@ -1762,6 +1855,14 @@ fn main() {
         .expect("failed to build XwX Deck native host");
     let exit_retry_pending = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     app.run(move |handle, event| match event {
+        tauri::RunEvent::Ready if !smoke => {
+            let _ = &legacy_conflict;
+            #[cfg(target_os="macos")]
+            if std::env::args().any(|a|a=="--smoke-update-restarted") && argument("--pilot-root").is_some() {
+                let root=PathBuf::from(argument("--pilot-root").unwrap());
+                let _=std::fs::write(root.join("macos-update-restarted.json"),serde_json::to_vec(&json!({"pid":std::process::id(),"version":macos_update::current_version(),"binary":std::env::current_exe().ok()})).unwrap());
+            }
+        }
         tauri::RunEvent::ExitRequested { api, .. } => {
             if std::env::args().any(|a| a == "--smoke") {
                 eprintln!("native-exit-requested");
@@ -1785,6 +1886,9 @@ fn main() {
                     return;
                 }
             };
+            if std::env::args().any(|a| a == "--smoke") {
+                eprintln!("native-exit-state-read {active}");
+            }
             if active {
                 api.prevent_exit();
                 show_main(handle);
@@ -1792,9 +1896,11 @@ fn main() {
             }
         }
         tauri::RunEvent::Exit => {
+            if std::env::args().any(|a| a == "--smoke") { eprintln!("native-exit-release-start"); }
             tauri::async_runtime::block_on(async {
                 pilot.lock().await.release_lock();
             });
+            if std::env::args().any(|a| a == "--smoke") { eprintln!("native-exit-release-complete"); }
         }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {

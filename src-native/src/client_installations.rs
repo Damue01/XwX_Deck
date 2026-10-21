@@ -348,6 +348,12 @@ fn codex_bundle_identity(path: &Path) -> bool {
 }
 
 impl Discovery {
+    #[cfg(all(test, windows))]
+    fn real_system_summary() -> serde_json::Value {
+        let packages = windows_packages().map_err(|e| e.to_string());
+        let discovery = Self::system();
+        serde_json::json!({"packages": packages, "codex": discovery.installed("codex"), "claude": discovery.installed("claude")})
+    }
     pub fn with_manual_locations(mut self, locations: BTreeMap<String, PathBuf>) -> Self {
         self.manual_locations = locations;
         self
@@ -763,6 +769,15 @@ impl Discovery {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[cfg(windows)]
+    #[ignore = "read-only inspection of this Windows user's registered clients"]
+    fn real_windows_installations() {
+        let summary = Discovery::real_system_summary();
+        println!("{summary}");
+        assert_eq!(summary["codex"], true);
+        assert_eq!(summary["claude"], true);
+    }
     use super::*;
     struct Fixture(PathBuf);
     impl Fixture {

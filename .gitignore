@@ -45,3 +45,6 @@ test-results/
 /release-native/
 /src-native/gen/
 /src-native/target/
+
+# Local counterpart checkout for strict common-source verification.
+.shared-core-peer

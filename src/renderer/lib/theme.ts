@@ -1,3 +1,4 @@
+import { storageKeys } from '../../shared/edition';
 // Theme management for XwXDeck. Day, night, or follow the operating system.
 // Drives both our own tokens (html[data-theme]) and COSS components (html.dark).
 //
@@ -10,7 +11,7 @@ import * as React from 'react';
 export type Theme = 'day' | 'night' | 'system';
 const systemTheme = window.matchMedia?.('(prefers-color-scheme: dark)');
 
-const STORAGE_KEY = 'xwx-deck.theme';
+const STORAGE_KEY = storageKeys.theme;
 let themeChangeId = 0;
 let pendingPersistence: Promise<unknown> = Promise.resolve();
 let requestedTheme: Theme | undefined;

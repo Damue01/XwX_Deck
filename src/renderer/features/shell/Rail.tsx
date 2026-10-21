@@ -1,3 +1,5 @@
+import { editionNavItems, type EditionPageId } from '@/edition';
+import { storageKeys } from '../../../shared/edition';
 import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
 import { Gauge, Box, Settings, LayoutDashboard, PanelLeft, ArrowDownToLine, Check, LoaderCircle } from 'lucide-react';
@@ -6,7 +8,7 @@ import { getApi } from '@/bridge/api';
 import { showErrorToast } from '@/lib/toast';
 import type { XwXDeckUpdateState } from '@/bridge/types';
 
-export type PageId = 'signal' | 'models' | 'settings';
+export type PageId = EditionPageId | 'signal' | 'models' | 'settings';
 
 interface Props {
   readonly activePage: PageId;
@@ -17,6 +19,7 @@ interface Props {
 const NAV_ITEMS: Array<{ id: PageId; label: string; tip: string; Icon: React.ElementType }> = [
   { id: 'signal',   label: 'Trace', tip: 'Trace', Icon: Gauge },
   { id: 'models',   label: '模型',      tip: '模型',      Icon: Box },
+  ...editionNavItems,
 ];
 
 export function Rail({ activePage, onNavigate, updateState }: Props): React.ReactElement {
@@ -35,13 +38,13 @@ export function Rail({ activePage, onNavigate, updateState }: Props): React.Reac
         ? t("设置，发现新版本 {0}", updateState?.targetVersion || '')
         : t('设置');
   const [collapsed, setCollapsed] = React.useState<boolean>(() => {
-    try { return localStorage.getItem('xwx-deck.sidebar') === 'collapsed'; } catch { return false; }
+    try { return localStorage.getItem(storageKeys.sidebar) === 'collapsed'; } catch { return false; }
   });
 
   const toggleCollapsed = React.useCallback(() => {
     setCollapsed(prev => {
       const next = !prev;
-      try { localStorage.setItem('xwx-deck.sidebar', next ? 'collapsed' : 'expanded'); } catch { /* ignore */ }
+      try { localStorage.setItem(storageKeys.sidebar, next ? 'collapsed' : 'expanded'); } catch { /* ignore */ }
       document.body.dataset.sidebar = next ? 'collapsed' : '';
       return next;
     });

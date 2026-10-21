@@ -34,6 +34,9 @@ if (css.status !== 0) process.exit(css.status ?? 1);
 // Copy host document.
 await fs.mkdir('dist/renderer', { recursive: true });
 await fs.copyFile('src/renderer/index.html', 'dist/renderer/index.html');
+const edition=await esbuild.build({stdin:{contents:"export {storageKeys} from './src/shared/edition.ts'",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
+const {storageKeys}=await import('data:text/javascript;base64,'+Buffer.from(edition.outputFiles[0].text).toString('base64'));
+await fs.writeFile('dist/renderer/edition-bootstrap.js','window.__XWX_EDITION_STORAGE__='+JSON.stringify(storageKeys)+';');
 const trayHtml = (await fs.readFile('src/renderer/index.html', 'utf8'))
   .replace('<html lang="zh-CN"', '<html data-surface="tray" lang="zh-CN"')
   .replace('<title>XwX Deck</title>', '<title>XwX Deck 托盘菜单</title>');

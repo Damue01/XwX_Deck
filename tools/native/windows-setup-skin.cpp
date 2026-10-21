@@ -8,6 +8,8 @@
 #include <commctrl.h>
 #include <uxtheme.h>
 #include <gdiplus.h>
+#include <shobjidl.h>
+#include <shlobj.h>
 #include <cmath>
 #include <cstdint>
 #include <algorithm>
@@ -18,6 +20,62 @@ static HBRUSH white;
 static HFONT regular, titleFont, headingFont, mono, versionFont;
 static HBITMAP field;
 static ULONG_PTR graphicsToken;
+static int px(int n);
+// Use the same modern shell dialog family as the application's image picker.
+extern "C" int __stdcall ChooseFolder(HWND owner,const wchar_t* initial,wchar_t* output,int capacity) {
+  if(!output||capacity<1)return -1;
+  output[0]=0;
+  HRESULT init=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
+  if(FAILED(init))return -1;
+  IFileOpenDialog* dialog=nullptr;
+  HRESULT result=CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog));
+  if(SUCCEEDED(result)) {
+    DWORD options=0;dialog->GetOptions(&options);
+    dialog->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM|FOS_DONTADDTORECENT);
+    dialog->SetTitle(L"选择安装位置");
+    IShellItem* start=nullptr;
+    wchar_t folder[32768]={};
+    if(initial&&wcslen(initial)<32768)wcscpy_s(folder,initial);
+    // A first install's final folder does not exist yet. Start at its nearest
+    // existing parent instead of loading the user's potentially remote Home view.
+    while(folder[0]) {
+      DWORD attributes=GetFileAttributes(folder);
+      if(attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_DIRECTORY))break;
+      wchar_t* slash=wcsrchr(folder,L'\\');if(!slash)slash=wcsrchr(folder,L'/');
+      if(!slash){folder[0]=0;break;}if(slash==folder+2&&folder[1]==L':'){slash[1]=0;break;}*slash=0;
+    }
+    if(folder[0]&&SUCCEEDED(SHCreateItemFromParsingName(folder,nullptr,IID_PPV_ARGS(&start)))){dialog->SetFolder(start);start->Release();}
+    result=dialog->Show(owner);
+    if(SUCCEEDED(result)) {
+      IShellItem* item=nullptr;
+      result=dialog->GetResult(&item);
+      if(SUCCEEDED(result)) {
+        PWSTR path=nullptr;result=item->GetDisplayName(SIGDN_FILESYSPATH,&path);
+        if(SUCCEEDED(result)){if(wcslen(path)<size_t(capacity))wcscpy_s(output,capacity,path);else result=E_INVALIDARG;CoTaskMemFree(path);}
+        item->Release();
+      }
+    }
+    dialog->Release();
+  }
+  CoUninitialize();
+  return SUCCEEDED(result)?1:result==HRESULT_FROM_WIN32(ERROR_CANCELLED)?0:-1;
+}
+static LRESULT CALLBACK checkboxProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
+  if(msg==WM_ERASEBKGND)return 1;
+  if(msg==WM_PAINT){
+    PAINTSTRUCT paint;HDC dc=BeginPaint(window,&paint);RECT r;GetClientRect(window,&r);FillRect(dc,&r,white);
+    bool checked=SendMessage(window,BM_GETCHECK,0,0)==BST_CHECKED;
+    RECT box={0,(r.bottom-px(16))/2,px(16),(r.bottom+px(16))/2};
+    HPEN pen=CreatePen(PS_SOLID,px(1),checked?RGB(23,24,26):RGB(130,132,135));HBRUSH brush=CreateSolidBrush(checked?RGB(23,24,26):RGB(255,255,255));
+    auto oldPen=SelectObject(dc,pen),oldBrush=SelectObject(dc,brush);RoundRect(dc,box.left,box.top,box.right,box.bottom,px(6),px(6));SelectObject(dc,oldPen);SelectObject(dc,oldBrush);DeleteObject(pen);DeleteObject(brush);
+    if(checked){pen=CreatePen(PS_SOLID,px(2),RGB(255,255,255));oldPen=SelectObject(dc,pen);POINT points[]={{px(4),box.top+px(8)},{px(7),box.top+px(11)},{px(12),box.top+px(5)}};Polyline(dc,points,3);SelectObject(dc,oldPen);DeleteObject(pen);}
+    r.left=px(24);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,RGB(23,24,26));auto font=SelectObject(dc,regular);wchar_t text[256];GetWindowText(window,text,256);DrawText(dc,text,-1,&r,DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX);SelectObject(dc,font);
+    if(GetFocus()==window){InflateRect(&r,-1,-px(3));DrawFocusRect(dc,&r);}EndPaint(window,&paint);return 0;
+  }
+  auto result=DefSubclassProc(window,msg,wp,lp);
+  if(msg==BM_SETCHECK||msg==WM_LBUTTONUP||msg==WM_KEYUP||msg==WM_SETFOCUS||msg==WM_KILLFOCUS)InvalidateRect(window,nullptr,TRUE);
+  return result;
+}
 static LRESULT CALLBACK editProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
   if(msg==WM_GETDLGCODE&&lp&&(((MSG*)lp)->wParam==VK_RETURN||((MSG*)lp)->wParam==VK_ESCAPE))return DLGC_WANTMESSAGE;
   if(msg==WM_KEYDOWN&&wp==VK_RETURN){if(IsWindowEnabled(GetDlgItem(mainWindow,IDOK)))PostMessage(mainWindow,WM_COMMAND,IDOK,0);return 0;}
@@ -74,6 +132,12 @@ static void drawButton(DRAWITEMSTRUCT* item) {
   if(primary||hover){HBRUSH fill=CreateSolidBrush(primary?(disabled?RGB(161,162,164):pressed||hover?RGB(57,58,60):RGB(23,24,26)):RGB(241,241,239));HGDIOBJ oldBrush=SelectObject(item->hDC,fill),oldPen=SelectObject(item->hDC,GetStockObject(NULL_PEN));RoundRect(item->hDC,r.left,r.top,r.right,r.bottom,px(10),px(10));SelectObject(item->hDC,oldBrush);SelectObject(item->hDC,oldPen);DeleteObject(fill);}
   SetTextColor(item->hDC,primary?RGB(255,255,255):disabled?RGB(180,181,183):close?RGB(164,166,167):RGB(115,117,121));
   wchar_t text[64];GetWindowText(item->hwndItem,text,64);
+  if(close){
+    HPEN pen=CreatePen(PS_SOLID,px(2),RGB(90,92,95));auto old=SelectObject(item->hDC,pen);
+    int x=(r.left+r.right)/2,y=(r.top+r.bottom)/2;
+    MoveToEx(item->hDC,x-px(5),y-px(5),nullptr);LineTo(item->hDC,x+px(5),y+px(5));
+    MoveToEx(item->hDC,x+px(5),y-px(5),nullptr);LineTo(item->hDC,x-px(5),y+px(5));SelectObject(item->hDC,old);DeleteObject(pen);return;
+  }
   for(unsigned i=0;text[i]&&text[i+1];++i)if(text[i]==L'('&&text[i+1]==L'&'){text[i]=0;break;}
   HFONT old=(HFONT)SelectObject(item->hDC,regular);DrawText(item->hDC,text,-1,&r,DT_CENTER|DT_VCENTER|DT_SINGLELINE);SelectObject(item->hDC,old);
   if((item->itemState&ODS_FOCUS)&&!(item->itemState&ODS_NOFOCUSRECT)){InflateRect(&r,-px(3),-px(3));DrawFocusRect(item->hDC,&r);}
@@ -82,7 +146,7 @@ static LRESULT CALLBACK skinProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_P
   if(msg==WM_ERASEBKGND){paintField(window,(HDC)wp);return 1;}
   if(msg==WM_CTLCOLORSTATIC||msg==WM_CTLCOLOREDIT||msg==WM_CTLCOLORDLG){HDC dc=(HDC)wp;SetBkMode(dc,TRANSPARENT);int id=GetDlgCtrlID((HWND)lp);SetTextColor(dc,GetProp((HWND)lp,L"error")?RGB(166,52,41):id==60003?RGB(164,166,168):id==60002?RGB(23,24,26):RGB(90,92,95));return (LRESULT)white;}
   if(msg==WM_DRAWITEM){drawButton((DRAWITEMSTRUCT*)lp);return TRUE;}
-  if(window==mainWindow&&msg==WM_COMMAND&&LOWORD(wp)==60001){SendMessage(window,WM_COMMAND,IDCANCEL,0);return 0;}
+  if(window==mainWindow&&msg==WM_COMMAND&&LOWORD(wp)==60001){SendMessage(window,WM_COMMAND,GetProp(window,L"finished")?IDOK:IDCANCEL,0);return 0;}
   if(window==mainWindow&&msg==WM_NCHITTEST){LRESULT hit=DefSubclassProc(window,msg,wp,lp);if(hit==HTCLIENT){POINT p={GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(window,&p);if(p.y<px(64))return HTCAPTION;}return hit;}
   return DefSubclassProc(window,msg,wp,lp);
 }
@@ -98,7 +162,7 @@ extern "C" void __stdcall Skin(HWND parent,HWND page,const wchar_t* version,int 
     RECT r;GetWindowRect(parent,&r);SetWindowLongPtr(parent,GWL_STYLE,WS_POPUP|WS_SYSMENU|WS_CLIPCHILDREN);SetWindowLongPtr(parent,GWL_EXSTYLE,WS_EX_APPWINDOW);
     SetWindowPos(parent,nullptr,(r.left+r.right-px(620))/2,(r.top+r.bottom-px(240))/2,px(620),px(240),SWP_NOZORDER|SWP_FRAMECHANGED);
     SetWindowRgn(parent,CreateRoundRectRgn(0,0,px(620)+1,px(240)+1,px(12),px(12)),TRUE);SetWindowSubclass(parent,skinProc,1,0);
-    HWND close=CreateWindow(L"BUTTON",L"×",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,parent,(HMENU)60001,GetModuleHandle(nullptr),nullptr);move(close,584,5,30,28);ownerButton(close);
+    HWND close=CreateWindow(L"BUTTON",L"关闭",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,parent,(HMENU)60001,GetModuleHandle(nullptr),nullptr);move(close,572,8,40,40);ownerButton(close);
     label(parent,60003,version,32,196,160,16,versionFont);
   }
   // NSIS changes pages and button state; retain its normal keyboard/default actions.
@@ -112,7 +176,8 @@ extern "C" void __stdcall Skin(HWND parent,HWND page,const wchar_t* version,int 
   if(mode==2){ // NSIS's real extraction/registration progress, not a timer animation.
     HWND bar=GetDlgItem(page,1004),caption=GetDlgItem(page,1006);move(bar,225,119,363,4);move(caption,225,86,363,22);SendMessage(caption,WM_SETFONT,(WPARAM)regular,TRUE);SetWindowSubclass(caption,labelProc,4,0);ShowWindow(bar,SW_SHOW);ShowWindow(caption,SW_SHOW);SetWindowTheme(bar,L"",L"");SendMessage(bar,PBM_SETBARCOLOR,0,RGB(23,24,26));SendMessage(bar,PBM_SETBKCOLOR,0,RGB(240,240,238));
   }
-  if(mode==1||mode==4){ShowWindow(cancel,SW_HIDE);EnableWindow(GetDlgItem(parent,60001),FALSE);}else if(mode==2)EnableWindow(GetDlgItem(parent,60001),FALSE);
+  if(mode==1||mode==4){ShowWindow(cancel,SW_HIDE);SetProp(parent,L"finished",(HANDLE)1);}else RemoveProp(parent,L"finished");
+  HWND close=GetDlgItem(parent,60001);EnableWindow(close,mode!=2);SetWindowPos(close,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
   InvalidateRect(parent,nullptr,TRUE);InvalidateRect(page,nullptr,TRUE);
 }
 extern "C" void __stdcall Field(HWND window,int kind) {
@@ -123,7 +188,7 @@ extern "C" void __stdcall Field(HWND window,int kind) {
   if(kind==2)move(window,225,78,363,18);
   if(kind==3){move(window,225,140,363,34);SetProp(window,L"error",(HANDLE)1);}
   if(kind==4){move(window,225,78,363,22);SetProp(window,L"heading",(HANDLE)1);SendMessage(window,WM_SETFONT,(WPARAM)headingFont,TRUE);}
-  if(kind==5)move(window,225,111,363,24);
+  if(kind==5){move(window,225,111,363,28);SetWindowTheme(window,L"",L"");SetWindowSubclass(window,checkboxProc,5,0);}
   if(kind==6)move(window,225,106,363,44);
   if(kind==2||kind==3||kind==4||kind==6)SetWindowSubclass(window,labelProc,4,0);
   // Remove theme edges only from the editable path. Keep genuine edit/button controls.

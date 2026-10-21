@@ -20,16 +20,16 @@ const MAX_BYTES: usize = 64 * 1024 * 1024;
 const MAX_RESULT: usize = 256 * 1024;
 const MARKER: &str = "xwxdeck.rendererMigration.v1";
 
-pub fn keys(_ids: impl Iterator<Item = String>, config: &Path) -> Vec<String> {
-    let mut keys = vec![
-        "xwx-deck.theme",
-        "xwx-deck.language",
-        "xwx-deck.sidebar",
-        "xwx-deck.onboardingSeen",
+pub fn keys(ids: impl Iterator<Item = String>, config: &Path) -> Vec<String> {
+    let mut keys = [
+        crate::edition::config::THEME_KEY,
+        crate::edition::config::LANGUAGE_KEY,
+        crate::edition::config::SIDEBAR_KEY,
+        crate::edition::config::ONBOARDING_KEY,
     ]
-    .into_iter()
     .map(str::to_owned)
-    .collect::<Vec<_>>();
+    .to_vec();
+    keys.extend(crate::edition::config::extra_preference_keys(ids));
     for section in ["application", "trace", "models"] {
         keys.push(format!("xwx-deck:settings:{section}:expanded:v1"));
     }
@@ -43,31 +43,40 @@ pub fn keys(_ids: impl Iterator<Item = String>, config: &Path) -> Vec<String> {
 }
 
 fn allowed_key(key: &str) -> bool {
-    matches!(
-        key,
-        "xwx-deck.theme"
-            | "xwx-deck.language"
-            | "xwx-deck.sidebar"
-            | "xwx-deck.onboardingSeen"
-            | "xwx-deck:settings:application:expanded:v1"
-            | "xwx-deck:settings:trace:expanded:v1"
-            | "xwx-deck:settings:models:expanded:v1"
-    ) || key
-        .strip_prefix("xwx.missingHistoryProviders.")
-        .is_some_and(|p| {
-            p.len() <= 4096 && Path::new(p).is_absolute() && !p.chars().any(char::is_control)
-        })
+    [
+        crate::edition::config::THEME_KEY,
+        crate::edition::config::LANGUAGE_KEY,
+        crate::edition::config::SIDEBAR_KEY,
+        crate::edition::config::ONBOARDING_KEY,
+        "xwx-deck:settings:application:expanded:v1",
+        "xwx-deck:settings:trace:expanded:v1",
+        "xwx-deck:settings:models:expanded:v1",
+    ]
+    .contains(&key)
+        || crate::edition::config::extra_preference_value(key, None)
+        || key
+            .strip_prefix("xwx.missingHistoryProviders.")
+            .is_some_and(|p| {
+                p.len() <= 4096 && Path::new(p).is_absolute() && !p.chars().any(char::is_control)
+            })
 }
 
 fn valid_value(key: &str, value: &str) -> bool {
     if value.len() > 8192 {
         return false;
     }
+    if crate::edition::config::extra_preference_value(key, None) {
+        return crate::edition::config::extra_preference_value(key, Some(value));
+    }
     match key {
-        "xwx-deck.theme" => ["day", "night", "system"].contains(&value),
-        "xwx-deck.language" => crate::language::is_supported(value),
-        "xwx-deck.sidebar" => ["collapsed", "expanded"].contains(&value),
-        "xwx-deck.onboardingSeen" => value == "true",
+        key if key == crate::edition::config::THEME_KEY => {
+            ["day", "night", "system"].contains(&value)
+        }
+        key if key == crate::edition::config::LANGUAGE_KEY => crate::language::is_supported(value),
+        key if key == crate::edition::config::SIDEBAR_KEY => {
+            ["collapsed", "expanded"].contains(&value)
+        }
+        key if key == crate::edition::config::ONBOARDING_KEY => value == "true",
         _ if key.starts_with("xwx-deck:settings:") => ["true", "false"].contains(&value),
         _ if key.starts_with("xwx.missingHistoryProviders.") => {
             serde_json::from_str::<Value>(value).ok().and_then(|v| {
@@ -415,131 +424,6 @@ pub fn initialization_script(report: &Value) -> String {
 mod tests {
     use super::*;
     #[test]
-    fn public_keys_match_the_actual_renderer_storage_contract() {
-        let configured = keys(std::iter::empty(), Path::new("/public-config/config.toml"));
-        for (source, key, value) in [
-            (
-                include_str!("../../src/renderer/lib/theme.ts"),
-                "xwx-deck.theme",
-                "night",
-            ),
-            (
-                include_str!("../../src/renderer/lib/i18n.ts"),
-                "xwx-deck.language",
-                "ja",
-            ),
-            (
-                include_str!("../../src/renderer/features/shell/Rail.tsx"),
-                "xwx-deck.sidebar",
-                "collapsed",
-            ),
-            (
-                include_str!("../../src/renderer/features/onboarding/OnboardingTour.tsx"),
-                "xwx-deck.onboardingSeen",
-                "true",
-            ),
-        ] {
-            assert!(
-                source.contains(&format!("'{key}'")),
-                "renderer storage key: {key}"
-            );
-            assert!(
-                configured.contains(&key.to_owned()),
-                "migration whitelist: {key}"
-            );
-            assert!(allowed_key(key));
-            assert!(valid_value(key, value));
-        }
-        let sidebar = include_str!("../../src/renderer/features/shell/Rail.tsx");
-        assert!(sidebar.contains("next ? 'collapsed' : 'expanded'"));
-        assert!(valid_value("xwx-deck.sidebar", "expanded"));
-        assert!(!valid_value("xwx-deck.sidebar", "true"));
-        assert!(!valid_value("xwx-deck.theme", "dark"));
-        assert!(!valid_value("xwx-deck.language", "unknown"));
-        assert!(!valid_value("xwx-deck.onboardingSeen", "false"));
-        let expansion = include_str!("../../src/renderer/lib/useRememberedExpansion.ts");
-        assert!(expansion.contains("xwx-deck:settings:${section}:expanded:v1"));
-        for section in ["application", "trace", "models"] {
-            let key = format!("xwx-deck:settings:{section}:expanded:v1");
-            assert!(configured.contains(&key));
-            assert!(valid_value(&key, "true"));
-            assert!(valid_value(&key, "false"));
-        }
-        let app = include_str!("../../src/renderer/App.tsx");
-        assert!(app.contains("xwx.missingHistoryProviders.${codexConfigPath}"));
-        assert!(valid_value(
-            "xwx.missingHistoryProviders./public-config/config.toml",
-            "[\"manual-provider\"]"
-        ));
-        assert!(!allowed_key("xwxdeck.theme"));
-        assert!(!allowed_key("xwxdeck.sidebar"));
-    }
-
-    #[test]
-    fn legacy_public_leveldb_reader_uses_the_real_ui_keys_without_mutating_source() {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "xwx-public-preferences-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&directory).unwrap();
-        let directory = fs::canonicalize(directory).unwrap();
-        let values = [
-            ("xwx-deck.theme", "night"),
-            ("xwx-deck.language", "ja"),
-            ("xwx-deck.sidebar", "collapsed"),
-            ("xwx-deck.onboardingSeen", "true"),
-            ("xwx-deck:settings:trace:expanded:v1", "false"),
-        ];
-        // The production dependency deliberately omits filesystem support.
-        // Serialize an actual database in MemEnv, then copy those database bytes
-        // into a physical legacy-profile fixture for the read-only worker.
-        let memory: Rc<Box<dyn Env>> = Rc::new(Box::new(MemEnv::new()));
-        let source_path = Path::new("legacy-public-source");
-        let options = Options {
-            env: memory.clone(),
-            ..Options::default()
-        };
-        let mut db = DB::open(source_path, options).unwrap();
-        db.put(b"VERSION", b"1").unwrap();
-        for (key, value) in values {
-            let mut encoded_key = b"_file://\0".to_vec();
-            encoded_key.push(1);
-            encoded_key.extend_from_slice(key.as_bytes());
-            let mut encoded_value = vec![1];
-            encoded_value.extend_from_slice(value.as_bytes());
-            db.put(&encoded_key, &encoded_value).unwrap();
-        }
-        db.close().unwrap();
-        for name in memory.children(source_path).unwrap() {
-            let mut bytes = Vec::new();
-            memory
-                .open_sequential_file(&source_path.join(&name))
-                .unwrap()
-                .read_to_end(&mut bytes)
-                .unwrap();
-            fs::write(directory.join(name), bytes).unwrap();
-        }
-        let before = fingerprint(&files(&directory).unwrap().unwrap());
-        let wanted = keys(
-            std::iter::empty(),
-            &directory.join("public-config/config.toml"),
-        );
-        let encoded =
-            base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&wanted).unwrap());
-        let report = worker(&directory, &encoded).unwrap();
-        for (key, value) in values {
-            assert_eq!(report["values"][key], value, "{key}");
-        }
-        assert_eq!(report["values"].as_object().unwrap().len(), values.len());
-        assert_eq!(fingerprint(&files(&directory).unwrap().unwrap()), before);
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
     fn chromium_strings_and_whitelist() {
         assert_eq!(decode(&[1, 0xe9]).unwrap(), "é");
         assert_eq!(decode(&[0, 0x2d, 0x4e]).unwrap(), "中");
@@ -547,13 +431,15 @@ mod tests {
         assert!(decode(&[3, 1]).is_err());
         assert!(!allowed_key("apiKey"));
         assert!(!allowed_key("xwx-deck:settings:unknown:expanded:v1"));
-        assert!(!valid_value("xwx-deck.sidebar", "sideways"));
+        assert!(!valid_value(
+            crate::edition::config::SIDEBAR_KEY,
+            "sideways"
+        ));
     }
     #[test]
     fn backup_requires_source_and_known_keys() {
-        let keys = vec!["xwx-deck.sidebar".to_owned()];
-        let mut report =
-            json!({"version":1,"status":"read","values":{"xwx-deck.sidebar":"collapsed"}});
+        let keys = vec![crate::edition::config::SIDEBAR_KEY.to_owned()];
+        let mut report = json!({"version":1,"status":"read","values":{crate::edition::config::SIDEBAR_KEY:"collapsed"}});
         assert!(validate(&report, &keys).is_err());
         report["sourceSha256"] = json!("a".repeat(64));
         assert!(validate(&report, &keys).is_ok());

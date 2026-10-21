@@ -57,7 +57,7 @@ impl Pilot {
         let mut paths = ["pricing-cache", "model-capabilities-cache.json"]
             .map(|name| self.root.join(name))
             .to_vec();
-        let mut model_paths = vec![];
+        let mut model_paths = extension::model_cache_paths(&self.root);
         for file in fs::read_dir(&self.root).map_err(err)? {
             let file = file.map_err(err)?;
             let name = file.file_name().to_string_lossy().into_owned();

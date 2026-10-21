@@ -57,7 +57,7 @@ pub(super) fn protected(relative: &str) -> bool {
         "codex-local-proxy-suspension.json",
         "codex-direct-config-state.json",
         "codex-direct-restore.json",
-        "compatible-image-gen.json",
+        crate::edition::config::IMAGE_JOURNAL,
         "claude-desktop-sync-state.json",
         "gateway/bootstrap.json",
         "gateway/control.token",

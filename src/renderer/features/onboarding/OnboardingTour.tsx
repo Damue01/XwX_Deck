@@ -1,3 +1,4 @@
+import { storageKeys } from '../../../shared/edition';
 import { t, useLanguage } from '@/lib/i18n';
 import * as React from 'react';
 import { OnboardingSetup } from './OnboardingSetup';
@@ -45,8 +46,8 @@ function tourSteps(): readonly TourStep[] { return [
   }
 ]; }
 
-const STORAGE_KEY = 'xwx-deck.onboardingSeen';
-const PROGRESS_KEY = 'xwx-deck.onboardingProgress.v1';
+const STORAGE_KEY = storageKeys.onboarding;
+const PROGRESS_KEY = storageKeys.onboardingProgress;
 interface Progress { preparing: boolean; setupStep: number; index: number; }
 function readProgress(): Progress {
   const initial = { preparing: true, setupStep: 0, index: 0 };

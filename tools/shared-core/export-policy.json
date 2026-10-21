@@ -1,0 +1,41 @@
+{
+  "excludedPaths": [
+    "src-native/src/edition",
+    "src/renderer/edition",
+    "src/shared/edition",
+    "src/shared/edition.ts",
+    "tools/native/edition"
+  ],
+  "forbiddenPackagedPatterns": [
+    "(?<![A-Za-z0-9/])/(?:Users|home)[/](?!demo\\b|example\\b|Shared\\b|runner\\b)[A-Za-z0-9_.-]+",
+    "[A-Za-z]:[\\\\]Users[\\\\](?!demo\\b|example\\b|Preview\\b|Public\\b)[^\\\\\\s\"<>]+",
+    "P[0-9]{11}",
+    "-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+    "\\bgh[pousr]_[A-Za-z0-9]{30,}\\b",
+    "\\bgithub_pat_[A-Za-z0-9_]{40,}\\b",
+    "https?://(?:10\\.[0-9.]+|192\\.168\\.[0-9.]+|172\\.(?:1[6-9]|2[0-9]|3[01])\\.[0-9.]+)(?=[:/\\s\"\\x27]|$)"
+  ],
+  "forbiddenIdentifierDigests": [
+    {
+      "length": 8,
+      "sha256": "5626e620575dac1310f64fbaa56a69bf7d1fd15348d77d7eca42caa44e44f6c1"
+    },
+    {
+      "length": 8,
+      "sha256": "237121e6e11e93445a0dc5cc6ef5d6f8e4bbe9e700b9073956b106421ad380a6"
+    },
+    {
+      "length": 9,
+      "sha256": "37d9527f34e8547d0dc91d57350d82a9742a4b9b9370a1f04670b0d1969ab2eb"
+    },
+    {
+      "length": 14,
+      "sha256": "ffa7107b90532138738d52bc11052d455bc78938e91560a971b778dd135a79f6"
+    },
+    {
+      "length": 2,
+      "sha256": "844b69c4d54cc264bc2dadb6bb70f53bc123beafc0f58d81ed8cd4a07c24a5a7",
+      "short": true
+    }
+  ]
+}

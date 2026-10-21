@@ -44,8 +44,22 @@ try {
   if (!priceCache) throw Error('Bundled model prices are missing or invalid.');
   setCatalogPriceRules(priceCache.rules);
   let viewer=renderTapViewerHtml({ state: { active: false, rootPath: '', sessions: [], traces: [] }, mode: 'live' });
+  const themeInit = '\napplyViewerTheme(state.theme);\n';
+  const themeProperty = '__XWX_NATIVE_VIEWER_THEME__';
+  const themeMarker = '<!--xwx-native-viewer-theme-->';
+  if (viewer.split(themeInit).length !== 2 || viewer.includes(themeProperty) || viewer.includes(themeMarker)) {
+    throw Error('Native Viewer must contain exactly one original theme bootstrap.');
+  }
+  viewer = viewer.replace(themeInit, `\nstate.theme=window.${themeProperty}??state.theme;applyViewerTheme(state.theme);\n`);
   const blocks=[...viewer.matchAll(/<(script|style)\b([^>]*)>([\s\S]*?)<\/\1>/gi)].reverse();
   for(const block of blocks){if(block[1]==='script'&&/application\/json/.test(block[2]))continue;const transformed=await esbuild.transform(block[3],{loader:block[1]==='script'?'js':'css',minify:true,legalComments:'inline',target:['safari15','chrome120']});viewer=viewer.slice(0,block.index)+`<${block[1]}${block[2]}>${transformed.code}</${block[1]}>`+viewer.slice(block.index+block[0].length);}
+  if (viewer.split('</head>').length !== 2 || viewer.split(`window.${themeProperty}`).length !== 2) {
+    throw Error('Minified native Viewer lost its unique theme bootstrap or document head.');
+  }
+  viewer = viewer.replace('</head>', `${themeMarker}</head>`);
+  if (viewer.split(themeMarker).length !== 2 || viewer.indexOf(themeMarker) > viewer.indexOf(`window.${themeProperty}`)) {
+    throw Error('Native Viewer theme must be injected exactly once before its bootstrap.');
+  }
   await writeFile(resolve(assets, 'viewer.html'), viewer);
   await writeFile(resolve(assets, 'clients.json'), JSON.stringify(CLIENT_DOWNLOADS.map(client => ({ ...client, modelManagement: supportsModelManagement(client.id) }))));
   await writeFile(resolve(assets, 'prices.json'), JSON.stringify(getPriceRules()));

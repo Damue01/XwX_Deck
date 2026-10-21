@@ -1,9 +1,10 @@
+import { automaticAdapters, legacyProviderId, type EditionProviderAdapter, type EditionProviderClient, type EditionProviderFields } from './edition';
 import { type ProviderPresetId } from './providerProfiles';
 
 /** User-owned connection registry. A fresh installation has no API connections. */
-export type ProviderAdapter = 'auto' | 'responses' | 'chat-completions' | 'anthropic-messages';
-export type ProviderClient = 'codex' | 'claude';
-export interface ProviderConnection {
+export type ProviderAdapter = EditionProviderAdapter | 'auto' | 'responses' | 'chat-completions' | 'anthropic-messages';
+export type ProviderClient = EditionProviderClient | 'codex' | 'claude';
+export interface ProviderConnection extends EditionProviderFields {
   readonly id: string;
   readonly subscriptionAccountId?: string;
   /** Backend verified that Codex already owns this official login identity. */
@@ -56,7 +57,7 @@ export type ProviderInput = Pick<ProviderConnection, 'displayName' | 'baseUrl' |
   readonly codexModel?: string;
 };
 export function supportsProviderClient(provider: ProviderConnection, client: ProviderClient): boolean {
-  return client === 'codex' || ['auto', 'anthropic-messages', 'responses', 'chat-completions'].includes(provider.adapter);
+  return client === 'codex' || automaticAdapters.includes(provider.adapter) || ['responses', 'chat-completions', 'anthropic-messages'].includes(provider.adapter);
 }
 
 export function providerNameError(name: string, _previousName?: string): string | undefined {
@@ -65,9 +66,9 @@ export function providerNameError(name: string, _previousName?: string): string 
 }
 
 /** Display names never replace a registered connection identity. */
-export function providerCodexId(provider: Pick<ProviderConnection, 'displayName' | 'codexProviderId'>, unified = false): string {
+export function providerCodexId(provider: Pick<ProviderConnection, 'displayName' | 'codexProviderId'> & EditionProviderFields, unified = false): string {
   if (unified) return 'xwx_deck';
-  return provider.codexProviderId || 'xwx_deck';
+  return provider.codexProviderId || legacyProviderId(provider);
 }
 
 export function providerDirectConnections(providers: readonly ProviderConnection[] = []) {

@@ -1,4 +1,4 @@
-//! Connection-scoped catalogs retain connection identity and endpoint membership;
+//! Connection-scoped catalogs retain identity and endpoint membership;
 //! capabilities retain their own provenance across cache and client publication.
 use super::*;
 use std::collections::BTreeMap;
@@ -223,10 +223,10 @@ fn protocols(row: &Value) -> Vec<Value> {
 pub(super) fn official_protocol_registry() -> &'static Value {
     static REGISTRY: OnceLock<Value> = OnceLock::new();
     REGISTRY.get_or_init(|| {
-        serde_json::from_str(include_str!(
-            "../../test-results/native-assets/official-models.json"
-        ))
-        .unwrap_or(Value::Null)
+        crate::embedded_assets::official_models()
+            .ok()
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(Value::Null)
     })
 }
 // Rules are evaluated for the live service directory, not only the bundled
@@ -576,6 +576,9 @@ impl Catalog {
                 return super::retired_models::overlay(&self.root, p, cached["entries"].clone());
             }
         }
+        if let Some(cached) = extension::cached_catalog(&self.root, p)? {
+            return Ok(cached);
+        }
         let imported = self.imported.get(&p.id).and_then(Value::as_array);
         super::retired_models::overlay(&self.root, p, json!(imported.into_iter().flatten().filter_map(Value::as_str).map(|id|json!({"id":id,"vendor":"导入配置","catalogEndpoints":[],"protocols":[if p.codex_api_format=="responses"{"openai-responses"}else{&p.codex_api_format}],"protocolsDeclared":false})).collect::<Vec<_>>()))
     }
@@ -599,11 +602,13 @@ impl Catalog {
             .timeout(Duration::from_secs(12))
             .build()
             .map_err(err)?;
-        let endpoints = [(
-            "",
-            format!("{}/models", Pilot::api_root(&p.base_url)),
-            "data",
-        )];
+        let endpoints = extension::catalog_endpoints(p).unwrap_or_else(|| {
+            vec![(
+                "",
+                format!("{}/models", Pilot::api_root(&p.base_url)),
+                "data",
+            )]
+        });
         let requests=endpoints.iter().map(|(kind,url,collection)|{let client=&client;async move {
             let mut request=client.get(url).header("accept","application/json").header("X-Magpie-Prices","1");
             if !p.bearer_token.is_empty(){request=if p.adapter=="anthropic-messages" {request.header("x-api-key",&p.bearer_token).header("anthropic-version","2023-06-01")}else{request.bearer_auth(&p.bearer_token)};}
@@ -615,7 +620,7 @@ impl Catalog {
             let result=rows.iter().filter_map(|r|r["id"].as_str().or_else(||r["name"].as_str()).map(|id| {
                 let id=if *kind=="gemini"{id.trim_start_matches("models/")}else{id};let declared=protocols(r);
                 let defaults=match *kind {"anthropic"=>json!(["anthropic-messages"]),"gemini"=>json!(["gemini"]),"openai"=>json!(["openai-responses","chat-completions"]),_=>json!([if p.codex_api_format=="responses"{"openai-responses"}else{p.codex_api_format.as_str()}])};
-                let mut entry = json!({"id":id,"vendor":r["owned_by"].as_str().unwrap_or(&p.display_name),"protocols":if declared.is_empty(){defaults}else{json!(declared)},"protocolsDeclared":!declared.is_empty(),"catalogEndpoints":if kind.is_empty(){json!([])}else{json!([kind])},"clients":json!(["codex","claude"])});
+                let mut entry = json!({"id":id,"vendor":r["owned_by"].as_str().unwrap_or(&p.display_name),"protocols":if declared.is_empty(){defaults}else{json!(declared)},"protocolsDeclared":!declared.is_empty(),"catalogEndpoints":if kind.is_empty(){json!([])}else{json!([kind])},"clients":extension::catalog_clients(kind)});
                 metadata::attach(&mut entry,r);
                 entry
             })).collect::<Vec<_>>();Ok::<_,String>(result)
@@ -631,7 +636,9 @@ impl Catalog {
                     entries.extend(rows);
                 }
                 Err(e) => {
-                    errors.push(e);
+                    if !extension::optional_catalog_error(p, &e) {
+                        errors.push(e);
+                    }
                 }
             }
         }
@@ -707,7 +714,7 @@ impl Catalog {
             ensure_codex_instructions(&mut row);
             row
         }).collect::<Vec<_>>();
-        let path = self.codex_home.join("xwx-deck-model-catalog.json");
+        let path = self.codex_home.join(crate::edition::config::CATALOG_FILE);
         write(&path, &json!({"models":models}).to_string())
     }
 }
@@ -941,6 +948,9 @@ fn entry_wire(p: &Provider, entry: Option<&Value>, incoming: &str) -> String {
     };
     if let Some(e) = entry {
         if e["protocolsDeclared"] != true {
+            if let Some(wire) = extension::catalog_wire(p, e, incoming, default) {
+                return wire;
+            }
             if e["catalogEndpoints"].as_array().is_some_and(|a| {
                 !a.is_empty()
                     && !a.iter().any(|v| v == "openai")

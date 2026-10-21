@@ -107,9 +107,10 @@ fn record_usage(value: &Value, wire: &str, record: &Value) -> Value {
     trace_usage::normalize_for_request(value, wire, request)
 }
 pub(super) fn load_prices(root: &Path) -> Vec<Value> {
-    let bundled: Vec<Value> =
-        serde_json::from_str(include_str!("../../test-results/native-assets/prices.json"))
-            .unwrap_or_default();
+    let bundled: Vec<Value> = crate::embedded_assets::prices()
+        .ok()
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or_default();
     let cache = read(&root.join("pricing-cache/models-dev-pricing.json"))
         .ok()
         .flatten()
@@ -449,8 +450,10 @@ impl TracePageReader {
                 } else {
                     trace_classification::annotations(&record)
                 };
-                if let Some(kind) = annotation.get("auxiliary") {
-                    record["auxiliary"] = kind.clone();
+                for field in ["auxiliary", "source", "clientConversationKey"] {
+                    if let Some(value) = annotation.get(field) {
+                        record[field] = value.clone();
+                    }
                 }
                 let record = if record.get("_traceContent").is_some()
                     && (record["costSnapshot"]["version"] != 1
@@ -1096,6 +1099,10 @@ impl TraceStore {
             read(&file)?;
             paths.push(file);
         }
+        let _deletion_guards = paths
+            .iter()
+            .map(|file| trace_content::deletion_guard(file))
+            .collect::<Result<Vec<_>>>()?;
         for file in paths {
             if file.exists() {
                 fs::remove_file(&file).map_err(err)?;
@@ -1489,7 +1496,10 @@ impl TraceStore {
     fn apply_retention(&mut self) {
         if self.limit != 0 {
             self.retention_notice = if self.auto_cleanup {
-                self.with_writer(true, |store| store.cleanup_to_limit())
+                // Writer/index validation still blocks capture. A cleanup
+                // error only leaves retention pending, including at lease drop.
+                self.with_writer(true, |store| Ok(store.cleanup_to_limit()))
+                    .and_then(|result| result)
                     .err()
                     .map(|error| format!("详细记录清理未完成：{error}；请重新应用存储设置"))
             } else {
@@ -1497,7 +1507,9 @@ impl TraceStore {
             };
             return;
         }
-        let result = self.with_writer(true, |store| store.purge_completed_details());
+        let result = self
+            .with_writer(true, |store| Ok(store.purge_completed_details()))
+            .and_then(|result| result);
         self.retention_notice = match result {
             Err(error) => Some(format!(
                 "设置已保存，详细记录清理未完成：{error}；请重新应用存储设置"
@@ -1523,6 +1535,7 @@ impl TraceStore {
                 return Err("索引路径越界".into());
             }
             read(&path)?;
+            let _deletion_guard = trace_content::deletion_guard(&path)?;
             let before = self.index.clone();
             self.retain_session_usage(&session);
             self.index["sessions"]
@@ -1554,6 +1567,7 @@ impl TraceStore {
                 && !self.recording.contains_key(id)
             {
                 let log = self.root.join(format!("{id}.jsonl"));
+                let _deletion_guard = trace_content::deletion_guard(&log)?;
                 if log.exists() {
                     read(&log)?;
                     fs::remove_file(&log).map_err(err)?;
@@ -1613,8 +1627,30 @@ impl TraceStore {
             self.persist()?;
             return Ok(());
         }
-        let id = format!("session-{}", &digest(key.as_bytes())[..24]);
-        let file = self.root.join(format!("{id}.jsonl"));
+        let mut id = format!("session-{}", &digest(key.as_bytes())[..24]);
+        let mut file = self.root.join(format!("{id}.jsonl"));
+        let indexed = self.index["sessions"].as_array().unwrap();
+        if !indexed.iter().any(|session| session["id"] == id) {
+            let matching: Vec<_> = indexed
+                .iter()
+                .filter(|session| {
+                    let annotation = self.legacy_annotations.get(text(session, "id"));
+                    let identity = |field| {
+                        annotation
+                            .and_then(|a| a.get(field))
+                            .unwrap_or(&session[field])
+                    };
+                    identity("source") == &record["source"]
+                        && identity("clientConversationKey") == key
+                })
+                .map(|session| text(session, "id").to_owned())
+                .take(2)
+                .collect();
+            if let [existing] = matching.as_slice() {
+                file = self.session_file(existing)?;
+                id = existing.clone();
+            }
+        }
         let sessions = self.index["sessions"].as_array_mut().unwrap();
         let at=sessions.iter().position(|s|s["id"]==id).unwrap_or_else(||{sessions.push(json!({"id":id,"startedAt":record["startedAt"],"updatedAt":record["completedAt"],"source":record["source"],"clientConversationKey":key,"firstPrompt":record["request"]["body"]["input"].as_str().or_else(||record["clientFirstPrompt"].as_str()).unwrap_or(""),"firstModel":record["request"]["model"],"jsonlPath":file,"traceCount":0,"totalTokens":0,"totalDurationMs":0,"usageByModel":{},"usageNormalizationVersion":2,"nativeUsage":[]}));sessions.len()-1});
         let summary = &mut sessions[at];
@@ -1650,6 +1686,17 @@ impl TraceStore {
             for (key, value) in legacy.as_object().into_iter().flatten() {
                 summary[key] = value.clone();
             }
+        }
+        summary["source"] = record["source"].clone();
+        summary["clientConversationKey"] = json!(key);
+        if !summary["nativeUsage"].is_array() {
+            summary["nativeUsage"] = self
+                .legacy_costs
+                .get(&id)
+                .and_then(|view| view.get("nativeUsage"))
+                .filter(|points| points.is_array())
+                .cloned()
+                .unwrap_or_else(|| json!([]));
         }
         let auxiliary = annotation["auxiliary"].is_string();
         summary["captureClassificationVersion"] = json!(1);
@@ -1740,7 +1787,12 @@ impl TraceStore {
             self.refresh_legacy_costs();
         }
         self.persist()?;
-        self.cleanup_to_limit()?;
+        // The record is committed. A retention failure must not mark capture
+        // as broken or block later requests from being recorded.
+        self.retention_notice = self
+            .cleanup_to_limit()
+            .err()
+            .map(|error| format!("详细记录清理未完成：{error}；请重新应用存储设置"));
         if self.index["sessions"]
             .as_array()
             .unwrap()
@@ -1973,6 +2025,68 @@ impl Drop for ClientBodyGuard {
 #[cfg(test)]
 mod client_evidence_tests {
     use super::*;
+
+    #[test]
+    fn legacy_cli_resume_reuses_the_owned_file_and_survives_reopen() {
+        let root = std::env::temp_dir().join(format!(
+            "xwx-legacy-cli-{}-{}",
+            std::process::id(),
+            millis()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let file = root.join("legacy-date.jsonl");
+        let old = json!({"id":"old-request","sessionId":"legacy-date","source":"codex-vscode","clientConversationKey":"codex-vscode:thread-a","startedAt":"2026-10-21T00:00:00Z","request":{"model":"fixture","headers":{"originator":"codex_exec","thread-id":"thread-a","session-id":"thread-a"},"body":{"input":"same prompt"}},"response":{"statusCode":200},"usage":{"totalTokens":3}});
+        let original = format!("{old}\n");
+        fs::write(&file, &original).unwrap();
+        let index = json!({"version":1,"sessions":[{"id":"legacy-date","source":"codex-vscode","clientConversationKey":"codex-vscode:thread-a","jsonlPath":file,"traceCount":1,"totalTokens":3,"usageByModel":{}}]}).to_string();
+        fs::write(root.join("index.json"), &index).unwrap();
+        let mut next = old.clone();
+        next["id"] = json!("new-request");
+        next["source"] = json!("codex-cli");
+        next["clientConversationKey"] = json!("codex-cli:thread-a");
+        next["request"]["body"]["input"] = json!("resume question");
+        for count in [2, 3] {
+            next["id"] = json!(format!("new-request-{count}"));
+            let store = TraceStore::open(root.clone(), u64::MAX, false, &root).unwrap();
+            {
+                let mut store = store.lock().unwrap();
+                assert_eq!(
+                    store.state(false)["sessions"][0]["clientConversationKey"],
+                    "codex-cli:thread-a"
+                );
+                if count == 2 {
+                    assert_eq!(fs::read_to_string(root.join("index.json")).unwrap(), index);
+                }
+                store.append(next.clone(), "codex-cli:thread-a").unwrap();
+                let state = store.state(false);
+                assert_eq!(state["sessions"].as_array().unwrap().len(), 1);
+                assert_eq!(state["sessions"][0]["id"], "legacy-date");
+                assert_eq!(state["sessions"][0]["firstPrompt"], "same prompt");
+                assert_eq!(state["sessions"][0]["traceCount"], count);
+                assert_eq!(state["sessions"][0]["totalTokens"], count * 3);
+                assert!(fs::read(&file).unwrap().starts_with(original.as_bytes()));
+            }
+        }
+        let store = TraceStore::open(root.clone(), u64::MAX, false, &root).unwrap();
+        next["request"]["headers"]["thread-id"] = json!("thread-b");
+        next["request"]["headers"]["session-id"] = json!("thread-b");
+        next["clientConversationKey"] = json!("codex-cli:thread-b");
+        store
+            .lock()
+            .unwrap()
+            .append(next, "codex-cli:thread-b")
+            .unwrap();
+        assert_eq!(
+            store.lock().unwrap().state(false)["sessions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn stats_distinguish_known_zero_from_missing_cost_without_repricing() {
@@ -2399,8 +2513,7 @@ mod client_evidence_tests {
     #[test]
     fn native_embeds_repository_prices_for_offline_billing() {
         let rules: Vec<Value> =
-            serde_json::from_str(include_str!("../../test-results/native-assets/prices.json"))
-                .unwrap();
+            serde_json::from_str(crate::embedded_assets::prices().unwrap()).unwrap();
         assert!(
             !rules.is_empty()
                 && rules
@@ -2880,15 +2993,8 @@ pub(super) async fn dashboard(State(context): State<DashboardState>, request: Re
     let result = tokio::task::spawn_blocking(move || -> Result<(String, &str)> {
         let mut store = store.lock().map_err(err)?;
         if ["/", "/dashboard", "/index.html"].contains(&path.as_str()) {
-            let mut html = include_str!("../../test-results/native-assets/viewer.html").to_string();
-            let preference = serde_json::to_string(&store.theme)
-                .map_err(err)?
-                .replace('<', "\\u003c");
-            html = html.replacen(
-                "applyViewerTheme(state.theme);",
-                &format!("state.theme={preference};applyViewerTheme(state.theme);"),
-                1,
-            );
+            let preference = serde_json::to_string(&store.theme).map_err(err)?;
+            let mut html = crate::embedded_assets::themed_viewer(&preference)?;
             if std::env::args().any(|a| a == "--smoke") {
                 html = html.replace(
                     "</body>",

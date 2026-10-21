@@ -1,3 +1,5 @@
+import type { EditionApi } from "../edition/types";
+export * from "../edition/types";
 import type { ProviderPresetId } from "../../shared/providerProfiles";
 import type { SetupWebsite, SetupWebsites } from '../../shared/setupWebsites';
 import type { ProviderValidationResult } from '../../shared/providers';
@@ -287,7 +289,7 @@ export interface TraceRetentionRepairResult {
 
 // ---- XwXDeck API surface -------------------------------------------------
 
-export interface XwXDeckApi {
+export interface XwXDeckApi extends EditionApi {
   getProviders(): Promise<ProviderSnapshot>;
   saveProvider(input: ProviderInput): Promise<ProviderSnapshot>;
   getServiceSwitching?(): Promise<import('../../shared/serviceSwitching').ServiceSwitchingConfig>;
@@ -367,7 +369,7 @@ export interface XwXDeckApi {
     expectedProviderId?: string | null;
   }): Promise<readonly ModelCatalogEntry[]>;
 
-  chooseDirectory(payload?: { kind?: 'trace' | 'logs' | 'claude' | 'client' }): Promise<string | undefined>;
+  chooseDirectory(payload?: { kind?: import('../../shared/edition').EditionDirectoryKind | 'trace' | 'logs' | 'claude' | 'client' }): Promise<string | undefined>;
   updateTraceDirectories(payload: Record<string, unknown>): Promise<XwXDeckRuntimeState>;
 
   // Shell

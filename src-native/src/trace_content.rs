@@ -244,6 +244,34 @@ pub(super) fn remove(log: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn deletion_guard(log: &Path) -> Result<Vec<fs::File>> {
+    #[cfg(windows)]
+    use std::os::windows::fs::OpenOptionsExt;
+    let content = path(log);
+    let handles = Vec::new();
+    #[cfg(windows)]
+    let mut handles = handles;
+    // Validate the whole pair before unlinking either file. On Windows, held
+    // DELETE access also prevents new handles from withholding delete sharing.
+    for file in std::iter::once(log.to_path_buf()).chain(
+        ["-journal", "-wal", "-shm", ""]
+            .map(|suffix| PathBuf::from(format!("{}{suffix}", content.display()))),
+    ) {
+        check_file(&file)?;
+        #[cfg(windows)]
+        match fs::OpenOptions::new()
+            .access_mode(0x0001_0000) // DELETE
+            .share_mode(7) // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+            .open(&file)
+        {
+            Ok(handle) => handles.push(handle),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(err(error)),
+        }
+    }
+    Ok(handles)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,6 +473,42 @@ mod tests {
         assert!(store.retention_notice.is_none());
         assert!(!log.exists() && !path(&log).exists());
         assert_eq!(store.stats()["total"]["tokens"], 15);
+    }
+
+    #[test]
+    fn retention_errors_do_not_block_usage_only_capture() {
+        let fixture = Fixture::new();
+        let root = fixture.0.parent().unwrap();
+        let store = TraceStore::open(root.into(), u64::MAX, false, root).unwrap();
+        let mut store = store.lock().unwrap();
+        store
+            .append(capture("first", &"history".repeat(10000)), "thread")
+            .unwrap();
+        let log = PathBuf::from(store.index["sessions"][0]["jsonlPath"].as_str().unwrap());
+        let content = path(&log);
+        let log_before = fs::read(&log).unwrap();
+        let held = content.with_extension("held");
+        fs::rename(&content, &held).unwrap();
+        fs::create_dir(&content).unwrap();
+        store.active = true;
+        // A directory at the content path fails cleanup on every platform.
+        // Neither positive retention nor 0 GB may poison the active writer.
+        for limit in [1, 0] {
+            store.set_retention(limit, true);
+            assert!(store.retention_notice.is_some());
+            assert!(store.read_problem.is_none());
+            assert_eq!(fs::read(&log).unwrap(), log_before);
+        }
+        store
+            .append(capture("second", "usage only"), "thread")
+            .unwrap();
+        assert_eq!(store.stats()["total"]["tokens"], 10);
+        fs::remove_dir(&content).unwrap();
+        fs::rename(&held, &content).unwrap();
+        store.set_retention(0, true);
+        assert!(store.retention_notice.is_none());
+        assert!(!log.exists() && !path(&log).exists());
+        assert_eq!(store.stats()["total"]["tokens"], 10);
     }
 
     #[test]

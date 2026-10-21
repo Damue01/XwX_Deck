@@ -1,5 +1,7 @@
 use super::*;
 use futures_util::StreamExt;
+#[path = "edition/update-source.rs"]
+mod source;
 use sha2::{Digest, Sha256};
 #[derive(Clone)]
 pub(crate) struct Updates {
@@ -12,6 +14,16 @@ struct Update {
     manifest: Value,
     generation: u64,
     installing: bool,
+}
+#[cfg(target_os = "macos")]
+pub(crate) struct InstallLease(Updates);
+#[cfg(target_os = "macos")]
+impl Drop for InstallLease {
+    fn drop(&mut self) {
+        if let Ok(mut inner) = self.0.inner.lock() {
+            inner.installing = false;
+        }
+    }
 }
 fn version(s: &str) -> Option<Vec<u64>> {
     let s = s.strip_prefix('v').unwrap_or(s);
@@ -26,17 +38,28 @@ fn version(s: &str) -> Option<Vec<u64>> {
     Some(parts)
 }
 fn validate_url(value: &str) -> Result<reqwest::Url> {
-    let url = reqwest::Url::parse(value).map_err(|_| "无效更新地址".to_string())?;
+    let url = reqwest::Url::parse(value).map_err(|_| "更新地址无效")?;
     if !url.username().is_empty()
         || url.password().is_some()
-        || !(url.scheme() == "https"
-            || (std::env::args().any(|a| a == "--rpc" || a == "--smoke")
-                && url.scheme() == "http"
-                && [Some("127.0.0.1"), Some("localhost")].contains(&url.host_str())))
+        || !crate::edition::config::allow_update_url(&url)
     {
-        return Err("更新只允许 HTTPS 或隔离本地测试服务".into());
+        return Err("更新地址不符合当前版本的来源规则".into());
     }
     Ok(url)
+}
+fn windows_installer(name: &str) -> bool {
+    name == "XwX Deck Setup.exe" || name.ends_with("-setup.exe")
+}
+fn artifact_extension_matches(name: &str, platform: &str, portable: bool) -> bool {
+    if platform == "windows" {
+        if portable {
+            name.ends_with(".exe") && !windows_installer(name)
+        } else {
+            windows_installer(name)
+        }
+    } else {
+        name.ends_with(".dmg")
+    }
 }
 impl Updates {
     pub fn new(root: PathBuf) -> Self {
@@ -44,7 +67,8 @@ impl Updates {
         let portable = !crate::windows_setup::is_registered();
         #[cfg(not(target_os = "windows"))]
         let portable = false;
-        let state = json!({"status":"idle","currentVersion":env!("CARGO_PKG_VERSION"),"channel":"release","portable":portable,"installMode":if cfg!(target_os="macos"){"manual-dmg"}else{"automatic"},"supported":cfg!(any(target_os="macos",target_os="windows")),"updateAvailable":false});
+        #[allow(unused_mut)]
+        let mut state = json!({"status":"idle","currentVersion":env!("CARGO_PKG_VERSION"),"channel":"release","portable":portable,"installMode":if cfg!(target_os="macos"){"manual-dmg"}else{"automatic"},"supported":cfg!(any(target_os="macos",target_os="windows")),"updateAvailable":false});
         #[cfg(target_os = "windows")]
         let state = {
             let mut state = state;
@@ -54,6 +78,24 @@ impl Updates {
             }
             state
         };
+        #[cfg(target_os = "macos")]
+        {
+            if crate::edition::config::AUTOMATIC_MACOS_UPDATES && crate::macos_update::available() {
+                state["installMode"] = json!("automatic");
+                if let Some(version) = crate::macos_update::current_version() {
+                    state["currentVersion"] = json!(version);
+                }
+            }
+            if let Ok(bytes) = fs::read(root.join("updates/macos-install-result.json")) {
+                if let Ok(result) = serde_json::from_slice::<Value>(&bytes) {
+                    if result["status"] == "error" {
+                        state["status"] = json!("error");
+                        state["error"] = result["error"].clone();
+                    }
+                    state["lastInstall"] = result;
+                }
+            }
+        }
         Self {
             root,
             inner: Arc::new(std::sync::Mutex::new(Update {
@@ -67,6 +109,15 @@ impl Updates {
     }
     pub fn state(&self) -> Value {
         self.inner.lock().unwrap().state.clone()
+    }
+    #[cfg(target_os = "macos")]
+    pub fn claim_install(&self) -> Result<InstallLease> {
+        let mut inner = self.inner.lock().map_err(err)?;
+        if inner.installing {
+            return Err("更新正在安装，请等待完成".into());
+        }
+        inner.installing = true;
+        Ok(InstallLease(self.clone()))
     }
     pub(super) fn clear_idle_cache(&self) -> Result<Option<u64>> {
         // Hold the updater lock through removal. A new download cannot move
@@ -82,48 +133,8 @@ impl Updates {
         }
         application_repair::remove_cache(&self.root.join("updates"))
     }
-    fn feed(&self) -> Result<String> {
-        let feed = std::env::var("XWX_DECK_UPDATE_SERVER_URL")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| {
-                "https://github.com/Damue01/XwX_Deck/releases/latest/download".into()
-            });
-        validate_url(&feed)?;
-        Ok(feed.trim_end_matches('/').into())
-    }
     async fn manifest(&self) -> Result<Value> {
-        let response = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .timeout(Duration::from_secs(12))
-            .build()
-            .map_err(err)?
-            .get(format!("{}/release.json", self.feed()?))
-            .send()
-            .await
-            .map_err(|_| "更新信息请求失败".to_string())?
-            .error_for_status()
-            .map_err(|e| {
-                format!(
-                    "更新信息 HTTP {}",
-                    e.status().map(|s| s.as_u16()).unwrap_or(0)
-                )
-            })?;
-        validate_url(response.url().as_str())?;
-        let bytes = response.bytes().await.map_err(err)?;
-        if bytes.len() > 1024 * 1024 {
-            return Err("更新信息过大".into());
-        }
-        let manifest: Value =
-            serde_json::from_slice(&bytes).map_err(|_| "更新信息格式错误".to_string())?;
-        if manifest["schemaVersion"] != 1
-            || manifest["channel"] != "release"
-            || version(text(&manifest, "version")).is_none()
-            || manifest["tag"] != format!("v{}", text(&manifest, "version"))
-        {
-            return Err("更新清单版本或频道不一致".into());
-        }
-        Ok(manifest)
+        source::manifest(&self.root).await
     }
     pub async fn check(&self) -> Result<Value> {
         {
@@ -163,7 +174,7 @@ impl Updates {
         } else {
             "x64"
         };
-        let newer = manifest["releaseSeries"] == "native-v1"
+        let newer = source::release_supported(&manifest)
             && version(text(&manifest, "version")) > version(text(&inner.state, "currentVersion"));
         let artifact = manifest["files"]
             .as_array()
@@ -171,15 +182,11 @@ impl Updates {
                 files.iter().find(|f| {
                     f["platform"] == platform
                         && f["arch"] == arch
-                        && (platform != "windows"
-                            || text(f, "name").ends_with(if inner.state["portable"] == true {
-                                ".exe"
-                            } else {
-                                "-setup.exe"
-                            }))
-                        && (platform != "windows"
-                            || inner.state["portable"] != true
-                            || !text(f, "name").ends_with("-setup.exe"))
+                        && artifact_extension_matches(
+                            text(f, "name"),
+                            platform,
+                            inner.state["portable"] == true,
+                        )
                 })
             })
             .cloned()
@@ -194,15 +201,11 @@ impl Updates {
                     .all(|c| c.is_ascii_hexdigit())
                 || text(&artifact, "sha256").len() != 64
                 || validate_url(text(&artifact, "url")).is_err()
-                || !text(&artifact, "name").ends_with(if cfg!(target_os = "macos") {
-                    ".dmg"
-                } else {
-                    if inner.state["portable"] == true {
-                        ".exe"
-                    } else {
-                        "-setup.exe"
-                    }
-                })
+                || !artifact_extension_matches(
+                    text(&artifact, "name"),
+                    platform,
+                    inner.state["portable"] == true,
+                )
                 || text(&artifact, "name").contains(['/', '\\']))
         {
             inner.state["status"] = json!("error");
@@ -337,12 +340,10 @@ impl Updates {
                     "XwX-Deck-{target}{}",
                     if cfg!(target_os = "macos") {
                         ".dmg"
+                    } else if windows_installer(text(&artifact, "name")) {
+                        "-setup.exe"
                     } else {
-                        if text(&artifact, "name").ends_with("-setup.exe") {
-                            "-setup.exe"
-                        } else {
-                            ".exe"
-                        }
+                        ".exe"
                     }
                 ));
                 let mut inner = this.inner.lock().unwrap();

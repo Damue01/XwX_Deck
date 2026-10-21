@@ -964,7 +964,8 @@ impl Pilot {
         json!({"platform":"other","overrides":overrides,"canRemoveAutomatically":false})
     }
     pub(super) fn claude_base(p: &Provider) -> String {
-        Self::provider_api_root(p).trim_end_matches("/v1").into()
+        extension::claude_base(p)
+            .unwrap_or_else(|| Self::provider_api_root(p).trim_end_matches("/v1").into())
     }
     pub(super) fn api_root(base: &str) -> String {
         let base = base.trim_end_matches('/');
@@ -980,8 +981,8 @@ impl Pilot {
         }
         base.into()
     }
-    pub(super) fn provider_api_root(provider: &Provider) -> String {
-        Self::api_root(&provider.base_url)
+    pub(super) fn provider_api_root(p: &Provider) -> String {
+        extension::endpoint(p, "responses").unwrap_or_else(|| Self::api_root(&p.base_url))
     }
     pub(super) fn cache_path(&self, provider: &Provider) -> PathBuf {
         provider_cache(&self.root, provider)
@@ -1184,8 +1185,9 @@ pub(super) async fn validate_provider(
     } else {
         p.claude_models["sonnet"].as_str().unwrap_or("")
     };
-    let wire = resolve_wire(&root, p, Some(model), "responses");
-    let base = Pilot::provider_api_root(p);
+    let wire = extension::validation_wire(&root, p, model)
+        .unwrap_or_else(|| resolve_wire(&root, p, Some(model), "responses"));
+    let base = extension::endpoint(p, &wire).unwrap_or_else(|| Pilot::provider_api_root(p));
     let messages = if base.rsplit('/').next().is_some_and(|s| {
         s.strip_prefix('v')
             .is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()))

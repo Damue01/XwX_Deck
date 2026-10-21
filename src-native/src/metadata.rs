@@ -63,7 +63,7 @@ impl Metadata {
             None
         } else {
             Some(Endpoints {
-                events: String::new(),
+                events: crate::edition::config::metadata_events(),
                 models: "https://models.dev/api.json".into(),
                 reconnect: Duration::from_secs(60),
                 fallback: Duration::from_secs(6 * 60 * 60),
@@ -447,7 +447,7 @@ impl Pilot {
     pub fn background_catalog_jobs(&self, network: bool) -> Result<Vec<catalog::CatalogJob>> {
         let mut jobs = vec![];
         let mut seen = vec![];
-        for client in ["codex", "claude"] {
+        for client in crate::edition::config::PROVIDER_CLIENTS {
             if let Some(id) = self.settings.selected[client].as_str() {
                 if !seen.contains(&id) {
                     seen.push(id);
@@ -481,7 +481,7 @@ mod tests {
     fn production_metadata_uses_public_sources_without_push_subscription() {
         let metadata = Metadata::new(PathBuf::from("/metadata-boundary-fixture"), false).unwrap();
         let endpoints = metadata.endpoints.unwrap();
-        assert!(endpoints.events.is_empty());
+        assert_eq!(endpoints.events, crate::edition::config::metadata_events());
         assert_eq!(endpoints.models, "https://models.dev/api.json");
         assert_eq!(endpoints.fallback, Duration::from_secs(6 * 60 * 60));
     }

@@ -80,7 +80,10 @@ pub(super) fn process_present(_: u32) -> bool {
 }
 
 fn owned_url(url: &str) -> bool {
-    super::legacy_recovery::endpoint(url).is_some_and(|a| (45233..=45242).contains(&a.port()))
+    super::legacy_recovery::endpoint(url).is_some_and(|a| {
+        (crate::edition::config::GATEWAY_PORT..=crate::edition::config::GATEWAY_PORT + 9)
+            .contains(&a.port())
+    })
 }
 fn toml_routes(source: &str) -> Result<Vec<String>> {
     let d = doc(source)?;
@@ -189,7 +192,9 @@ pub(super) fn preflight(root: &Path, registered: bool) -> Result<()> {
         // With neither a runtime nor recorded route, retain the conservative
         // old-format guard. Otherwise probe only the recorded endpoints; an
         // unrelated application in the product range is not this root's helper.
-        control_ports.extend(45233..=45242);
+        control_ports.extend(
+            crate::edition::config::GATEWAY_PORT..=crate::edition::config::GATEWAY_PORT + 9,
+        );
     }
     control_ports.sort();
     control_ports.dedup();
@@ -261,7 +266,10 @@ impl Pilot {
         for path in [
             profile,
             meta.parent().unwrap().join("xwx-deck.json"),
-            meta.parent().unwrap().join("xwx-deck-deepseek.json"),
+            meta.parent().unwrap().join(format!(
+                "{}.json",
+                crate::edition::config::DESKTOP_LEGACY_IDS[1]
+            )),
         ] {
             if let Some(source) = read(&path)? {
                 let profile: Value = serde_json::from_str(&source)
@@ -309,7 +317,8 @@ mod tests {
 
     #[test]
     fn known_runtime_ports_do_not_claim_an_unrelated_product_listener() {
-        let unrelated = (45233..=45242)
+        let unrelated = (crate::edition::config::GATEWAY_PORT
+            ..=crate::edition::config::GATEWAY_PORT + 9)
             .find_map(|port| std::net::TcpListener::bind(("127.0.0.1", port)).ok())
             .expect("unused product port for isolated listener");
         let gateway = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

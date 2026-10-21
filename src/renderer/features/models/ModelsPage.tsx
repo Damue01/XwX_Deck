@@ -1,3 +1,4 @@
+import { ProviderExtras } from '@/edition';
 import { GatewayClientModels } from './GatewayClientModels';
 import { t, getLanguage, useLanguage } from '@/lib/i18n';
 import { ProviderPicker } from './ProviderPicker';
@@ -837,6 +838,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
                 </div>
               </div>
             ))}
+            <ProviderExtras provider={selectedClaudeProvider} active={active && clientRoute === "claude"} />
             {claudeDesktopSync && (
               <ClaudeEnhancements
                 sync={claudeDesktopSync}
@@ -878,6 +880,7 @@ export function ModelsPage({ active }: Props): React.ReactElement {
             </div>
             {codexProviderId === null && <OfficialChatgptAccount active={active && clientRoute === 'codex'} />}
             {selectedCodexProvider?.subscriptionAccountId?.startsWith('official-chatgpt') && <OfficialChatgptAccount key={selectedCodexProvider.subscriptionAccountId} accountId={selectedCodexProvider.subscriptionAccountId} active={active && clientRoute === 'codex'} />}
+            <ProviderExtras provider={selectedCodexProvider} active={active && clientRoute === "codex"} />
             {enhancements ? (
               <CodexEnhancements
                 enhancements={enhancements}

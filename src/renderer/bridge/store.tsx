@@ -1,3 +1,4 @@
+import { initialBridgeState, loadEditionState, type EditionBridgeState } from '@/edition/bridge';
 import type { ProviderSnapshot } from '../../shared/providers';
 import * as React from 'react';
 import { getApi, isDesktop } from './api';
@@ -16,7 +17,7 @@ import type {
   CompatibleServiceConfigSnapshot,
 } from './types';
 
-export interface BridgeState {
+export interface BridgeState extends EditionBridgeState {
   readonly modelClients: readonly import('../../shared/clientDownloads').DownloadClientId[];
   readonly compatibleServiceConfig: CompatibleServiceConfigSnapshot | null;
   readonly providers: ProviderSnapshot | null;
@@ -59,6 +60,7 @@ const BOOT_REQUEST_TIMEOUT_MS = 8_000;
 export function BridgeProvider({ children }: Props): React.ReactElement {
   const api = React.useMemo(() => getApi(), []);
   const [state, setState] = React.useState<BridgeData>({
+    ...initialBridgeState,
     modelClients: [],
     compatibleServiceConfig: null,
     providers: null,
@@ -178,6 +180,7 @@ export function BridgeProvider({ children }: Props): React.ReactElement {
     load(() => api.getModelServices(), '加载模型服务', modelServices => ({ modelServices }));
     if (api.getModelClients) load(() => api.getModelClients!(), "加载客户端", modelClients => ({ modelClients }));
     load(() => api.getProviders(), '加载模型服务列表', providers => ({ providers }));
+    loadEditionState(api, load);
 
     // Subscriptions
     const unsubState = api.onState(async (incoming) => {

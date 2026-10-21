@@ -4,7 +4,10 @@ use super::*;
 use std::net::TcpStream;
 
 fn owned_local(url: &str) -> bool {
-    super::legacy_recovery::endpoint(url).is_some_and(|a| (45233..=45242).contains(&a.port()))
+    super::legacy_recovery::endpoint(url).is_some_and(|a| {
+        (crate::edition::config::GATEWAY_PORT..=crate::edition::config::GATEWAY_PORT + 9)
+            .contains(&a.port())
+    })
 }
 fn usable_direct(url: &str) -> bool {
     reqwest::Url::parse(url).is_ok_and(|u| {
@@ -16,9 +19,10 @@ fn usable_direct(url: &str) -> bool {
     })
 }
 fn check_dead(url: &str) -> Result<()> {
-    if let Some(address) =
-        super::legacy_recovery::endpoint(url).filter(|a| (45233..=45242).contains(&a.port()))
-    {
+    if let Some(address) = super::legacy_recovery::endpoint(url).filter(|a| {
+        (crate::edition::config::GATEWAY_PORT..=crate::edition::config::GATEWAY_PORT + 9)
+            .contains(&a.port())
+    }) {
         if TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok() {
             return Err("旧版 Codex Gateway 仍在运行，请先停止旧版 Trace；现有请求未中断".into());
         }
@@ -260,7 +264,7 @@ impl Pilot {
             }
             self.consume_legacy_codex(name, &source)?;
         }
-        let name = "compatible-image-gen.json";
+        let name = crate::edition::config::IMAGE_JOURNAL;
         if let Some((source, record)) = self.legacy_codex_record(name, &[1])? {
             if record["writtenValue"] != false
                 || !record["previous"]["present"].is_boolean()
@@ -456,8 +460,9 @@ impl Pilot {
         if definitions.len() > 128 {
             return Err("旧 Codex 直连服务过多，账本已保留".into());
         }
-        let mut ids: Vec<String> = ["xwx_deck"]
-            .into_iter()
+        let mut ids: Vec<String> = crate::edition::config::LEGACY_PROVIDER_IDS
+            .iter()
+            .copied()
             .filter(|id| {
                 written
                     .get("model_providers")
@@ -579,7 +584,9 @@ impl Pilot {
                     return Err(format!("旧 Codex {id} 直连服务不唯一，未猜测地址或凭据"));
                 }
                 if let Some(definition) = first {
-                    let base = text(definition, "baseUrl").trim_end_matches('/');
+                    let base = extension::legacy_direct_base(definition).unwrap_or_else(|| {
+                        text(definition, "baseUrl").trim_end_matches('/').into()
+                    });
                     set_codex_provider_field(&mut baseline, id, "base_url", value(base));
                     set_codex_provider_field(
                         &mut baseline,
@@ -717,8 +724,14 @@ mod direct_tests {
     }
     #[test]
     fn mapped_loopback_is_owned_and_other_local_servers_are_valid_direct() {
-        assert!(owned_local("http://[::ffff:127.0.0.1]:45233/v1"));
-        assert!(!usable_direct("http://[::ffff:127.0.0.1]:45233/v1"));
+        assert!(owned_local(&format!(
+            "http://[::ffff:127.0.0.1]:{}/v1",
+            crate::edition::config::GATEWAY_PORT
+        )));
+        assert!(!usable_direct(&format!(
+            "http://[::ffff:127.0.0.1]:{}/v1",
+            crate::edition::config::GATEWAY_PORT
+        )));
         assert!(usable_direct("http://127.0.0.1:11434/v1"));
         assert!(!usable_direct("https://user:password@fixture.example/v1"));
     }

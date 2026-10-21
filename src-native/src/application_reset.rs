@@ -325,14 +325,15 @@ impl Pilot {
         // Restore all original Desktop fields before archiving its ownership ledger.
         self.stop().await?;
         self.desktop_restore()?;
-        let keep = [
+        let mut keep = vec![
             self.codex_home(),
             self.claude_dir(),
             self.root.join("clients"),
             self.root.join("desktop"),
         ];
+        keep.extend(self.extension.reset_keep(&self.root)?);
         if keep.iter().any(|path| self.root.starts_with(path)) {
-            return Err("客户端目录覆盖应用数据；请先调整目录后重置，历史未修改".into());
+            return Err("客户端或扩展目录覆盖应用数据；请先调整目录后重置，历史未修改".into());
         }
         let mut custom = vec![];
         for path in [self.trace_root(), self.log_root()] {
@@ -340,7 +341,9 @@ impl Pilot {
                 .iter()
                 .any(|owned| path.starts_with(owned) || owned.starts_with(&path))
             {
-                return Err("Trace 或日志目录与客户端目录重叠，历史保留；请调整目录后重置".into());
+                return Err(
+                    "Trace 或日志目录与客户端/扩展目录重叠，历史保留；请调整目录后重置".into(),
+                );
             }
             if path == self.root || self.root.starts_with(&path) {
                 return Err("Trace 或日志目录覆盖应用目录，数据保留".into());

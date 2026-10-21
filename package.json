@@ -12,7 +12,7 @@
   },
   "scripts": {
     "clean": "rimraf dist",
-    "compile": "npm run check-types && npm run check:docs && npm run check:icons && npm run check:release-contract && npm run check:runtime-boundary && node tools/build/esbuild.config.mjs && npm run check:repository",
+    "compile": "npm run check-types && npm run check:docs && npm run check:icons && npm run check:release-contract && npm run check:runtime-boundary && npm run check:shared-parity && node tools/build/esbuild.config.mjs && npm run check:repository",
     "check-types": "tsc --noEmit",
     "check:quality": "node tools/checks/check-quality.mjs",
     "check:docs": "node tools/checks/check-docs.mjs",
@@ -27,7 +27,7 @@
     "test": "npm run check:quality",
     "test:built": "npm run test:public-history && npm run test:theme && npm run test:history-confirm && npm run test:trace-notices && npm run test:shared-core && npm run test:release-manifest && npm run test:folder-window-cleanup",
     "test:public-history": "node tools/tests/public-history-test.mjs",
-    "test:shared-core": "node tools/shared-core/trace-cache-rate-test.mjs && node tools/shared-core/models-dev-unification-test.mjs",
+    "test:shared-core": "node tools/shared-core/trace-cache-rate-test.mjs && node tools/shared-core/models-dev-unification-test.mjs && node tools/shared-core/parity-test.mjs",
     "test:trace-notices": "node tools/tests/run-trace-notice-regressions.mjs && node tools/tests/run-bridge-order-regressions.mjs",
     "test:history-confirm": "node tools/tests/run-history-confirm-regressions.mjs",
     "test:theme": "node tools/tests/run-theme-regressions.mjs",
@@ -71,7 +71,10 @@
     "test:docs": "node tools/site/docs-browser-test.mjs",
     "check:repository": "node tools/checks/check-repository-boundary.mjs",
     "test:release-manifest": "node tools/tests/release-manifest-test.mjs",
-    "test:folder-window-cleanup": "node tools/native/windows-folder-windows-test.mjs"
+    "test:folder-window-cleanup": "node tools/native/windows-folder-windows-test.mjs",
+    "check:shared-parity": "node tools/shared-core/audit-parity.mjs --quiet",
+    "sync:core": "node tools/shared-core/sync.mjs",
+    "test:shared-parity": "node tools/shared-core/parity-test.mjs"
   },
   "devDependencies": {
     "@base-ui/react": "^1.6.0",

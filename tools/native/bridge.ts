@@ -1,3 +1,4 @@
+import { registerEditionBridge } from './edition/bridge';
 import { setupWebsitesFor } from '../../src/shared/setupWebsites';
 
 declare const __NATIVE_ARCH__: 'arm64' | 'x64';
@@ -52,6 +53,7 @@ bridge.onUpdateState = (listener: any) => subscribe('update', listener);
 bridge.onShowUpdateDetails = (listener: any) => subscribe('showUpdate', listener);
 bridge.getPathForFile = () => ''; // Tauri supplies real paths through its native drag-drop event.
 bridge.onNotice = (listener: any) => subscribe('notice', listener);
+registerEditionBridge({bridge,rpc,native,subscribe,publish});
 (window as any).xwxDeck = bridge;
 let lastSubscriptionNotice = 0;
 let noticesInitialized = false;

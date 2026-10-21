@@ -4281,12 +4281,6 @@ function renderBlocks(blocks, callNames, expanded){
     if(!b || typeof b !== 'object') return blockWrap('<pre class="codebox">'+esc(j(b))+'</pre>', many, b);
     const type = b.type || 'raw';
     const rawBlock = rawBlockValue(b);
-    if(!expanded){
-      const value = b.text ?? b.output ?? b.content ?? b.arguments ?? b.thinking;
-      if(typeof value === 'string' && value.length > 32000){
-        return '<details class="message-history"><summary>'+esc(type)+' '+num(value.length)+L(' 字符',' chars')+'</summary><div class="deferred-detail-content">'+deferredDetailBody(() => renderBlocks([b],callNames,true))+'</div></details>';
-      }
-    }
     if(type === 'text' || type === 'input_text' || type === 'output_text') return blockWrap('<div class="md txt-md">'+renderTextRich(textBlockValue(b))+'</div>'+renderCitations(b.citations), many, rawBlock, true);
     if(type === 'refusal') return blockWrap('<div class="resp-refusal"><div class="resp-refusal-k">'+L('模型拒绝','REFUSAL')+'</div><div class="pre-text">'+esc(b.text || b.refusal || '')+'</div></div>', many, rawBlock);
     if(type === 'thinking' || type === 'reasoning' || type === 'reasoning_text' || type === 'redacted_thinking'){

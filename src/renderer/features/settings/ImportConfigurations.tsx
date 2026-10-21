@@ -26,7 +26,6 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
   const generation = React.useRef(0);
   const lock = React.useRef(false);
   const container = React.useRef<HTMLDivElement | null>(null);
-  const seen = React.useRef(new Set<string>());
   const refreshClients = detection.refresh;
   const scan = React.useCallback(async () => {
     if (lock.current) return;
@@ -41,10 +40,8 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
       if (current !== generation.current) return;
       setPreview(next);
       onDetected?.(next.sources.filter(source => source.found).flatMap(source => source.items.filter(item => ['new', 'paused', 'needs-login'].includes(item.status))).length);
-      const previouslySeen = seen.current;
       const eligible = next.sources.flatMap(source => source.items.filter(item => ['new', 'paused', 'needs-login'].includes(item.status)));
-      setPicked(current => [...new Set(eligible.filter(item => current.includes(item.fingerprint) || (item.status === 'new' && !item.accountKind && !previouslySeen.has(item.fingerprint))).map(item => item.fingerprint))]);
-      seen.current = new Set([...previouslySeen, ...eligible.map(item => item.fingerprint)]);
+      setPicked(current => current.filter(id => eligible.some(item => item.fingerprint === id)));
     } catch (failure) { if (current === generation.current) setError(failure instanceof Error ? failure.message : String(failure)); }
     finally { lock.current = false; setBusy(false); onBusyChange(false); }
   }, [api, onBusyChange, onDetected, refreshClients]);

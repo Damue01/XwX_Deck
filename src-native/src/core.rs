@@ -1,3 +1,5 @@
+#[path = "edition/core.rs"]
+mod extension;
 #[path = "settings.rs"]
 mod settings;
 pub use settings::Provider;
@@ -308,6 +310,7 @@ pub struct Pilot {
     recovery_problem: Option<String>,
     renderer_preferences_problem: Option<String>,
     updates: updates::Updates,
+    extension: extension::State,
     metadata: metadata::Metadata,
 }
 pub type Shared = Arc<Mutex<Pilot>>;
@@ -469,7 +472,7 @@ fn stale_codex_root_override(config: &DocumentMut, origins: &[String]) -> bool {
         .iter()
         .any(|key| codex_root_override(config, key, &old_origins))
 }
-const GATEWAY_PORT: u16 = 45233;
+const GATEWAY_PORT: u16 = crate::edition::config::GATEWAY_PORT;
 fn gateway_listen_port(isolated: bool) -> u16 {
     if isolated {
         0
@@ -689,6 +692,7 @@ impl Pilot {
     pub async fn execute_validation(job: (PathBuf, Provider, Option<String>)) -> Result<Value> {
         clients::validate_provider(job.0, job.1, job.2).await
     }
+
     fn client_discovery(&self) -> client_installations::Discovery {
         let fixture_home =
             if self.isolated && std::env::args().any(|arg| arg == "--rpc" || arg == "--smoke") {
@@ -862,17 +866,7 @@ impl Pilot {
                     }
                 }
                 if value.get("nativeMigrationVersion").is_none() {
-                    if let Some(connections) = value["connections"].as_array_mut() {
-                        for p in connections {
-                            if p["codexProviderId"].as_str().is_none_or(str::is_empty) {
-                                p["codexProviderId"] = p["id"]
-                                    .as_str()
-                                    .filter(|id| !id.is_empty())
-                                    .map(|id| json!(id))
-                                    .unwrap_or(json!("xwx_deck"));
-                            }
-                        }
-                    }
+                    extension::migrate(&root, &mut value)?;
                     let remembered = value["selected"].clone();
                     for (client, mode) in [
                         ("codex", "codexPreferredMode"),
@@ -923,6 +917,7 @@ impl Pilot {
             state_revision: std::sync::Mutex::new((0, Value::Null)),
             subscriptions: subscriptions::Accounts::open(&root, isolated)?,
             updates: updates::Updates::new(root.clone()),
+            extension: extension::State::new(&root, isolated),
             metadata: metadata::Metadata::new(root.clone(), isolated)?,
             root,
             isolated,
@@ -1224,11 +1219,11 @@ impl Pilot {
                     (provider == p.codex_provider_id || provider == p.id)
                         && base == Self::provider_api_root(p)
                 }));
-        Ok(
-            json!({"configPath":self.config_path(),"authPath":self.codex_home().join("auth.json"),"exists":self.config_path().exists(),"mode":if using_selected{"compatible"}else{"official"},"authMode":self.auth_mode(),"activeProvider":provider,"activeBaseUrl":base,"officialModel":if !using_selected{model}else{""},"modelCatalogSource":if d.get("model_catalog_json").and_then(Item::as_str).is_some_and(|p|Path::new(p)==self.codex_home().join("xwx-deck-model-catalog.json")){"compatible"}else{"none"},"configOwnership":if !self.config_path().exists() || owned_provider {"deck"} else {"external"},
+        Ok(extension::codex_snapshot(
+            json!({"configPath":self.config_path(),"authPath":self.codex_home().join("auth.json"),"exists":self.config_path().exists(),"mode":if using_selected{"compatible"}else{"official"},"authMode":self.auth_mode(),"activeProvider":provider,"activeBaseUrl":base,"officialModel":if !using_selected{model}else{""},"modelCatalogSource":if d.get("model_catalog_json").and_then(Item::as_str).is_some_and(|p|Path::new(p)==self.codex_home().join(crate::edition::config::CATALOG_FILE)){"compatible"}else{"none"},"configOwnership":if !self.config_path().exists() || owned_provider {"deck"} else {"external"},
           "modelContextWindow":selected.map(|p|p.codex_context_window).filter(|n|*n>0).or_else(||if selected.is_none(){d.get("model_context_window").and_then(Item::as_integer).and_then(|n|u64::try_from(n).ok()).filter(|n|*n>0)}else{None}),
           "compatible":{"provider":selected.map(|p|p.display_name.as_str()).unwrap_or(""),"model":selected.map(|p|p.codex_model.as_str()).unwrap_or(""),"baseUrl":selected.map(|p|p.base_url.as_str()).unwrap_or(""),"bearerToken":selected.map(|p|p.bearer_token.as_str()).unwrap_or("")}}),
-        )
+        ))
     }
     fn subscription_route_accepted(&self, client: &str, source: &str) -> Result<bool> {
         use sha2::{Digest, Sha256};
@@ -1450,7 +1445,7 @@ impl Pilot {
                 }
                 native_auth::configure(&mut d, direct_id, &self.root, self.isolated, p)?;
             }
-            let catalog_path = self.codex_home().join("xwx-deck-model-catalog.json");
+            let catalog_path = self.codex_home().join(crate::edition::config::CATALOG_FILE);
             let pointer = d.get("model_catalog_json").and_then(Item::as_str);
             if pointer.is_some_and(|path| Path::new(path) != catalog_path) && !takeover {
                 return Err("外部模型目录已保留，请确认接管后重试".into());
@@ -1483,7 +1478,7 @@ impl Pilot {
             if d.get("model_catalog_json")
                 .and_then(Item::as_str)
                 .is_some_and(|p| {
-                    Path::new(p) == self.codex_home().join("xwx-deck-model-catalog.json")
+                    Path::new(p) == self.codex_home().join(crate::edition::config::CATALOG_FILE)
                 })
             {
                 d.remove("model_catalog_json");
@@ -1782,7 +1777,7 @@ impl Pilot {
                             .and_then(Item::as_str)
                             .is_some_and(|path| {
                                 Path::new(path)
-                                    != self.codex_home().join("xwx-deck-model-catalog.json")
+                                    != self.codex_home().join(crate::edition::config::CATALOG_FILE)
                             })
                         {
                             return Err("外部模型目录已保留，请先明确接管后再开启 Trace".into());
@@ -1799,7 +1794,7 @@ impl Pilot {
                             "model_catalog_json",
                             value(
                                 self.codex_home()
-                                    .join("xwx-deck-model-catalog.json")
+                                    .join(crate::edition::config::CATALOG_FILE)
                                     .to_string_lossy()
                                     .to_string(),
                             ),
@@ -1854,7 +1849,11 @@ impl Pilot {
         let claude = self.claude_managed(port, &claude_path)?;
         let result=write(&self.root.join("gateway-recovery.json"),&json!({"before":before,"managed":managed,"port":port,"codexManaged":codex_managed,"codexOfficial":codex_official,"claude":claude,"claudeConfigPath":claude_path}).to_string()).and_then(|_| {
             if codex_managed {write_checked(&self.config_path(),&before,&managed)?;}
-            if let Some((ref before,ref managed))=claude {write_checked(&claude_path,before,managed)?;}
+            if let Some((ref before,ref managed))=claude {
+                let parent = claude_path.parent().ok_or("Claude 配置目录无效")?;
+                Self::directory(&self.root, &parent.to_string_lossy(), "claude")?;
+                write_checked(&claude_path,before,managed)?;
+            }
             Ok(())
         });
         if let Err(e) = result {
@@ -1964,8 +1963,6 @@ impl Pilot {
         claude: Option<Provider>,
         forwarding: gateway_forwarding::Bindings,
     ) -> Result<()> {
-        // Isolated acceptance must never receive requests from normal clients.
-        // Normal restarts reuse the same endpoint; occupation must be visible.
         let listener = bind_gateway_listener(gateway_listen_port(self.isolated)).await?;
         let port = listener.local_addr().map_err(err)?.port();
         let (cancel, cancelled) = tokio::sync::watch::channel(false);
@@ -2295,12 +2292,6 @@ impl Pilot {
             }
             "refreshSubscriptionUsage" => {self.subscriptions.refresh_usage(text(&input,"platform")).await?;Ok(self.subscriptions.snapshot().await)} ,
             "beginSubscriptionSignIn" => self.subscriptions.begin_for(text(&input,"platform"), text(&input,"accountId")).await,
-            "getConfigurationRemovalImpact" => {
-                let providers: Vec<String> = serde_json::from_value(input["providerIds"].clone()).map_err(err)?;
-                let accounts: Vec<String> = serde_json::from_value(input.get("accountIds").cloned().unwrap_or(json!([]))).map_err(err)?;
-                Ok(json!(self.removal_impact(&providers, &accounts)))
-            }
-            "removeSubscriptionAccounts" => self.remove_subscription_accounts(&input).await,
             "cancelSubscriptionSignIn" => Ok(self.subscriptions.cancel().await),
             "subscriptionTestAuthorizationUrl" => Ok(json!(self.subscriptions.test_url().await?)),
             "connectSubscriptionAccount" => {
@@ -2318,6 +2309,12 @@ impl Pilot {
                 if let Err(error) = self.persist() { self.settings = before; return Err(error); }
                 Ok(self.providers().await)
             }
+            "getConfigurationRemovalImpact" => {
+                let providers: Vec<String> = serde_json::from_value(input["providerIds"].clone()).map_err(err)?;
+                let accounts: Vec<String> = serde_json::from_value(input.get("accountIds").cloned().unwrap_or(json!([]))).map_err(err)?;
+                Ok(json!(self.removal_impact(&providers, &accounts)))
+            }
+            "removeSubscriptionAccounts" => self.remove_subscription_accounts(&input).await,
             "renameSubscriptionAccount" => {
                 let id=text(&input,"accountId"); let label=text(&input,"label").trim();
                 if label.is_empty() || label.chars().count()>80 || label.chars().any(char::is_control) { return Err("账号名称须为 1–80 个字符".into()); }
@@ -2334,7 +2331,7 @@ impl Pilot {
             }
             "detectClientInstallations" => {
                 let discovery = self.client_discovery();
-                let catalog: Value = serde_json::from_str(include_str!("../../test-results/native-assets/clients.json")).map_err(err)?;
+                let catalog: Value = serde_json::from_str(crate::embedded_assets::clients()?).map_err(err)?;
                 Ok(json!({"available":true,"clients":catalog.as_array().into_iter().flatten().map(|client|json!({"id":client["id"],"installed":discovery.installed(text(client,"id")),"modelManagement":client["modelManagement"]==true && discovery.management_supported(text(client,"id")),"installationLocation":self.settings.other.get("clientInstallationLocations").and_then(|locations|locations.get(client_installations::canonical_id(text(client,"id"))))})).collect::<Vec<_>>()}))
             }
             "getModelClients" => Ok(json!(self.model_clients())),
@@ -2345,7 +2342,7 @@ impl Pilot {
             }
             "addModelClient" | "removeModelClient" => {
                 let id = input.as_str().ok_or("无效客户端")?;
-                let catalog: Value = serde_json::from_str(include_str!("../../test-results/native-assets/clients.json")).map_err(err)?;
+                let catalog: Value = serde_json::from_str(crate::embedded_assets::clients()?).map_err(err)?;
                 if !catalog.as_array().is_some_and(|rows|rows.iter().any(|row|row["id"]==id)) { return Err("未知客户端".into()); }
                 let id = client_installations::canonical_id(id);
                 // Explicit null restores automatic discovery; omitted retains the saved choice.
@@ -2451,6 +2448,21 @@ impl Pilot {
                 Box::pin(self.call("switchClientProvider", &[request])).await
             }
             "getDashboardUrl" => Ok(json!(self.dashboard_url().await?)),
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             "getTraceStats" => Ok(self.store.lock().map_err(err)?.stats()),
             "inspectTraceIndexRepair" => self.store.lock().map_err(err)?.inspect_repair(),
             "applyTraceIndexRepair" => {
@@ -2539,7 +2551,7 @@ impl Pilot {
                 let selected=self.selected().ok_or("请先保存并选择连接")?;
                 let mut update=serde_json::to_value(selected).map_err(err)?;
                 for (key,value) in input.as_object().ok_or("无效连接设置")?{update[key]=value.clone();}
-                if let Some(format)=input["codexApiFormat"].as_str(){update["adapter"]=json!(format);}
+                if !extension::automatic_adapter(text(&update,"adapter")) {if let Some(format)=input["codexApiFormat"].as_str(){update["adapter"]=json!(format);}}
                 Box::pin(self.call("saveProvider",&[update])).await?;
                 Box::pin(self.call("getCompatibleServiceConfig",&[])).await
             }
@@ -2674,7 +2686,7 @@ impl Pilot {
                     "chat-completions",
                     "anthropic-messages",
                 ]
-                .contains(&adapter)
+                .contains(&adapter) && !extension::adapter_supported(adapter)
                 {
                     return Err("无效协议".into());
                 }
@@ -2707,7 +2719,7 @@ impl Pilot {
                     base_url: base.into(),
                     bearer_token: text(&input, "bearerToken").into(),
                     adapter: adapter.into(),
-                    codex_api_format: input["codexApiFormat"].as_str().filter(|v|["responses","chat-completions","anthropic-messages"].contains(v)).unwrap_or_else(||if adapter=="auto"{old.map(|p|p.codex_api_format.as_str()).filter(|s|!s.is_empty()).unwrap_or("responses")}else{adapter}).into(),
+                    codex_api_format: input["codexApiFormat"].as_str().filter(|v|["responses","chat-completions","anthropic-messages"].contains(v)).unwrap_or_else(||if adapter=="auto" || extension::automatic_adapter(adapter){old.map(|p|p.codex_api_format.as_str()).filter(|s|!s.is_empty()).unwrap_or(extension::default_protocol(adapter))}else{adapter}).into(),
                     codex_model: input
                         .get("codexModel")
                         .and_then(Value::as_str)
@@ -2729,7 +2741,7 @@ impl Pilot {
             }
             "switchClientProvider" => {
                 let client = text(&input, "client");
-                if !["codex", "claude"].contains(&client) {
+                if !crate::edition::config::PROVIDER_CLIENTS.contains(&client) {
                     return Err("无效客户端".into());
                 }
                 if self.active() {
@@ -2932,9 +2944,7 @@ impl Pilot {
                 self.settings.other.insert("traceDesiredEnabled".into(),json!(desired));self.persist()?;
                 Ok(self.state())
             }
-            _ => Err(format!(
-                "当前原生版本不支持操作 {method}"
-            )),
+            _ => extension::call(self,method,args).await,
         }
     }
 }
@@ -3479,7 +3489,8 @@ async fn forward_once(
     } else {
         format!("?{query}")
     };
-    let normalized = Pilot::provider_api_root(provider);
+    let normalized =
+        extension::endpoint(provider, wire).unwrap_or_else(|| Pilot::provider_api_root(provider));
     let base = normalized.as_str();
     let endpoint = if provider.oauth {
         if account {
@@ -4044,14 +4055,16 @@ async fn forward_once(
 }
 
 fn resolve_wire(root: &Path, provider: &Provider, model: Option<&str>, incoming: &str) -> String {
-    if provider.adapter == "auto" && provider.subscription_account_id.is_empty() {
+    if (provider.adapter == "auto" || extension::automatic_adapter(&provider.adapter))
+        && provider.subscription_account_id.is_empty()
+    {
         return catalog::wire(root, provider, model, incoming);
     }
     if provider.adapter == "auto" {
-        let known: Value = serde_json::from_str(include_str!(
-            "../../test-results/native-assets/official-models.json"
-        ))
-        .unwrap_or(json!([]));
+        let known: Value = crate::embedded_assets::official_models()
+            .ok()
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(json!([]));
         let cache = root.join(format!(
             "provider-{}-models.json",
             &storage::digest(provider.id.as_bytes())[..24]
@@ -4103,7 +4116,10 @@ mod gateway_listener_tests {
 
     #[test]
     fn normal_endpoint_is_fixed_and_acceptance_is_isolated() {
-        assert_eq!(gateway_listen_port(false), 45233);
+        assert_eq!(
+            gateway_listen_port(false),
+            crate::edition::config::GATEWAY_PORT
+        );
         assert_eq!(gateway_listen_port(true), 0);
     }
 
@@ -4138,7 +4154,7 @@ mod config_merge_tests {
                 "model_provider = \"openai\"",
                 "model_provider = \"xwx_deck\"",
             )
-            .replace("https://original.invalid/v1", "http://127.0.0.1:45233/v1");
+            .replace("https://original.invalid/v1", "http://127.0.0.1:59233/v1");
         let current = managed
             .replace("# old note", "# user's newest comment")
             .replace(
@@ -4159,8 +4175,8 @@ mod config_merge_tests {
     #[test]
     fn refuses_owned_route_drift_without_a_write() {
         let before = "model_provider = \"openai\"\n";
-        let managed="model_provider = \"xwx_deck\"\n[model_providers.xwx_deck]\nbase_url = \"http://127.0.0.1:45233/v1\"\n";
-        let external = managed.replace("45233", "59999");
+        let managed="model_provider = \"xwx_deck\"\n[model_providers.xwx_deck]\nbase_url = \"http://127.0.0.1:59233/v1\"\n";
+        let external = managed.replace("59233", "59999");
         assert!(restore_codex_fields(&external, before, managed, false).is_err());
     }
     #[test]

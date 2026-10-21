@@ -1,8 +1,10 @@
+import {editionProviderPresets,editionDefaultProviderPreset} from './edition';
 import type { ProviderConnection, ProviderInput } from './providers';
 
 // Official API presets, including local servers. No preset creates a connection.
 // Source links are kept with each preset so endpoint updates are reviewable.
 export const OFFICIAL_PROVIDERS = [
+  ...editionProviderPresets,
   { id: 'deepseek', label: 'DeepSeek', displayName: 'DeepSeek', baseUrl: 'https://api.deepseek.com', adapter: 'responses', consoleUrl: 'https://platform.deepseek.com/api_keys', docsUrl: 'https://api-docs.deepseek.com/guides/responses_api/' },
   { id: 'qwen', label: '千问', displayName: 'Qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', adapter: 'responses', consoleUrl: 'https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key', docsUrl: 'https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses' },
   { id: 'ark', label: '火山方舟', displayName: 'Volcengine-Ark', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', adapter: 'responses', providerPreset: 'volcengine-ark', consoleUrl: 'https://ark.volcengine.com/region:cn-beijing/apikey', docsUrl: 'https://docs.volcengine.com/docs/ark/product-overview?lang=zh' },
@@ -66,7 +68,7 @@ export function isLocalProvider(connection: { baseUrl: string; providerPreset?: 
   catch { return false; }
 }
 
-export function newProviderDraft(connections: readonly ProviderConnection[] = [], id: OfficialProviderId | 'custom' = 'deepseek'): ProviderInput {
+export function newProviderDraft(connections: readonly ProviderConnection[] = [], id: OfficialProviderId | 'custom' = editionDefaultProviderPreset): ProviderInput {
   const preset = OFFICIAL_PROVIDERS.find(provider => provider.id === id);
   const initialName = preset?.displayName ?? 'Custom';
   const names = new Set(connections.flatMap(provider => [provider.displayName, provider.codexProviderId]));

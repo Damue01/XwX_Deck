@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const files = new Set(['package.json', 'package-lock.json', 'tsconfig.json', 'tools/build/esbuild.config.mjs', 'release-contract.json', 'LICENSE', 'NOTICE', 'docs/licenses/third-party-notices.md', 'tools/icons/generate-macos-dmg-background.swift']);
+const files = new Set(['docs/shared-core-sync.json', 'package.json', 'package-lock.json', 'tsconfig.json', 'tools/build/esbuild.config.mjs', 'esbuild.config.mjs', 'THIRD_PARTY_NOTICES.md', 'release-contract.json', 'LICENSE', 'NOTICE', 'docs/licenses/third-party-notices.md', 'tools/icons/generate-macos-dmg-background.swift']);
 const prefixes = ['src/', 'src-native/', 'assets/', 'tools/', 'web/site/', 'docs/licenses/'];
 export async function sourceFingerprint(root) {
   const paths = [...new Set(execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\0').filter(path => path && (files.has(path) || prefixes.some(prefix => path.startsWith(prefix)))))].sort();

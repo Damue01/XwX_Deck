@@ -1,44 +1,27 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-const root=path.resolve(import.meta.dirname,'../..');
-const read=file=>readFile(path.join(root,file),'utf8');
-const [contract,pkg,config,cargo,main,core,clients,updates,build,bridge,app,rail,license,workflows]=await Promise.all([
-  read('release-contract.json').then(JSON.parse),read('package.json').then(JSON.parse),read('src-native/tauri.conf.json').then(JSON.parse),read('src-native/Cargo.toml'),read('src-native/src/main.rs'),Promise.all(['core','settings'].map(n=>read(`src-native/src/${n}.rs`))).then(v=>v.join('\n')),read('src-native/src/clients.rs'),read('src-native/src/updates.rs'),read('tools/native/build.mjs'),read('tools/native/bridge.ts'),read('src/renderer/App.tsx'),read('src/renderer/features/shell/Rail.tsx'),read('LICENSE'),Promise.all(['ci','pages','release'].map(n=>read(`.github/workflows/${n}.yml`))).then(v=>v.join('\n'))
-]);
-const failures=[];const check=(v,m)=>{if(!v)failures.push(m);};
-check(contract.schemaVersion===1&&contract.edition==='standalone'&&contract.product==='XwX Deck','standalone contract identity');
-check(pkg.name===contract.identity.packageName&&config.identifier===contract.identity.appId,'native/package app identity');
-check(config.version===pkg.version&&cargo.includes(`version = "${pkg.version}"`),'native/package versions');
-check(contract.identity.gatewayPort===45233&&core.includes('const GATEWAY_PORT: u16 = 45233;')&&core.includes('bind_gateway_listener(gateway_listen_port(self.isolated))'),'fixed Gateway port');
-check(main.includes('Application Support/xwx-deck')&&main.includes('.join("xwx-deck")'),'native data namespace');
-check(pkg.license==='Apache-2.0'&&license.includes('Apache License'),'Apache license');
-check(pkg.scripts.start==='npm run start:native:isolated'&&pkg.scripts['build:mac:arm64'].includes('tools/native/build.mjs')&&pkg.scripts['build:win'].includes('tools/native/build.mjs'),'default runtime and packaging must use Rust');
-check(!build.includes('electron-builder')&&build.includes('licenses.html')&&main.includes('licenses.html')&&build.includes('meta charset="utf-8"')&&pkg.nativePackaging.dmg.contents.some(item=>item.type==='link'&&item.path==='/Applications'),'native packaging and licenses');
-check(cargo.includes('opt-level = "z"')&&cargo.includes('lto = true')&&cargo.includes('strip = true'),'release size optimization');
-check(config.app.security.capabilities.every(c=>c.windows.length===1&&(c.windows[0]==='main'||(c.windows[0]==='tray-menu'&&c.permissions.every(p=>p==='core:event:default'))))&&/caller\.label\(\)\s*!\s*=\s*"main"/.test(main)&&main.includes('caller.label() != windows_tray::LABEL'),'remote Viewer cannot invoke client configuration commands; tray has only events and its guarded command');
-check(main.includes('tauri_plugin_autostart')&&main.includes('TrayIconBuilder')&&main.includes('api.prevent_exit()')&&clients.includes('gateway-recovery.json'),'startup, background reopen, safe exit and crash recovery');
-check(core.includes('connections: vec![]')&&core.includes('trace_warning_gb: 1.0')&&core.includes('trace_auto_cleanup: true'),'empty install and 1GB automatic retention');
-check(contract.traceRetention.preservesExplicitUserSettings&&core.includes('default)]')&&core.includes('settings-before-native-migration.json'),'explicit settings preserved on native migration');
-check(contract.features.repairCenter&&contract.features.safeExitRecovery&&!contract.features.toolsPage&&!contract.features.conversationDiagnostics&&!contract.features.configurationSync&&!contract.features.excelToMarkdown,'retained and removed feature contract');
-for(const[label,text]of Object.entries({app,rail,bridge,main,core}))check(!/ToolsPage|diagnoseCodexConversations|queryCodexConversations|SyncPage|convert-excel/.test(text),`${label}: removed feature still exposed`);
-check(JSON.stringify(contract.providerFramework.userFields)===JSON.stringify(['displayName','baseUrl','key','adapter','codexModel'])&&contract.providerFramework.defaultConnections.length===0,'provider fields and no defaults');
-check(updates.includes(contract.updates.defaultServer)&&updates.includes('XWX_DECK_UPDATE_SERVER_URL')&&updates.includes('declined-update.json')&&/latest\s*!=\s*selected/.test(updates)&&updates.includes('SHA-256'),'native updates validate immutable release, persist cancellation and verify package');
-check(contract.platforms.macosArm64.installMode==='manual-dmg'&&!contract.platforms.macosArm64.automaticInstall&&main.includes('open_path'),'Mac manual DMG');
-const identities = new Set();
-for (const [key, platform, arch, artifact] of [
-  ['windows', 'windows', 'x64', 'XwX-Deck-windows-x64-setup.exe'],
-  ['macosArm64', 'darwin', 'arm64', 'XwX-Deck-mac-arm64.dmg'],
-  ['macosX64', 'darwin', 'x64', 'XwX-Deck-mac-x64.dmg']
-]) {
-  const target = contract.platforms[key];
-  check(target?.platform === platform && target.arch === arch && target.publishedArtifactName === artifact, `${key}: release artifact identity`);
-  check(pkg.scripts[target?.buildScript]?.includes(`--require-arch=${arch}`), `${key}: native architecture guard`);
-  check(!identities.has(`${platform}/${arch}`), `${key}: duplicate architecture`);
-  identities.add(`${platform}/${arch}`);
-  if (platform === 'darwin') check(target.installMode === 'manual-dmg' && target.automaticInstall === false, `${key}: manual DMG installation`);
-}
-check(contract.platforms.windows.installMode==='automatic'&&main.includes('portable_update::spawn'),'Windows native portable replacement');
-check(contract.platforms.windows.installScope==='per-user'&&contract.platforms.windows.installerType==='nsis-v1'&&contract.platforms.windows.portableArtifactName==='XwX-Deck-windows-x64.exe'&&build.includes('buildWindowsSetup')&&main.includes('windows_setup::spawn'),'Windows per-user Setup and separate portable updates');
-check(workflows.includes('npm run docs:build')&&workflows.includes('write-release-manifest.mjs')&&workflows.includes('--draft')&&workflows.includes('npm run check:test-plan'),'documentation, regression and draft release gates');
-check(workflows.includes('npm run test:rust:backend')&&workflows.includes('Set up Rust'),'CI must compile and regress native backend');
-if(failures.length){console.error(failures.map(f=>`- ${f}`).join('\n'));process.exit(1);}console.log('PASS standalone native XwX Deck release contract');
+import {readFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
+import {editionBuild} from '../native/edition/build.mjs';
+import {checkEditionRelease} from '../native/edition/release-contract.mjs';
+const root=resolve(import.meta.dirname,'../..');
+const read=path=>readFile(resolve(root,path),'utf8');
+const failures=[];
+const check=(condition,message)=>{if(!condition)failures.push(message);};
+const [contract,pkg,tauri,cargo,core,main,settings,config,host,updates,builder,licenses]=await Promise.all([
+ read('release-contract.json').then(JSON.parse),read('package.json').then(JSON.parse),read('src-native/tauri.conf.json').then(JSON.parse),
+ read('src-native/Cargo.toml'),read('src-native/src/core.rs'),read('src-native/src/main.rs'),read('src-native/src/settings.rs'),read('src-native/src/edition/config.rs'),read('src-native/src/edition/mod.rs'),read('src-native/src/updates.rs'),read('tools/native/build.mjs'),read('tools/native/license-document.mjs')]);
+check(contract.schemaVersion===1&&contract.product==='XwX Deck','product release contract');
+check(pkg.displayName===contract.product&&tauri.productName===contract.product,'native product name');
+check(tauri.identifier===contract.identity.appId&&tauri.version===pkg.version&&cargo.includes('version = "'+pkg.version+'"'),'native identity and version');
+check(cargo.includes('name = "'+editionBuild.nativeBinary+'"')&&builder.includes('editionBuild.nativeBinary'),'native executable identity');
+const namespace=contract.identity.dataNamespace??contract.identity.dataDirectory;
+check(new RegExp('DATA_DIRECTORY\\s*:\\s*&str\\s*=\\s*"'+namespace+'"').test(config)&&host.includes('config::DATA_DIRECTORY'),'edition data namespace');
+check(new RegExp('GATEWAY_PORT\\s*:\\s*u16\\s*=\\s*'+contract.identity.gatewayPort).test(config)&&core.includes('crate::edition::config::GATEWAY_PORT')&&core.includes('bind_gateway_listener(gateway_listen_port(self.isolated))'),'fixed edition Gateway port');
+check(pkg.scripts.compile.includes('check:release-contract')&&pkg.scripts.compile.includes('check:runtime-boundary')&&pkg.scripts.compile.includes('check:shared-parity'),'compile executes native and shared-source gates');
+check(pkg.scripts['build:win'].includes('tools/native/build.mjs')&&pkg.scripts['build:win'].includes('--require-platform=win32'),'Windows uses guarded native builder');
+check(builder.includes('renderLicenseDocument')&&licenses.includes('meta charset="utf-8"')&&main.includes('licenses.html'),'native license document');
+check(updates.includes('declined-update.json')&&/latest\s*!=\s*selected/.test(updates)&&updates.includes('SHA-256'),'immutable updates, cancellation and digest verification');
+check(builder.includes('buildWindowsSetup')&&main.includes('windows_setup::spawn')&&main.includes('portable_update::spawn'),'separate installer and portable updates');
+check(!pkg.dependencies?.electron&&!pkg.devDependencies?.electron&&!pkg.devDependencies?.['electron-builder'],'Rust is the default runtime');
+check(core.includes('extension::call')&&main.includes('edition::rpc'),'edition features use extension dispatch');
+await checkEditionRelease({read,check,contract,pkg,tauri,cargo,core,main,settings,config,host,updates,builder});
+if(failures.length){console.error(failures.map(message=>'- '+message).join('\n'));process.exitCode=1;}else console.log('PASS native release identity, storage, Gateway, packaging, update and extension contract');

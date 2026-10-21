@@ -1,3 +1,5 @@
+import {editionDictionaries} from '@/edition/locales';
+import { storageKeys } from '../../shared/edition';
 import * as React from 'react';
 import { english } from './locales/en';
 import traditional from './locales/zh-TW.json';
@@ -21,7 +23,7 @@ const dictionaries: Partial<Record<Language, Readonly<Record<string, string>>>> 
   en: english, 'zh-TW': traditional, ja: japanese, ko: korean,
   fr: french, de: german, es: spanish, 'pt-BR': portuguese,
 };
-const storageKey = 'xwx-deck.language';
+const storageKey = storageKeys.language;
 const listeners = new Set<() => void>();
 export function systemLanguage(languages: readonly string[] = typeof navigator === 'undefined' ? [] : navigator.languages ?? []): Language {
   for (const locale of languages.length ? languages : [typeof navigator === 'undefined' ? 'en' : navigator.language]) {
@@ -61,6 +63,6 @@ function subscribe(listener: () => void): () => void { listeners.add(listener); 
 export function useLanguage(): Language { return React.useSyncExternalStore(subscribe, getLanguage); }
 /** Translate product copy only, never model IDs, configuration names or credentials. */
 export function t(message: string, ...values: readonly unknown[]): string {
-  const template = language === 'zh-CN' ? message : dictionaries[language]?.[message] ?? english[message] ?? message;
+  const template = language === 'zh-CN' ? message : dictionaries[language]?.[message] ?? editionDictionaries[language]?.[message] ?? english[message] ?? editionDictionaries.en?.[message] ?? message;
   return template.replace(/\{(\d+)\}/g, (match, index: string) => Number(index) < values.length ? String(values[Number(index)]) : match);
 }

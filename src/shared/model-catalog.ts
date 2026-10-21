@@ -1,7 +1,7 @@
 export type ModelProtocol =
   | 'anthropic-messages' | 'openai-responses' | 'chat-completions' | 'gemini';
 export type ModelCatalogEndpointKind = 'openai' | 'anthropic' | 'gemini';
-export type ModelClient = 'claude' | 'codex';
+export type ModelClient = import('./edition').EditionProviderClient | 'claude' | 'codex';
 export type ModelCapabilitySource = 'provider' | 'probed' | 'compatible' | 'official' | 'models.dev' | 'builtin' | 'fallback';
 export type ModelCapabilityField =
   | 'contextWindow'

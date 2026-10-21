@@ -1,15 +1,18 @@
+import { editionProviderIcon, editionProviderKind } from '@/edition';
 import { Plug, Server } from 'lucide-react';
 import { PROVIDER_BRAND_IMAGES } from './providerBrandImages';
 import { OFFICIAL_PROVIDERS, officialProviderForUrl, type OfficialProviderId } from '../../../shared/officialProviders';
 import type { DownloadClientIcon } from '../../../shared/clientDownloads';
 import { CATALOG_BRAND_IMAGES } from './catalogBrandImages';
 
-export type ProviderIconKind = OfficialProviderId | DownloadClientIcon | 'copilot';
+export type ProviderIconKind = OfficialProviderId | DownloadClientIcon | 'copilot' | import('@/edition').EditionProviderIconKind;
 const MONOCHROME_BRANDS = new Set(['kimi', 'groq', 'xai', 'openrouter', 'cerebras', 'zai', 'ollama', 'lmstudio', 'cursor', 'windsurf', 'zed', 'trae', 'opencode', 'cline', 'goose', 'copilot', 'pi', 'omp', 'qoder', 'factory', 'mimocode', 'hermes', 'openchamber', 't3code']);
 const DARK_CONTRAST_BRANDS = new Set(['qwen', 'zhipu', 'minimax', 'tencent', 'fireworks', 'perplexity']);
 
 // Whale mark from https://www.deepseek.com/ (bundled, no runtime image request).
 export function ProviderIcon({ kind }: { kind?: ProviderIconKind }) {
+  const editionImage=editionProviderIcon(kind);
+  if(editionImage) return <img className="provider-brand-icon" src={editionImage} alt="" aria-hidden="true"/>;
   const preset = OFFICIAL_PROVIDERS.find(provider => provider.id === kind);
   if (preset && 'icon' in preset) kind = preset.icon;
   const imageClassName = `provider-brand-icon${kind && MONOCHROME_BRANDS.has(kind) ? ' catalog-monochrome' : kind && DARK_CONTRAST_BRANDS.has(kind) ? ' catalog-color-contrast' : ''}`;
@@ -24,6 +27,8 @@ export function ProviderIcon({ kind }: { kind?: ProviderIconKind }) {
 
 export function providerIconKind(baseUrl: string): ProviderIconKind | undefined {
   try {
+    const editionKind=editionProviderKind(baseUrl);
+    if(editionKind)return editionKind;
     const host = new URL(baseUrl).hostname;
     if (host === 'cli-chat-proxy.grok.com') return 'xai';
     if (host === 'api2.cursor.sh' || host.endsWith('.cursor.sh')) return 'cursor';

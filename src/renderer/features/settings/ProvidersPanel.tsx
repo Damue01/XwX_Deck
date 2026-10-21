@@ -207,20 +207,16 @@ export function ProvidersPanel({ onRequestOpen }: { onRequestOpen: () => void })
       const providers = await bridge.api.saveProvider(draft);
       bridge.patch({ providers });
       refresh();
-      const saved = providers.connections.find(item => draft.id ? item.id === draft.id : item.displayName === draft.displayName);
-      if (saved) {
-        setDrafts(current => { const next = { ...current }; delete next[draftKey]; next[saved.id] = { ...draft, id: saved.id }; return next; });
-        edit(saved, editorTrigger.current);
-        requestAnimationFrame(() => document.getElementById('provider-config-tab')?.focus());
-      }
+      setDrafts(current => { const next = { ...current }; delete next[draftKey]; return next; });
       const endpointIncluded = /\/(?:responses(?:\/compact)?|chat\/completions|messages)\/?$/i.test(new URL(draft.baseUrl).pathname);
+      onRequestOpen();
       showToast(t(draft.id ? '已保存配置「{0}」' : '已添加配置「{0}」', draft.displayName.trim()), 'success');
       if (endpointIncluded) {
         showToast(t('请核对 API 地址路径'), 'info', undefined, {
           description: t('地址包含完整接口路径。请按服务商文档确认是否应去掉末尾的 responses、chat/completions 或 messages。')
         });
       }
-    });
+    }).then(saved => { if (saved) closeEditor(); });
   }}>
       <div className="provider-editor-fields">
       <div className="field-row">

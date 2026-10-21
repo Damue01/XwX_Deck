@@ -1,5 +1,4 @@
-/** Product copy only. User-entered values and model IDs are never translated. */
-export const english: Readonly<Record<string, string>> = {
+export const english: Readonly<Record<string,string>> = {
   "此模型与 Claude 使用的协议不同，需要开启 Trace 在本地转换请求。": "This model uses a different protocol from Claude. Enable Trace to convert requests locally.",
   "此模型与 ChatGPT 使用的协议不同，需要开启 Trace 在本地转换请求。": "This model uses a different protocol from ChatGPT. Enable Trace to convert requests locally.",
   "Claude CLI 可直接使用；Claude Desktop 需要开启 Trace 转换模型请求。": "Claude CLI works directly. Claude Desktop needs Trace enabled to translate model requests.",
@@ -74,13 +73,12 @@ export const english: Readonly<Record<string, string>> = {
   "只读取模型目录，不发送模型请求": "Read the model catalog without sending a model request",
   "请先停止 Trace，并在模型页切换使用此配置的客户端。": "Stop Trace and switch clients using this configuration on the Models page first.",
   "此操作只删除这份配置，其他模型服务和历史记录会保留。": "Only this configuration will be deleted. Other services and history are kept.",
-  'Cursor CLI 暂不支持自动接管': 'Cursor CLI automatic routing is not supported yet',
-  '连接设置': 'Connection settings',
-  '查看连接说明': 'Connection documentation',
-  '模型配置已保存，请在客户端连接': 'Saved. Connect in the client settings.',
-  '已保存，请在 WorkBuddy 任务中选择模型': 'Saved. Select the model in your WorkBuddy task.',
-  '添加自定义服务': 'Add a custom provider',
-
+  "Cursor CLI 暂不支持自动接管": "Cursor CLI automatic routing is not supported yet",
+  "连接设置": "Connection settings",
+  "查看连接说明": "Connection documentation",
+  "模型配置已保存，请在客户端连接": "Saved. Connect in the client settings.",
+  "已保存，请在 WorkBuddy 任务中选择模型": "Saved. Select the model in your WorkBuddy task.",
+  "添加自定义服务": "Add a custom provider",
   "客户端配置读取失败": "Could not read client settings",
   "接管 {0} 的模型连接": "Route {0} through Trace",
   "原连接会备份，关闭 Trace 后恢复。只修改模型连接，保留其他设置。": "Back up the connection and restore it when Trace stops. Other settings stay intact.",
@@ -90,7 +88,6 @@ export const english: Readonly<Record<string, string>> = {
   "接入地址": "API address",
   "复制接入地址": "Copy API address",
   "开启 Trace 后可连接": "Start Trace to connect",
-
   "语言": "Language",
   "简体中文": "简体中文",
   "语言未保存": "Could not save language",
@@ -687,12 +684,11 @@ export const english: Readonly<Record<string, string>> = {
   "未接管": "Not connected",
   "未检测到客户端，原配置保留": "Client not detected; original configuration preserved",
   "将接入地址填入客户端后开始捕获": "Set this endpoint in your client to capture requests",
-
   "金额只合计已知费用；未计价请求的数量和原因可在仪表盘查看。": "The amount sums known costs. Unpriced request counts and reasons are available in the dashboard.",
   "日夜模式": "Color mode",
   "跟随系统": "Follow system",
   "套餐额度": "Plan allowance",
-  '已下线': 'Retired',
+  "已下线": "Retired",
   "显示 Key": "Show Key",
   "隐藏 Key": "Hide Key",
   "海外模型额度": "Overseas model quota",
@@ -783,4 +779,6 @@ export const english: Readonly<Record<string, string>> = {
   "仅记录用量": "Usage only",
   "只统计 Token 和费用，不保存请求与响应正文。": "Track Token usage and cost without saving request or response bodies.",
   "请输入正整数，单位 GB": "Enter a positive integer in GB",
+  "未登录": "Not signed in",
+  "检查登录": "Check sign-in"
 };

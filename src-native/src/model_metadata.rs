@@ -55,10 +55,8 @@ pub(super) fn cached_capabilities(root: &Path) -> Result<Value> {
     }) {
         return Ok(value.clone());
     }
-    let bundled: Value = serde_json::from_str(include_str!(
-        "../../test-results/native-assets/models-dev-capabilities.json"
-    ))
-    .map_err(err)?;
+    let bundled: Value =
+        serde_json::from_str(crate::embedded_assets::models_dev_capabilities()?).map_err(err)?;
     Ok(json!({"version":1,"modelsDev":parse_models(&bundled["catalog"])}))
 }
 

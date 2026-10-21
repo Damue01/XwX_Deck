@@ -1,3 +1,4 @@
+@import "./edition/styles.css";
 @import "tailwindcss" source(none);
 @import "./typography.css";
 @source "./";
@@ -2018,3 +2019,12 @@ body { font-weight: 400; }
 :is(.btn, .txt-action, .src-add, .model-client-name, .prov-name, .provider-name, .trace-row-label) { font-weight: 500; }
 .src-t { font-weight: 400; }
 .src-t.on { font-weight: 550; }
+
+/* Shared control grid. */
+#page-models .field-row>.fr-value{justify-content:flex-end}
+#page-models .field-row>.fr-value>.xwx-combobox{width:min(220px,100%);min-width:0}
+.chatgpt-policy{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}
+.configuration-import-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 32px 32px;align-items:center;gap:8px}
+.configuration-import-toolbar>.configuration-close{width:32px;height:32px;display:grid;place-items:center;margin:0}
+.routing-section-heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px}
+@media(max-width:780px){#page-models .field-row>.fr-value>.xwx-combobox{width:100%;max-width:220px}#page-models .field-row:has(>.fr-value>.xwx-combobox)>.fr-value{justify-content:flex-start}}

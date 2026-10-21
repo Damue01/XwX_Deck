@@ -10,6 +10,7 @@ custom-protocol = ["tauri/custom-protocol"]
 manual-acceptance = []
 
 [build-dependencies]
+zstd = { version = "0.13", default-features = false }
 tauri-build = { version = "2", features = [] }
 cc = "1"
 

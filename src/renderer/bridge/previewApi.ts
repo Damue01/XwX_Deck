@@ -1,9 +1,16 @@
-import { t, isLanguage, type Language } from '@/lib/i18n';
-import type { ProviderSnapshot, ProviderConnection } from '../../shared/providers';
-import { DEFAULT_TRACE_LIMIT_GB, DEFAULT_TRACE_AUTO_CLEANUP } from '../../shared/traceDefaults';
+import { createEditionPreviewApi } from '@/edition/preview';
+import { initialConnections, providerClients, automaticAdapters } from '../../shared/edition';
+import { formatBytes } from '../../shared/format-bytes.browser.js';
+import { setupWebsitesFor, setupWebsiteUrl } from '../../shared/setupWebsites';
+import {
+  providerCodexId,
+  supportsProviderClient,
+  type ProviderSnapshot
+} from '../../shared/providers';
 import type {
   ClientId,
   ClaudeModelSettings,
+  ClaudeDesktopSyncSnapshot,
   CodexAuthMode,
   CodexConfigSnapshot,
   CodexEnhancementsSnapshot,
@@ -16,9 +23,7 @@ import type {
   CompatibleServiceConfigSnapshot,
   WindowState,
 } from './types';
-import { detectProviderPreset } from '../../shared/providerProfiles';
-import { setupWebsiteUrl, setupWebsitesFor } from '../../shared/setupWebsites';
-import { normalizeModelClients } from '../../shared/clientDownloads';
+import type { SubscriptionAccountsSnapshot, SubscriptionRoutingGroup, SubscriptionRoutingPolicy } from '../../shared/subscriptionAccounts';
 
 function previewCustomBackground(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
@@ -32,16 +37,21 @@ function previewCustomBackground(): string {
 
 export function createPreviewApi(): XwXDeckApi {
   const previewQuery = typeof location !== 'undefined' ? new URLSearchParams(location.search) : undefined;
-  const setupPlatform = previewQuery?.get('setup-platform') ?? 'darwin';
-  const setupArch = previewQuery?.get('setup-arch') ?? 'arm64';
-  document.documentElement.dataset.platform = setupPlatform;
-  const hasTraceSkipped = previewQuery?.get('trace-skipped') === '1';
-  const hasTraceLive = previewQuery?.get('trace-live') === '1' || previewQuery?.get('appearance') === '1';
+  const scenario = previewQuery?.get('scenario');
+  const missingHistoryProviderPreview = previewQuery?.get('missing-history-provider');
+  const hasTraceSkipped = previewQuery?.get('trace-skipped') === '1' || scenario === 'trace-skipped';
+  const hasTraceLive = previewQuery?.get('trace-live') === '1' || previewQuery?.get('appearance') === '1' || scenario === 'trace-active';
+  const traceCapacityPreview = scenario === 'trace-capacity-over' ? 'over'
+    : scenario === 'trace-capacity-under' ? 'under'
+      : null;
   const chatGptRestartRecommended = previewQuery?.get('chatgpt-restart') === '1';
+  const hasNoticePreview = previewQuery?.get('notice-preview') === '1';
+  const hasExternalCodexCatalog = previewQuery?.get('external-codex-catalog') === '1' || scenario === 'codex-conflict' || scenario === 'codex-permission';
+  const hasExternalCodexProvider = previewQuery?.get('external-codex-provider') === '1' || scenario === 'codex-conflict' || scenario === 'codex-permission';
+  const codexTakeoverError = previewQuery?.get('codex-takeover-error') ?? (scenario === 'codex-permission' ? 'permission' : null);
   const state: {
     tracingEnabled: boolean;
-    theme: import('./types').AppTheme;
-    language?: Language;
+    theme: 'day' | 'night' | 'system';
     traceAppearance: {
       skin: 'classic' | 'clean' | 'custom';
       showThroughput: boolean;
@@ -54,23 +64,26 @@ export function createPreviewApi(): XwXDeckApi {
     logRoot: string;
     claudeConfigDir: string;
     claudeConfigPath: string;
-    startup: { enabled: boolean; supported: boolean; launchHidden: boolean };
+    startup: { enabled: boolean; supported: boolean; launchHidden: boolean; desiredEnabled?: boolean; warning?: string };
     sessions: number;
     traces: number;
     storageText: string;
+    traceStorageBytes: number;
     traceWarningGB: number;
+    language: NonNullable<XwXDeckRuntimeState['language']>;
     traceDetailLimitGB: number;
     traceAutoCleanup: boolean;
+    traceStorageNotice?: string;
     clients: Array<{
       id: ClientId; label: string; enabled: boolean;
       status: 'idle' | 'taken' | 'skipped' | 'off'; statusText: string; detail: string;
     }>;
   } = {
     tracingEnabled: hasTraceSkipped || hasTraceLive,
-    theme: 'day',
+    theme: previewQuery?.get('theme') === 'night' ? 'night' : previewQuery?.get('theme') === 'system' ? 'system' : 'day',
     traceAppearance: {
       skin: 'classic',
-      showThroughput: true,
+      showThroughput: false,
       customImageFile: '',
       customImageFit: 'cover',
       customImageOverlay: 42
@@ -83,12 +96,14 @@ export function createPreviewApi(): XwXDeckApi {
     sessions: 0,
     traces: 0,
     storageText: '0 B',
-    traceWarningGB: DEFAULT_TRACE_LIMIT_GB,
-    traceDetailLimitGB: DEFAULT_TRACE_LIMIT_GB,
-    traceAutoCleanup: DEFAULT_TRACE_AUTO_CLEANUP,
+    traceStorageBytes: 0,
+    traceWarningGB: 2,
+    language: 'zh-CN',
+    traceDetailLimitGB: 2,
+    traceAutoCleanup: false,
     clients: [
-      { id: 'claude-cli', label: 'Claude', enabled: true, status: 'idle', statusText: t('待命'), detail: t('追踪未开启') },
-      { id: 'codex-cli', label: 'ChatGPT', enabled: true, status: 'idle', statusText: t('待命'), detail: t('追踪未开启') }
+      { id: 'claude-cli', label: 'Claude', enabled: true, status: 'idle', statusText: '待命', detail: '追踪未开启' },
+      { id: 'codex-cli', label: 'ChatGPT', enabled: true, status: 'idle', statusText: '待命', detail: '追踪未开启' }
     ]
   };
   if (hasTraceSkipped || hasTraceLive) {
@@ -96,29 +111,43 @@ export function createPreviewApi(): XwXDeckApi {
     const codexClient = state.clients.find(client => client.id === 'codex-cli');
     if (claudeClient) {
       claudeClient.status = 'taken';
-      claudeClient.statusText = t('追踪中');
+      claudeClient.statusText = '追踪中';
       claudeClient.detail = 'api.anthropic.com';
     }
     if (codexClient && hasTraceSkipped) {
       codexClient.status = 'skipped';
-      codexClient.statusText = t('未接入');
-      codexClient.detail = t('ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。');
+      codexClient.statusText = '未接入';
+      codexClient.detail = 'ChatGPT 暂未接入，XwX Deck 当前的连接方式无法与 Trace 同时使用。请先重启 XwX Deck，再重启 Trace 后重试。';
     } else if (codexClient) {
       codexClient.status = 'taken';
-      codexClient.statusText = t('追踪中');
+      codexClient.statusText = '追踪中';
       codexClient.detail = 'api.openai.com';
     }
+  }
+  if (traceCapacityPreview) {
+    const usedGB = traceCapacityPreview === 'over' ? 2.4 : 1.2;
+    state.traceStorageBytes = Math.round(usedGB * 1024 ** 3);
+    state.storageText = formatBytes(state.traceStorageBytes);
+    state.sessions = traceCapacityPreview === 'over' ? 138 : 41;
+    state.traces = traceCapacityPreview === 'over' ? 8_426 : 1_247;
   }
 
   const previewStartedAt = Date.now();
 
   const buildState = (): XwXDeckRuntimeState => ({
     ...state,
-    missingCodexHistoryProviders: [],
-    traceStorageBytes: 0, traceWarningGB: state.traceWarningGB, traceDetailLimitGB: state.traceDetailLimitGB, traceAutoCleanup: state.traceAutoCleanup,
     backgroundGatewayActive: state.tracingEnabled,
     backgroundGatewayAction: state.tracingEnabled ? 'close' : undefined,
     chatGptRestartRecommended,
+    missingCodexHistoryProviders: missingHistoryProviderPreview ? [missingHistoryProviderPreview] : [],
+    lifecycleNotice: hasNoticePreview ? {
+      message: '连接提示预览',
+      description: '持续性的连接问题显示在页面顶部；临时操作结果显示为右下角 Toast。同一个问题不会同时显示两次。',
+      type: 'error',
+      persistent: true,
+      action: 'repair',
+      actionLabel: '查看处理建议'
+    } : undefined,
     readiness: {
       startupPhase: 'ready',
       proxyListening: state.tracingEnabled,
@@ -139,7 +168,9 @@ export function createPreviewApi(): XwXDeckApi {
     return snapshot;
   };
 
+  let traceUsageCleared = false;
   const previewTraceStats = (): ManagerTraceStats => {
+    if (traceUsageCleared) return { total: { tokens: 0, costUsd: 0, costComplete: true }, today: { tokens: 0, costUsd: 0, costComplete: true }, week: { tokens: 0, costUsd: 0, costComplete: true }, series: [] };
     if (!state.tracingEnabled) {
       return { total: { tokens: 0, costUsd: 0, costComplete: true }, today: { tokens: 0, costUsd: 0, costComplete: true }, week: { tokens: 0, costUsd: 0, costComplete: true }, series: [] };
     }
@@ -167,23 +198,30 @@ export function createPreviewApi(): XwXDeckApi {
     };
   };
 
-  const hasUpdate = previewQuery?.get('update') === '1';
+  const hasUpdate = previewQuery?.get('update') === '1' || scenario === 'update-failed';
   const hasMacUpdate = previewQuery?.get('mac-update') === '1';
   let update: XwXDeckUpdateState = hasUpdate
     ? {
-        status: previewQuery?.get('update-ready') === '1' ? 'ready' : 'available',
-        background: previewQuery?.get('update-background') === '1', currentVersion: '1.0.0', targetVersion: '1.0.1', channel: 'release',
+        status: 'available', currentVersion: '1.0.0', targetVersion: '1.0.1', channel: 'release',
         portable: false, installMode: hasMacUpdate ? 'manual-dmg' : 'automatic', supported: true, updateAvailable: true,
-        releaseNotes: t('新增右下角版本更新提醒\n展示本次更新内容并支持立即下载\n优化 Windows 原地更新体验')
+        releaseNotes: '新增右下角版本更新提醒\n展示本次更新内容并支持立即下载\n优化便携版原地更新体验'
       }
-    : { status: 'idle', currentVersion: t('浏览器预览'), channel: 'release', portable: false, installMode: 'automatic', supported: false, updateAvailable: false };
+    : { status: 'idle', currentVersion: '浏览器预览', channel: 'release', portable: false, installMode: 'automatic', supported: false, updateAvailable: false };
 
   let claude: ClaudeModelSettings = { fable: '', opus: '', sonnet: '', haiku: '' };
+  let claudeDesktopSync: ClaudeDesktopSyncSnapshot = {
+    enabled: false, supported: true, active: false, modelCount: 0
+  };
   let codex: CodexConfigSnapshot = {
-    configPath: '', authPath: '', exists: false,
-    modelCatalogSource: 'none',
-    mode: 'official', officialModel: 'gpt-5.6-sol', authMode: 'unknown' as CodexAuthMode,
-    activeProvider: 'openai', activeBaseUrl: 'https://api.openai.com/v1',
+    configPath: missingHistoryProviderPreview ? 'C:\\Users\\demo\\.codex\\config.toml' : '',
+    authPath: '', exists: false,
+    mode: hasExternalCodexProvider ? 'compatible' : 'official',
+    officialModel: 'gpt-5.6-sol', authMode: 'unknown' as CodexAuthMode,
+    activeProvider: hasExternalCodexProvider ? 'external_manager' : 'openai',
+    activeBaseUrl: hasExternalCodexProvider ? 'https://external-manager.example/v1' : 'https://api.openai.com/v1',
+    configuredProviders: ['openai'],
+    modelCatalogSource: hasExternalCodexCatalog ? 'external' : 'none',
+    configOwnership: hasExternalCodexCatalog || hasExternalCodexProvider ? 'external' : 'deck',
     compatible: { provider: 'compatible', model: 'gpt-5.6-sol', baseUrl: '', bearerToken: '' }
   };
   let codexEnhancements: CodexEnhancementsSnapshot = {
@@ -191,15 +229,14 @@ export function createPreviewApi(): XwXDeckApi {
     historyRestorePending: false, hasHistoryBackup: false
   };
   let compatible: CompatibleServiceConfigSnapshot = {
-    displayName: t('兼容服务'),
-    providerPreset: 'auto',
-    baseUrl: 'https://gateway.example.com/v1',
+    displayName: '自定义连接',
+    baseUrl: '',
     bearerToken: '',
     codexApiFormat: 'responses'
   };
   let services: ModelServiceSnapshot = {
     claude: false,
-    codex: false,
+    codex: hasExternalCodexProvider,
     claudeStatus: {
       enabled: false,
       status: 'disabled',
@@ -207,32 +244,174 @@ export function createPreviewApi(): XwXDeckApi {
       traceManaged: false
     }
   };
-  const savedLanguage = localStorage.getItem('xwx-deck.preview.language');
-  if (isLanguage(savedLanguage)) state.language = savedLanguage;
-  let providers: ProviderSnapshot = { version: 1, connections: [], selected: { codex: null, claude: null }, active: { codex: null, claude: null } };
-  let modelClients: import('../../shared/clientDownloads').DownloadClientId[] = [];
-  try { modelClients = JSON.parse(localStorage.getItem('xwx-deck.preview.model-clients') ?? '[]'); if (!Array.isArray(modelClients)) modelClients = []; } catch { /* Empty navigation on malformed preview preferences. */ }
-  modelClients = normalizeModelClients(localStorage.getItem('xwx-deck.preview.model-clients-version') === '2' ? modelClients : ['claude', 'codex', ...modelClients]);
-  const saveModelClients = () => { localStorage.setItem('xwx-deck.preview.model-clients', JSON.stringify(modelClients)); localStorage.setItem('xwx-deck.preview.model-clients-version', '2'); return [...modelClients]; };
-  return {
-    detectClientInstallations: async () => ({ available: false, clients: [] }),
-    getModelClients: async () => [...modelClients],
-    addModelClient: async () => { throw new Error(t('浏览器预览无法检测本机安装，请在桌面应用中添加客户端')); },
-    removeModelClient: async id => { modelClients = modelClients.filter(client => client !== id); return saveModelClients(); },
-    setupWebsites: setupWebsitesFor(setupPlatform, setupArch),
-    openSetupWebsite: async site => { window.open(setupWebsiteUrl(site, setupPlatform, setupArch), '_blank', 'noopener,noreferrer'); },
-    getState: async () => buildState(),
-    setStartupEnabled: async (enabled) => {
-      state.startup = { ...state.startup, enabled };
+
+  let providers: ProviderSnapshot = {version:1,connections:initialConnections(),selected:Object.fromEntries(providerClients.map(c=>[c,null])) as Record<import('../../shared/providers').ProviderClient,string|null>,active:Object.fromEntries(providerClients.map(c=>[c,null])) as Record<import('../../shared/providers').ProviderClient,string|null>};
+  let firstBootPass = true;
+  let firstTraceStop = true;
+  // Explicit browser-only UI fixture; never reads local account credentials.
+  const subscriptionState = previewQuery?.get('subscription-state');
+  let subscriptionPreview: SubscriptionAccountsSnapshot = {
+    supported: true, officialLoginInstalled: true,
+    accounts: (['chatgpt', 'cursor', 'claude', 'grok', 'copilot'] as const).flatMap(platform => ['林青', '陈雨'].map((label, index) => ({
+      id: `${platform}-preview-${index}`, platform, label, email: `${index ? 'chen' : 'lin'}@example.test`, status: subscriptionState === 'signed-out' ? 'signed-out' as const : 'connected' as const,
+      ...(platform === 'chatgpt' ? { authKind: 'official' as const } : {}),
+      ...(subscriptionState === 'missing' || subscriptionState === 'error' ? {} : { quota: { remainingPercent: index ? 42 : 77, resetsAt: 2000000000, checkedAt: Date.now() / 1000 } }),
+      ...(subscriptionState === 'error' ? { quotaError: '样例：官方额度暂时无法读取，请重试' } : {})
+    }))), routing: {}
+  };
+  if (scenario === 'service-switching') {
+    providers = { ...providers, connections: [...providers.connections,
+      { ...providers.connections[0]!, id: 'fixture-deepseek', displayName: 'DeepSeek', baseUrl: 'https://api.deepseek.com', adapter: 'chat-completions', codexModel: 'deepseek-chat' },
+      { ...providers.connections[0]!, id: 'fixture-ark', displayName: '火山方舟', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', adapter: 'chat-completions', codexModel: '' }
+    ] };
+  }
+  let serviceSwitching: import('../../shared/serviceSwitching').ServiceSwitchingConfig = scenario === 'service-switching' ? {codex: {enabled:true,providerIds:['initial-provider','fixture-deepseek','fixture-ark']}} : {};
+  const api: XwXDeckApi = {
+    ...createEditionPreviewApi(previewQuery,()=>api),
+    getServiceSwitching: async () => structuredClone(serviceSwitching),
+    setServiceSwitching: async ({client, policy}) => {serviceSwitching = {...serviceSwitching, [client]: structuredClone(policy)};return structuredClone(serviceSwitching);},
+    updateProviderClientModel: async ({providerId,client,model,role}) => {
+      providers = {...providers, connections:providers.connections.map(p=>p.id===providerId?client==='codex'?{...p,codexModel:model}:{...p,claudeModels:{...p.claudeModels,[role!]:model}}:p)};
+      if (providers.selected.codex === providerId && client === 'codex') codex = {...codex, compatible:{...codex.compatible,model}};
+      if (providers.selected.claude === providerId && client === 'claude') claude = {...claude,[role!]:model};
+      return structuredClone(providers);
+    },
+
+    ...(scenario === 'subscription-accounts' ? {
+      getSubscriptionAccounts: async () => structuredClone(subscriptionPreview),
+      renameSubscriptionAccount: async ({ accountId, label }: { accountId: string; label: string }) => {
+        subscriptionPreview = { ...subscriptionPreview, accounts: subscriptionPreview.accounts.map(account => account.id === accountId ? { ...account, label } : account) };
+        return structuredClone(providers);
+      },
+      beginSubscriptionSignIn: async (input: { accountId?: string; platform?: SubscriptionRoutingGroup }) => {
+        subscriptionPreview = { ...subscriptionPreview, flow: { id: 'preview-login', platform: input.platform === 'chatgpt-official' ? 'chatgpt' : input.platform, authKind: input.platform === 'chatgpt-official' ? 'official' : 'api', accountId: input.accountId, status: 'waiting', ...(input.platform === 'copilot' ? { userCode: 'DEMO-CODE' } : {}) } };
+        return structuredClone(subscriptionPreview);
+      },
+      cancelSubscriptionSignIn: async () => {
+        subscriptionPreview = { ...subscriptionPreview, flow: null }; return structuredClone(subscriptionPreview);
+      },
+      refreshSubscriptionUsage: async () => structuredClone(subscriptionPreview),
+      setSubscriptionRouting: async ({ platform, policy }: { platform: SubscriptionRoutingGroup; policy: SubscriptionRoutingPolicy }) => {
+        subscriptionPreview = { ...subscriptionPreview, routing: { ...subscriptionPreview.routing, [platform]: structuredClone(policy) } };
+        return structuredClone(subscriptionPreview);
+      }
+    } : {}),
+    setupWebsites: setupWebsitesFor(navigator.platform.startsWith('Mac') ? 'darwin' : 'win32', 'arm64'),
+    openSetupWebsite: async site => { window.open(setupWebsiteUrl(site,navigator.platform.startsWith('Mac')?'darwin':'win32','arm64'),'_blank','noopener,noreferrer'); },
+    validateProvider: async input => ({status:'unavailable', providerId:input.providerId,providerName:providers.connections.find(p=>p.id===input.providerId)?.displayName ?? ''}),
+    getCompatibleServiceConfig: async () => compatible,
+    updateCompatibleServiceConfig: async input => {compatible={...compatible,...input};return compatible;},
+    inspectTraceIndexRepair: async () => { throw Error('请在桌面应用中检查索引'); },
+    applyTraceIndexRepair: async () => { throw Error('请在桌面应用中修复索引'); },
+    getProviders: async () => structuredClone(providers),
+    saveProvider: async input => {
+      const existing = providers.connections.find(p => p.id === input.id);
+      const p = { ...existing, ...input, providerPreset: input.providerPreset ?? existing?.providerPreset ?? "custom" as const, id: existing?.id ?? crypto.randomUUID(), codexProviderId: existing?.displayName === input.displayName ? existing.codexProviderId : input.displayName, codexApiFormat: automaticAdapters.includes(input.adapter) ? 'responses' as const : input.adapter as import("./types").CompatibleServiceConfigSnapshot["codexApiFormat"],
+        codexModel: existing?.codexModel ?? '', codexContextWindow: existing?.codexContextWindow ?? 0,
+        claudeModels: existing?.claudeModels ?? { fable: '', opus: '', sonnet: '', haiku: '' } };
+      providers = { ...providers, connections: existing ? providers.connections.map(c => c.id === p.id ? p : c) : [...providers.connections, p] };
+      return structuredClone(providers);
+    },
+    deleteProvider: async id => {
+      if (providers.active.claude === id || providers.active.codex === id) throw new Error('请先切换正在使用此连接的客户端，再删除。');
+      const selected = { ...providers.selected }; const active = { ...providers.active };
+      for (const c of providerClients) { if (selected[c] === id) selected[c] = null; if (active[c] === id) active[c] = null; }
+      providers = { ...providers, selected, active, connections: providers.connections.filter(p => p.id !== id) };
+      serviceSwitching = Object.fromEntries(Object.entries(serviceSwitching).map(([client,policy]) => [client,{...policy,providerIds:policy.providerIds.filter(p=>p!==id)}]));
+      return structuredClone(providers);
+    },
+    getConfigurationRemovalImpact: async ({providerIds}) => Object.entries(providers.selected).filter(([,id]) => id && providerIds.includes(id)).map(([client]) => client === 'codex' ? 'ChatGPT / Codex' : client === 'claude' ? 'Claude' : client),
+    removeSubscriptionAccounts: async ids => {
+      const removed = providers.connections.filter(p => p.subscriptionAccountId && ids.includes(p.subscriptionAccountId)).map(p => p.id);
+      if (Object.values(providers.selected).some(id => id && removed.includes(id))) throw Error('请先在模型页切换使用此配置的客户端');
+      providers = {...providers,connections:providers.connections.filter(p => !removed.includes(p.id))};
+      serviceSwitching = Object.fromEntries(Object.entries(serviceSwitching).map(([client,policy]) => [client,{...policy,providerIds:policy.providerIds.filter(id=>!removed.includes(id))}]));
+      subscriptionPreview = {...subscriptionPreview,accounts:subscriptionPreview.accounts.filter(a => !ids.includes(a.id)),flow:null};
+      return structuredClone(providers);
+    },
+    switchClientProvider: async ({ client, providerId, takeOverExternalConfig }) => {
+      const p = providers.connections.find(p => p.id === providerId);
+      if (providerId && (!p || !supportsProviderClient(p, client))) throw new Error('模型服务不可用。');
+      if ((scenario === 'provider-missing-url' || scenario === 'provider-missing-key')
+        && p && (!p.baseUrl || !p.bearerToken)) throw new Error('请先保存服务地址和密钥。');
+      if (client === 'codex' && takeOverExternalConfig) {
+        if (codexTakeoverError === 'changed') {
+          throw new Error('ChatGPT 配置在写入前被其他软件修改，已停止以避免覆盖。');
+        }
+        if (codexTakeoverError === 'invalid') {
+          throw new Error('ChatGPT config.toml 格式错误，未修改配置。');
+        }
+        if (codexTakeoverError === 'permission') {
+          throw new Error('EPERM: ChatGPT config.toml 只读，无法写入。');
+        }
+      }
+      providers = { ...providers, selected: providerId || !(client === 'codex' || client === 'claude') ? { ...providers.selected, [client]: providerId } : providers.selected, active: { ...providers.active, [client]: providerId } };
+      if ((client === 'codex' || client === 'claude')) services = { ...services, [client]: !!p };
+      if (client === 'claude' && p) claude = { ...p.claudeModels };
+      if (client === 'codex') {
+        if (p) compatible = { ...p };
+        codex = {
+          ...codex,
+          mode: p ? 'compatible' : 'official',
+          activeProvider: p ? providerCodexId(p, codexEnhancements.unifySessionHistory) : codexEnhancements.unifySessionHistory ? 'xwx_deck' : 'openai',
+          modelCatalogSource: takeOverExternalConfig ? 'none' : codex.modelCatalogSource,
+          configOwnership: takeOverExternalConfig ? 'deck' : codex.configOwnership,
+          compatible: p ? { ...codex.compatible, provider: providerCodexId(p, codexEnhancements.unifySessionHistory), baseUrl: p.baseUrl, bearerToken: p.bearerToken, model: p.codexModel || 'gpt-5.6-sol' } : codex.compatible
+        };
+      }
+      return structuredClone(providers);
+    },
+    getClaudeEnvironmentOverrides: async () => ({
+      platform: 'windows',
+      overrides: [],
+      canRemoveAutomatically: true
+    }),
+    clearClaudeEnvironmentOverrides: async () => ({
+      platform: 'windows',
+      overrides: [],
+      canRemoveAutomatically: true,
+      backupPath: 'C:\\Users\\demo\\AppData\\Roaming\\xwxdeck\\backups\\claude-environment-before-standardization-preview.json'
+    }),
+    fetchProviderModels: async () => api.fetchModels(),
+    getState: async () => {
+      if ((scenario === 'boot-slow' || scenario === 'boot-retry') && firstBootPass) {
+        window.setTimeout(() => { firstBootPass = false; }, 0);
+      }
+      if (scenario === 'boot-slow' && firstBootPass) {
+        await new Promise<void>(resolve => window.setTimeout(resolve, 9_000));
+      }
+      if (scenario === 'boot-retry' && firstBootPass) {
+        throw new Error('模拟应用状态读取失败');
+      }
       return buildState();
     },
-    setLanguage: async (language) => {
-      state.language = language;
-      localStorage.setItem('xwx-deck.preview.language', language);
-      return emitState();
+    setStartupEnabled: async (enabled) => {
+      const pending = scenario === 'settings-pending' && enabled && state.startup.desiredEnabled !== true;
+      state.startup = { ...state.startup, enabled: pending ? false : enabled, desiredEnabled: enabled,
+        warning: pending ? '模拟系统登录项暂未同步；选择已保存，可重试。' : undefined };
+      return buildState();
     },
     setTheme: async (theme) => {
       state.theme = theme;
+      return emitState();
+    },
+    setLanguage: async language => { state.language = language; return emitState(); },
+    setTraceStoragePolicy: async (input) => {
+      if (input.limitGB !== undefined && (!Number.isSafeInteger(input.limitGB) || input.limitGB < 0)) {
+        throw new Error('Trace 存储上限须为非负整数，单位 GB。');
+      }
+      if (input.limitGB !== undefined) {
+        if (input.limitGB > 0) state.traceDetailLimitGB = input.limitGB;
+        else if (state.traceWarningGB > 0) state.traceDetailLimitGB = state.traceWarningGB;
+        state.traceWarningGB = input.limitGB;
+        if (input.limitGB === 0) {
+          state.traceStorageBytes = 0;
+          state.storageText = '0 B';
+        }
+      }
+      if (input.clearUsage === true && input.limitGB === 0) traceUsageCleared = true;
+      if (input.autoCleanup !== undefined) state.traceAutoCleanup = input.autoCleanup;
+      if (scenario === 'settings-pending') state.traceStorageNotice = '设置已保存，将自动重试应用：模拟后台暂不可用。';
       return emitState();
     },
     setTraceAppearance: async (input) => {
@@ -259,14 +438,49 @@ export function createPreviewApi(): XwXDeckApi {
     },
     getTraceStats: async () => previewTraceStats(),
     getUpdateState: async () => update,
-    checkForUpdates: async () => update,
+    checkForUpdates: async () => {
+      if (scenario === 'update-failed') throw new Error('模拟更新服务器无响应');
+      return update;
+    },
     downloadUpdate: async () => { update = { ...update, status: 'ready', percent: 100 }; return update; },
     restartAndInstall: async () => update,
-    cancelUpdate: async () => { update = { ...update, status: 'available', percent: undefined }; return update; },
-    repairApplication: async () => ({ removedCachePaths: 0, removedBytes: 0, chromiumCacheCleared: true, traceRetention: { legacyLimitsFound: false, persistedSettingsChanged: false, settings: { maxSessions: 0, maxStorageMB: 0 }, helper: { state: 'not-running' } } }),
+    cancelUpdate: async () => {
+      update = { ...update, status: update.updateAvailable ? 'available' : 'idle', percent: undefined };
+      return update;
+    },
+    repairApplication: async () => ({
+      removedCachePaths: 0,
+      removedBytes: 0,
+      chromiumCacheCleared: true,
+      traceRetention: {
+        legacyLimitsFound: false,
+        persistedSettingsChanged: false,
+        settings: { maxSessions: 0, maxStorageMB: 0 },
+        helper: { state: 'verified', maxSessions: 0, maxStorageBytes: state.traceAutoCleanup ? state.traceWarningGB * 1024 ** 3 : 0 }
+      }
+    }),
+    repairUnreadableSettings: async () => ({ backupPath: 'preview-settings-backup.bak', lostProviderSettings: false }),
+    repairInvalidCodexConfiguration: async () => ({
+      backupPath: 'preview-codex-backup.toml',
+      mode: codex.mode,
+      conflicts: []
+    }),
+    repairClientProviderSwitch: async ({ client, providerId }) => {
+      if (providerId === undefined) providerId = providers.active[client];
+      providers = {
+        ...providers,
+        selected: { ...providers.selected, [client]: providerId },
+        active: { ...providers.active, [client]: providerId }
+      };
+      return structuredClone(providers);
+    },
     resetApplication: async () => undefined,
-    toggleTracing: async () => {
-      state.tracingEnabled = !state.tracingEnabled;
+    toggleTracing: async (enabled) => {
+      if (scenario === 'trace-active' && enabled === false && firstTraceStop) {
+        firstTraceStop = false;
+        throw new Error('1 个回复正在生成。');
+      }
+      state.tracingEnabled = enabled ?? !state.tracingEnabled;
       for (const c of state.clients) {
         c.status = state.tracingEnabled && c.enabled
           ? hasTraceSkipped && c.id === 'codex-cli' ? 'skipped' : 'taken'
@@ -283,14 +497,17 @@ export function createPreviewApi(): XwXDeckApi {
       return emitState();
     },
     getClaudeModels: async () => ({ ...claude }),
-    updateClaudeModels: async (value) => { claude = { ...claude, ...(value as Partial<ClaudeModelSettings>) }; return claude; },
-    repairUnreadableSettings: async () => ({ backupPath: 'preview/settings.backup.json', lostProviderSettings: false }),
-    repairInvalidCodexConfiguration: async () => ({ backupPath: 'preview/config.backup.toml', mode: codex.mode, conflicts: [] }),
-    repairClientProviderSwitch: async () => structuredClone(providers),
-    getClaudeEnvironmentOverrides: async () => ({ platform: 'other', overrides: [], canRemoveAutomatically: false }),
-    clearClaudeEnvironmentOverrides: async () => ({ platform: 'other', overrides: [], canRemoveAutomatically: false }),
-    getClaudeDesktopSync: async () => ({ enabled: false, supported: false, active: false, configPath: '', modelCount: 0 }),
-    updateClaudeDesktopSync: async (enabled) => ({ enabled, supported: false, active: false, configPath: '', modelCount: 0 }),
+    updateClaudeModels: async ({ expectedProviderId: _expected, ...value }) => { claude = { ...claude, ...value }; return claude; },
+    getClaudeDesktopSync: async () => structuredClone(claudeDesktopSync),
+    updateClaudeDesktopSync: async enabled => {
+      claudeDesktopSync = {
+        ...claudeDesktopSync,
+        enabled,
+        active: enabled && state.tracingEnabled,
+        modelCount: enabled ? 72 : 0
+      };
+      return structuredClone(claudeDesktopSync);
+    },
     getCodexConfig: async () => structuredClone(codex),
     isChatGptRunning: async () => new URLSearchParams(location.search).get('chatgptRunning') === '1',
     getCodexEnhancements: async () => structuredClone(codexEnhancements),
@@ -320,7 +537,7 @@ export function createPreviewApi(): XwXDeckApi {
     updateCodexConfig: async (value) => {
       const mode = value.mode === 'compatible' ? 'compatible' as const : 'official' as const;
       if (mode === 'compatible' && (!(value.compatibleBaseUrl as string)?.trim() || !(value.compatibleBearerToken as string)?.trim())) {
-        throw new Error(t("先在设置中填写 {0} 地址和密钥。", compatible.displayName));
+        throw new Error(`先在设置中填写 ${compatible.displayName} 地址和密钥。`);
       }
       codex = {
         ...codex, mode,
@@ -338,75 +555,13 @@ export function createPreviewApi(): XwXDeckApi {
       };
       return structuredClone(codex);
     },
-    copyText: async value => {
+    copyText: async (value) => {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
-    },
-    getSubscriptionAccounts: async () => ({ supported: false, accounts: [] }),
-    getProviders: async () => structuredClone(providers),
-    saveProvider: async input => {
-      const existing = providers.connections.find(p => p.id === input.id);
-      const provider: ProviderConnection = { id: existing?.id ?? crypto.randomUUID(), displayName: input.displayName, baseUrl: input.baseUrl, bearerToken: input.bearerToken, adapter: input.adapter,
-        providerPreset: input.providerPreset ?? 'auto', codexApiFormat: input.adapter === 'auto' ? 'responses' : input.adapter,
-        codexModel: input.codexModel ?? existing?.codexModel ?? '', codexContextWindow: existing?.codexContextWindow ?? 0,
-        claudeModels: existing?.claudeModels ?? { fable: '', opus: '', sonnet: '', haiku: '' } };
-      providers = { ...providers, connections: existing ? providers.connections.map(p => p.id === provider.id ? provider : p) : [...providers.connections, provider] };
-      return structuredClone(providers);
-    },
-    deleteProvider: async id => {
-      if (Object.values(providers.active).includes(id)) throw new Error(t('请先切换正在使用此连接的客户端。'));
-      providers = { ...providers, connections: providers.connections.filter(p => p.id !== id), selected: { codex: providers.selected.codex === id ? null : providers.selected.codex, claude: providers.selected.claude === id ? null : providers.selected.claude } };
-      return structuredClone(providers);
-    },
-    switchClientProvider: async ({ client, providerId }) => {
-      const provider = providers.connections.find(p => p.id === providerId);
-      if (providerId && !provider) throw new Error(t('连接不存在。'));
-      providers = { ...providers, selected: providerId ? { ...providers.selected, [client]: providerId } : providers.selected, active: { ...providers.active, [client]: providerId } };
-      services = { ...services, [client]: !!providerId };
-      if (client === 'codex') {
-        if (provider) compatible = { ...provider };
-        codex = { ...codex, mode: provider ? 'compatible' : 'official', activeProvider: provider ? 'xwx_deck' : 'openai', compatible: { ...codex.compatible, model: provider?.codexModel || codex.compatible.model } };
-      } else if (provider) claude = { ...provider.claudeModels };
-      return structuredClone(providers);
-    },
-    fetchProviderModels: async () => [],
-    validateProvider: async ({ providerId }) => {
-      const provider = providers.connections.find(item => item.id === providerId);
-      if (!provider) throw new Error(t('服务连接不存在。'));
-      const match = provider.baseUrl.match(/^(.*)\/(responses|chat\/completions|messages)(?:\/v1)?\/?$/i);
-      if (match) {
-        return {
-          status: 'suggestion',
-          providerId,
-          providerName: provider.displayName,
-          suggestedBaseUrl: match[1],
-          suggestedAdapter: match[2].toLowerCase() === 'chat/completions'
-            ? 'chat-completions'
-            : match[2].toLowerCase() === 'messages' ? 'anthropic-messages' : 'responses'
-        };
-      }
-      return { status: 'valid', providerId, providerName: provider.displayName };
-    },
-    getCompatibleServiceConfig: async () => ({ ...compatible }),
-    updateCompatibleServiceConfig: async (value) => {
-      compatible = {
-        providerPreset: typeof value.baseUrl === 'string'
-          ? detectProviderPreset(value.baseUrl)
-          : compatible.providerPreset,
-        displayName: typeof value.displayName === 'string'
-          ? value.displayName.trim().replace(/\s+/g, ' ').slice(0, 80) || compatible.displayName
-          : compatible.displayName,
-        baseUrl: (value.baseUrl as string) ?? compatible.baseUrl,
-        bearerToken: (value.bearerToken as string) ?? compatible.bearerToken,
-        codexApiFormat: value.codexApiFormat === 'chat-completions' || value.codexApiFormat === 'anthropic-messages'
-          ? value.codexApiFormat
-          : compatible.codexApiFormat,
-      };
-      return { ...compatible };
     },
     getModelServices: async () => ({ ...services }),
     setModelService: async (value) => {
       if (value.enabled && (!compatible.baseUrl?.trim() || !compatible.bearerToken?.trim())) {
-        throw new Error(t("请先在设置中填写并保存 {0} 地址和密钥。", compatible.displayName));
+        throw new Error(`请先在设置中填写并保存 ${compatible.displayName} 地址和密钥。`);
       }
       services = { ...services, [value.client]: value.enabled };
       if (value.client === 'claude') {
@@ -428,57 +583,56 @@ export function createPreviewApi(): XwXDeckApi {
       return { ...services };
     },
     fetchModels: async () => {
-      const openAiModels: ModelCatalogEntry[] = [
-        {
-          id: 'gpt-5.6-sol',
-          vendor: 'OpenAI',
-          protocols: ['openai-responses', 'chat-completions'],
-          vision: true,
-          clients: ['codex'],
-          contextWindow: 1_050_000,
-          capabilitySources: { contextWindow: 'builtin' }
-        },
-        {
-          id: 'gpt-5.5',
-          vendor: 'OpenAI',
-          protocols: ['openai-responses', 'chat-completions'],
-          vision: true,
-          clients: ['codex'],
-          contextWindow: 262_144,
-          capabilitySources: { contextWindow: 'models.dev' }
-        }
-      ];
-      const multiProtocol = compatible.providerPreset === 'compatible'
-        || new URLSearchParams(location.search).get('multi-provider') === '1';
-      if (!multiProtocol) return openAiModels;
+      if (scenario === 'catalog-slow') await new Promise(resolve => setTimeout(resolve, 3_000));
+      if (scenario === 'catalog-failed') throw new Error('模拟 /models 请求超时，服务选择不受影响');
       return [
-        ...openAiModels,
-        {
-          id: 'claude-sonnet-4-5',
-          vendor: 'Anthropic',
-          protocols: ['anthropic-messages', 'openai-responses'],
-          clients: ['claude', 'codex'],
-          vision: true,
-          contextWindow: 200_000,
-          maxOutputTokens: 64_000,
-          reasoning: true,
-          toolCalling: true,
-          interleavedThinking: true
-        },
-        {
-          id: 'deepseek-v3.2',
-          vendor: 'DeepSeek',
-          protocols: ['anthropic-messages', 'chat-completions'],
-          clients: ['claude']
-        }
-      ];
+      {
+        id: 'claude-sonnet-4-5',
+        vendor: 'Anthropic',
+        protocols: ['anthropic-messages', 'openai-responses'],
+        protocolsDeclared: true,
+        clients: ['claude', 'codex'],
+        vision: true,
+        contextWindow: 200_000,
+        maxOutputTokens: 64_000,
+        reasoning: true,
+        toolCalling: true,
+        interleavedThinking: true
+      },
+      {
+        id: 'claude-incomplete-preview',
+        vendor: 'Anthropic',
+        protocols: ['anthropic-messages'],
+        protocolsDeclared: true,
+        clients: ['codex'],
+        contextWindow: 200_000,
+        toolCalling: true
+      },
+      {
+        id: 'gpt-5.6-sol',
+        vendor: 'OpenAI',
+        protocols: ['openai-responses', 'chat-completions'],
+        protocolsDeclared: true,
+        vision: true,
+        clients: [...providerClients].filter(c=>c!=='claude'),
+        contextWindow: 1_050_000,
+        capabilitySources: { contextWindow: 'builtin' }
+      },
+      {
+        id: 'gpt-5.5',
+        vendor: 'OpenAI',
+        protocols: ['openai-responses', 'chat-completions'],
+        protocolsDeclared: true,
+        vision: true,
+        clients: [...providerClients].filter(c=>c!=='claude'),
+        contextWindow: 262_144,
+        capabilitySources: { contextWindow: 'models.dev' }
+      },
+      { id: 'gemini-2.5-pro', vendor: 'Google', protocols: [], vision: true, clients: [] },
+      { id: 'deepseek-v3.2', vendor: 'DeepSeek', protocols: ['anthropic-messages', 'chat-completions'], protocolsDeclared: true, clients: ['claude'] }
+      ] as ModelCatalogEntry[];
     },
-    chooseDirectory: async (input) => {
-      if (input?.kind === 'logs') return 'D:\\XwX Deck\\Custom Logs';
-      if (input?.kind === 'trace') return 'D:\\XwX Deck\\Custom Trace';
-      if (input?.kind === 'claude') return 'C:\\Users\\Preview\\CustomClaude';
-      return undefined;
-    },
+    chooseDirectory: async () => undefined,
     updateTraceDirectories: async (value) => {
       if (typeof value?.traceRoot === 'string') state.traceRoot = value.traceRoot;
       if (typeof value?.logRoot === 'string') state.logRoot = value.logRoot;
@@ -492,41 +646,12 @@ export function createPreviewApi(): XwXDeckApi {
       }
       return buildState();
     },
-    openDashboard: async () => undefined,
+    openDashboard: async () => {
+      if (scenario === 'dashboard-failed') throw new Error('模拟仪表盘端口被占用');
+    },
     openDataFolder: async () => undefined,
     openLogFolder: async () => undefined,
     clearHistory: async () => buildState(),
-    setTraceStoragePolicy: async (input) => {
-      if (typeof input?.limitGB === 'number') {
-        if (input.limitGB > 0) state.traceDetailLimitGB = input.limitGB;
-        else if (state.traceWarningGB > 0) state.traceDetailLimitGB = state.traceWarningGB;
-        state.traceWarningGB = input.limitGB;
-      }
-      if (typeof input?.autoCleanup === 'boolean') state.traceAutoCleanup = input.autoCleanup;
-      return buildState();
-    },
-    inspectTraceIndexRepair: async () => ({
-      rootPath: state.traceRoot,
-      indexPath: `${state.traceRoot}\\index.json`,
-      indexStatus: 'valid' as const,
-      indexSha256: 'preview-index',
-      indexedSessions: state.sessions,
-      jsonlFiles: state.sessions,
-      missingIndexedFiles: [],
-      candidates: []
-    }),
-    applyTraceIndexRepair: async () => ({
-      rootPath: state.traceRoot,
-      indexPath: `${state.traceRoot}\\index.json`,
-      indexStatus: 'valid' as const,
-      indexSha256: 'preview-index',
-      indexedSessions: state.sessions,
-      jsonlFiles: state.sessions,
-      missingIndexedFiles: [],
-      candidates: [],
-      applied: true as const,
-      recoveredSessions: 0
-    }),
     disableBreaksCodex: async () => false,
     refresh: async () => buildState(),
     minimizeWindow: async () => undefined,
@@ -547,12 +672,10 @@ export function createPreviewApi(): XwXDeckApi {
       stateListeners.add(listener);
       return () => stateListeners.delete(listener);
     },
-    onWindowState: (listener: (state: WindowState) => void) => {
-      queueMicrotask(() => listener({ maximized: false, fullscreen: false, nativeFrame: setupPlatform === 'darwin' }));
-      return () => undefined;
-    },
+    onWindowState: (_listener: (state: WindowState) => void) => () => undefined,
     onUpdateState: (_listener: (state: XwXDeckUpdateState) => void) => () => undefined,
     onShowUpdateDetails: (_listener: () => void) => () => undefined,
     onNotice: (_listener) => () => undefined,
   };
+  return api;
 }

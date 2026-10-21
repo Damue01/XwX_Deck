@@ -19,6 +19,12 @@ for (const [, ref] of sourceRefs) {
   assert.ok(bytes.equals(await readFile(resolve(root, 'test-results/native-assets/fonts', hash + '.woff2'))));
 }
 const frontend = resolve(root, 'test-results/native-frontend');
+
+for (const surface of ['tray', 'recovery']) {
+  const page = await readFile(resolve(frontend, surface + '.html'), 'utf8');
+  assert.ok(page.includes('data-surface="' + surface + '"'), surface + ' has its dedicated renderer entry');
+  assert.ok(page.includes('src="./app.js') && page.includes('href="./app.css'), surface + ' shares bundled code and styles');
+}
 const renderer = await readFile(resolve(frontend, 'app.css'), 'utf8');
 const viewer = await readFile(resolve(root, 'test-results/native-assets/viewer.html'), 'utf8');
 for (const css of [renderer, viewer]) {

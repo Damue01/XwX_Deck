@@ -125,7 +125,10 @@ fn entry(
                 u.host_str(),
                 Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
             ) && u.port().is_some_and(|port| {
-                blocked_ports.contains(&port) || (45233..=45242).contains(&port)
+                blocked_ports.contains(&port)
+                    || (crate::edition::config::GATEWAY_PORT
+                        ..=crate::edition::config::GATEWAY_PORT + 9)
+                        .contains(&port)
             }) =>
         {
             Some("指向配置管理器本地代理，不能作为上游导入")
@@ -871,7 +874,7 @@ fn read_client(path: &Path, source: &str, isolated_root: Option<&Path>) -> Resul
             .is_some_and(|p| {
                 Path::new(p)
                     .file_name()
-                    .is_some_and(|n| n == "xwx-deck-model-catalog.json")
+                    .is_some_and(|n| n == crate::edition::config::CATALOG_FILE)
             })
     {
         // This is Deck's generated route, not an independent import source.

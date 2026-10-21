@@ -114,7 +114,11 @@ pub fn cleanup(root: &Path) -> Result<(), String> {
     supported()?;
     #[cfg(target_os = "macos")]
     {
-        remove_stores(vec![identifier(root)?])
+        {
+            let mut ids = crate::edition::store_ids(root);
+            ids.push(identifier(root)?);
+            remove_stores(ids)
+        }
     }
     #[cfg(target_os = "windows")]
     {
@@ -141,7 +145,7 @@ pub(crate) fn cleanup_reset(root: &Path, persistent_main: bool) -> Result<(), St
         if !identified_stores_supported()? {
             return Ok(());
         } // Older default store was cleared in the main window.
-        let mut ids = vec![];
+        let mut ids = crate::edition::store_ids(root);
         if persistent_main {
             ids.push(identifier(root)?);
         }

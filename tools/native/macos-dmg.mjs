@@ -1,3 +1,5 @@
+import {editionBuild} from './edition/build.mjs';
+import {writeInstallGuide} from './edition/install-guide.mjs';
 import { cp, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -17,15 +19,11 @@ export async function buildMacDmg({ root, app, dmg, productName, isolated, accep
   try {
     const backgrounds = join(temporary, 'backgrounds');
     await mkdir(backgrounds);
-    run('/usr/bin/swift', [resolve(root, 'tools/icons/generate-macos-dmg-background.swift'), '--output-directory', backgrounds]);
+    run('/usr/bin/swift', [resolve(root, editionBuild.backgroundScript), '--output-directory', backgrounds]);
     const background = join(temporary, 'background.tiff');
     run('/usr/bin/tiffutil', ['-cathidpicheck', join(backgrounds, 'dmg-background.png'), join(backgrounds, 'dmg-background@2x.png'), '-out', background]);
     const guide = join(temporary, isolated ? '验证说明.txt' : '首次打开说明.txt');
-    if (isolated) {
-      await writeFile(guide, 'XwX Deck 隔离验证包\n\n本包使用独立身份和测试配置。请在源码仓库运行 npm run start:native:isolated。不要替换正常应用。\n\n本地验证不代表正式发布、签名或公证验收。\n');
-    } else {
-      await cp(resolve(root, 'assets/macos/首次打开说明.txt'), guide);
-    }
+    await writeInstallGuide({root,guide,isolated,acceptance,signed});
     const contents = config.contents.filter(item => !signed || item.type === 'link' || !item.path).map(item => item.type === 'link'
       ? { ...item }
       : item.path

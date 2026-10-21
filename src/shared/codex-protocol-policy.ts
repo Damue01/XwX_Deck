@@ -1,3 +1,4 @@
+import { legacyCatalogProtocol } from './edition';
 import type { ModelCatalogEntry } from './model-catalog';
 import type { ProviderConnection } from './providers';
 
@@ -34,7 +35,7 @@ export function resolveProviderCodexProtocol(
     }
     return officialOpenAiProtocol(entry) ?? fallback;
   }
-  return fallback;
+  return legacyCatalogProtocol(provider,entry) ?? fallback;
 }
 
 /**

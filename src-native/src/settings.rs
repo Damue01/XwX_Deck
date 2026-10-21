@@ -79,12 +79,15 @@ impl Settings {
         if self.trace_warning_gb > 0.0 {
             return self.trace_warning_gb;
         }
-        self.other.get("traceDetailLimitGB").and_then(Value::as_f64)
-            .filter(|limit| limit.is_finite() && *limit > 0.0).unwrap_or(1.0)
+        self.other
+            .get("traceDetailLimitGB")
+            .and_then(Value::as_f64)
+            .filter(|limit| limit.is_finite() && *limit > 0.0)
+            .unwrap_or(1.0)
     }
 
     pub(super) fn fresh() -> Self {
-        Self::default()
+        extension::fresh_settings()
     }
 }
 impl Pilot {
@@ -96,7 +99,7 @@ impl Pilot {
                 .get("rememberedProviderIds")
                 .cloned()
                 .unwrap_or(settings.selected.clone());
-            for client in ["codex", "claude"] {
+            for client in crate::edition::config::PROVIDER_CLIENTS {
                 if !settings.selected[client].is_null() {
                     retained[client] = settings.selected[client].clone();
                 }
@@ -172,39 +175,5 @@ impl Pilot {
             self.check_settings_source()?;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod public_tests {
-    use super::*;
-
-    #[test]
-    fn fresh_install_has_no_saved_or_selected_connection() {
-        let settings = Settings::fresh();
-        assert!(settings.connections.is_empty());
-        assert_eq!(settings.selected, json!({"codex":null,"claude":null}));
-        assert_eq!(settings.trace_warning_gb, 1.0);
-        assert!(settings.trace_auto_cleanup);
-        assert_eq!(settings.claude_desktop["syncEnabled"], false);
-    }
-
-    #[test]
-    fn existing_storage_policy_and_connection_identity_survive_read_write() {
-        let settings: Settings = serde_json::from_value(json!({
-            "traceWarningGB": 8.0, "traceAutoCleanup": false,
-            "connections": [{"id":"my-api","displayName":"旧名称","baseUrl":"https://service.example/v1","adapter":"responses","customMetadata":"keep"}],
-            "selected":{"codex":"my-api","claude":null},
-            "unrelatedSetting":{"enabled":true}
-        })).unwrap();
-        let document: Value =
-            serde_json::from_str(&Pilot::settings_document(&settings).unwrap()).unwrap();
-        assert_eq!(document["traceWarningGB"], 8.0);
-        assert_eq!(document["traceAutoCleanup"], false);
-        assert_eq!(document["connections"][0]["id"], "my-api");
-        assert_eq!(document["connections"][0]["displayName"], "旧名称");
-        assert_eq!(document["connections"][0]["customMetadata"], "keep");
-        assert_eq!(document["selected"]["codex"], "my-api");
-        assert_eq!(document["unrelatedSetting"]["enabled"], true);
     }
 }

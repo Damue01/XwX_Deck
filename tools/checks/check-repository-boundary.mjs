@@ -107,6 +107,7 @@ for (const relative of policy.forbiddenFeaturePaths) check(!await exists(relativ
 check(!await exists('src/main'), 'production TypeScript backend must be removed');
 check(!await exists('tools/legacy'), 'public repository must not import historical private fixtures');
 
+const [editionConfig,editionHost,editionUpdate]=await Promise.all([read('src-native/src/edition/config.rs'),read('src-native/src/edition/mod.rs'),read('src-native/src/edition/update-source.rs')]);
 const [pkg, contract, tauri, settings, main, core, metadata, updates, cargo] = await Promise.all([
   read('package.json').then(JSON.parse), read('release-contract.json').then(JSON.parse), read('src-native/tauri.conf.json').then(JSON.parse),
   read('src-native/src/settings.rs'), read('src-native/src/main.rs'), read('src-native/src/core.rs'), read('src-native/src/metadata.rs'), read('src-native/src/updates.rs'), read('src-native/Cargo.toml'),
@@ -115,8 +116,8 @@ check(pkg.name === 'xwx-deck', 'package identity must remain public');
 check(tauri.identifier === 'app.xwxdeck.desktop', 'native application ID must remain public');
 check(tauri.productName === 'XwX Deck' && tauri.version === pkg.version, 'native product/version must match package');
 check(contract.identity?.dataNamespace === 'xwx-deck' && contract.identity?.appId === tauri.identifier, 'public data/application identity must match');
-check(main.includes('join("xwx-deck")') && main.includes('Library/Application Support/xwx-deck'), 'native default data roots must retain the public namespace');
-check(contract.identity?.gatewayPort === 45233 && core.includes('const GATEWAY_PORT: u16 = 45233;') && core.includes('bind_gateway_listener(gateway_listen_port(self.isolated))'), 'Gateway must retain the fixed independent public port');
+check(/DATA_DIRECTORY\s*:\s*&str\s*=\s*"xwx-deck"/.test(editionConfig) && editionHost.includes('config::DATA_DIRECTORY'), 'native default data roots must retain the public namespace');
+check(contract.identity?.gatewayPort === 45233 && /GATEWAY_PORT\s*:\s*u16\s*=\s*45233/.test(editionConfig) && core.includes('crate::edition::config::GATEWAY_PORT') && core.includes('bind_gateway_listener(gateway_listen_port(self.isolated))'), 'Gateway must retain the fixed independent public port');
 check(/name\s*=\s*"xwx-deck-native"/u.test(cargo), 'native binary identity must remain public');
 for (const feature of ['configurationSync', 'toolsPage', 'conversationDiagnostics', 'excelToMarkdown']) check(contract.features?.[feature] === false, `release contract must disable ${feature}`);
 check(contract.providerFramework?.defaultConnections?.length === 0, 'release contract must not seed connections');
@@ -126,9 +127,9 @@ check(/selected:\s*json!\(\s*\{\s*"codex"\s*:\s*null\s*,\s*"claude"\s*:\s*null\s
 check(/trace_warning_gb:\s*1\.0/u.test(settings) && /trace_auto_cleanup:\s*true/u.test(settings), 'native public retention defaults must be 1 GB with cleanup');
 check(core.includes('"getClaudeDesktopSync"') && core.includes('"updateClaudeDesktopSync"'), 'supported Desktop model integration must remain');
 const publicFeed = 'https://github.com/Damue01/XwX_Deck/releases/latest/download';
-check(contract.updates?.defaultServer === publicFeed && updates.includes(publicFeed), 'default update feed must remain public');
+check(contract.updates?.defaultServer === publicFeed && editionUpdate.includes(publicFeed), 'default update feed must remain public');
 check(!/events:\s*"https?:\/\//u.test(metadata), 'metadata events must have no built-in remote endpoint');
-check(/events:\s*String::new\(\)/u.test(metadata) || /events:\s*std::env::var\([^)]*\)[\s\S]{0,120}?\.unwrap_or_default\(\)/u.test(metadata), 'metadata push must default to an empty endpoint');
+check(/fn metadata_events\(\)\s*->\s*String\s*\{\s*String::new\(\)\s*\}/u.test(editionConfig) && metadata.includes("crate::edition::config::metadata_events()"), 'metadata push must default to an empty endpoint');
 for (const name of ['electron', 'electron-builder', 'electron-updater']) check(!pkg.dependencies?.[name] && !pkg.devDependencies?.[name], `default dependency must exclude ${name}`);
 check((await exists('tools/checks/check-runtime-boundary.mjs'))?.isFile(), 'current runtime dependency graph checker must exist');
 const history = inspectPublicHistory(root, containsPrivateIdentifier, policy.historyPatterns, policy.historyAuthorEmailDomains);

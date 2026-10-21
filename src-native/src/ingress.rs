@@ -585,7 +585,8 @@ async fn forward_inner(
             );
         }
         payload["model"] = json!(model);
-        let base = Pilot::provider_api_root(provider);
+        let base = extension::endpoint(provider, "anthropic-messages")
+            .unwrap_or_else(|| Pilot::provider_api_root(provider));
         let endpoint = if base
             .rsplit('/')
             .next()

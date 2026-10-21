@@ -778,5 +778,7 @@
   "将打开已校验的 DMG，并安全退出当前 XwX Deck。退出完成后，把新版拖入“应用程序”并选择替换。": "Ouvrez le DMG vérifié et quittez XwX Deck en toute sécurité. Une fois terminé, faites glisser la nouvelle version vers Applications et remplacez l'ancienne.",
   "仅记录用量": "Statistiques uniquement",
   "只统计 Token 和费用，不保存请求与响应正文。": "Comptabilise les tokens et les coûts sans enregistrer le contenu des requêtes et des réponses.",
-  "请输入正整数，单位 GB": "Saisissez un entier positif en Go"
+  "请输入正整数，单位 GB": "Saisissez un entier positif en Go",
+  "未登录": "Non connecté",
+  "检查登录": "Vérifier la connexion"
 }

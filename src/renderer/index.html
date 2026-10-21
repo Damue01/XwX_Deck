@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="zh-CN" data-theme="day">
   <head>
+    <script src="./edition-bootstrap.js"></script>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="color-scheme" content="light" />
@@ -11,7 +12,7 @@
     <script>
       // Apply stored theme before first paint to avoid a flash.
       try {
-        var t = localStorage.getItem('xwx-deck.theme');
+        var t = localStorage.getItem(window.__XWX_EDITION_STORAGE__.theme);
         if (t === 'system') t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'night' : 'day';
         if (t !== 'day' && t !== 'night') t = 'day';
         document.documentElement.dataset.theme = t;

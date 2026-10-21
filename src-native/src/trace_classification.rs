@@ -29,7 +29,39 @@ pub(super) fn annotations(record: &Value) -> Value {
     } else {
         ""
     };
-    let mut result = json!({"firstPrompt":if kind.is_empty(){prompt.as_str()}else{""},"captureClassificationVersion":1});
+    let mut result = json!({"firstPrompt":if kind.is_empty(){prompt.as_str()}else{""},"hasMainTurn":kind.is_empty(),"captureClassificationVersion":1});
+    if record["source"] == "codex-vscode" {
+        let headers = &record["request"]["headers"];
+        let originator = text(headers, "originator").to_ascii_lowercase();
+        let agent = text(headers, "user-agent").to_ascii_lowercase();
+        let cli = matches!(
+            originator.as_str(),
+            "codex_exec" | "codex-tui" | "codex_cli_rs"
+        ) || (originator.is_empty()
+            && ["codex_exec/", "codex-tui/", "codex_cli_rs/"]
+                .iter()
+                .any(|prefix| agent.starts_with(prefix)));
+        let thread = meta["thread_id"]
+            .as_str()
+            .or_else(|| headers["thread-id"].as_str())
+            .unwrap_or("");
+        let consistent = [
+            meta["session_id"].as_str(),
+            headers["thread-id"].as_str(),
+            headers["session-id"].as_str(),
+        ]
+        .into_iter()
+        .flatten()
+        .all(|id| id == thread);
+        if cli
+            && consistent
+            && !thread.is_empty()
+            && record["clientConversationKey"] == format!("codex-vscode:{thread}")
+        {
+            result["source"] = json!("codex-cli");
+            result["clientConversationKey"] = json!(format!("codex-cli:{thread}"));
+        }
+    }
     if !kind.is_empty() {
         result["auxiliary"] = json!(kind);
         result["hidden"] = json!(true);
@@ -120,6 +152,21 @@ pub(super) fn associate_titles(sessions: &mut [Value]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_cli_identity_requires_wire_evidence_and_matching_native_thread() {
+        let record = json!({"source":"codex-vscode","clientConversationKey":"codex-vscode:thread-a","request":{"headers":{"originator":"codex_exec","thread-id":"thread-a","session-id":"thread-a"},"body":{"input":"same prompt"}}});
+        let original = record.clone();
+        let annotation = annotations(&record);
+        assert_eq!(annotation["source"], "codex-cli");
+        assert_eq!(annotation["clientConversationKey"], "codex-cli:thread-a");
+        assert_eq!(record, original);
+        let mut vscode = record.clone();
+        vscode["request"]["headers"]["originator"] = json!("codex_vscode");
+        assert!(annotations(&vscode)["source"].is_null());
+        let mut mismatch = record;
+        mismatch["request"]["headers"]["thread-id"] = json!("thread-b");
+        assert!(annotations(&mismatch)["source"].is_null());
+    }
     #[test]
     fn native_title_and_predictions_are_auxiliary_without_mutating_wire() {
         let record = json!({"request":{"headers":{"x-codex-turn-metadata":"{\"thread_source\":\"thread_title\"}"},"body":{"input":"You are a helpful assistant. short title for a task\nUser prompt:\nActual question"}},"response":{"body":{"status":"completed","output":[{"role":"assistant","content":[{"text":"{\"title\":\"Actual title\"}"}]}]}}});

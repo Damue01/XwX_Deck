@@ -20,7 +20,12 @@ export function useClientInstallations(visible: boolean) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const result = await Promise.race([
-          Promise.resolve().then(() => api.detectClientInstallations?.() ?? { available: false, clients: [] }),
+          Promise.resolve().then(() => api.detectClientInstallations?.() ?? { available: false, clients: [] }).then(result => {
+            // A native dialog or startup work can delay the bridge. Accept its
+            // eventual result until the user starts a newer detection or leaves.
+            if (request === generation.current) { setSnapshot(result); setError(''); }
+            return result;
+          }),
           new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(t('检测超时，请重新检测'))), 8000); }),
         ]);
         if (request === generation.current) { setSnapshot(result); return result; }

@@ -1,3 +1,5 @@
+import { EditionPages, EditionOverlays } from '@/edition';
+import { historyProviderLabels } from '../shared/edition';
 import * as React from 'react';
 import { formatBytes } from '../shared/format-bytes.browser.js';
 import { DEFAULT_TRACE_LIMIT_GB } from '../shared/traceDefaults';
@@ -182,9 +184,7 @@ function Shell(): React.ReactElement {
     if (notifiedMissingProviders.current === visibleSignature) return;
     if (runtimeError || recoveryNotice) return;
     notifiedMissingProviders.current = visibleSignature;
-    const labels: Record<string, string> = {
-      xwx_deck: 'XwX Deck',
-    };
+    const labels = historyProviderLabels;
     const missing = missingProviders.map(provider => labels[provider] ?? provider);
     showToast(t('ChatGPT 历史连接配置缺失'), 'warning', id, {
       description: t("历史对话仍引用 {0}，但该连接已不在 ChatGPT 配置中。当前新对话不受影响；如需继续使用旧对话，请从可信备份恢复原连接。", missing.join('、')),
@@ -257,11 +257,13 @@ function Shell(): React.ReactElement {
           <SignalPage active={activePage === 'signal'} />
           <ModelsPage active={activePage === 'models'} />
           <SettingsPage active={activePage === 'settings'} />
+          <EditionPages activePage={activePage} />
           </div>
         </div>
       </div>
       <OnboardingTour />
       <UpdateNotification />
+      <EditionOverlays />
     </div>
   );
 }

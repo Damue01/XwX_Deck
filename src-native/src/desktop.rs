@@ -1,6 +1,6 @@
 use super::*;
 pub(super) const ID: &str = "00000000-0000-4000-8000-000000157220";
-pub(super) const LEGACY_IDS: [&str; 2] = ["xwx-deck", "xwx-deck-deepseek"];
+pub(super) const LEGACY_IDS: [&str; 2] = crate::edition::config::DESKTOP_LEGACY_IDS;
 fn object(path: &Path) -> Result<Value> {
     parse_object(&read(path)?)
 }
@@ -19,7 +19,7 @@ fn native(id: &str) -> bool {
     // Match the retained Desktop ID policy: a Claude-looking name can still
     // be rejected by the client when it contains another vendor's tokens.
     let foreign = FOREIGN.get_or_init(|| regex::Regex::new(r"ark-code|astron|command-r|deepseek|doubao|gemini|gemma|glm|gpt|grok|hermes|hy3|kimi|lfm|\bling\b|llama|longcat|mimo|minimax|mistral|mixtral|moonshot|nemotron|openai|phi-|qianfan|qwen|\bunic\b|yi-|stepfun|step-3|seed-|bytedance|hunyuan|granite|amazon\.nova|nova-|devstral|ministral|ernie|codex|arcee|trinity|abab|phi\d|\bk2\.|\bm2\.|jamba|arctic|solar|mercury|zamba|kat-coder|\bds-|dpsk").unwrap());
-    !value.contains('\0') && !foreign.is_match(&value)
+    !value.contains('\0') && !crate::edition::config::foreign_model_alias(&value) && !foreign.is_match(&value)
         && COMPATIBLE.get_or_init(|| regex::Regex::new(r"^claude-(?:haiku|sonnet|opus|fable|mythos)(?:[-.@:]|$)|(?:^|[./])anthropic\.claude-(?:haiku|sonnet|opus|fable|mythos)(?:[-.@:]|$)").unwrap()).is_match(&value)
 }
 

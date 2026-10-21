@@ -191,7 +191,10 @@ export function SettingsPage({ active }: Props): React.ReactElement {
         onChange={event => setLimitDraft(event.target.value)}
         onBlur={commitLimit}
         onKeyDown={event => {
-          if (event.key === 'Enter') event.currentTarget.blur();
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            void commitLimit();
+          }
           if (event.key === 'Escape') {
             setLimitDraft(String(storageLimitGB));
             setEditingLimit(false);

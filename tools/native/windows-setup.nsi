@@ -201,11 +201,13 @@ Function InstallPage
 FunctionEnd
 
 Function Browse
-  nsDialogs::SelectFolderDialog "选择安装位置" "$INSTDIR"
-  Pop $0
-  ${If} $0 != "error"
+  System::Call /NOUNLOAD '$PLUGINSDIR\XwXSetupSkin.dll::ChooseFolder(p $HWNDPARENT, w "$INSTDIR", w .r0, i ${NSIS_MAX_STRLEN}) i .r1'
+  ${If} $1 == 1
     StrCpy $INSTDIR $0
     ${NSD_SetText} $LocationField $INSTDIR
+  ${ElseIf} $1 == -1
+    ${NSD_SetText} $ErrorLabel "无法打开系统文件夹窗口，请直接编辑安装路径后重试。"
+    ShowWindow $ErrorLabel ${SW_SHOW}
   ${EndIf}
 FunctionEnd
 

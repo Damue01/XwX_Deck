@@ -10,7 +10,7 @@ const root = resolve(import.meta.dirname, '../..');
 const source = await readFile(resolve(root, 'src/renderer/lib/theme.ts'), 'utf8');
 const bundle = await build({
   stdin: {
-    contents: `${source}\nexport { changeTheme };`,
+    contents: `${source}\nexport { changeTheme, storageKeys };`,
     loader: 'ts',
     resolveDir: resolve(root, 'src/renderer/lib')
   },
@@ -34,7 +34,7 @@ function fixture({storageFails=false,failSave=false,darkSystem=false}={}) {
 }
 const tests=[];const test=(name,run)=>tests.push({name,run});
 const tick=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
-test('startup restores the persisted runtime theme',()=>{const f=fixture();f.api.applyTheme('night');assert.equal(f.attrs.theme,'night');assert.equal(f.storage.get('xwx-deck.theme'),'night');});
+test('startup restores the persisted runtime theme',()=>{const f=fixture();f.api.applyTheme('night');assert.equal(f.attrs.theme,'night');assert.equal(f.storage.get(f.api.storageKeys.theme),'night');});
 test('theme paints immediately while save is pending',async()=>{const f=fixture();f.click('night');assert.equal(f.attrs.theme,'night');await tick();assert.deepEqual(f.saves,['night']);f.pending[0].resolve();});
 test('late runtime echoes cannot undo the latest local choice',()=>{const f=fixture();f.click('night');f.api.applyTheme('day');assert.equal(f.attrs.theme,'night');f.click('day');f.api.applyTheme('night');assert.equal(f.attrs.theme,'day');});
 test('rapid selections persist only the last unsent choice',async()=>{const f=fixture();f.click('night');f.click('day');f.click('night');await tick();assert.deepEqual(f.saves,['night']);f.pending[0].resolve();});
@@ -42,7 +42,7 @@ test('a slow earlier save cannot finish after and overwrite a later save',async(
 test('superseded queued saves never persist intermediate choices',async()=>{const f=fixture();f.click('night');await tick();f.click('night');f.click('day');f.pending[0].resolve();await tick();assert.deepEqual(f.saves,['night','day']);f.pending[1].resolve();});
 test('save rejection keeps the choice and later saves still work',async()=>{const f=fixture({failSave:true});f.click('night');await tick();assert.equal(f.attrs.theme,'night');assert.equal(f.warnings.length,1);f.click('day');await tick();assert.deepEqual(f.saves,['night','day']);assert.equal(f.attrs.theme,'day');});
 test('storage failure cannot block painting and preserves the event identity',async()=>{const f=fixture({storageFails:true});f.click('night');assert.equal(f.attrs.theme,'night');assert.ok(f.events.every(e=>e==='xwx:themechange'));await tick();f.pending[0].resolve();});
-test('system mode follows OS changes without losing the preference',()=>{const f=fixture({darkSystem:true});f.api.applyTheme('system');assert.equal(f.attrs.theme,'night');assert.equal(f.storage.get('xwx-deck.theme'),'system');f.system(false);assert.equal(f.attrs.theme,'day');assert.equal(f.storage.get('xwx-deck.theme'),'system');});
+test('system mode follows OS changes without losing the preference',()=>{const f=fixture({darkSystem:true});f.api.applyTheme('system');assert.equal(f.attrs.theme,'night');assert.equal(f.storage.get(f.api.storageKeys.theme),'system');f.system(false);assert.equal(f.attrs.theme,'day');assert.equal(f.storage.get(f.api.storageKeys.theme),'system');});
 test('manual choice ignores later OS changes and stale runtime',()=>{const f=fixture({darkSystem:true});f.click('day');f.system(true);f.api.applyTheme('system');assert.equal(f.attrs.theme,'day');assert.equal(f.attrs.themePreference,'day');});
 for(const{name,run}of tests){await run();console.log('PASS '+name);}
 console.log(`${tests.length} responsive theme regressions passed`);

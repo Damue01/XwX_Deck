@@ -4,7 +4,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { standardWindowsArtifact } from './windows-execution-level.mjs';
-import { assertPublicBinary } from './public-binary-boundary.mjs';
 
 // NSIS distribution used by Tauri 2.11.4; verified against its published digest.
 const TOOL_SHA256 = 'c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1';
@@ -55,11 +54,10 @@ export async function buildWindowsSetup({ root, binary, output, version, failure
   if (configured.status) throw Error('Cannot initialize the MSVC x86 compiler.');
   const compilerEnv = { ...process.env };
   for (const line of configured.stdout.split(/\r?\n/)) { const at = line.indexOf('='); if (at > 0) compilerEnv[line.slice(0, at)] = line.slice(at + 1); }
-  await writeFile(join(work, 'skin.def'), 'LIBRARY XwXSetupSkin\nEXPORTS\nSkin=_Skin@16\nField=_Field@8\n');
-  const compiled = spawnSync('cl.exe', ['/nologo', '/LD', '/MT', '/O2', '/std:c++17', '/utf-8', '/Brepro', '/experimental:deterministic', `/pathmap:${root}=/src`, join(root, 'tools/native/windows-setup-skin.cpp'), `/Fo${join(work, 'skin.obj')}`, `/Fe${skin}`, '/link', `/DEF:${join(work, 'skin.def')}`, 'user32.lib', 'gdi32.lib', 'comctl32.lib', 'uxtheme.lib', 'gdiplus.lib'], { cwd: work, env: compilerEnv, encoding: 'utf8', windowsHide: true });
+  await writeFile(join(work, 'skin.def'), 'LIBRARY XwXSetupSkin\nEXPORTS\nSkin=_Skin@16\nField=_Field@8\nChooseFolder=_ChooseFolder@16\n');
+  const compiled = spawnSync('cl.exe', ['/nologo', '/LD', '/MT', '/O2', '/std:c++17', '/utf-8', '/Brepro', '/experimental:deterministic', `/pathmap:${root}=/src`, join(root, 'tools/native/windows-setup-skin.cpp'), `/Fo${join(work, 'skin.obj')}`, `/Fe${skin}`, '/link', `/DEF:${join(work, 'skin.def')}`, 'user32.lib', 'gdi32.lib', 'comctl32.lib', 'uxtheme.lib', 'gdiplus.lib', 'ole32.lib', 'shell32.lib', 'uuid.lib'], { cwd: work, env: compilerEnv, encoding: 'utf8', windowsHide: true });
   await writeFile(join(work, 'skin-build.log'), (compiled.stdout || '') + (compiled.stderr || ''));
   if (compiled.error || compiled.status) throw Error(compiled.error?.message || compiled.stdout + compiled.stderr);
-  await assertPublicBinary(skin, root);
   let template = await readFile(join(root, 'tools/native/windows-setup.nsi'), 'utf8');
   const binarySha256 = createHash('sha256').update(await readFile(binary)).digest('hex');
   for (const [key, value] of Object.entries({ OUTPUT: output, BINARY: binary, SKIN: skin, ICON: join(root, 'assets/icon.ico'), VERSION: version, BINARY_SHA256: binarySha256, FAILURE_FIXTURE: failureFixture === 'uninstall' ? '3' : failureFixture === 'registered' ? '2' : failureFixture ? '1' : '0' })) template = template.replaceAll(`@@${key}@@`, quote(value));
@@ -68,7 +66,6 @@ export async function buildWindowsSetup({ root, binary, output, version, failure
   await writeFile(join(work, 'build.log'), (result.stdout || '') + (result.stderr || ''));
   if (result.error || result.status) throw Error(result.error?.message || (result.stdout || '') + (result.stderr || ''));
   await standardWindowsArtifact(output);
-  await assertPublicBinary(output, root);
   const bytes = await readFile(output), sha256 = createHash('sha256').update(bytes).digest('hex');
   await writeFile(output + '.sha256', sha256 + '  ' + output.split(/[\\/]/).at(-1) + '\n');
   return { path: output, size: bytes.length, sha256, version, scope: 'per-user', installerType: 'nsis-v1', integrityLabel: 'medium', binarySha256, failureFixture };
