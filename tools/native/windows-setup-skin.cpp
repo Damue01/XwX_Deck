@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <algorithm>
+#include <process.h>
 using namespace Gdiplus;
 static HWND mainWindow;
 static int dpi = 96;
@@ -21,21 +22,34 @@ static HFONT regular, titleFont, headingFont, mono, versionFont;
 static HBITMAP field;
 static ULONG_PTR graphicsToken;
 static int px(int n);
-// Use the same modern shell dialog family as the application's image picker.
-extern "C" int __stdcall ChooseFolder(HWND owner,const wchar_t* initial,wchar_t* output,int capacity) {
-  if(!output||capacity<1)return -1;
-  output[0]=0;
+static ULONGLONG folderStarted;
+static int folderOpenMs=-1;
+static void CALLBACK folderShown(HWINEVENTHOOK,DWORD,HWND window,LONG object,LONG,DWORD,DWORD) {
+  wchar_t name[32];
+  if(folderOpenMs<0&&object==OBJID_WINDOW&&GetClassName(window,name,32)&&wcscmp(name,L"#32770")==0)
+    folderOpenMs=int(GetTickCount64()-folderStarted);
+}
+struct FolderRequest { HWND owner;const wchar_t* initial;wchar_t* output;int capacity;int result=-1; };
+// A dedicated STA keeps slow shell extensions and unavailable paths off the installer UI thread.
+static unsigned __stdcall chooseFolder(void* context) {
+  auto& request=*static_cast<FolderRequest*>(context);
   HRESULT init=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
-  if(FAILED(init))return -1;
+  if(FAILED(init))return 0;
   IFileOpenDialog* dialog=nullptr;
   HRESULT result=CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog));
   if(SUCCEEDED(result)) {
     DWORD options=0;dialog->GetOptions(&options);
-    dialog->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM|FOS_DONTADDTORECENT);
+    dialog->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM|FOS_DONTADDTORECENT|FOS_NOCHANGEDIR);
+    // Keep this picker's saved shell state separate from other applications' remote/recent folders.
+    const GUID client={0xb8bb170a,0x5604,0x4a87,{0x9f,0x55,0x1e,0x53,0xaf,0x80,0xc3,0x91}};
+    dialog->SetClientGuid(client);
     dialog->SetTitle(L"选择安装位置");
     IShellItem* start=nullptr;
     wchar_t folder[32768]={};
-    if(initial&&wcslen(initial)<32768)wcscpy_s(folder,initial);
+    if(request.initial&&wcslen(request.initial)<32768)wcscpy_s(folder,request.initial);
+    wchar_t root[4]={folder[0],L':',L'\\',0};
+    // Probing an offline UNC or mapped drive can block for Windows' network timeout.
+    if(folder[1]!=L':'||GetDriveType(root)!=DRIVE_FIXED)folder[0]=0;
     // A first install's final folder does not exist yet. Start at its nearest
     // existing parent instead of loading the user's potentially remote Home view.
     while(folder[0]) {
@@ -44,21 +58,50 @@ extern "C" int __stdcall ChooseFolder(HWND owner,const wchar_t* initial,wchar_t*
       wchar_t* slash=wcsrchr(folder,L'\\');if(!slash)slash=wcsrchr(folder,L'/');
       if(!slash){folder[0]=0;break;}if(slash==folder+2&&folder[1]==L':'){slash[1]=0;break;}*slash=0;
     }
-    if(folder[0]&&SUCCEEDED(SHCreateItemFromParsingName(folder,nullptr,IID_PPV_ARGS(&start)))){dialog->SetFolder(start);start->Release();}
-    result=dialog->Show(owner);
+    if(!folder[0]){GetWindowsDirectory(folder,32768);folder[3]=0;}
+    if(SUCCEEDED(SHCreateItemFromParsingName(folder,nullptr,IID_PPV_ARGS(&start)))){dialog->SetFolder(start);start->Release();}
+    auto hook=SetWinEventHook(EVENT_OBJECT_SHOW,EVENT_OBJECT_SHOW,nullptr,folderShown,GetCurrentProcessId(),GetCurrentThreadId(),WINEVENT_OUTOFCONTEXT);
+    result=dialog->Show(request.owner);
+    if(hook)UnhookWinEvent(hook);
     if(SUCCEEDED(result)) {
       IShellItem* item=nullptr;
       result=dialog->GetResult(&item);
       if(SUCCEEDED(result)) {
         PWSTR path=nullptr;result=item->GetDisplayName(SIGDN_FILESYSPATH,&path);
-        if(SUCCEEDED(result)){if(wcslen(path)<size_t(capacity))wcscpy_s(output,capacity,path);else result=E_INVALIDARG;CoTaskMemFree(path);}
+        if(SUCCEEDED(result)){if(wcslen(path)<size_t(request.capacity))wcscpy_s(request.output,request.capacity,path);else result=E_INVALIDARG;CoTaskMemFree(path);}
         item->Release();
       }
     }
     dialog->Release();
   }
   CoUninitialize();
-  return SUCCEEDED(result)?1:result==HRESULT_FROM_WIN32(ERROR_CANCELLED)?0:-1;
+  request.result=SUCCEEDED(result)?1:result==HRESULT_FROM_WIN32(ERROR_CANCELLED)?0:-1;
+  return 0;
+}
+// Use the same modern shell dialog family as the application's image picker.
+extern "C" int __stdcall ChooseFolder(HWND owner,const wchar_t* initial,wchar_t* output,int capacity) {
+  if(!output||capacity<1)return -1;
+  output[0]=0;folderOpenMs=-1;folderStarted=GetTickCount64();
+  FolderRequest request{owner,initial,output,capacity};
+  bool enabled=owner&&IsWindowEnabled(owner);
+  if(enabled)EnableWindow(owner,FALSE);
+  HANDLE thread=reinterpret_cast<HANDLE>(_beginthreadex(nullptr,0,chooseFolder,&request,0,nullptr));
+  if(thread){
+    MSG message;bool quit=false;int quitCode=0;
+    while(MsgWaitForMultipleObjects(1,&thread,FALSE,INFINITE,QS_ALLINPUT)!=WAIT_OBJECT_0){
+      while(PeekMessage(&message,nullptr,0,0,PM_REMOVE)){
+        if(message.message==WM_QUIT){quit=true;quitCode=int(message.wParam);}
+        else{TranslateMessage(&message);DispatchMessage(&message);}
+      }
+    }
+    CloseHandle(thread);
+    if(quit)PostQuitMessage(quitCode);
+  }
+  if(enabled){EnableWindow(owner,TRUE);SetForegroundWindow(owner);}
+  return request.result;
+}
+extern "C" int __stdcall FolderOpenMilliseconds() {
+  return folderOpenMs;
 }
 static LRESULT CALLBACK checkboxProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
   if(msg==WM_ERASEBKGND)return 1;

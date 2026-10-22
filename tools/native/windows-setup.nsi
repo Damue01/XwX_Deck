@@ -186,11 +186,18 @@ Function ValidateTarget
     Return
   ${EndIf}
   ClearErrors
-  ExecWait '"$PLUGINSDIR\guard.exe" --check-setup-target "$INSTDIR\XwX Deck.exe"' $0
+  Delete "$PLUGINSDIR\target-error.txt"
+  ClearErrors
+  ExecWait '"$PLUGINSDIR\guard.exe" --check-setup-target "$INSTDIR\XwX Deck.exe" --setup-error-file "$PLUGINSDIR\target-error.txt"' $0
   !insertmacro Log "安装目标核对结果：$0"
   ${If} ${Errors}
   ${OrIf} $0 != 0
-    StrCpy $ErrorMessage "无法安全安装。请从托盘退出已安装的 XwX Deck，或选择没有同名程序的文件夹。"
+    StrCpy $ErrorMessage "无法完成安装检查，请重新打开本安装包后重试。"
+    FileOpen $1 "$PLUGINSDIR\target-error.txt" r
+    ${IfNot} ${Errors}
+      FileReadUTF16LE $1 $ErrorMessage
+      FileClose $1
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 
@@ -239,7 +246,19 @@ Function ManageLegacyInstallation
 FunctionEnd
 
 Function Browse
+  ${NSD_GetText} $LocationField $INSTDIR
+  SetCtlColors $ErrorLabel 777777 FFFFFF
+  ${NSD_SetText} $ErrorLabel "正在打开系统文件夹窗口…"
+  ShowWindow $ErrorLabel ${SW_SHOW}
+  System::Call 'user32::UpdateWindow(p $ErrorLabel)'
   System::Call /NOUNLOAD '$PLUGINSDIR\XwXSetupSkin.dll::ChooseFolder(p $HWNDPARENT, w "$INSTDIR", w .r0, i ${NSIS_MAX_STRLEN}) i .r1'
+  System::Call /NOUNLOAD '$PLUGINSDIR\XwXSetupSkin.dll::FolderOpenMilliseconds() i .r2'
+  !insertmacro Log "系统文件夹窗口显示耗时：$2 ms；结果：$1"
+  SetCtlColors $ErrorLabel A63429 FFFFFF
+  ${NSD_SetText} $ErrorLabel $ErrorMessage
+  ${If} $ErrorMessage == ""
+    ShowWindow $ErrorLabel ${SW_HIDE}
+  ${EndIf}
   ${If} $1 == 1
     StrCpy $INSTDIR $0
     ${NSD_SetText} $LocationField $INSTDIR

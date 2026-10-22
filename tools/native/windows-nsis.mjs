@@ -54,7 +54,7 @@ export async function buildWindowsSetup({ root, binary, output, version, failure
   if (configured.status) throw Error('Cannot initialize the MSVC x86 compiler.');
   const compilerEnv = { ...process.env };
   for (const line of configured.stdout.split(/\r?\n/)) { const at = line.indexOf('='); if (at > 0) compilerEnv[line.slice(0, at)] = line.slice(at + 1); }
-  await writeFile(join(work, 'skin.def'), 'LIBRARY XwXSetupSkin\nEXPORTS\nSkin=_Skin@16\nField=_Field@8\nChooseFolder=_ChooseFolder@16\n');
+  await writeFile(join(work, 'skin.def'), 'LIBRARY XwXSetupSkin\nEXPORTS\nSkin=_Skin@16\nField=_Field@8\nChooseFolder=_ChooseFolder@16\nFolderOpenMilliseconds=_FolderOpenMilliseconds@0\n');
   const compiled = spawnSync('cl.exe', ['/nologo', '/LD', '/MT', '/O2', '/std:c++17', '/utf-8', '/Brepro', '/experimental:deterministic', `/pathmap:${root}=/src`, join(root, 'tools/native/windows-setup-skin.cpp'), `/Fo${join(work, 'skin.obj')}`, `/Fe${skin}`, '/link', `/DEF:${join(work, 'skin.def')}`, 'user32.lib', 'gdi32.lib', 'comctl32.lib', 'uxtheme.lib', 'gdiplus.lib', 'ole32.lib', 'shell32.lib', 'uuid.lib'], { cwd: work, env: compilerEnv, encoding: 'utf8', windowsHide: true });
   await writeFile(join(work, 'skin-build.log'), (compiled.stdout || '') + (compiled.stderr || ''));
   if (compiled.error || compiled.status) throw Error(compiled.error?.message || compiled.stdout + compiled.stderr);

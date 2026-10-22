@@ -275,9 +275,63 @@ fn remove_legacy(target: &Path) -> Result<()> {
     }
     Ok(())
 }
+fn version_numbers(version: &str) -> Option<[u64; 4]> {
+    let parts = version.split('.').collect::<Vec<_>>();
+    if !(3..=4).contains(&parts.len()) {
+        return None;
+    }
+    let mut numbers = [0; 4];
+    for (index, part) in parts.iter().enumerate() {
+        numbers[index] = part.parse().ok()?;
+    }
+    Some(numbers)
+}
+fn check_unregistered_target(target: &Path) -> Result<()> {
+    let uninstaller = target.parent().ok_or("无效安装位置")?.join("uninstall.exe");
+    for (path, setup) in [(target, false), (uninstaller.as_path(), true)] {
+        if !path.exists() {
+            continue;
+        }
+        let info = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+        let owned = info.is_file()
+            && !info.file_type().is_symlink()
+            && if setup {
+                version_field(path, "ProductName").as_deref() == Ok("XwX Deck Setup")
+                    && version_field(path, "OriginalFilename").as_deref()
+                        == Ok("XwX-Deck-windows-x64-setup.exe")
+                    && version_field(path, "InstallScope").as_deref() == Ok("per-user")
+            } else {
+                version_field(path, "ProductName").as_deref() == Ok("XwX Deck")
+                    && version_field(path, "FileDescription").as_deref() == Ok("XwX Deck")
+                    && version_field(path, "CompanyName").as_deref() == Ok("xwxdeck")
+            };
+        if !owned {
+            return Err(format!(
+                "无法确认 {} 属于 XwX Deck，请选择其他安装文件夹；原文件保留。",
+                path.display()
+            ));
+        }
+        let version = version_field(path, "ProductVersion")?;
+        let installed =
+            version_numbers(&version).ok_or("旧程序版本信息无效，请选择其他安装文件夹。")?;
+        let current =
+            version_numbers(env!("CARGO_PKG_VERSION")).ok_or("当前安装包版本信息无效。")?;
+        if installed > current {
+            return Err(format!(
+                "此目录中已有 {version}，请使用相同或更新版本的安装包。"
+            ));
+        }
+    }
+    Ok(())
+}
 fn check_target(target: &Path, uninstall: bool) -> Result<()> {
     if !target.is_absolute() || target.file_name().and_then(|s| s.to_str()) != Some(APP_FILE) {
         return Err("无效安装目标".into());
+    }
+    if other_instance(target) {
+        return Err(
+            "此目录中的 XwX Deck 仍在运行，请从托盘退出后再次点击安装；配置和数据保留。".into(),
+        );
     }
     if registry(INSTALL_KEY, "Path").is_some() {
         if uninstall || registry(INSTALL_KEY, "InstallerType").as_deref() == Some("nsis-v1") {
@@ -285,16 +339,10 @@ fn check_target(target: &Path, uninstall: bool) -> Result<()> {
         } else {
             legacy_product(target)?;
         }
-    } else if uninstall
-        || target.exists()
-        || target
-            .parent()
-            .is_some_and(|p| p.join("uninstall.exe").exists())
-    {
-        return Err("目标程序不属于本次安装".into());
-    }
-    if other_instance(target) {
-        return Err("请先从托盘退出 XwX Deck；当前程序和数据保留".into());
+    } else if uninstall {
+        return Err("安装登记不存在，请先用安装包修复此目录后再卸载；配置和数据保留。".into());
+    } else {
+        check_unregistered_target(target)?;
     }
     Ok(())
 }
@@ -508,6 +556,17 @@ pub fn worker() -> Option<i32> {
             return Some(match result {
                 Ok(()) => 0,
                 Err(e) => {
+                    if flag == "--check-setup-target" {
+                        if let Some(path) = crate::argument("--setup-error-file") {
+                            let bytes = e
+                                .encode_utf16()
+                                .flat_map(u16::to_le_bytes)
+                                .collect::<Vec<_>>();
+                            if let Err(error) = fs::write(path, bytes) {
+                                eprintln!("无法记录安装检查结果：{error}");
+                            }
+                        }
+                    }
                     eprintln!("{e}");
                     1
                 }
@@ -654,6 +713,17 @@ pub fn previous_error(root: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod legacy_tests {
+    #[test]
+    fn installer_versions_compare_numerically_without_accepting_unknown_formats() {
+        assert!(super::version_numbers("1.10.0") > super::version_numbers("1.2.0"));
+        assert_eq!(
+            super::version_numbers("1.2.0"),
+            super::version_numbers("1.2.0.0")
+        );
+        for version in ["", "1.2", "1.2.0-beta", "1.2.0.0.1", "no-version"] {
+            assert_eq!(super::version_numbers(version), None);
+        }
+    }
     #[test]
     fn legacy_product_codes_cannot_be_commands_or_partial_identifiers() {
         assert!(super::valid_product_code(

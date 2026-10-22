@@ -51,6 +51,11 @@ async function uninstall(name) {
  const result=spawnSync(runner,['/S','_?='+current.Path],{windowsVerbatimArguments:true,windowsHide:true,timeout:60000,stdio:'ignore'});
  if(result.error)throw result.error;return result.status;
 }
+function forgetOwnedRegistration(path) {
+ assert.equal(registration()?.Path,path);assert.ok([install,cInstall].includes(path));
+ const script=String.raw`$p=Get-ItemProperty -LiteralPath 'HKCU:\Software\XwX Deck\Installation';if($p.Path -ne $env:XWX_SETUP_OWNED_PATH -or $p.AppId -ne 'app.xwxdeck.desktop' -or $p.InstallerType -ne 'nsis-v1'){throw 'Unrelated installation'};Remove-Item -LiteralPath 'HKCU:\Software\XwX Deck\Installation';Remove-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\XwX Deck'`;
+ const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{env:{...process.env,XWX_SETUP_OWNED_PATH:path},encoding:'utf8',windowsHide:true});assert.equal(result.status,0,result.stderr);assert.equal(registration(),null);
+}
 async function legacyMsi() {
  const wix=join(repo,'test-results/wix314'),archive=join(repo,'test-results/wix314-binaries.zip');
  const expected='6ac824e1642d6f7277d0ed7ea09411a508f6116ba6fae0aa5f2c7daa2ff43d31';
@@ -149,6 +154,34 @@ try {
  assert.deepEqual(await readFile(shortcut),unrelatedShortcut,'uninstall preserves an unrelated named shortcut');
  if(!previousShortcut)await unlink(shortcut);
  pass('per-user Setup installs exact files in a Unicode C-drive path and uninstalls without Windows Installer');
+ const foreign=join(work,'同名 其他程序');await mkdir(foreign);
+ for(const name of ['XwX Deck.exe','uninstall.exe']){
+  const file=join(foreign,name);await writeFile(file,'foreign executable bytes');
+  assert.equal(setup(artifacts.new.path,['/D='+foreign],'foreign-'+name),2);
+  assert.equal(await readFile(file,'utf8'),'foreign executable bytes');assert.equal(registration(),null);
+  const log=new TextDecoder('gb18030').decode(await readFile(join(work,'foreign-'+name+'.log')));
+  assert.ok(log.includes('无法确认')&&log.includes(name));assert.ok(!log.includes('仍在运行'));
+  await unlink(file);
+ }
+ pass('unrelated same-name applications and uninstallers are retained with a precise ownership error');
+ assert.equal(setup(artifacts.old.path,['/D='+cInstall],'orphan-old-install'),0);
+ const orphanApp=hash(await readFile(join(cInstall,'XwX Deck.exe'))),orphanUninstall=hash(await readFile(join(cInstall,'uninstall.exe')));
+ const orphanData=join(cInstall,'retained-user-data.txt');await writeFile(orphanData,'orphan fixture data');forgetOwnedRegistration(cInstall);
+ await rpcSession(join(cInstall,'XwX Deck.exe'),async()=>{
+  assert.equal(setup(artifacts.new.path,['/D='+cInstall],'orphan-running'),2);assert.equal(registration(),null);assert.equal(hash(await readFile(join(cInstall,'XwX Deck.exe'))),orphanApp);
+  const log=new TextDecoder('gb18030').decode(await readFile(join(work,'orphan-running.log')));assert.ok(log.includes('仍在运行'));assert.ok(!log.includes('无法确认'));
+ });
+ pass('a running unregistered old app is retained with a precise exit-and-retry message');
+ assert.equal(setup(lateFailure.path,['/D='+cInstall],'orphan-failed-repair'),3);
+ assert.equal(registration(),null);assert.equal(hash(await readFile(join(cInstall,'XwX Deck.exe'))),orphanApp);assert.equal(hash(await readFile(join(cInstall,'uninstall.exe'))),orphanUninstall);assert.equal(await readFile(orphanData,'utf8'),'orphan fixture data');
+ pass('repairing lost registration rolls back exact original files and leaves registration absent on injected failure');
+ assert.equal(setup(artifacts.new.path,['/D='+cInstall],'orphan-repair'),0);
+ assert.equal(registration().Path,cInstall);assert.equal(registration().InstallerType,'nsis-v1');assert.equal(hash(await readFile(join(cInstall,'XwX Deck.exe'))),hash(await readFile(newBinary)));assert.equal(await readFile(orphanData,'utf8'),'orphan fixture data');
+ forgetOwnedRegistration(cInstall);await unlink(join(cInstall,'XwX Deck.exe'));
+ assert.equal(setup(artifacts.new.path,['/D='+cInstall],'orphan-missing-executable'),0);assert.equal(registration().Path,cInstall);assert.equal(hash(await readFile(join(cInstall,'XwX Deck.exe'))),hash(await readFile(newBinary)));
+ pass('a verified orphan uninstaller permits repair when the application executable is missing');
+ assert.equal(await uninstall('orphan-repaired-uninstall'),0);assert.equal(registration(),null);assert.equal(await readFile(orphanData,'utf8'),'orphan fixture data');
+ pass('verified old files without installation registration upgrade in place and regain working uninstall ownership while retaining user files');
  await rpcSession(newBinary,async rpc=>{
   const p=await rpc('saveProvider',{id:'setup-preserved',displayName:'Setup fixture',baseUrl:base+'/v1',bearerToken:'synthetic-setup-key',adapter:'responses',codexModel:'fixture-model'});
   await rpc('switchClientProvider',{client:'codex',providerId:p.connections[0].id});
