@@ -95,7 +95,7 @@ function legacyRegistration(product,remove=false){
  const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script+'; exit 0'],{env:{...process.env,XWX_TEST_MSI_PRODUCT:product,XWX_TEST_MSI_PATH:cInstall},windowsHide:true,encoding:'utf8'});assert.equal(result.status,0,result.stderr);
 }
 async function rpcSession(binary,task) {
- const child=spawn(binary,['--rpc','--pilot-root',data],{windowsHide:true,env:{...process.env,XWX_DECK_TEST_UPDATE_FEED_URL:base},stdio:['pipe','pipe','pipe']});
+ const child=spawn(binary,['--rpc','--pilot-root',data],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base},stdio:['pipe','pipe','pipe']});
  const queue=[];let errors='';createInterface({input:child.stdout}).on('line',line=>queue.shift()?.(JSON.parse(line)));child.stderr.on('data',d=>errors+=d);
  const rpc=(method,...args)=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('RPC timeout '+method+' '+errors)),25000);queue.push(value=>{clearTimeout(timer);value.ok?resolve(value.result):reject(Error(value.error));});child.stdin.write(JSON.stringify({method,args})+'\n');});
  try{return await task(rpc,child);}finally{if(child.exitCode===null){const exited=once(child,'exit');child.stdin.end();const [code]=await exited;assert.equal(code,0,errors);}}
@@ -217,7 +217,7 @@ try {
  pass('same-version repair restores missing files and retains configuration and Trace');
  assert.equal(await uninstall('reset-update-fixture'),0);assert.equal(setup(artifacts.old.path,['/D='+install],'restore-old'),0);
  let installerPath,finishedPid;
- await rpcSession(executable,async(rpc,child)=>{finishedPid=child.pid;assert.equal((await rpc('checkForAutomaticUpdates')).status,'available');await rpc('downloadAutomaticUpdate');await wait(async()=>{const s=await rpc('getUpdateState');if(s.status==='error')throw Error(s.error);if(s.status==='ready'){installerPath=s.downloadPath;return true;}return false;},'Setup download failed');assert.ok(installerPath.endsWith('-setup.exe'));const bytes=await readFile(installerPath);await writeFile(installerPath,'modified fixture');await assert.rejects(rpc('restartAndInstall'),/已被修改/);await writeFile(installerPath,bytes);});
+ await rpcSession(executable,async(rpc,child)=>{finishedPid=child.pid;assert.equal((await rpc('checkForAutomaticUpdates')).status,'available');await rpc('downloadAutomaticUpdate');await wait(async()=>{const s=await rpc('getUpdateState');if(s.status==='error')throw Error(s.error);if(s.status==='ready'){installerPath=s.downloadPath;return true;}return false;},'Setup download failed');assert.ok(installerPath.endsWith('-setup.exe'));const bytes=await readFile(installerPath);assert.equal(hash(bytes),artifacts.new.sha256,'updates must use the current isolated candidate');await writeFile(installerPath,'modified fixture');await assert.rejects(rpc('restartAndInstall'),/已被修改/);await writeFile(installerPath,bytes);});
  pass('automatic update selects Setup over portable EXE and rejects modified bytes');
  const helper=join(data,'updates/xwx-setup-update-failure.exe');await copyFile(executable,helper);await standardWindowsArtifact(helper);
  const recoveryLog=await open(join(work,'recovery-startup.log'),'a');
@@ -232,7 +232,7 @@ try {
  }finally{await recoveryLog.close();}
  await wait(()=>!spawnSync('tasklist.exe',['/FI','PID eq '+failure.recoveryPid,'/FO','CSV','/NH'],{encoding:'utf8',windowsHide:true}).stdout.includes('"'+failure.recoveryPid+'"'),'Recovered test app did not exit');
  pass('detached update helper rejects tampering and renders the unchanged old application again');
- ui=spawn(executable,['--pilot-root',data,'--smoke','--smoke-setup-update','--smoke-setup-restart'],{windowsHide:true,env:{...process.env,XWX_DECK_TEST_UPDATE_FEED_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:'ignore'});
+ ui=spawn(executable,['--pilot-root',data,'--smoke','--smoke-setup-update','--smoke-setup-restart'],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base,XWX_SYSTEM_LANGUAGE_TEST:'zh-CN'},stdio:'ignore'});
  await wait(async()=>{try{const r=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));if(!r.passed)throw Error(r.error);return r.stage==='downloaded';}catch(e){if(e.code==='ENOENT')return false;throw e;}},'Rendered updater did not download');
  await wait(()=>ui.exitCode!==null,'Old app did not exit');assert.equal(ui.exitCode,0);
  await wait(async()=>{try{const r=JSON.parse(await readFile(join(data,'native-smoke.json'),'utf8'));if(!r.passed)throw Error(r.error);return r.stage==='restarted'&&r.version===newVersion;}catch(e){if(e.code==='ENOENT')return false;throw e;}},'Updated app did not render');
