@@ -87,7 +87,7 @@ jobs:
       - name: Diagnose window setup without modifying the candidate
         if: failure() && steps.native-ui.conclusion == 'failure'
         run: node tools/native/windows-window-probe.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: windows-verification
@@ -105,7 +105,7 @@ jobs:
           New-Item -ItemType Directory -Force release-upload | Out-Null
           Copy-Item "release/XwX Deck.exe" "release-upload/XwX-Deck-windows-x64.exe"
           Copy-Item "release/XwX Deck Setup.exe" "release-upload/XwX-Deck-windows-x64-setup.exe"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-x64
           path: release-upload/*
