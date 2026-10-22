@@ -97,6 +97,7 @@ function legacyRegistration(product,remove=false){
 async function rpcSession(binary,task,options={}) {
  const child=spawn(binary,(options.args??['--rpc','--pilot-root',data]),{windowsHide:true,env:{...process.env,...options.env,XWX_DECK_UPDATE_SERVER_URL:base},stdio:['pipe','pipe','pipe']});
  const queue=[];let errors='';createInterface({input:child.stdout}).on('line',line=>queue.shift()?.(JSON.parse(line)));child.stderr.on('data',d=>errors+=d);
+ child.once('exit',code=>{while(queue.length)queue.shift()({ok:false,error:errors||'RPC process exited: '+code});});
  const rpc=(method,...args)=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('RPC timeout '+method+' '+errors)),25000);queue.push(value=>{clearTimeout(timer);value.ok?resolve(value.result):reject(Error(value.error));});child.stdin.write(JSON.stringify({method,args})+'\n');});
  try{return await task(rpc,child);}finally{if(child.exitCode===null){const exited=once(child,'exit');child.stdin.end();const [code]=await exited;assert.equal(code,0,errors);}}
 }
@@ -254,7 +255,7 @@ try {
  await writeFile(join(work,'storage-policy-fixture.json'),JSON.stringify({profileHome:policyHome,installation:install},null,2)+'\n');
  const policyEnv={APPDATA:join(policyHome,'appdata'),HOME:policyHome,USERPROFILE:policyHome,CODEX_HOME:join(policyHome,'codex'),CLAUDE_CONFIG_DIR:join(policyHome,'claude')};
  for(const path of Object.values(policyEnv))await mkdir(path,{recursive:true});
- const normalOptions={args:['--rpc'],env:policyEnv};
+ const normalOptions={args:['--acceptance-rpc'],env:policyEnv};
  const bulkFile=join(install,'XwXTrace/traces/policy-fixture.bin');
  await rpcSession(executable,async rpc=>{
   const before=await rpc('getState');assert.ok(before.traceRoot.startsWith(policyHome));assert.ok(before.logRoot.startsWith(policyHome));
