@@ -282,6 +282,8 @@
       check('import managed and selected clients retain normal brand colors without a selection border',!document.querySelector('.configuration-client-check')&&getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='none'&&getComputedStyle(document.querySelector('[data-detected-client="qwen-code"] .provider-brand-icon')).filter==='none'&&getComputedStyle(document.querySelector('[data-detected-client="codex"]')).borderTopWidth==='0px');
       document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);
       check('card client deselection is pending until confirmation',document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='false' && !(await window.xwxDeck.getModelClients()).includes('qwen-code'));
+      for (const button of document.querySelectorAll('[data-detected-client]')) if (button.getAttribute('aria-pressed')==='true') button.click();
+      await delay(50);
       check('import is a single titled task without configuration tabs or a return link', document.querySelectorAll('[role=dialog]:not([data-position])').length === 1 && !document.querySelector('.configuration-header .configuration-tabs') && document.querySelector('.configuration-header').textContent.includes('导入配置') && !document.querySelector('.configuration-back'));
       check('import lists unique detected configurations with inline sources and no missing-source placeholders', document.querySelectorAll('.configuration-import-item').length === 2 && document.querySelectorAll('.configuration-import input[type=checkbox]').length === 1 && !document.querySelector('.configuration-import').textContent.includes('Claude CLI') && [...document.querySelectorAll('.configuration-import-source-label')].map(item=>item.textContent).join(',')==='Magpie,CC Switch');
       // Preserve the current draft while exercising long-list geometry.
@@ -343,6 +345,8 @@
       document.querySelector('.configuration-import-entry').click();
       await wait(()=>document.querySelector('[data-detected-client="qwen-code"]')?.disabled===false && !document.querySelector('.configuration-import-refresh').disabled,'real card enrollment');
       check('newly detected client is preselected for confirmation',document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='true');
+      for (const button of document.querySelectorAll('[data-detected-client]')) if (button.dataset.detectedClient!=='qwen-code' && button.getAttribute('aria-pressed')==='true') button.click();
+      await delay(50);
       document.querySelector('.configuration-import-actions .primary').click();
       await wait(()=>!document.querySelector('.configuration-import'),'real client-only card confirmation');
       check('card confirmation enrolls the client in the real registry without changing services or enabling Trace',(await window.xwxDeck.getModelClients()).includes('qwen-code') && (await window.xwxDeck.getProviders()).connections.length===0 && !(await window.xwxDeck.getState()).tracingEnabled);

@@ -133,7 +133,8 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
           <div className="configuration-grid">{installedClients.map(client => {
             const managed = managedClients.includes(client.id);
             const supported = canUseClient(client.id);
-            return <ClientChoice key={client.id} client={client} configured={managed} selected={selectedClients.includes(client.id)} data-detected-client={client.id} disabled={busy || managed || !supported} title={managed ? t('已纳入客户端管理') : !supported ? t('暂不支持模型配置') : undefined} onClick={() => setPickedClients(current => current.includes(client.id) ? current.filter(id => id !== client.id) : [...current, client.id])} />;
+            const selected = selectedClients.includes(client.id);
+            return <ClientChoice key={client.id} client={client} configured={managed || selected} selected={selected} data-detected-client={client.id} disabled={busy || managed || !supported} title={managed ? t('已纳入客户端管理') : !supported ? t('暂不支持模型配置') : undefined} onClick={() => setPickedClients(current => current.includes(client.id) ? current.filter(id => id !== client.id) : [...current, client.id])} />;
           })}</div>
         </>}
         {detection.error ? <p className="provider-field-error" role="alert">{t('客户端检测失败，可继续导入配置')}<span>{detection.error}</span></p>
