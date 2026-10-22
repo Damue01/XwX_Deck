@@ -1,4 +1,5 @@
 import { EditionPages, EditionOverlays } from '@/edition';
+import { StorageMigrationPrompt } from '@/features/settings/StorageMigrationPrompt';
 import { historyProviderLabels } from '../shared/edition';
 import * as React from 'react';
 import { formatBytes } from '../shared/format-bytes.browser.js';
@@ -264,6 +265,7 @@ function Shell(): React.ReactElement {
       <OnboardingTour />
       <UpdateNotification />
       <EditionOverlays />
+      <StorageMigrationPrompt />
     </div>
   );
 }

@@ -80,3 +80,5 @@ pub(super) fn legacy_direct_base(definition: &Value) -> Option<String> {
 pub(super) fn codex_snapshot(value: Value) -> Value {
     value
 }
+pub(super) fn defer_storage_migration(_root: &std::path::Path) -> std::result::Result<bool, String> { Ok(false) }
+pub(super) fn legacy_bulk_trace_root(_root: &std::path::Path) -> Option<std::path::PathBuf> { None }

@@ -172,7 +172,8 @@
           "tools/native/portability-test.mjs",
           "tools/native/claude-native-sessions-test.mjs",
           "tools/native/routing-consumption-test.mjs",
-          "tools/native/client-trace-defaults-test.mjs"
+          "tools/native/client-trace-defaults-test.mjs",
+          "tools/native/data-storage-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "脚本验证工程合同。真实授权、账单与物理操作分别补验。"
@@ -1603,7 +1604,8 @@
         "scripts": [
           "tools/native/update-test.mjs",
           "tools/native/portable-update-test.mjs",
-          "tools/native/windows-setup-test.mjs"
+          "tools/native/windows-setup-test.mjs",
+          "tools/native/windows-setup-ui-test.mjs"
         ],
         "mappingStatus": "entry-points-only",
         "gap": "只验收本版持久配置和未来原生更新。旧发行版本的兼容不在 XwX Deck 范围；实际平台安装、系统授权和重启仍需 U/H。"

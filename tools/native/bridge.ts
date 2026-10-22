@@ -42,12 +42,14 @@ const methods = [
   'resetApplication', 'getApplicationResetResult', 'updateCodexEnhancements', 'updateClaudeModels', 'updateClaudeDesktopSync',
   'clearClaudeEnvironmentOverrides', 'updateCompatibleServiceConfig', 'chooseDirectory',
   'updateTraceDirectories', 'openDashboard', 'openDataFolder', 'openLogFolder', 'clearHistory',
-  'inspectTraceIndexRepair', 'applyTraceIndexRepair', 'copyText'
+  'inspectTraceIndexRepair', 'applyTraceIndexRepair', 'copyText', 'inspectStorageMigration', 'migrateStorage'
 ];
 const bridge: any = Object.fromEntries(methods.map(method => [method, (...args: any[]) => rpc(method, args)]));
 bridge.toggleGatewayClient = (id: string) => rpc("toggleClient", [id]);
 bridge.setupWebsites = setupWebsitesFor(platform, __NATIVE_ARCH__);
 bridge.onState = (listener: any) => subscribe('state', listener);
+bridge.onStorageMigrationProgress = (listener: any) => subscribe('storageMigrationProgress', listener);
+native.event.listen('xwxdeck-storage-migration-progress', (event: any) => publish('storageMigrationProgress', event.payload));
 bridge.onWindowState = (listener: any) => { listener(windowState); return subscribe('window', listener); };
 bridge.onUpdateState = (listener: any) => subscribe('update', listener);
 bridge.onShowUpdateDetails = (listener: any) => subscribe('showUpdate', listener);

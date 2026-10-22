@@ -53,6 +53,8 @@ mod cursor_protocol;
 mod desktop;
 #[path = "directory_settings.rs"]
 mod directory_settings;
+#[path = "data_storage.rs"]
+pub(crate) mod data_storage;
 #[path = "gateway_forwarding.rs"]
 mod gateway_forwarding;
 #[path = "gateway_transport.rs"]
@@ -2221,6 +2223,16 @@ impl Pilot {
             return Err("正在重置，请等待应用重新启动".into());
         }
         self.preflight_settings_write(method)?;
+        if method == "smokeStorageMigration" && self.isolated {
+            let target = args.first().and_then(|v|v["destination"].as_str()).ok_or("缺少隔离目标目录")?;
+            let target = PathBuf::from(target);
+            if !target.starts_with(&self.root) { return Err("迁移试验只能使用隔离根目录".into()); }
+            self.stop().await?;
+            let mut progress = vec![];
+            let mut state = self.migrate_storage_to(&target, |value| progress.push(value))?;
+            state["migrationProgress"] = json!(progress);
+            return Ok(state);
+        }
         if self.active()
             && [
                 "saveProvider",

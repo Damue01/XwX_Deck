@@ -235,6 +235,36 @@ async fn pilot_rpc(
         return result;
     }
     match method.as_str() {
+        "inspectStorageMigration" => pilot.lock().await.inspect_storage_migration(),
+        "migrateStorage" => {
+            let resume = {
+                let mut state = pilot.lock().await;
+                let active = state.active();
+                let snapshot = state.state();
+                if snapshot["activeRequests"].as_u64().unwrap_or(0) > 0 || snapshot["waitingTools"].as_u64().unwrap_or(0) > 0 {
+                    return Err("当前对话仍在运行，请等待本轮完成后重试数据迁移".into());
+                }
+                state.stop().await?;
+                active
+            };
+            let shared = pilot.inner().clone();
+            let handle = app.clone();
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                let mut last = std::time::Instant::now();
+                shared.blocking_lock().migrate_storage(|progress| {
+                    if progress["phase"] == "complete" || last.elapsed().as_millis() >= 100 {
+                        last = std::time::Instant::now();
+                        let _ = handle.emit("xwxdeck-storage-migration-progress", progress);
+                    }
+                })
+            }).await.map_err(|e| e.to_string())?;
+            let resumed = if resume { pilot.lock().await.call("resumeTracing", &[]).await }
+                else { Ok(pilot.lock().await.state()) };
+            let migrated = result?;
+            let mut state = resumed?;
+            state["storageMigrationResult"] = migrated["storageMigrationResult"].clone();
+            Ok(state)
+        }
         "detectClientInstallations" => {
             let job = pilot.lock().await.client_installations_job();
             tauri::async_runtime::spawn_blocking(job).await.map_err(|e| e.to_string())?

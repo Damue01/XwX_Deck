@@ -2020,3 +2020,11 @@ body { font-weight: 400; }
 .chatgpt-policy{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}
 .routing-section-heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px}
 @media(max-width:780px){#page-models .field-row>.fr-value>.xwx-combobox{width:100%;max-width:220px}#page-models .field-row:has(>.fr-value>.xwx-combobox)>.fr-value{justify-content:flex-start}}
+
+.configuration-dialog.data-migration-dialog{width:min(580px,calc(100% - 32px));height:auto}
+.data-migration-body{padding:8px 22px 24px;display:grid;gap:20px}
+.data-migration-body>p{margin:0;color:var(--quiet);font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.data-migration-status{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:10px;font-size:13px}
+.data-migration-count{color:var(--quiet);font-variant-numeric:tabular-nums;font-weight:400}
+.data-migration-body [data-slot="progress-indicator"]{height:100%}
+.data-migration-actions{display:flex;justify-content:flex-end;gap:10px}

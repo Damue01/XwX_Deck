@@ -1,5 +1,5 @@
-//! Per-user Windows Setup updates. NSIS owns program files; user data stays
-//! in the unchanged xwx-deck namespace, outside the installation directory.
+//! Per-user Windows Setup updates. NSIS owns program files and preserves bulk
+//! storage in XwXTrace. Small settings retain the edition's user-data namespace.
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{

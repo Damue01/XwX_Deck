@@ -16,6 +16,7 @@
 #include <process.h>
 using namespace Gdiplus;
 static HWND mainWindow;
+static HWND activePage;
 static int dpi = 96;
 static HBRUSH white;
 static HFONT regular, titleFont, headingFont, mono, versionFont;
@@ -127,7 +128,9 @@ static LRESULT CALLBACK editProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_P
 }
 static LRESULT CALLBACK buttonProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
   // Dialog focus/default-button handling must not replace the branded drawing style.
+  if(msg==BM_SETSTYLE){auto result=DefSubclassProc(window,msg,(wp&~BS_TYPEMASK)|BS_OWNERDRAW,lp);InvalidateRect(window,nullptr,TRUE);return result;}
   if(msg==WM_STYLECHANGING&&wp==(WPARAM)GWL_STYLE){auto style=(STYLESTRUCT*)lp;style->styleNew=(style->styleNew&~BS_TYPEMASK)|BS_OWNERDRAW;}
+  if(msg==WM_UPDATEUISTATE){auto result=DefSubclassProc(window,msg,wp,lp);InvalidateRect(window,nullptr,TRUE);return result;}
   if(msg==WM_MOUSEMOVE&&!GetProp(window,L"hover")){SetProp(window,L"hover",(HANDLE)1);TRACKMOUSEEVENT event={sizeof(event),TME_LEAVE,window,0};TrackMouseEvent(&event);InvalidateRect(window,nullptr,TRUE);}
   if(msg==WM_MOUSELEAVE){RemoveProp(window,L"hover");InvalidateRect(window,nullptr,TRUE);}
   if(msg==WM_GETDLGCODE)return DLGC_BUTTON|((lp&&(((MSG*)lp)->wParam==VK_RETURN||((MSG*)lp)->wParam==VK_ESCAPE))?DLGC_WANTMESSAGE:0)|(GetDlgCtrlID(window)==IDOK?DLGC_DEFPUSHBUTTON:DLGC_UNDEFPUSHBUTTON);
@@ -167,7 +170,7 @@ static LRESULT CALLBACK labelProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_
   return DefSubclassProc(window,msg,wp,lp);
 }
 static void move(HWND control,int x,int y,int w,int h) { SetWindowPos(control,nullptr,px(x),px(y),px(w),px(h),SWP_NOZORDER|SWP_NOACTIVATE); }
-static void ownerButton(HWND button) { SetWindowTheme(button,L"",L"");SetWindowLongPtr(button,GWL_STYLE,(GetWindowLongPtr(button,GWL_STYLE)&~BS_TYPEMASK)|BS_OWNERDRAW);SendMessage(button,WM_SETFONT,(WPARAM)regular,TRUE);SetWindowSubclass(button,buttonProc,2,0); }
+static void ownerButton(HWND button) { SetWindowTheme(button,L"",L"");SetWindowLongPtr(button,GWL_STYLE,(GetWindowLongPtr(button,GWL_STYLE)&~(BS_TYPEMASK|WS_BORDER))|BS_OWNERDRAW);SetWindowLongPtr(button,GWL_EXSTYLE,GetWindowLongPtr(button,GWL_EXSTYLE)&~(WS_EX_CLIENTEDGE|WS_EX_STATICEDGE|WS_EX_DLGMODALFRAME));SendMessage(button,WM_SETFONT,(WPARAM)regular,TRUE);SetWindowSubclass(button,buttonProc,2,0);SetWindowPos(button,nullptr,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED); }
 static void drawButton(DRAWITEMSTRUCT* item) {
   bool primary=GetDlgCtrlID(item->hwndItem)==IDOK,close=GetDlgCtrlID(item->hwndItem)==60001;
   bool disabled=(item->itemState&ODS_DISABLED)!=0,pressed=(item->itemState&ODS_SELECTED)!=0,hover=GetProp(item->hwndItem,L"hover")!=nullptr;
@@ -176,27 +179,38 @@ static void drawButton(DRAWITEMSTRUCT* item) {
   SetTextColor(item->hDC,primary?RGB(255,255,255):disabled?RGB(180,181,183):close?RGB(164,166,167):RGB(115,117,121));
   wchar_t text[64];GetWindowText(item->hwndItem,text,64);
   if(close){
-    HPEN pen=CreatePen(PS_SOLID,px(2),RGB(90,92,95));auto old=SelectObject(item->hDC,pen);
-    int x=(r.left+r.right)/2,y=(r.top+r.bottom)/2;
-    MoveToEx(item->hDC,x-px(5),y-px(5),nullptr);LineTo(item->hDC,x+px(5),y+px(5));
-    MoveToEx(item->hDC,x+px(5),y-px(5),nullptr);LineTo(item->hDC,x-px(5),y+px(5));SelectObject(item->hDC,old);DeleteObject(pen);return;
+    Graphics graphics(item->hDC);graphics.SetSmoothingMode(SmoothingModeAntiAlias);graphics.SetPixelOffsetMode(PixelOffsetModeHalf);
+    Pen pen(hover?Color(90,92,95):Color(119,121,124),REAL(1.1*dpi/96));
+    REAL x=REAL(r.left+r.right)/2,y=REAL(r.top+r.bottom)/2,half=REAL(4.*dpi/96);
+    graphics.DrawLine(&pen,x-half,y-half,x+half,y+half);
+    graphics.DrawLine(&pen,x+half,y-half,x-half,y+half);return;
   }
   for(unsigned i=0;text[i]&&text[i+1];++i)if(text[i]==L'('&&text[i+1]==L'&'){text[i]=0;break;}
   HFONT old=(HFONT)SelectObject(item->hDC,regular);DrawText(item->hDC,text,-1,&r,DT_CENTER|DT_VCENTER|DT_SINGLELINE);SelectObject(item->hDC,old);
-  if((item->itemState&ODS_FOCUS)&&!(item->itemState&ODS_NOFOCUSRECT)){InflateRect(&r,-px(3),-px(3));DrawFocusRect(item->hDC,&r);}
+  if((item->itemState&ODS_FOCUS)&&!(SendMessage(item->hwndItem,WM_QUERYUISTATE,0,0)&UISF_HIDEFOCUS)){
+    InflateRect(&r,-px(2),-px(2));HPEN pen=CreatePen(PS_SOLID,std::max(1,px(1)),RGB(128,130,133));
+    auto oldPen=SelectObject(item->hDC,pen),oldBrush=SelectObject(item->hDC,GetStockObject(NULL_BRUSH));
+    RoundRect(item->hDC,r.left,r.top,r.right,r.bottom,px(8),px(8));SelectObject(item->hDC,oldPen);SelectObject(item->hDC,oldBrush);DeleteObject(pen);
+  }
+}
+static LRESULT CALLBACK hiddenChromeProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
+  if(msg==WM_WINDOWPOSCHANGING&&window!=activePage){auto pos=(WINDOWPOS*)lp;pos->flags=(pos->flags&~SWP_SHOWWINDOW)|SWP_HIDEWINDOW;}
+  return DefSubclassProc(window,msg,wp,lp);
 }
 static LRESULT CALLBACK skinProc(HWND window,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR) {
+  if(window==activePage&&msg==WM_WINDOWPOSCHANGING){auto pos=(WINDOWPOS*)lp;pos->x=0;pos->y=0;pos->cx=px(620);pos->cy=px(180);pos->hwndInsertAfter=HWND_BOTTOM;pos->flags&=~(SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER);}
   if(msg==WM_ERASEBKGND){paintField(window,(HDC)wp);return 1;}
   if(msg==WM_CTLCOLORSTATIC||msg==WM_CTLCOLOREDIT||msg==WM_CTLCOLORDLG){HDC dc=(HDC)wp;SetBkMode(dc,TRANSPARENT);int id=GetDlgCtrlID((HWND)lp);SetTextColor(dc,GetProp((HWND)lp,L"error")?RGB(166,52,41):id==60003?RGB(164,166,168):id==60002?RGB(23,24,26):RGB(90,92,95));return (LRESULT)white;}
   if(msg==WM_DRAWITEM){drawButton((DRAWITEMSTRUCT*)lp);return TRUE;}
   if(window==mainWindow&&msg==WM_COMMAND&&LOWORD(wp)==60001){SendMessage(window,WM_COMMAND,GetProp(window,L"finished")?IDOK:IDCANCEL,0);return 0;}
-  if(window==mainWindow&&msg==WM_NCHITTEST){LRESULT hit=DefSubclassProc(window,msg,wp,lp);if(hit==HTCLIENT){POINT p={GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(window,&p);if(p.y<px(64))return HTCAPTION;}return hit;}
+  if(msg==WM_NCHITTEST){LRESULT hit=DefSubclassProc(window,msg,wp,lp);if(hit==HTCLIENT){POINT p={GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};RECT close;GetWindowRect(GetDlgItem(mainWindow,60001),&close);if(PtInRect(&close,p))return HTCLIENT;ScreenToClient(mainWindow,&p);if(p.y>=0&&p.y<px(64))return window==mainWindow?HTCAPTION:HTTRANSPARENT;}return hit;}
   return DefSubclassProc(window,msg,wp,lp);
 }
 static HWND label(HWND parent,int id,const wchar_t* text,int x,int y,int w,int h,HFONT font) {
   HWND control=CreateWindow(L"STATIC",text,WS_CHILD|WS_VISIBLE|SS_NOPREFIX,x,y,w,h,parent,(HMENU)(INT_PTR)id,GetModuleHandle(nullptr),nullptr);move(control,x,y,w,h);SendMessage(control,WM_SETFONT,(WPARAM)font,TRUE);SetWindowSubclass(control,labelProc,4,0);return control;
 }
 extern "C" void __stdcall Skin(HWND parent,HWND page,const wchar_t* version,int mode) {
+  activePage=page;
   if(!mainWindow){mainWindow=parent;dpi=GetDpiForWindow(parent);white=CreateSolidBrush(RGB(255,255,255));
     regular=CreateFont(-px(11),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
     titleFont=CreateFont(-px(28),0,0,0,FW_MEDIUM,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
@@ -207,12 +221,15 @@ extern "C" void __stdcall Skin(HWND parent,HWND page,const wchar_t* version,int 
     SetWindowRgn(parent,CreateRoundRectRgn(0,0,px(620)+1,px(240)+1,px(12),px(12)),TRUE);SetWindowSubclass(parent,skinProc,1,0);
     HWND close=CreateWindow(L"BUTTON",L"关闭",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,parent,(HMENU)60001,GetModuleHandle(nullptr),nullptr);move(close,572,8,40,40);ownerButton(close);
     label(parent,60003,version,32,196,160,16,versionFont);
+    SendMessage(parent,WM_CHANGEUISTATE,MAKEWPARAM(UIS_SET,UISF_HIDEFOCUS),0);
   }
   // NSIS changes pages and button state; retain its normal keyboard/default actions.
   HWND next=GetDlgItem(parent,IDOK),cancel=GetDlgItem(parent,IDCANCEL);move(next,530,187,58,29);move(cancel,478,187,42,29);ownerButton(next);ownerButton(cancel);ShowWindow(GetDlgItem(parent,3),SW_HIDE);
   ShowWindow(next,mode==2?SW_HIDE:SW_SHOW);
   SetWindowText(cancel,L"取消");SendMessage(parent,DM_SETDEFID,IDOK,0);
-  for(HWND child=GetWindow(parent,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)){int id=GetDlgCtrlID(child);if(child!=page&&child!=next&&child!=cancel&&id!=60001&&id!=60003)ShowWindow(child,SW_HIDE);}
+  move(GetDlgItem(parent,1018),0,0,620,180);
+  for(HWND child=GetWindow(parent,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)){int id=GetDlgCtrlID(child);if(child!=page&&child!=next&&child!=cancel&&id!=60001&&id!=60003){SetWindowSubclass(child,hiddenChromeProc,6,0);ShowWindow(child,SW_HIDE);}}
+  SetWindowLongPtr(page,GWL_STYLE,GetWindowLongPtr(page,GWL_STYLE)|WS_CLIPSIBLINGS|WS_CLIPCHILDREN);
   move(page,0,0,620,180);ShowWindow(page,SW_SHOW);SetWindowSubclass(page,skinProc,1,0);
   if(mode==0)SetProp(page,L"folder",(HANDLE)1);else RemoveProp(page,L"folder");
   label(page,60002,L"XwX Deck",32,88,175,42,titleFont);

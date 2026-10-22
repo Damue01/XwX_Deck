@@ -371,6 +371,9 @@ export interface XwXDeckApi extends EditionApi {
 
   chooseDirectory(payload?: { kind?: import('../../shared/edition').EditionDirectoryKind | 'trace' | 'logs' | 'claude' | 'client' }): Promise<string | undefined>;
   updateTraceDirectories(payload: Record<string, unknown>): Promise<XwXDeckRuntimeState>;
+  inspectStorageMigration?(): Promise<{ destination: string; deferred?: boolean } | null>;
+  migrateStorage?(): Promise<XwXDeckRuntimeState>;
+  onStorageMigrationProgress?(listener: (value: import('../../shared/storageMigration').StorageMigrationProgress) => void): () => void;
 
   // Shell
   openDashboard(): Promise<void>;

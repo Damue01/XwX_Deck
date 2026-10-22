@@ -24,6 +24,7 @@
 | [client-trace-defaults-test.mjs](../tools/native/client-trace-defaults-test.mjs) | 后端默认入口 | TR01、CL01 |
 | [codex-client-compatibility-test.mjs](../tools/native/codex-client-compatibility-test.mjs) | 后端默认入口 | TR05、MO01、CL01、CL02 |
 | [dashboard-layout-test.mjs](../tools/native/dashboard-layout-test.mjs) | 独立专题入口 | TR08、CO03 |
+| [data-storage-test.mjs](../tools/native/data-storage-test.mjs) | 独立专题入口 | TR01 |
 | [official-websocket-proxy-test.mjs](../tools/native/official-websocket-proxy-test.mjs) | 后端默认入口 | TR07 |
 | [portability-test.mjs](../tools/native/portability-test.mjs) | 后端默认入口 | TR01、TR02、TR03、TR04、TR05、TR06、TR07、TR09、CL01、CL02、CL03、CL04、CL05、CL07、CL08 |
 | [routing-consumption-test.mjs](../tools/native/routing-consumption-test.mjs) | 后端默认入口 | TR01、TR02、TR07、MO03、MO06、CL01、CL02、CL05、CL06、LF03 |
@@ -224,6 +225,7 @@
 | [source-fingerprint-test.mjs](../tools/native/source-fingerprint-test.mjs) | 后端默认入口 | RE01、RE02、RE03、RE04 |
 | [update-test.mjs](../tools/native/update-test.mjs) | 后端默认入口 | RE02、RE03、RE04、RE05 |
 | [windows-setup-test.mjs](../tools/native/windows-setup-test.mjs) | 独立专题入口 | RE02、RE03、RE05 |
+| [windows-setup-ui-test.mjs](../tools/native/windows-setup-ui-test.mjs) | 独立专题入口 | RE05 |
 | [release-manifest-test.mjs](../tools/tests/release-manifest-test.mjs) | test:built 入口 | RE02 |
 
 ## SW 额度耗尽自动服务切换
@@ -268,4 +270,5 @@
 | [public-binary-boundary-test.mjs](../tools/native/public-binary-boundary-test.mjs) | 后端默认入口 |
 | [reasoning-chat-providers-test.mjs](../tools/native/reasoning-chat-providers-test.mjs) | 后端默认入口 |
 | [trace-compaction-test.mjs](../tools/native/trace-compaction-test.mjs) | 后端默认入口 |
+| [parity-test.mjs](../tools/shared-core/parity-test.mjs) | test:built 入口 |
 | [public-history-test.mjs](../tools/tests/public-history-test.mjs) | test:built 入口 |
