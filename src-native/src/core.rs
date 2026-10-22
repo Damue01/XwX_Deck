@@ -2278,6 +2278,22 @@ impl Pilot {
         }
         let input = args.first().cloned().unwrap_or(Value::Null);
         match method {
+            "inspectStorageMigration" => self.inspect_storage_migration(),
+            "migrateStorage" => {
+                let snapshot = self.state();
+                if snapshot["activeRequests"].as_u64().unwrap_or(0) > 0 || snapshot["waitingTools"].as_u64().unwrap_or(0) > 0 {
+                    return Err("当前对话仍在运行，请等待本轮完成后重试数据迁移".into());
+                }
+                let resume = self.active();
+                self.stop().await?;
+                let mut progress = vec![];
+                let migrated = self.migrate_storage(|value| progress.push(value));
+                let resumed = if resume { self.start().await } else { Ok(()) };
+                let mut state = migrated?;
+                resumed?;
+                state["migrationProgress"] = json!(progress);
+                Ok(state)
+            }
             "getServiceSwitching" => self.service_switching_snapshot(),
             "setServiceSwitching" => self.set_service_switching(&input),
             "updateProviderClientModel" => self.update_provider_client_model(&input).await,

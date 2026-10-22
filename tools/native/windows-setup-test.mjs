@@ -94,8 +94,8 @@ function legacyRegistration(product,remove=false){
   :"$p=Get-ItemProperty -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation' -ErrorAction SilentlyContinue;if($p){if($p.ProductCode -ne $env:XWX_TEST_MSI_PRODUCT -or $p.Path.TrimEnd('\\') -ne $env:XWX_TEST_MSI_PATH){throw 'Unrelated installation'}}else{New-Item -Path 'HKCU:\\Software\\XwX Deck\\Installation' -Force|Out-Null;Set-ItemProperty -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation' -Name Path -Value $env:XWX_TEST_MSI_PATH;Set-ItemProperty -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation' -Name ProductCode -Value $env:XWX_TEST_MSI_PRODUCT;Set-ItemProperty -LiteralPath 'HKCU:\\Software\\XwX Deck\\Installation' -Name Version -Value '0.9.9'}";
  const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script+'; exit 0'],{env:{...process.env,XWX_TEST_MSI_PRODUCT:product,XWX_TEST_MSI_PATH:cInstall},windowsHide:true,encoding:'utf8'});assert.equal(result.status,0,result.stderr);
 }
-async function rpcSession(binary,task) {
- const child=spawn(binary,['--rpc','--pilot-root',data],{windowsHide:true,env:{...process.env,XWX_DECK_UPDATE_SERVER_URL:base},stdio:['pipe','pipe','pipe']});
+async function rpcSession(binary,task,options={}) {
+ const child=spawn(binary,(options.args??['--rpc','--pilot-root',data]),{windowsHide:true,env:{...process.env,...options.env,XWX_DECK_UPDATE_SERVER_URL:base},stdio:['pipe','pipe','pipe']});
  const queue=[];let errors='';createInterface({input:child.stdout}).on('line',line=>queue.shift()?.(JSON.parse(line)));child.stderr.on('data',d=>errors+=d);
  const rpc=(method,...args)=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('RPC timeout '+method+' '+errors)),25000);queue.push(value=>{clearTimeout(timer);value.ok?resolve(value.result):reject(Error(value.error));});child.stdin.write(JSON.stringify({method,args})+'\n');});
  try{return await task(rpc,child);}finally{if(child.exitCode===null){const exited=once(child,'exit');child.stdin.end();const [code]=await exited;assert.equal(code,0,errors);}}
@@ -249,10 +249,27 @@ try {
  await rpcSession(executable,async rpc=>{assert.equal((await rpc('getUpdateState')).portable,false);});
  assert.equal(setup(artifacts.new.path,[],'repair-uninstall-recovery'),0);
  pass('uninstall failure after registration deletion restores the app, exact uninstall entry, shortcut and working registered recovery');
+ const policyHome=join(work,'storage-policy-home');
+ const policyEnv={APPDATA:join(policyHome,'appdata'),HOME:policyHome,USERPROFILE:policyHome,CODEX_HOME:join(policyHome,'codex'),CLAUDE_CONFIG_DIR:join(policyHome,'claude')};
+ for(const path of Object.values(policyEnv))await mkdir(path,{recursive:true});
+ const normalOptions={args:['--rpc'],env:policyEnv};
+ const bulkFile=join(install,'XwXTrace/traces/policy-fixture.bin');
+ await rpcSession(executable,async rpc=>{
+  const before=await rpc('getState');assert.ok(before.traceRoot.startsWith(policyHome));assert.ok(before.logRoot.startsWith(policyHome));
+  await writeFile(join(before.traceRoot,'policy-fixture.bin'),'verified cross-volume storage fixture');
+  await writeFile(join(before.logRoot,'policy-fixture.log'),'verified runtime log');
+  const plan=await rpc('inspectStorageMigration');assert.equal(plan.destination,join(install,'XwXTrace'));
+  const state=await rpc('migrateStorage');assert.equal(state.traceRoot,join(install,'XwXTrace/traces'));assert.equal(state.logRoot,join(install,'XwXTrace/logs'));assert.equal(state.migrationProgress.at(-1).percent,100);
+  assert.equal(await readFile(bulkFile,'utf8'),'verified cross-volume storage fixture');await assert.rejects(access(join(before.traceRoot,'policy-fixture.bin')));
+ },normalOptions);
+ await rpcSession(executable,async rpc=>{assert.equal((await rpc('getState')).traceRoot,join(install,'XwXTrace/traces'));assert.equal(await rpc('inspectStorageMigration'),null);},normalOptions);
+ pass('registered installation migrates an isolated normal profile across volumes into XwXTrace and reopens without another migration');
  const retained=join(install,'keep.txt');await writeFile(retained,'user-owned fixture');
  assert.equal(await uninstall('uninstall-new'),0);assert.equal(registration(),null);await assert.rejects(access(executable));if(previousShortcut)assert.deepEqual(await readFile(shortcut),previousShortcut);else await assert.rejects(access(shortcut));assert.equal(await readFile(retained,'utf8'),'user-owned fixture');
  assert.equal(hash(await readFile(join(data,'settings.json'))),settingsBefore);assert.equal(hash(await readFile(traceFile)),traceBefore);
  pass('uninstall removes owned application files and registration, retaining user files, configuration and Trace');
+ assert.equal(await readFile(bulkFile,'utf8'),'verified cross-volume storage fixture');assert.equal(await readFile(join(install,'XwXTrace/logs/policy-fixture.log'),'utf8'),'verified runtime log');
+ pass('uninstall preserves the installation XwXTrace folder and all migrated bulk bytes');
  assert.equal(setup(artifacts.new.path,['/D='+install],'reinstall'),0);await rpcSession(executable,async rpc=>{assert.deepEqual(await rpc('getProviders'),providersBefore);});assert.equal(await uninstall('uninstall-reinstalled'),0);
  pass('reinstallation restores the retained choices and a second uninstall succeeds');
  await writeFile(join(work,'summary.json'),JSON.stringify({passed:true,checks,artifacts,modelRequests,work,binarySha256:hash(await readFile(newBinary)),scope:'isolated real per-user MSI migration, Setup system and work-drive installation, recovery, repair, native rendered update, uninstall and retention; loopback requests'},null,2)+'\n');console.log(JSON.stringify({passed:true,checks:checks.length,work}));
