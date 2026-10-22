@@ -249,7 +249,9 @@ try {
  await rpcSession(executable,async rpc=>{assert.equal((await rpc('getUpdateState')).portable,false);});
  assert.equal(setup(artifacts.new.path,[],'repair-uninstall-recovery'),0);
  pass('uninstall failure after registration deletion restores the app, exact uninstall entry, shortcut and working registered recovery');
- const policyHome=join(work,'storage-policy-home');
+ const policyHome=await mkdtemp(join(process.env.LOCALAPPDATA,'Deck-storage-acceptance-'));
+ assert.notEqual(policyHome.slice(0,2).toLowerCase(),install.slice(0,2).toLowerCase(),'Storage policy acceptance requires different source and installation volumes');
+ await writeFile(join(work,'storage-policy-fixture.json'),JSON.stringify({profileHome:policyHome,installation:install},null,2)+'\n');
  const policyEnv={APPDATA:join(policyHome,'appdata'),HOME:policyHome,USERPROFILE:policyHome,CODEX_HOME:join(policyHome,'codex'),CLAUDE_CONFIG_DIR:join(policyHome,'claude')};
  for(const path of Object.values(policyEnv))await mkdir(path,{recursive:true});
  const normalOptions={args:['--rpc'],env:policyEnv};
