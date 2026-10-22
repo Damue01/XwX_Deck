@@ -332,6 +332,9 @@
       check('Cancel restores the configuration directory and keyboard focus without writing', !!document.querySelector('.configuration-header .configuration-tabs') && document.activeElement===document.querySelector('.configuration-import-entry') && importRequests.length===0 && (await window.xwxDeck.getProviders()).connections.length===0);
       document.querySelector('.configuration-import-entry').click();
       await wait(() => document.querySelector('.configuration-import input[type=checkbox]') && !document.querySelector('.configuration-import-refresh').disabled,'reopened import');
+      check('reopened import defaults detected clients on while leaving configurations unchecked',[...document.querySelectorAll('[data-detected-client]')].some(button=>button.getAttribute('aria-pressed')==='true') && !document.querySelector('.configuration-import input[type=checkbox]').checked);
+      for (const button of document.querySelectorAll('[data-detected-client]')) if (button.getAttribute('aria-pressed')==='true') button.click();
+      await delay(50);
       check('reopened import keeps every configuration unchecked', document.querySelector('.configuration-import-actions .primary').disabled && !document.querySelector('.configuration-import input[type=checkbox]').checked);
       document.querySelector('.configuration-import input[type=checkbox]').click(); await delay(50);
       document.querySelector('.configuration-import-actions .primary').click();
