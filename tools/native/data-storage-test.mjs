@@ -1,3 +1,4 @@
+import { nativeTestBinary } from './test-support.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -9,7 +10,7 @@ import { once } from 'node:events';
 import { createHash } from 'node:crypto';
 import { verifyCandidate } from './source-fingerprint.mjs';
 
-const binary = resolve(process.env.XWX_NATIVE_TEST_BINARY ?? 'test-results/native-target/debug/xwxdeck-native.exe');
+const binary = resolve(nativeTestBinary);
 const directory = await mkdtemp(join(tmpdir(), 'xwx-storage-migration-'));
 const checks = [];
 const check = (name, value) => { assert.ok(value, name); checks.push(name); };

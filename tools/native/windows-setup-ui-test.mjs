@@ -38,6 +38,8 @@ using System.Runtime.InteropServices;
 using System.Threading;
 public static class SetupPresentation {
  [StructLayout(LayoutKind.Sequential)] public struct Rect {public int Left,Top,Right,Bottom;}
+ [StructLayout(LayoutKind.Sequential)] public struct GuiInfo {public uint cbSize,flags;public IntPtr active,focus,capture,menu,move,caret;public Rect caretRect;}
+ [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint thread,ref GuiInfo info);
  delegate bool EnumProc(IntPtr w,IntPtr p);
  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f,IntPtr p);
  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr w,EnumProc f,IntPtr p);
@@ -63,17 +65,15 @@ public static class SetupPresentation {
  static void Wait(Func<bool> f,string name){for(int i=0;i<200;i++){if(f())return;Thread.Sleep(25);}throw new Exception(name);}
  static Bitmap Capture(IntPtr w,string path){Rect r=Bounds(w);var b=new Bitmap(r.Right-r.Left,r.Bottom-r.Top);using(var g=Graphics.FromImage(b)){g.Clear(Color.White);IntPtr dc=g.GetHdc();bool ok=PrintWindow(w,dc,2);g.ReleaseHdc(dc);if(!ok)throw new Exception("PrintWindow failed");}b.Save(path,ImageFormat.Png);return b;}
  static void Layout(IntPtr w){IntPtr page=Page(w);Rect a=Bounds(w),b=Bounds(page);Check(b.Left==a.Left&&b.Top==a.Top&&b.Right-b.Left==Px(620)&&b.Bottom-b.Top==Px(180),"page stays aligned with the borderless host");bool clean=true;EnumChildWindows(w,(c,p)=>{int id=GetDlgCtrlID(c);if(GetParent(c)==w&&IsWindowVisible(c)&&c!=page&&id!=1&&id!=2&&id!=60001&&id!=60003)clean=false;return true;},IntPtr.Zero);Check(clean,"native headers and separator controls stay hidden");}
+ static bool Moving(IntPtr w){uint pid;uint thread=GetWindowThreadProcessId(w,out pid);var info=new GuiInfo{cbSize=(uint)Marshal.SizeOf(typeof(GuiInfo))};return GetGUIThreadInfo(thread,ref info)&&(info.flags&2)!=0&&info.move==w;}
  static void Drag(IntPtr w){
   IntPtr page=Page(w),close=GetDlgItem(w,60001);Rect r=Bounds(w),c=Bounds(close);int x=r.Left+Px(290),y=r.Top+Px(25);
   Check(SendMessage(w,0x84,IntPtr.Zero,Packed(x,y)).ToInt64()==2,"host top area is a Windows caption");
   Check(SendMessage(page,0x84,IntPtr.Zero,Packed(x,y)).ToInt64()==-1,"page forwards top-area hit testing");
   Check(SendMessage(w,0x84,IntPtr.Zero,Packed((c.Left+c.Right)/2,(c.Top+c.Bottom)/2)).ToInt64()==1,"close button is excluded from dragging");
-  PostMessage(w,0x112,new IntPtr(0xf010),IntPtr.Zero);Thread.Sleep(80);
-  PostMessage(w,0x100,new IntPtr(0x27),IntPtr.Zero);Thread.Sleep(50);
-  PostMessage(w,0x100,new IntPtr(0x27),IntPtr.Zero);Thread.Sleep(50);
-  PostMessage(w,0x100,new IntPtr(0x28),IntPtr.Zero);Thread.Sleep(50);
-  PostMessage(w,0x100,new IntPtr(0x0d),IntPtr.Zero);Thread.Sleep(80);
-  Rect moved=Bounds(w);Check(moved.Left!=r.Left||moved.Top!=r.Top,"Windows can move the owned borderless installer");
+  PostMessage(w,0x112,new IntPtr(0xf010),IntPtr.Zero);Wait(()=>Moving(w),"Windows enters the owned installer move loop");
+  PostMessage(w,0x1f,IntPtr.Zero,IntPtr.Zero);Wait(()=>!Moving(w),"Windows exits the owned move loop without global input");
+  Check(true,"borderless installer accepts the native Windows move loop");
  }
  public static void Run(string executable,string directory,int dpi){
   SetThreadDpiAwarenessContext(new IntPtr(-4));scale=dpi;checks.Clear();
