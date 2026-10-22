@@ -56,6 +56,8 @@ try {
   const response = await fetch(state.localBaseUrl + '/v1/responses', { method: 'POST', headers: { 'content-type': 'application/json', 'x-session-id': 'storage-fixture' }, body: JSON.stringify({ model: 'fixture', input: 'fixture request '.repeat(3000) }) });
   assert.equal(response.status, 200); await response.json();
   await rpc('toggleTracing', false);
+  await rpc('setTheme', 'night');
+  await rpc('setLanguage', 'zh-CN');
   const oldIndex = JSON.parse(await readFile(join(root, 'traces/index.json'), 'utf8'));
   assert.ok(oldIndex.sessions.length > 0);
   const before = new Map();
@@ -68,6 +70,9 @@ try {
   const beforeSettings = JSON.parse(await readFile(join(root, 'settings.json'), 'utf8'));
   const target = join(root, 'installation/XwXTrace');
   const migrated = await rpc('smokeStorageMigration', { destination: target });
+  const migratedDashboard = await rpc('getDashboardUrl');
+  assert.deepEqual(await (await fetch(migratedDashboard + 'api/theme')).json(), { theme: 'night', language: 'zh-CN' });
+  check('hot migration preserves the actual Viewer theme and language before restart', true);
   const events = migrated.migrationProgress;
   check('migration reports intermediate progress and ends at 100 percent', events.some(v => v.percent > 0 && v.percent < 100) && events.at(-1).percent === 100);
   check('progress never decreases', events.every((value, index) => index === 0 || value.percent >= events[index - 1].percent));
@@ -118,6 +123,12 @@ try {
   rpc = await start(customRoot); await rpc('getState');
   const customTrace = join(customRoot, 'user-trace'); const customLog = join(customRoot, 'user-log');
   await rpc('updateTraceDirectories', { traceRoot: customTrace, logRoot: customLog });
+  await rpc('setTheme', 'night'); await rpc('setLanguage', 'zh-CN');
+  await rpc('updateTraceDirectories', { traceRoot: join(customRoot, 'chosen-trace') });
+  const chosenDashboard = await rpc('getDashboardUrl');
+  assert.deepEqual(await (await fetch(chosenDashboard + 'api/theme')).json(), { theme: 'night', language: 'zh-CN' });
+  check('manual directory changes retain the same Viewer preferences', true);
+  await rpc('updateTraceDirectories', { traceRoot: customTrace });
   await writeFile(join(customTrace, 'user.bin'), 'keep custom');
   const custom = await rpc('smokeStorageMigration', { destination: join(customRoot, 'installation/XwXTrace') });
   check('explicit user directories and files remain unchanged', custom.traceRoot === customTrace && custom.logRoot === customLog && await readFile(join(customTrace, 'user.bin'), 'utf8') === 'keep custom');

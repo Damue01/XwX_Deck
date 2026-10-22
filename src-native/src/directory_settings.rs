@@ -1,6 +1,21 @@
 //! Validate all directory choices, persist once, then publish the new store.
 use super::*;
 impl Pilot {
+    pub(super) fn relocated_trace_store(&self, path: PathBuf) -> Result<storage::Store> {
+        let store = storage::TraceStore::open(
+            path,
+            (self.settings.trace_warning_gb * 1024.0f64.powi(3)) as u64,
+            self.settings.trace_auto_cleanup,
+            &self.root,
+        )?;
+        {
+            let current = self.store.lock().map_err(err)?;
+            let mut next = store.lock().map_err(err)?;
+            next.theme = current.theme.clone();
+            next.language = current.language.clone();
+        }
+        Ok(store)
+    }
     pub(super) fn directory_path(root: &Path, path: &str, default: &str) -> Result<PathBuf> {
         let path = if path.trim().is_empty() {
             root.join(default)
@@ -117,12 +132,7 @@ impl Pilot {
             let store = trace
                 .as_ref()
                 .map(|path| {
-                    storage::TraceStore::open(
-                        path.clone(),
-                        (self.settings.trace_warning_gb * 1024.0f64.powi(3)) as u64,
-                        self.settings.trace_auto_cleanup,
-                        &self.root,
-                    )
+                    self.relocated_trace_store(path.clone())
                 })
                 .transpose()?;
             let mut settings = self.settings.clone();

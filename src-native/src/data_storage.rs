@@ -312,12 +312,7 @@ impl Pilot {
         for (_, _, target) in &moves {
             Self::directory(&self.root, &target.to_string_lossy(), "")?;
         }
-        let store = storage::TraceStore::open(
-            PathBuf::from(&settings.trace_root),
-            (settings.trace_warning_gb * 1024.0f64.powi(3)) as u64,
-            settings.trace_auto_cleanup,
-            &self.root,
-        )?;
+        let store = self.relocated_trace_store(PathBuf::from(&settings.trace_root))?;
         let source = Self::settings_document(&settings)?;
         let mut advance = |bytes: u64| {
             done = done.saturating_add(bytes);
