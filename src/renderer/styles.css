@@ -1317,8 +1317,9 @@ html[data-theme="night"] .setup-card-backdrop { background: rgba(0,0,0,.5); }
 .configuration-choice[data-unconfigured="true"] { color: var(--quiet); }
 .configuration-choice[data-unconfigured="true"] .provider-brand-icon { opacity: .7; }
 .configuration-choice[data-unconfigured="true"] .provider-brand-icon { filter: grayscale(1); }
-.configuration-choice:hover, .configuration-choice[aria-pressed="true"] { background: var(--hover); }
+.configuration-choice:hover, .configuration-choice:not(.configuration-client-choice)[aria-pressed="true"] { background: var(--hover); }
 .configuration-choice:disabled { opacity: .5; cursor: default; }
+.configuration-client-choice:disabled { opacity: 1; }
 .configuration-dialog:focus { outline: none; }
 .configuration-choice:focus-visible, .configuration-tabs button:focus-visible, .configuration-close:focus-visible { outline: 1px solid var(--slate); outline-offset: -2px; }
 .configuration-detail { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 22px 4px; }

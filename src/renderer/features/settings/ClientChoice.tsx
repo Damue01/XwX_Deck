@@ -9,7 +9,7 @@ type Props = Omit<ComponentProps<'button'>, 'children'> & {
 };
 
 export function ClientChoice({ client, configured, selected, ...props }: Props) {
-  return <button {...props} type="button" className="configuration-choice" data-unconfigured={!configured || undefined} aria-pressed={selected}>
+  return <button {...props} type="button" className="configuration-choice configuration-client-choice" data-unconfigured={!(configured || selected) || undefined} aria-pressed={selected}>
     <ProviderIcon kind={client.icon} /><span>{clientCatalogLabel(client)}</span>
   </button>;
 }

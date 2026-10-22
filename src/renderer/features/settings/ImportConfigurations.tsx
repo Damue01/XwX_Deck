@@ -19,6 +19,7 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
   const [preview, setPreview] = React.useState<ConfigurationImportPreview | null>(null);
   const [picked, setPicked] = React.useState<readonly string[]>([]);
   const [pickedClients, setPickedClients] = React.useState<readonly DownloadClientId[]>([]);
+  const seenClients = React.useRef(new Set<DownloadClientId>());
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const specs = React.useRef<readonly ConfigurationImportSpec[] | undefined>(undefined);
@@ -85,6 +86,15 @@ export function ImportConfigurations({ visible, onBack, onBusyChange, onboarding
   const managedClients = normalizeModelClients(modelClients);
   const canUseClient = (id: DownloadClientId) => supportsModelManagement(id) && detection.snapshot?.clients.find(row => row.id === id)?.modelManagement !== false;
   const selectedClients = pickedClients.filter(id => installedClients.some(client => client.id === id) && canUseClient(id) && !managedClients.includes(id));
+  React.useEffect(() => {
+    if (!detection.snapshot?.available) return;
+    const discovered = normalizeModelClients(detection.snapshot.clients
+      .filter(client => client.installed && client.modelManagement !== false).map(client => client.id))
+      .filter(id => supportsModelManagement(id) && !seenClients.current.has(id));
+    discovered.forEach(id => seenClients.current.add(id));
+    // Default only newly discovered clients. A refresh must retain explicit deselection.
+    setPickedClients(current => [...new Set([...current, ...discovered])]);
+  }, [detection.snapshot]);
   const hasSelection = picked.length > 0 || selectedClients.length > 0;
   const cannotApply = !preview || !api.importConfigurations;
   const actions = <div className="configuration-import-actions">

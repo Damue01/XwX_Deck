@@ -79,13 +79,13 @@
     const detectedClients=()=>[...document.querySelectorAll('[data-detected-client]')].map(client=>client.dataset.detectedClient).sort();
     const expectedClients=[...new Set(discovery.clients.filter(client=>client.installed&&client.modelManagement).map(client=>canonicalClient(client.id)))].sort();
     check('import step shows the actual read-only client detection without duplicate Desktop and CLI entries',JSON.stringify(detectedClients())===JSON.stringify(expectedClients));
-    check('detected clients start muted and no client is implicitly managed', (await window.xwxDeck.getModelClients()).length===0 && [...document.querySelectorAll('[data-detected-client]')].every(client=>client.getAttribute('aria-pressed')==='false') && getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='grayscale(1)');
+    check('discovered clients default selected without writing management settings', (await window.xwxDeck.getModelClients()).length===0 && [...document.querySelectorAll('[data-detected-client]')].every(client=>client.getAttribute('aria-pressed')==='true') && getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='none' && getComputedStyle(document.querySelector('[data-detected-client="codex"]')).backgroundColor==='rgba(0, 0, 0, 0)');
     document.querySelector('[data-detected-client="codex"]').click(); await delay(50);
-    check('pending client selection keeps the shared configured-status icon rule without writing settings', document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='true' && getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='grayscale(1)' && (await window.xwxDeck.getModelClients()).length===0);
+    check('explicit deselection mutes the client without writing settings', document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='false' && getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='grayscale(1)' && (await window.xwxDeck.getModelClients()).length===0);
     document.querySelector('.configuration-import-refresh').click();
     await wait(()=>!document.querySelector('.configuration-import-refresh').disabled&&importContinue(),'combined client and configuration refresh');
     check('import recheck retains detected clients and configuration preview',JSON.stringify(detectedClients())===JSON.stringify(expectedClients)&&!!document.querySelector('.configuration-import-list'));
-    check('rechecking preserves the explicit client selection',document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='true');
+    check('rechecking preserves explicit client deselection',document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='false');
     check('client detection and import preview do not change services or activate a route',JSON.stringify(await window.xwxDeck.getProviders())===onboardingProviders);
     document.querySelector('#onboarding-setup .onboarding-foot > .btn').click();
     await wait(()=>onboardingStep()===0||onboardingStep()===1,'back from import preserves the conditional recommendation');
@@ -97,7 +97,8 @@
     const continueRect = continueButton.getBoundingClientRect();
     const continueHit = document.elementFromPoint(continueRect.x + continueRect.width / 2, continueRect.y + continueRect.height / 2);
     check('returned import continuation is visible in the shared footer and receives pointer input', continueHit === continueButton || continueButton.contains(continueHit));
-    document.querySelector('[data-detected-client="claude"]').click(); await delay(50);
+    document.querySelector('[data-detected-client="codex"]').click();
+    document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);
     document.querySelector('#onboarding-setup .configuration-import-actions .primary').click();
     await wait(()=>document.querySelector('.tour-root')&&!document.querySelector('#onboarding-setup'),'continue to real feature walkthrough');
     check('confirming client-only onboarding preserves providers and explicitly enrolls selected clients',JSON.stringify(await window.xwxDeck.getProviders())===onboardingProviders && JSON.stringify(await window.xwxDeck.getModelClients())===JSON.stringify(['codex','claude']));
@@ -273,11 +274,10 @@
       document.querySelector('.configuration-import-entry').click();
       await wait(() => document.querySelector('.configuration-import input[type=checkbox]') && !document.querySelector('.configuration-import-refresh').disabled, 'flat import list');
       await wait(()=>document.querySelector('.configuration-import-clients')?.getAttribute('aria-busy')==='false','card import discovery');
-      check('card import clearly marks already managed clients and leaves new clients selectable',document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='false' && document.querySelector('[data-detected-client="codex"]').title==='已纳入客户端管理' && document.querySelector('[data-detected-client="codex"]').disabled && document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='false');
-      check('import selected and unselected cards keep shared brand states without a selection border',!document.querySelector('.configuration-client-check')&&getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='none'&&getComputedStyle(document.querySelector('[data-detected-client="qwen-code"] .provider-brand-icon')).filter==='grayscale(1)'&&getComputedStyle(document.querySelector('[data-detected-client="codex"]')).borderTopWidth==='0px');
+      check('card import clearly marks already managed clients and leaves new clients selectable',document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='false' && document.querySelector('[data-detected-client="codex"]').title==='已纳入客户端管理' && document.querySelector('[data-detected-client="codex"]').disabled && document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='true');
+      check('import managed and selected clients retain normal brand colors without a selection border',!document.querySelector('.configuration-client-check')&&getComputedStyle(document.querySelector('[data-detected-client="codex"] .provider-brand-icon')).filter==='none'&&getComputedStyle(document.querySelector('[data-detected-client="qwen-code"] .provider-brand-icon')).filter==='none'&&getComputedStyle(document.querySelector('[data-detected-client="codex"]')).borderTopWidth==='0px');
       document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);
-      check('card client selection is pending until confirmation',document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='true' && !(await window.xwxDeck.getModelClients()).includes('qwen-code'));
-      document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);
+      check('card client deselection is pending until confirmation',document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='false' && !(await window.xwxDeck.getModelClients()).includes('qwen-code'));
       check('import is a single titled task without configuration tabs or a return link', document.querySelectorAll('[role=dialog]:not([data-position])').length === 1 && !document.querySelector('.configuration-header .configuration-tabs') && document.querySelector('.configuration-header').textContent.includes('导入配置') && !document.querySelector('.configuration-back'));
       check('import lists unique detected configurations with inline sources and no missing-source placeholders', document.querySelectorAll('.configuration-import-item').length === 2 && document.querySelectorAll('.configuration-import input[type=checkbox]').length === 1 && !document.querySelector('.configuration-import').textContent.includes('Claude CLI') && [...document.querySelectorAll('.configuration-import-source-label')].map(item=>item.textContent).join(',')==='Magpie,CC Switch');
       // Preserve the current draft while exercising long-list geometry.
@@ -338,7 +338,7 @@
       window.xwxDeck.previewConfigurationImport=originalImportPreview; window.xwxDeck.chooseConfigurationImportFile=originalImportFile; window.xwxDeck.importConfigurations=originalImportApply;
       document.querySelector('.configuration-import-entry').click();
       await wait(()=>document.querySelector('[data-detected-client="qwen-code"]')?.disabled===false && !document.querySelector('.configuration-import-refresh').disabled,'real card enrollment');
-      document.querySelector('[data-detected-client="qwen-code"]').click();await delay(50);
+      check('newly detected client is preselected for confirmation',document.querySelector('[data-detected-client="qwen-code"]').getAttribute('aria-pressed')==='true');
       document.querySelector('.configuration-import-actions .primary').click();
       await wait(()=>!document.querySelector('.configuration-import'),'real client-only card confirmation');
       check('card confirmation enrolls the client in the real registry without changing services or enabling Trace',(await window.xwxDeck.getModelClients()).includes('qwen-code') && (await window.xwxDeck.getProviders()).connections.length===0 && !(await window.xwxDeck.getState()).tracingEnabled);

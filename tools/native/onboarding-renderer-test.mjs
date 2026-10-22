@@ -16,7 +16,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 dom.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 const require = createRequire(resolve(base, 'package.json'));
 const React = require('react'), { act } = React, { createRoot } = require('react-dom/client');
-let snapshot, failure = false, heldDetection, importItems = [], done = 0, imports = 0, detections = 0, previews = 0;
+let snapshot, failure = false, heldDetection, importItems = [], done = 0, imports = 0, detections = 0, previews = 0, lastImport;
 const opened = [];
 const { setupWebsitesFor } = await (async () => {
   const result = await esbuild.build({ entryPoints: [resolve(base, 'src/shared/setupWebsites.ts')], bundle: true, platform: 'node', format: 'cjs', write: false });
@@ -26,7 +26,7 @@ const api = {
   setupWebsites: setupWebsitesFor('darwin', 'arm64'),
   detectClientInstallations: async () => { detections++; if (heldDetection) return heldDetection; if (failure) throw Error('检测失败，请重新检测'); return structuredClone(snapshot); },
   previewConfigurationImport: async () => { previews++; return { targetDigest: 'fixture', sources: [{ source: 'magpie', path: '/isolated/providers.json', name: 'Magpie', found: true, error: '', items: importItems }] }; },
-  importConfigurations: async () => { imports++; return { providers: {}, added: [] }; },
+  importConfigurations: async input => { imports++; lastImport = input; return { providers: {}, added: [], modelClients: input.clients }; },
   openSetupWebsite: async site => opened.push(site)
 };
 globalThis.__onboardingFixture = { api, patch() {} };
@@ -78,10 +78,15 @@ try {
   console.log('PASS detected import candidates update the heading without importing or modifying configuration');
   const detectedIds = () => [...document.querySelectorAll('[data-detected-client]')].map(client => client.dataset.detectedClient);
   assert.deepEqual(detectedIds(), ['codex', 'claude', 'qwen-code', 'vscode']);
+  assert.ok([...document.querySelectorAll('[data-detected-client]')].every(client => client.getAttribute('aria-pressed') === 'true' && !client.dataset.unconfigured));
+  await act(async () => document.querySelector('[data-detected-client="codex"]').click());
+  assert.equal(document.querySelector('[data-detected-client="codex"]').dataset.unconfigured, 'true');
   const beforeRefresh = { detections, previews };
   snapshot.clients = [{ id: 'codex-cli', installed: true }, { id: 'codex', installed: true }, { id: 'opencode', installed: true }];
   await act(async () => document.querySelector('.configuration-import-refresh').click());
   assert.deepEqual(detectedIds(), ['codex', 'opencode']);
+  assert.equal(document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed'), 'false');
+  assert.equal(document.querySelector('[data-detected-client="opencode"]').getAttribute('aria-pressed'), 'true');
   assert.equal(detections, beforeRefresh.detections + 1); assert.equal(previews, beforeRefresh.previews + 1);
   failure = true;
   await act(async () => document.querySelector('.configuration-import-refresh').click());
@@ -102,6 +107,13 @@ try {
   failure = true; await render([]); await click('开始使用'); assert.equal(current(), 1); assert.ok(document.body.textContent.includes('检测失败')); assert.equal(document.querySelectorAll('.onboarding-app').length, 0); await click('继续'); assert.equal(current(), 2);
   assert.equal(imports, 0); assert.equal(done, 0); failure = false;
   console.log('PASS unavailable discovery does not claim software is missing or prevent continuation');
+  await render(['codex', 'claude']); await click('开始使用');
+  await act(async () => document.querySelector('[data-detected-client="codex"]').click());
+  await click('确认并继续');
+  assert.deepEqual(lastImport.clients, ['claude']); assert.deepEqual(lastImport.fingerprints, []);
+  await act(async () => new Promise(resolve => setTimeout(resolve, 450)));
+  assert.equal(done, 1); imports = 0;
+  console.log('PASS first-run discovery defaults clients on; explicit deselection survives refresh and confirmation enrolls only the remaining selection');
   await act(async () => root.render(React.createElement(ClientDownloads, { client: 'qwen-code' })));
   assert.equal(document.querySelectorAll('details').length, 0); assert.ok(!document.body.textContent.includes('Apple Silicon'));
   const desktop = document.querySelector('a'); assert.equal(desktop.href, 'https://qwen.ai/qwencode');
@@ -117,6 +129,7 @@ try {
   assert.equal(current(),2);
   assert.equal(imports,0);
   console.log('PASS interrupted setup restores the import step and only repeats read-only detection');
+  await act(async () => { document.querySelector('[data-detected-client="codex"]').click(); document.querySelector('[data-detected-client="claude"]').click(); });
   await click('继续');
   const deadline=Date.now()+3000;
   while(!document.querySelector('.tour-root')&&Date.now()<deadline) await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10));});
