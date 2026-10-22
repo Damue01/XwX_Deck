@@ -35,6 +35,9 @@ if(previousShortcut)await writeFile(join(work,'previous-shortcut.lnk'),previousS
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const checks=[];const pass=name=>{checks.push(name);console.log('PASS '+name);};
 const wait=async(test,label,limit=1200)=>{for(let n=0;n<limit;n++){if(await test())return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error(label);};
+async function removeFixtureFile(path) {
+ await wait(async()=>{try{await unlink(path);return true;}catch(error){if(['EBUSY','EACCES','EPERM'].includes(error.code))return false;throw error;}},'Owned fixture file remains locked: '+path,50);
+}
 function setup(binary,args,name) {
  console.log('Setup: '+name);
  const command=['/S',`"/LOG=${join(work,name+'.log')}"`,...args];
@@ -178,7 +181,7 @@ try {
  pass('repairing lost registration rolls back exact original files and leaves registration absent on injected failure');
  assert.equal(setup(artifacts.new.path,['/D='+cInstall],'orphan-repair'),0);
  assert.equal(registration().Path,cInstall);assert.equal(registration().InstallerType,'nsis-v1');assert.equal(hash(await readFile(join(cInstall,'XwX Deck.exe'))),hash(await readFile(newBinary)));assert.equal(await readFile(orphanData,'utf8'),'orphan fixture data');
- forgetOwnedRegistration(cInstall);await unlink(join(cInstall,'XwX Deck.exe'));
+ forgetOwnedRegistration(cInstall);await removeFixtureFile(join(cInstall,'XwX Deck.exe'));
  assert.equal(setup(artifacts.new.path,['/D='+cInstall],'orphan-missing-executable'),0);assert.equal(registration().Path,cInstall);assert.equal(hash(await readFile(join(cInstall,'XwX Deck.exe'))),hash(await readFile(newBinary)));
  pass('a verified orphan uninstaller permits repair when the application executable is missing');
  assert.equal(await uninstall('orphan-repaired-uninstall'),0);assert.equal(registration(),null);assert.equal(await readFile(orphanData,'utf8'),'orphan fixture data');
@@ -213,7 +216,7 @@ try {
  assert.equal(registration().Path,install);assert.equal(registration().Version,newVersion);assert.equal(hash(await readFile(executable)),hash(await readFile(newBinary)));
  await assert.rejects(access(join(work,'must-not-relocate','XwX Deck.exe')));
  pass('manual E-drive upgrade retains the registered path, ignoring a conflicting destination');
- await unlink(executable);assert.equal(setup(artifacts.new.path,[],'repair-missing-file'),0);assert.equal(hash(await readFile(executable)),hash(await readFile(newBinary)));
+ await removeFixtureFile(executable);assert.equal(setup(artifacts.new.path,[],'repair-missing-file'),0);assert.equal(hash(await readFile(executable)),hash(await readFile(newBinary)));
  assert.equal(hash(await readFile(join(data,'settings.json'))),settingsBefore);assert.equal(hash(await readFile(traceFile)),traceBefore);
  pass('same-version repair restores missing files and retains configuration and Trace');
  assert.equal(await uninstall('reset-update-fixture'),0);assert.equal(setup(artifacts.old.path,['/D='+install],'restore-old'),0);
@@ -250,7 +253,7 @@ try {
  await rpcSession(executable,async rpc=>{assert.equal((await rpc('getUpdateState')).portable,false);});
  assert.equal(setup(artifacts.new.path,[],'repair-uninstall-recovery'),0);
  pass('uninstall failure after registration deletion restores the app, exact uninstall entry, shortcut and working registered recovery');
- const policyHome=await mkdtemp(join(process.env.LOCALAPPDATA,'Deck-storage-acceptance-'));
+ const policyHome=await mkdtemp(join(process.env.XWX_STORAGE_FIXTURE_BASE??process.env.LOCALAPPDATA,'Deck-storage-acceptance-'));
  assert.notEqual(policyHome.slice(0,2).toLowerCase(),install.slice(0,2).toLowerCase(),'Storage policy acceptance requires different source and installation volumes');
  await writeFile(join(work,'storage-policy-fixture.json'),JSON.stringify({profileHome:policyHome,installation:install},null,2)+'\n');
  const policyEnv={APPDATA:join(policyHome,'appdata'),HOME:policyHome,USERPROFILE:policyHome,CODEX_HOME:join(policyHome,'codex'),CLAUDE_CONFIG_DIR:join(policyHome,'claude')};
