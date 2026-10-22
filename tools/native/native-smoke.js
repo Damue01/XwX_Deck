@@ -97,11 +97,15 @@
     const continueRect = continueButton.getBoundingClientRect();
     const continueHit = document.elementFromPoint(continueRect.x + continueRect.width / 2, continueRect.y + continueRect.height / 2);
     check('returned import continuation is visible in the shared footer and receives pointer input', continueHit === continueButton || continueButton.contains(continueHit));
-    document.querySelector('[data-detected-client="codex"]').click();
-    document.querySelector('[data-detected-client="qwen-code"]').click(); await delay(50);
+    check('returning to import retains explicit client deselection',document.querySelector('[data-detected-client="codex"]').getAttribute('aria-pressed')==='false');
+    for (const button of document.querySelectorAll('[data-detected-client]')) {
+      const selected = ['codex','claude'].includes(button.dataset.detectedClient);
+      if ((button.getAttribute('aria-pressed')==='true') !== selected) button.click();
+    }
+    await delay(50);
     document.querySelector('#onboarding-setup .configuration-import-actions .primary').click();
     await wait(()=>document.querySelector('.tour-root')&&!document.querySelector('#onboarding-setup'),'continue to real feature walkthrough');
-    check('confirming client-only onboarding preserves providers and explicitly enrolls selected clients',JSON.stringify(await window.xwxDeck.getProviders())===onboardingProviders && JSON.stringify(await window.xwxDeck.getModelClients())===JSON.stringify(['codex','claude']));
+    check('confirming client-only onboarding preserves providers and explicitly enrolls selected clients',JSON.stringify(await window.xwxDeck.getProviders())===onboardingProviders && JSON.stringify((await window.xwxDeck.getModelClients()).sort())===JSON.stringify(['claude','codex']));
     const guideTitles=['添加配置','切换模型','按需开启 Trace','在仪表盘查看详情'];
     check('public onboarding starts at adding configuration and has four focused steps',document.querySelector('.tour-title').textContent===guideTitles[0]&&document.querySelectorAll('.tour-dots i').length===4);
     for(let index=0;index<4;index++) {
