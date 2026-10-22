@@ -52,10 +52,10 @@ try{
  const client=id=>document.querySelector(`[data-detected-client="${id}"]`);
  const primary=()=>document.querySelector('.configuration-import-actions .primary');
  assert.equal(document.querySelectorAll('[data-detected-client="codex"]').length,1);
- assert.equal(client('codex').getAttribute('aria-pressed'),'false');assert.equal(client('qwen-code').getAttribute('aria-pressed'),'false');assert.equal(client('qwen-code').disabled,true);assert.equal(client('qwen-code').title,'已纳入客户端管理');assert.equal(client('qwen-code').querySelector('small'),null);assert.equal(client('codex').className,'configuration-choice');assert.equal(client('codex').querySelector('.configuration-client-check'),null);assert.equal(client('codex').getAttribute('data-unconfigured'),'true');assert.equal(client('qwen-code').hasAttribute('data-unconfigured'),false);
- assert.equal(client('cursor'),null);assert.equal(primary().disabled,true);assert.ok(!document.body.textContent.includes('点击选择要纳入管理的客户端'));
+ assert.equal(client('codex').getAttribute('aria-pressed'),'true');assert.equal(client('qwen-code').getAttribute('aria-pressed'),'false');assert.equal(client('qwen-code').disabled,true);assert.equal(client('qwen-code').title,'已纳入客户端管理');assert.equal(client('qwen-code').querySelector('small'),null);assert.ok(client('codex').classList.contains('configuration-choice'));assert.equal(client('codex').querySelector('.configuration-client-check'),null);assert.equal(client('codex').hasAttribute('data-unconfigured'),false);assert.equal(client('qwen-code').hasAttribute('data-unconfigured'),false);
+ assert.equal(client('cursor'),null);assert.equal(primary().disabled,false);assert.ok(!document.body.textContent.includes('点击选择要纳入管理的客户端'));
  const writesBefore=writes.length;
- await act(async()=>client('codex').click());assert.equal(client('codex').getAttribute('aria-pressed'),'true');assert.equal(writes.length,writesBefore);assert.equal(primary().textContent,'确认');
+ assert.equal(client('codex').getAttribute('aria-pressed'),'true');assert.equal(writes.length,writesBefore);assert.equal(primary().textContent,'确认');
  await act(async()=>document.querySelector('.configuration-import-refresh').click());assert.equal(client('codex').getAttribute('aria-pressed'),'true');
  await act(async()=>client('codex').click());assert.equal(primary().disabled,true);
  await act(async()=>document.querySelector('.configuration-import-refresh').click());assert.equal(client('codex').getAttribute('aria-pressed'),'false');
@@ -67,8 +67,8 @@ try{
  await act(async()=>primary().click());assert.deepEqual(writes.at(-1).clients,['codex']);assert.deepEqual(writes.at(-1).fingerprints,[]);assert.deepEqual(patches.at(-1).modelClients,['qwen-code','codex']);assert.equal(results.length,beforeResults+1);
  console.log('PASS failed refresh preserves usable cached choices; failed confirmation retains selection; client-only confirmation patches model tabs before completing');
  await renderImport('cancel-enrollment');await act(async()=>client('codex').click());const beforeCancel=writes.length;await act(async()=>document.querySelector('.configuration-import-actions .btn:not(.primary)').click());assert.equal(writes.length,beforeCancel);
- await renderImport('reopen-enrollment');assert.equal(client('codex').getAttribute('aria-pressed'),'false');
- await renderImport('onboarding-enrollment',{onboarding:true});await act(async()=>client('codex').click());assert.equal(primary().textContent,'确认并继续');await act(async()=>primary().click());assert.deepEqual(writes.at(-1).clients,['codex']);
+ await renderImport('reopen-enrollment');assert.equal(client('codex').getAttribute('aria-pressed'),'true');
+ await renderImport('onboarding-enrollment',{onboarding:true});assert.equal(primary().textContent,'确认并继续');await act(async()=>primary().click());assert.deepEqual(writes.at(-1).clients,['codex']);
  console.log('PASS cancel discards pending enrollment; onboarding uses the same explicit client-only confirmation');
  preview.sources=[{source:'claude',path:'/fixture/strict.json',name:'Claude',found:true,error:'',items:[item('strict','Strict source','new')]}];
  await act(async()=>root.render(React.createElement(React.StrictMode,null,React.createElement(mod.exports.ImportConfigurations,{key:'strict-first-open',visible:true,onBack:()=>{},onBusyChange:busy}))));
